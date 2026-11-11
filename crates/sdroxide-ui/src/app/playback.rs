@@ -11,6 +11,7 @@
 //! server's recordings folder and the engine opens them there.
 
 use crate::i18n::tr;
+use crate::theme::ThemedScroll;
 use eframe::egui::{self, RichText};
 use sdroxide_types::{Command, PlaybackCommand, PlaybackStatus, RecordingFile, RecordingListing};
 
@@ -138,7 +139,8 @@ impl super::SdroxideApp {
         let tool_child = crate::app::undocked::ChildWindow::own(self);
         crate::app::undocked::tool_window(
             ctx,
-            crate::app::undocked::ToolWindow::new("PLAYBACK", &tool_title, [640.0, 520.0]),
+            crate::app::undocked::ToolWindow::new("PLAYBACK", &tool_title, [640.0, 520.0])
+                .min_size([340.0, 300.0]),
             &mut tool_st,
             tool_child,
             &mut open,
@@ -150,48 +152,26 @@ impl super::SdroxideApp {
 
     fn playback_body(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         crate::chrome::window_body_bg(ui);
-        ui.label(RichText::new(tr!("playback-intro")).size(11.0).color(crate::theme::gray(160)));
-        ui.add_space(4.0);
-        if let Some(st) = self.state.playback.clone() {
-            self.playback_transport(ui, &st, cmds, true);
-            ui.add_space(4.0);
-        }
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(tr!("playback-find")).size(11.0).color(crate::theme::gray(150)));
-            crate::chrome::field(
-                ui,
-                egui::TextEdit::singleline(&mut self.playback.find)
-                    .desired_width(200.0)
-                    .hint_text(tr!("playback-find-hint")),
-            );
-            if crate::chrome::chip(ui, false, tr!("playback-refresh"))
-                .on_hover_text(tr!("playback-refresh-hint"))
-                .clicked()
-            {
-                self.playback.asked = false;
-            }
-        });
-        let Some(listing) = self.playback.listing.clone() else {
-            ui.label(RichText::new(tr!("playback-asking")).size(11.0));
-            return;
-        };
-        if !listing.dir.is_empty() {
-            ui.label(
-                RichText::new(tr!("playback-folder", dir = listing.dir))
-                    .size(10.0)
-                    .color(crate::theme::gray(140)),
-            );
-        }
-        if let Some(e) = &listing.error {
-            ui.label(RichText::new(e).size(11.0).color(crate::theme::ALERT()));
-        }
+        // Everything above the list scrolls on its own once it is taller than
+        // half the window: the intro, the transport and the find row come to
+        // a dozen lines in a narrow window, and on a 600-point screen they
+        // pushed the list — and the window's bottom — off the screen.
+        let head_h = (ui.available_height() * 0.5).max(64.0);
+        let listing = egui::ScrollArea::vertical()
+            .id_salt("playback-head")
+            .max_height(head_h)
+            .auto_shrink([false, true])
+            .show_themed(ui, |ui| self.playback_head(ui, cmds))
+            .inner;
+        let Some(listing) = listing else { return };
         ui.separator();
         let playing = self.state.playback.as_ref().map(|p| p.name.clone());
         let transmitting = self.state.tx.ptt || self.state.tx.tune;
         let writing = [self.state.recording_file.clone(), self.state.iq_recording_file.clone()];
-        egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("playback-list").show(
-            ui,
-            |ui| {
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .id_salt("playback-list")
+            .show_themed(ui, |ui| {
                 if listing.files.is_empty() {
                     ui.label(RichText::new(tr!("playback-none")).color(crate::theme::gray(150)));
                 }
@@ -199,7 +179,7 @@ impl super::SdroxideApp {
                 for file in listing.files.iter().filter(|f| matches(f, &find)) {
                     let (when, what) = describe(file);
                     let current = playing.as_deref() == Some(file.name.as_str());
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         let enabled = !file.iq && !transmitting;
                         let chip = ui
                             .add_enabled_ui(enabled, |ui| {
@@ -280,8 +260,55 @@ impl super::SdroxideApp {
                     .response
                     .on_hover_text(&file.name);
                 }
-            },
-        );
+            });
+    }
+
+    /// The intro, the transport while a file plays, the find row and the
+    /// folder. Returns the listing, once the station has sent one.
+    fn playback_head(
+        &mut self,
+        ui: &mut egui::Ui,
+        cmds: &mut Vec<Command>,
+    ) -> Option<RecordingListing> {
+        ui.label(RichText::new(tr!("playback-intro")).size(11.0).color(crate::theme::gray(160)));
+        ui.add_space(4.0);
+        if let Some(st) = self.state.playback.clone() {
+            self.playback_transport(ui, &st, cmds, true);
+            ui.add_space(4.0);
+        }
+        // Wrapped, as every row of this window is: on a phone, or in a window
+        // dragged narrow, a row that does not wrap widens the window past the
+        // screen's edge instead.
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(tr!("playback-find")).size(11.0).color(crate::theme::gray(150)));
+            crate::chrome::field(
+                ui,
+                egui::TextEdit::singleline(&mut self.playback.find)
+                    .desired_width(200.0)
+                    .hint_text(tr!("playback-find-hint")),
+            );
+            if crate::chrome::chip(ui, false, tr!("playback-refresh"))
+                .on_hover_text(tr!("playback-refresh-hint"))
+                .clicked()
+            {
+                self.playback.asked = false;
+            }
+        });
+        let Some(listing) = self.playback.listing.clone() else {
+            ui.label(RichText::new(tr!("playback-asking")).size(11.0));
+            return None;
+        };
+        if !listing.dir.is_empty() {
+            ui.label(
+                RichText::new(tr!("playback-folder", dir = listing.dir))
+                    .size(10.0)
+                    .color(crate::theme::gray(140)),
+            );
+        }
+        if let Some(e) = &listing.error {
+            ui.label(RichText::new(e).size(11.0).color(crate::theme::ALERT()));
+        }
+        Some(listing)
     }
 
     /// The strip above the waterfall while a recording plays, so nobody takes
@@ -366,7 +393,7 @@ impl super::SdroxideApp {
                 }
             }
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let pos = self.playback.scrub.unwrap_or(st.position_s);
             match st.duration_s {
                 Some(total) if total > 0.0 => {
