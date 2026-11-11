@@ -2813,6 +2813,10 @@ struct Engine {
     /// calibration, on top of the station's `cal_offset_db`.
     radio_cal_db: f32,
     tx_center_hz: f64,
+    /// The axis (centre, span) the panadapter was last drawn on while
+    /// receiving, which the TX monitor is redrawn onto — see
+    /// [`Engine::make_spectrum_frame`].
+    rx_axis: Option<(f64, f64)>,
     tx_ham_only: bool,
     /// SWR guard: trip threshold, and the latch it sets.
     ///
@@ -4475,6 +4479,7 @@ fn engine_thread(
         audio_route: radio_cfg.audio_route,
         radio_cal_db: radio_cfg.s_meter_cal_db,
         tx_center_hz: 0.0,
+        rx_axis: None,
         tx_ham_only: engine_cfg.tx_ham_only,
         swr_guard: engine_cfg.swr_guard,
         swr_limit: engine_cfg.swr_limit.clamp(SWR_LIMIT_MIN, SWR_LIMIT_MAX),
@@ -8405,10 +8410,30 @@ impl Engine {
         if self.audio_mode { self.audio_bw } else { TX_MONITOR_VIEW_HZ }
     }
 
+    /// The panadapter frame: the receiver's, or the TX monitor's during an
+    /// over on a radio that goes deaf when keyed.
+    ///
+    /// The TX monitor is drawn on the axis the receiver was last drawn on,
+    /// not on its own. Its own is a few kilohertz at the dial on a CAT rig, a
+    /// TCI rig or a digital mode, and the client's waterfall follows a
+    /// frame's axis by remapping its history onto it: keying zoomed the whole
+    /// scrollback into those few kilohertz and unkeying zoomed it back out,
+    /// leaving the history black everywhere but the transmit passband (#827).
     fn make_spectrum_frame(&mut self) -> SpectrumFrame {
         if self.tx_active && !self.rx_drawn_during_tx() {
-            return self.make_tx_frame();
+            let tx = self.make_tx_frame();
+            return match self.rx_axis {
+                Some((center, span)) => place_on_axis(&tx, center, span).unwrap_or(tx),
+                None => tx,
+            };
         }
+        let frame = self.make_rx_frame();
+        self.rx_axis = Some((frame.center_hz, frame.span_hz));
+        frame
+    }
+
+    /// The receiver's panadapter frame — see [`Engine::make_spectrum_frame`].
+    fn make_rx_frame(&mut self) -> SpectrumFrame {
         let bins = self.cfg.bins();
         if self.audio_mode {
             // Zoomed inside the rig's own passband: its audio resolves that
@@ -14428,8 +14453,7 @@ impl Engine {
         // and there was no way out of the digital modes by band buttons. A
         // panel mode is chosen, never recalled.
         let cur_mode = rx.mode;
-        let recallable =
-            |e: &BandStackEntry| !e.mode.has_bottom_panel() || e.mode == cur_mode;
+        let recallable = |e: &BandStackEntry| !e.mode.has_bottom_panel() || e.mode == cur_mode;
 
         if band == cur_band {
             if let Some(stack) = self.stacks.get_mut(&band) {
@@ -14444,11 +14468,15 @@ impl Engine {
             self.remember_band_entry(cur_band, cur_entry);
         }
 
-        let entry = self.stacks.get(&band).and_then(|s| s.iter().find(|e| recallable(e)).copied()).unwrap_or_else(|| {
-            let (freq_hz, mode) = band.default_entry();
-            let (filter_lo, filter_hi) = mode.default_filter_at(freq_hz);
-            BandStackEntry { freq_hz, mode, filter_lo, filter_hi }
-        });
+        let entry = self
+            .stacks
+            .get(&band)
+            .and_then(|s| s.iter().find(|e| recallable(e)).copied())
+            .unwrap_or_else(|| {
+                let (freq_hz, mode) = band.default_entry();
+                let (filter_lo, filter_hi) = mode.default_filter_at(freq_hz);
+                BandStackEntry { freq_hz, mode, filter_lo, filter_hi }
+            });
 
         self.state.band = band;
         self.apply_entry(entry);
@@ -19989,6 +20017,105 @@ mod slide_rows_tests {
     fn a_move_clear_of_the_window_keeps_nothing() {
         let mut rows = vec![1, 2, 3, 4, 5, 6, 7, 8];
         assert!(!slide_rows(&mut rows, axis(1000.0), axis(1900.0)));
+    }
+}
+
+/// `frame` redrawn on another frequency axis with as many columns: where the
+/// frame covers a column it is the peak of the bins that fall in it (read
+/// between two bins where one column is narrower than a bin), and the floor
+/// everywhere else. `None` when the frame and the axis do not overlap at all,
+/// which would draw nothing.
+///
+/// Rows are not carried: they were clocked on the frame's own axis.
+fn place_on_axis(frame: &SpectrumFrame, center_hz: f64, span_hz: f64) -> Option<SpectrumFrame> {
+    let n = frame.bins.len();
+    if n == 0 || frame.span_hz <= 0.0 || span_hz <= 0.0 {
+        return None;
+    }
+    let src_lo = frame.center_hz - frame.span_hz / 2.0;
+    let dst_lo = center_hz - span_hz / 2.0;
+    if src_lo >= dst_lo + span_hz || src_lo + frame.span_hz <= dst_lo {
+        return None;
+    }
+    // Hz per column on each axis; a column in source-bin units is [a, b).
+    let (per_src, per_dst) = (frame.span_hz / n as f64, span_hz / n as f64);
+    let bins = (0..n)
+        .map(|i| {
+            let f0 = dst_lo + i as f64 * per_dst;
+            let a = (f0 - src_lo) / per_src;
+            let b = (f0 + per_dst - src_lo) / per_src;
+            if b <= 0.0 || a >= n as f64 {
+                0
+            } else if b - a >= 1.0 {
+                let lo = a.max(0.0) as usize;
+                let hi = (b.ceil() as usize).clamp(lo + 1, n);
+                frame.bins[lo..hi].iter().copied().max().unwrap_or(0)
+            } else {
+                let at = (a + b) / 2.0 - 0.5;
+                let k = at.floor().clamp(0.0, (n - 1) as f64) as usize;
+                let t = (at - k as f64).clamp(0.0, 1.0);
+                let (p, q) = (f64::from(frame.bins[k]), f64::from(frame.bins[(k + 1).min(n - 1)]));
+                (p + (q - p) * t).round() as u8
+            }
+        })
+        .collect();
+    Some(SpectrumFrame {
+        seq: frame.seq,
+        center_hz,
+        span_hz,
+        db_floor: frame.db_floor,
+        db_ceil: frame.db_ceil,
+        bins,
+        rows: Vec::new(),
+        rows_clocked: false,
+    })
+}
+
+#[cfg(test)]
+mod place_on_axis_tests {
+    use super::*;
+
+    fn frame(center_hz: f64, span_hz: f64, bins: Vec<u8>) -> SpectrumFrame {
+        SpectrumFrame {
+            seq: 1,
+            center_hz,
+            span_hz,
+            db_floor: -120.0,
+            db_ceil: -20.0,
+            bins,
+            rows: Vec::new(),
+            rows_clocked: false,
+        }
+    }
+
+    /// Proves #827's fix: a 3.5 kHz TX monitor lands on the receiver's
+    /// 170 kHz axis at its own frequencies, keeps its peak, and leaves every
+    /// other column at the floor, so the waterfall's axis never moves.
+    #[test]
+    fn a_narrow_tx_window_lands_at_its_frequency_on_the_wide_axis() {
+        let n = 2048;
+        let mut bins = vec![10u8; n];
+        bins[n / 2] = 200;
+        let tx = frame(3_657_000.0 + 1_750.0, 3_500.0, bins);
+        let rx = (3_660_000.0, 170_000.0);
+        let out = place_on_axis(&tx, rx.0, rx.1).expect("overlaps");
+        assert_eq!((out.center_hz, out.span_hz, out.bins.len()), (rx.0, rx.1, n));
+        let col = |hz: f64| ((hz - (rx.0 - rx.1 / 2.0)) / rx.1 * n as f64) as usize;
+        let (lo, hi) = (col(3_657_000.0), col(3_660_500.0));
+        assert!(out.bins[..lo].iter().all(|&b| b == 0));
+        assert!(out.bins[hi + 1..].iter().all(|&b| b == 0));
+        assert_eq!(out.bins[lo..=hi].iter().copied().max(), Some(200), "peak survives");
+        assert!(out.bins[lo + 1..hi].iter().all(|&b| b >= 10));
+    }
+
+    /// A zoomed-in receiver crops the TX monitor to the same window, and one
+    /// clear of the axis draws nothing and leaves the frame as it was.
+    #[test]
+    fn a_narrow_axis_crops_and_a_disjoint_one_declines() {
+        let tx = frame(7_075_000.0, 10_000.0, (0..1000).map(|i| (i % 250) as u8).collect());
+        let out = place_on_axis(&tx, 7_075_000.0, 1_000.0).expect("overlaps");
+        assert!(out.bins.iter().any(|&b| b > 0));
+        assert!(place_on_axis(&tx, 14_074_000.0, 3_000.0).is_none());
     }
 }
 
