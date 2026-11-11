@@ -1637,7 +1637,13 @@ use sdroxide_types::{
 /// and `data2g_bw` settings, each on its tail. The same positions v190 used,
 /// with other contents, so neither a v190 nor a v191 peer can talk to a v192
 /// one.
-pub const PROTO_VERSION: u16 = 192;
+///
+/// v193: [`sdroxide_types::Command`] gains `SetHumFilter`, `SetSkFilter` and
+/// `SetViewUncovered`, appended; `RxState` gains `hum_filter` and the
+/// `sk_filter*` settings, and `RadioConfig` gains `dwell_recentre_off`, each
+/// on its tail. `RxState` rides whole in `RadioState`, so a v192 peer reads
+/// receiver state out of step.
+pub const PROTO_VERSION: u16 = 193;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
