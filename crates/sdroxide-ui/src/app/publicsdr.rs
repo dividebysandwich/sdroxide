@@ -630,7 +630,7 @@ impl SdroxideApp {
         egui::Panel::bottom(ui.id().with("publicsdr_map_rows"))
             .frame(egui::Frame::NONE)
             .resizable(false)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 take = self.public_sdr_map_rows(ui, all, &picked, my_pos);
             });
         let h = ui.available_height().max(crate::publicsdr_map::MIN_HEIGHT);
