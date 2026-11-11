@@ -2059,12 +2059,12 @@ topbar-return-selector-top-bar-popup = De kiezer terugzetten in het pop-upvenste
 topbar-dec-off = DEC uit
 topbar-vol = Vol
 topbar-counted-steps-not-decibels-what =
-
+    {""}
 
     Geteld in stappen, niet in decibel: wat één stap waard is, is de eigen zaak van de ontvanger, en op een SDRplay hangt het ook van de band af. Rechts is nog steeds meer gain.
 topbar-gain = Gain
 topbar-plutosdr-s-own-agc-setting =
-
+    {""}
 
     De eigen AGC van de PlutoSDR stelt deze gain in, dus het verschuiven van de schuif doet niets. Zet Instellingen → Radio → AGC op Handmatig om hem hier te regelen.
 topbar-agc-hang-time-click-cycle = Hangtijd AGC — klik om te wisselen: Uit / Langzaam / Gemiddeld / Snel
@@ -4186,7 +4186,7 @@ ism-where-decoder-actually-listening-follows = Waar de decoder werkelijk luister
 ism-transmissions-gate-opened-how-many = Zendingen waarop de poort openging, en hoeveel er een geldig frame opleverden. Veel bursts en geen decoderingen betekent dat de band bezet is met apparaten die sdroxide nog niet kan lezen. Helemaal niets betekent dat niets de drempel bereikt — verlaag hem, of controleer of de dial op de band staat.
 ism-nothing-heard-yet = nog niets gehoord
 ism-click-tune-receiver =
-
+    {""}
 
     Klik om de ontvanger erop af te stemmen
 
@@ -4290,20 +4290,20 @@ frame-restart-without-oob-tx-put = Herstart zonder --oob-tx om de vergrendeling 
 
 smeter-alc-how-hard-transmitter-being = ALC — hoe hard de zender wordt aangestuurd, als percentage van het meeste wat hij kan afgeven. 100 % is volle schaal, niet volledig vermogen in watt: wat dat aan de antenne waard is, hangt af van de radio en van Aansturing.
 smeter-radio-reports-no-forward-power =
-
+    {""}
 
     Deze radio meldt geen voorwaarts vermogen, dus het getal naast ALC is opnieuw de ALC-aflezing in plaats van watt.
 smeter-no-swr-radio-has-no =
-
+    {""}
 
     Geen SWR: deze radio heeft geen brug om het mee te meten, en sdroxide verzint er geen — het kan alleen tonen wat de radio zelf meldt. Een radio met een SWR-meter (via CAT, TCI of een LAN-verbinding) en een HPSDR-bord vullen dit allebei in; een gewone SDR-zender kan dat niet.
 smeter-no-signal-report-yet-receiver = Nog geen signaalrapport — de ontvanger heeft nog geen meteraflezing geleverd.
 smeter-s9-73-dbm-each-s =
-
+    {""}
 
     S9 is −73 dBm en elke S-eenheid eronder is 6 dB. Het dBm-getal is maar zo eerlijk als de kalibratie van het front-end — een ongekalibreerde ontvanger meldt dBFS met een dBm-label.
 smeter-ovld-converter-into-rails-so =
-
+    {""}
 
     OVLD: de converter zit tegen zijn grenzen, dus het getoonde niveau onderschat het signaal. Draai de front-endgain terug.
 smeter-table-held = , tabel vastgehouden

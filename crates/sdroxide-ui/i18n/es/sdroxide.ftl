@@ -2058,12 +2058,12 @@ topbar-return-selector-top-bar-popup = Devuelve el selector a la ventana emergen
 topbar-dec-off = DEC desact.
 topbar-vol = Vol
 topbar-counted-steps-not-decibels-what =
-
+    {""}
 
     Contada en pasos, no en decibelios: lo que vale un paso es asunto del propio receptor, y en un SDRplay depende también de la banda. Derecha sigue siendo más ganancia.
 topbar-gain = Gan.
 topbar-plutosdr-s-own-agc-setting =
-
+    {""}
 
     El propio AGC del PlutoSDR está fijando esta ganancia, así que mover el deslizador no hace nada. Pon Ajustes → Radio → AGC en Manual para controlarla aquí.
 topbar-agc-hang-time-click-cycle = Tiempo de retención del AGC — haz clic para alternar: Off / Lento / Med / Rápido
@@ -4175,7 +4175,7 @@ ism-where-decoder-actually-listening-follows = Dónde está escuchando realmente
 ism-transmissions-gate-opened-how-many = Transmisiones en que se abrió la puerta, y cuántas produjeron una trama válida. Muchas ráfagas y ninguna decodificación significa que la banda está ocupada por dispositivos que sdroxide aún no sabe leer. Ninguna en absoluto significa que nada llega al umbral — bájalo, o comprueba que el dial está en la banda.
 ism-nothing-heard-yet = aún no se ha oído nada
 ism-click-tune-receiver =
-
+    {""}
 
     Haz clic para sintonizar el receptor en él
 
@@ -4279,20 +4279,20 @@ frame-restart-without-oob-tx-put = Reinicia sin --oob-tx para volver a poner el 
 
 smeter-alc-how-hard-transmitter-being = ALC — con cuánta fuerza se está excitando el transmisor, como porcentaje de lo máximo que puede entregar. 100 % es el fondo de escala, no la potencia completa en vatios: lo que eso vale en la antena depende de la radio y de la Excitación.
 smeter-radio-reports-no-forward-power =
-
+    {""}
 
     Esta radio no informa de potencia directa, así que la cifra junto a ALC es la lectura de ALC otra vez y no vatios.
 smeter-no-swr-radio-has-no =
-
+    {""}
 
     Sin ROE: esta radio no tiene puente con que medirla, y sdroxide no se la inventará — solo puede mostrar lo que informa la propia radio. Un equipo con medidor de ROE (por CAT, TCI o un enlace LAN) y una placa HPSDR la rellenan ambos; un transmisor SDR simple no puede.
 smeter-no-signal-report-yet-receiver = Aún no hay informe de señal — el receptor no ha entregado una lectura del medidor.
 smeter-s9-73-dbm-each-s =
-
+    {""}
 
     S9 son −73 dBm y cada unidad S por debajo son 6 dB. La cifra en dBm es tan honesta como la calibración de la etapa de entrada — un receptor sin calibrar informa dBFS con una etiqueta de dBm.
 smeter-ovld-converter-into-rails-so =
-
+    {""}
 
     OVLD: el conversor está en sus topes, así que el nivel mostrado subestima la señal. Reduce la ganancia de la etapa de entrada.
 smeter-table-held = , tabla mantenida

@@ -2065,12 +2065,12 @@ topbar-return-selector-top-bar-popup = Den Wähler zurück in das Popup der ober
 topbar-dec-off = DEC aus
 topbar-vol = Lautst.
 topbar-counted-steps-not-decibels-what =
-
+    {""}
 
     In Schritten gezählt, nicht in Dezibel: Was ein Schritt wert ist, ist die eigene Sache des Empfängers, und bei einem SDRplay hängt es außerdem vom Band ab. Richtig ist weiterhin mehr Verstärkung.
 topbar-gain = Verstärkung
 topbar-plutosdr-s-own-agc-setting =
-
+    {""}
 
     Die eigene AGC des PlutoSDR stellt diese Verstärkung ein, daher bewirkt das Verschieben des Reglers nichts. Einstellungen → Funkgerät → AGC auf Manuell setzen, um sie hier zu steuern.
 topbar-agc-hang-time-click-cycle = AGC-Haltezeit — klicken zum Wechseln: Aus / Langsam / Mittel / Schnell
@@ -4314,20 +4314,20 @@ frame-restart-without-oob-tx-put = Ohne --oob-tx neu starten, um die Sperre wied
 
 smeter-alc-how-hard-transmitter-being = ALC — wie stark der Sender ausgesteuert wird, als Prozentsatz dessen, was er höchstens abgeben kann. 100 % ist Vollaussteuerung, nicht volle Leistung in Watt: Was das am Antenneneingang wert ist, hängt vom Funkgerät und von der Aussteuerung ab.
 smeter-radio-reports-no-forward-power =
-
+    {""}
 
     Dieses Funkgerät meldet keine Vorwärtsleistung, daher ist die Angabe neben ALC wieder der ALC-Wert statt Watt.
 smeter-no-swr-radio-has-no =
-
+    {""}
 
     Kein SWR: Dieses Funkgerät hat keine Brücke, um es zu messen, und sdroxide wird keine erfinden — es kann nur zeigen, was das Funkgerät selbst meldet. Ein Gerät mit SWR-Messgerät (über CAT, TCI oder eine LAN-Verbindung) und eine HPSDR-Karte füllen dies beide aus; ein einfacher SDR-Sender kann es nicht.
 smeter-no-signal-report-yet-receiver = Noch kein Signalbericht — der Empfänger hat noch keinen Messwert geliefert.
 smeter-s9-73-dbm-each-s =
-
+    {""}
 
     S9 ist −73 dBm, und jede S-Stufe darunter ist 6 dB. Die dBm-Angabe ist nur so ehrlich wie die Kalibrierung der Frontstufe — ein nicht kalibrierter Empfänger meldet dBFS mit einer dBm-Beschriftung.
 smeter-ovld-converter-into-rails-so =
-
+    {""}
 
     OVLD: Der Konverter ist an seinen Grenzen, daher unterschätzt der angezeigte Pegel das Signal. Die Verstärkung der Frontstufe zurücknehmen.
 smeter-table-held = , Tabelle gehalten

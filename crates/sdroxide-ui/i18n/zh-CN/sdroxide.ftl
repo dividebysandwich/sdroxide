@@ -2043,12 +2043,12 @@ topbar-return-selector-top-bar-popup = 将选择器返回顶部栏弹出窗口
 topbar-dec-off = DEC 关
 topbar-vol = 音量
 topbar-counted-steps-not-decibels-what =
-
+    {""}
 
     按步进计数，而非分贝：每一步的价值是接收机自己的事情，在 SDRplay 上它还取决于频段。数值越大，增益仍然越大。
 topbar-gain = 增益
 topbar-plutosdr-s-own-agc-setting =
-
+    {""}
 
     PlutoSDR 自己的 AGC 正在设置此增益，因此移动滑块不起作用。在“设置 → 电台 → AGC”中将其设为手动，即可在此控制。
 topbar-agc-hang-time-click-cycle = AGC 保持时间——点击循环切换：关 / 慢 / 中 / 快
@@ -4164,7 +4164,7 @@ ism-where-decoder-actually-listening-follows = 解码器实际在收听的位置
 ism-transmissions-gate-opened-how-many = 闸门打开过的发射次数，以及其中产生有效帧的次数。突发很多而解码很少，说明频段上充斥着 sdroxide 尚无法读取的设备。完全没有，则说明没有任何东西达到阈值——请调低阈值，或检查表盘是否在该频段上。
 ism-nothing-heard-yet = 尚未听到任何内容
 ism-click-tune-receiver =
-
+    {""}
 
     点击即可将接收机调谐到它
 
@@ -4267,20 +4267,20 @@ frame-restart-without-oob-tx-put = 不带 --oob-tx 重新启动，以恢复锁�
 
 smeter-alc-how-hard-transmitter-being = ALC——发射机被驱动的力度，以其最大输出的百分比表示。100% 是满量程，而不是以瓦计的满功率：它在天线上相当于多少，取决于电台和驱动设置。
 smeter-radio-reports-no-forward-power =
-
+    {""}
 
     此电台不报告正向功率，因此 ALC 旁边的数值仍是 ALC 读数，而非瓦数。
 smeter-no-swr-radio-has-no =
-
+    {""}
 
     没有驻波比：此电台没有用于测量它的电桥，sdroxide 不会凭空制造一个——它只能显示电台自身所报告的内容。带有驻波比表的电台（通过 CAT、TCI 或局域网链路）以及 HPSDR 板卡都会在此处填入数值；普通的 SDR 发射机则不能。
 smeter-no-signal-report-yet-receiver = 尚无信号报告——接收机尚未提供表头读数。
 smeter-s9-73-dbm-each-s =
-
+    {""}
 
     S9 为 −73 dBm，其下每个 S 单位为 6 dB。dBm 数值的可靠程度仅取决于前端的校准——未校准的接收机会以 dBFS 报告，却标注为 dBm。
 smeter-ovld-converter-into-rails-so =
-
+    {""}
 
     OVLD：变换器已达到其极限，因此所显示的电平低估了信号。请调低前端增益。
 smeter-table-held = ，表格已保持

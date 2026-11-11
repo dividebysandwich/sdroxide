@@ -2072,12 +2072,12 @@ topbar-return-selector-top-bar-popup = Return the selector to the top-bar popup
 topbar-dec-off = DEC off
 topbar-vol = Vol
 topbar-counted-steps-not-decibels-what =
-
+    {""}
 
     Counted in steps, not decibels: what one step is worth is the receiver's own business, and on an SDRplay it depends on the band as well. Right is still more gain.
 topbar-gain = Gain
 topbar-plutosdr-s-own-agc-setting =
-
+    {""}
 
     The PlutoSDR's own AGC is setting this gain, so moving the slider does nothing. Set Settings → Radio → AGC to Manual to control it here.
 topbar-agc-hang-time-click-cycle = AGC hang time — click to cycle: Off / Slow / Med / Fast
@@ -4220,7 +4220,7 @@ ism-where-decoder-actually-listening-follows = Where the decoder is actually lis
 ism-transmissions-gate-opened-how-many = Transmissions the gate opened on, and how many produced a valid frame. Many bursts and no decodes means the band is busy with devices sdroxide cannot read yet. None at all means nothing is reaching the threshold — lower it, or check that the dial is on the band.
 ism-nothing-heard-yet = nothing heard yet
 ism-click-tune-receiver =
-
+    {""}
 
     Click to tune the receiver to it
 
@@ -4326,20 +4326,20 @@ frame-restart-without-oob-tx-put = Restart without --oob-tx to put the lockout b
 
 smeter-alc-how-hard-transmitter-being = ALC — how hard the transmitter is being driven, as a percentage of the most it can put out. 100 % is full scale, not full power in watts: what that is worth at the antenna depends on the radio and on Drive.
 smeter-radio-reports-no-forward-power =
-
+    {""}
 
     This radio reports no forward power, so the figure beside ALC is the ALC reading again rather than watts.
 smeter-no-swr-radio-has-no =
-
+    {""}
 
     No SWR: this radio has no bridge to measure it with, and sdroxide will not invent one — it can only show what the radio itself reports. A rig with an SWR meter (over CAT, TCI or a LAN link) and an HPSDR board both fill this in; a plain SDR transmitter cannot.
 smeter-no-signal-report-yet-receiver = No signal report yet — the receiver has not delivered a meter reading.
 smeter-s9-73-dbm-each-s =
-
+    {""}
 
     S9 is −73 dBm and each S-unit below it is 6 dB. The dBm figure is only as honest as the front end's calibration — an uncalibrated receiver reports dBFS with a dBm label.
 smeter-ovld-converter-into-rails-so =
-
+    {""}
 
     OVLD: the converter is into its rails, so the level shown understates the signal. Wind the front-end gain back.
 smeter-table-held = , table held

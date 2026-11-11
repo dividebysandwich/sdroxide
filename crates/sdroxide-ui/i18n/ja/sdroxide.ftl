@@ -2046,10 +2046,12 @@ topbar-return-selector-top-bar-popup = 選択を上部バーのポップアッ�
 topbar-dec-off = DEC オフ
 topbar-vol = 音量
 topbar-counted-steps-not-decibels-what =
+    {""}
 
     デシベルではなく段階で数えます。1 段階の値は受信機自身の問題で、SDRplay ではバンドにも依存します。それでも、大きいほどゲインが多くなります。
 topbar-gain = ゲイン
 topbar-plutosdr-s-own-agc-setting =
+    {""}
 
     PlutoSDR 自身の AGC がこのゲインを設定しているため、スライダーを動かしても何も起きません。ここで制御するには、設定 → 無線機 → AGC を手動に設定してください。
 topbar-agc-hang-time-click-cycle = AGC のホールドタイム。クリックで切り替え：オフ / 遅い / 中 / 速い
@@ -4171,6 +4173,7 @@ ism-where-decoder-actually-listening-follows = デコーダーが実際に聴い
 ism-transmissions-gate-opened-how-many = ゲートが開いた送信の数と、そのうち有効なフレームを生んだ数です。バーストが多いのにデコードがない場合は、sdroxide がまだ読めない機器でバンドが混み合っています。まったくない場合は、何もしきい値に届いていません。しきい値を下げるか、ダイヤルがバンドに合っているか確認してください。
 ism-nothing-heard-yet = まだ何も聞こえていません
 ism-click-tune-receiver =
+    {""}
 
     クリックして、受信機をそれに同調させます
 
@@ -4274,16 +4277,20 @@ frame-restart-without-oob-tx-put = ロックアウトを元に戻すには、--o
 
 smeter-alc-how-hard-transmitter-being = ALC。送信機がどれだけ強く駆動されているかを、出力できる最大値に対する割合で示します。100 % はフルスケールであり、ワット数でのフルパワーではありません。アンテナでそれが何ワットに相当するかは、無線機と駆動の設定によります。
 smeter-radio-reports-no-forward-power =
+    {""}
 
     この無線機は順方向電力を報告しないため、ALC の横の値はワットではなく、再び ALC の読み値です。
 smeter-no-swr-radio-has-no =
+    {""}
 
     SWR なし：この無線機には、それを測定するブリッジがなく、sdroxide はそれを捏造しません。無線機自身が報告するものだけを表示できます。SWR メーター付きのリグ（CAT、TCI、または LAN リンク経由）と HPSDR ボードは、どちらもこれを表示します。通常の SDR の送信機はできません。
 smeter-no-signal-report-yet-receiver = まだ信号レポートはありません。受信機がメーターの読み値をまだ送っていません。
 smeter-s9-73-dbm-each-s =
+    {""}
 
     S9 は −73 dBm で、その下の S 単位は 1 つにつき 6 dB です。dBm の値は、フロントエンドの校正と同じくらい正確です。校正されていない受信機は、dBm のラベルを付けて dBFS を報告します。
 smeter-ovld-converter-into-rails-so =
+    {""}
 
     OVLD：コンバーターが上限に達しているため、表示されるレベルは信号を過小に示しています。フロントエンドのゲインを下げてください。
 smeter-table-held = 、テーブルを保持
