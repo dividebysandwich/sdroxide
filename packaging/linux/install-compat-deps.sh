@@ -38,7 +38,18 @@ sed -i -E "s#https?://(archive|security|ports)\.ubuntu\.com/ubuntu(-ports)?/?#ht
   /etc/apt/sources.list
 echo "apt snapshot: $APT_SNAPSHOT"
 grep '^deb ' /etc/apt/sources.list
-apt-get update
+# snapshot.ubuntu.com has outages (502/503). apt treats a failed index as a
+# warning and carries on with none, so the install below would report every
+# package as missing. --error-on=any makes the failure an error, and the loop
+# rides out a short outage.
+for attempt in 1 2 3 4 5; do
+  apt-get update --error-on=any && break
+  if [[ $attempt == 5 ]]; then
+    echo "::error::snapshot.ubuntu.com unreachable for $APT_SNAPSHOT after 5 attempts" >&2
+    exit 1
+  fi
+  sleep $((attempt * 30))
+done
 apt-get install -y --no-install-recommends \
   curl wget zstd build-essential \
   libasound2-dev pkg-config cmake autoconf automake libtool libclang-dev \
