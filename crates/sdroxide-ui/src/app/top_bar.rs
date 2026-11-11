@@ -1006,22 +1006,38 @@ impl SdroxideApp {
                     // strip this shape cannot hold the needle's arc, see
                     // [`smeter::SmeterStyle::compact`].
                     let style = self.ui_settings.smeter_style;
+                    let mut trace = self.smeter_trace();
                     ui.allocate_ui_with_layout(
                         egui::vec2(ui.available_width(), meter_h),
                         egui::Layout::left_to_right(egui::Align::Min),
                         |ui| {
-                            let hover = tr!(
-                                "topbar-smeter-hover",
-                                reading = smeter::hover_text(self.meters.as_ref()),
-                                faces = tr!("topbar-bar-trace")
+                            let snr = self.smeter_snr();
+                            let shown = style.compact();
+                            let hover = smeter_hover(
+                                tr!(
+                                    "topbar-smeter-hover",
+                                    reading = smeter::hover_text(self.meters.as_ref()),
+                                    faces = tr!("topbar-bar-trace")
+                                ),
+                                shown,
                             );
-                            let resp = smeter::show(ui, self.meters.as_ref(), style.compact())
-                                .on_hover_text(hover);
+                            let resp = smeter::show(
+                                ui,
+                                self.meters.as_ref(),
+                                shown,
+                                smeter::TraceOpts::of(&self.ui_settings),
+                                snr.as_ref(),
+                            )
+                            .on_hover_text(hover);
                             if resp.clicked() {
-                                self.set_smeter_style(style.next_compact());
+                                self.set_smeter_style(style.next_compact_with(snr.is_some()));
+                            }
+                            if shown == sdroxide_types::SmeterStyle::Trace {
+                                smeter_trace_menu(&resp, &mut trace);
                             }
                         },
                     );
+                    self.set_smeter_trace(trace);
                 });
             });
         });
@@ -1802,6 +1818,46 @@ impl SdroxideApp {
         format!("{hz:.6} MHz", hz = hz / 1e6)
     }
 
+    /// The S/N face's reading: the S/N guide's cells over the receive
+    /// passband (dial + RIT + filter edges, the cursor on the panadapter):
+    /// the mean over its width, the maximum at its middle. `None` while the guide has no
+    /// mean — then the face is left out of the click cycle.
+    // Why: HDZ 2026-11-09: "wenn wir S/N haben, da ein eigenes Instrument
+    //      haben, die werden ja mit Linksklick durchgeschaltet".
+    fn smeter_snr(&self) -> Option<smeter::SnrReading> {
+        let g = self.snr_last.as_deref()?;
+        let hz = self.state.rx_freq_hz();
+        let lo = hz + f64::from(self.state.rx[0].filter_lo);
+        let hi = hz + f64::from(self.state.rx[0].filter_hi);
+        let (db, mid_db) = smeter::passband_snr(g.lo_hz, g.cell_hz, &g.snr_db, lo, hi)?;
+        Some(smeter::SnrReading { db, mid_db, width_hz: hi - lo, frames: g.frames })
+    }
+
+    /// The trace face's speed step, direction and S range, as the
+    /// right-click menu edits them.
+    fn smeter_trace(&self) -> TraceSet {
+        let u = &self.ui_settings;
+        TraceSet {
+            speed: u.smeter_trace_speed,
+            newest_left: u.smeter_trace_newest_left,
+            lo: u.smeter_trace_lo,
+            hi: u.smeter_trace_hi,
+        }
+    }
+
+    /// Store the trace face's settings if they changed, in `[ui]` like the
+    /// face itself.
+    fn set_smeter_trace(&mut self, t: TraceSet) {
+        if t != self.smeter_trace() {
+            let u = &mut self.ui_settings;
+            u.smeter_trace_speed = t.speed;
+            u.smeter_trace_newest_left = t.newest_left;
+            u.smeter_trace_lo = t.lo;
+            u.smeter_trace_hi = t.hi;
+            crate::app::persist::persist_ui_settings(&self.ui_settings);
+        }
+    }
+
     /// Take the face a click asked for and write it out.
     ///
     /// Straight to disk rather than left for eframe's periodic save: the face
@@ -1834,6 +1890,8 @@ impl SdroxideApp {
         let style = self.ui_settings.smeter_style;
         let shown = if compact { style.compact() } else { style };
         let mut picked = None;
+        let mut trace = self.smeter_trace();
+        let snr = self.smeter_snr();
         crate::chrome::module_bare_flush_h(ui, w, h, |ui| {
             let hover = tr!(
                 "topbar-smeter-hover",
@@ -1841,14 +1899,30 @@ impl SdroxideApp {
                 faces =
                     if compact { tr!("topbar-bar-trace") } else { tr!("topbar-needle-bar-trace") }
             );
-            let resp = smeter::show(ui, self.meters.as_ref(), shown).on_hover_text(hover);
+            let resp = smeter::show(
+                ui,
+                self.meters.as_ref(),
+                shown,
+                smeter::TraceOpts::of(&self.ui_settings),
+                snr.as_ref(),
+            )
+            .on_hover_text(smeter_hover(hover, shown));
             if resp.clicked() {
-                picked = Some(if compact { style.next_compact() } else { style.next() });
+                let with = snr.is_some();
+                picked = Some(if compact {
+                    style.next_compact_with(with)
+                } else {
+                    style.next_with(with)
+                });
+            }
+            if shown == sdroxide_types::SmeterStyle::Trace {
+                smeter_trace_menu(&resp, &mut trace);
             }
         });
         if let Some(style) = picked {
             self.set_smeter_style(style);
         }
+        self.set_smeter_trace(trace);
     }
 
     /// Combined VFO + RIT/XIT box: the VFO A/B utility chips on top, with the
@@ -7449,6 +7523,129 @@ fn readout_for(
         return (dial + f64::from(cw_pitch_hz), None, f64::from(cw_pitch_hz));
     }
     (dial, None, 0.0)
+}
+
+/// The S-meter's hover, with a line on the right-click menu while the trace
+/// face shows.
+fn smeter_hover(hover: String, shown: sdroxide_types::SmeterStyle) -> String {
+    match shown {
+        sdroxide_types::SmeterStyle::Trace => {
+            format!("{hover}\n{}", tr!("smeter-trace-right-click"))
+        }
+        sdroxide_types::SmeterStyle::Snr => format!("{hover}\n{}", tr!("smeter-snr-hover")),
+        _ => hover,
+    }
+}
+
+/// The trace face's settings the right-click menu edits.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct TraceSet {
+    speed: Speed,
+    newest_left: bool,
+    lo: u8,
+    hi: u8,
+}
+
+/// Right-click on the trace face: which way it flows, the S range its height
+/// spreads over, and how fast it runs on the waterfall's five speed steps.
+// Why: HDZ 2026-11-09: "S-Meter … auf Rechtsklick die Richtung umdrehen, die
+//      Geschwindigkeit an den Waterfall ausrichten, die verschiedenen
+//      Speed-Stufen einfach frech übernehmen"; then: "im Menü nicht ‚neu‘,
+//      sondern Flow: rechts/links, und rechts daneben einen Regler, der unten
+//      und oben anpassbar ist".
+fn smeter_trace_menu(resp: &egui::Response, trace: &mut TraceSet) {
+    resp.context_menu(|ui| {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(tr!("smeter-trace-caption-flow"))
+                    .size(10.0)
+                    .color(crate::theme::CYAN_DIM()),
+            )
+            .on_hover_text(tr!("smeter-trace-flow-hint"));
+            // Flow names the way the plot moves: RIGHT puts the newest
+            // reading at the left edge and the plot streams rightwards.
+            for (left, label) in
+                [(true, tr!("smeter-trace-flow-right")), (false, tr!("smeter-trace-flow-left"))]
+            {
+                if crate::chrome::chip(ui, trace.newest_left == left, label).clicked() {
+                    trace.newest_left = left;
+                }
+            }
+            ui.add_space(10.0);
+            s_range_rail(ui, &mut trace.lo, &mut trace.hi)
+                .on_hover_text(tr!("smeter-trace-range-hint"));
+            ui.label(
+                RichText::new(format!(
+                    "{}–{}",
+                    smeter::stop_label(trace.lo),
+                    smeter::stop_label(trace.hi)
+                ))
+                .monospace()
+                .size(10.0)
+                .color(crate::theme::CYAN_DIM()),
+            );
+        });
+        speed_row(
+            ui,
+            &tr!("smeter-trace-caption-speed"),
+            &mut trace.speed,
+            &Speed::WATERFALL,
+            &tr!("smeter-trace-speed-hint"),
+        );
+    });
+}
+
+/// A rail with two knobs over the S scale's stops (S0…S9, +10…+60): the
+/// bottom and the top of the trace's range. Each knob snaps to a stop; the
+/// one nearer the pointer when the press starts is the one the drag moves,
+/// and the two stay at least a stop apart.
+fn s_range_rail(ui: &mut egui::Ui, lo: &mut u8, hi: &mut u8) -> egui::Response {
+    let n = smeter::STOPS;
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(220.0, 18.0), egui::Sense::click_and_drag());
+    let rail = rect.shrink2(egui::vec2(7.0, 0.0));
+    let x_of = |i: u8| rail.left() + rail.width() * f32::from(i) / f32::from(n - 1);
+    let stop_at = |x: f32| {
+        (((x - rail.left()) / rail.width()) * f32::from(n - 1)).round().clamp(0.0, f32::from(n - 1))
+            as u8
+    };
+    let grab = resp.id.with("upper");
+    if let Some(pos) = resp.interact_pointer_pos() {
+        // Which knob: chosen when the press starts and kept for the drag.
+        let starting = resp.drag_started() || resp.clicked();
+        let upper = match ui.data(|d| d.get_temp::<bool>(grab)).filter(|_| !starting) {
+            Some(u) => u,
+            None => {
+                let u = (pos.x - x_of(*hi)).abs() < (pos.x - x_of(*lo)).abs();
+                ui.data_mut(|d| d.insert_temp(grab, u));
+                u
+            }
+        };
+        let i = stop_at(pos.x);
+        if upper {
+            *hi = i.max(*lo + 1).min(n - 1);
+        } else {
+            *lo = i.min(*hi - 1);
+        }
+    }
+    if resp.drag_stopped() || resp.clicked() {
+        ui.data_mut(|d| d.remove::<bool>(grab));
+    }
+    let p = ui.painter();
+    let dim = crate::theme::CYAN_DIM();
+    let lit = crate::theme::CYAN();
+    let y = rect.center().y;
+    p.hline(rail.x_range(), y, egui::Stroke::new(2.0, dim.linear_multiply(0.5)));
+    for i in 0..n {
+        // S9 gets the long tick: where the S-units end and the 10 dB steps begin.
+        let h = if i == 9 { 5.0 } else { 3.0 };
+        p.vline(x_of(i), (y - h)..=(y + h), egui::Stroke::new(1.0, dim.linear_multiply(0.6)));
+    }
+    p.hline(x_of(*lo)..=x_of(*hi), y, egui::Stroke::new(3.0, lit));
+    for i in [*lo, *hi] {
+        p.circle_filled(egui::pos2(x_of(i), y), 5.5, lit);
+    }
+    resp
 }
 
 /// One row of the SPEC popup: a caption naming the setting, then a chip per
