@@ -802,6 +802,12 @@ impl Js8Controller {
                 continue;
             }
             if self.auto_sent_at.len() >= AUTO_RULE_MAX_PER_HOUR {
+                // Held by the hourly cap. A reply that has waited past its own
+                // gap (five minutes at least) is no longer an answer to
+                // anything; drop it rather than send it unattended much later.
+                if unix_now - p.next_unix > p.gap_s.max(300) {
+                    self.auto_pending[i].sent = self.auto_pending[i].total;
+                }
                 continue;
             }
             let text = p.text.clone();
