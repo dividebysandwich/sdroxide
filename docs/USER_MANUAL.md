@@ -7909,6 +7909,11 @@ table holds up to ten rows, and each has:
 Rows are tried in the order they are listed, and a dial no row covers falls
 through to the single **Offset** above and then to the bare radio — which is
 what keeps HF working on a station whose only converter is a 2 m transverter.
+The Hermes-Lite transmit tuning envelope extends to its 38.4 MHz hardware
+limit, so a 2 m transverter may use an I.F. above 30 MHz. The transmit band
+check uses the on-air frequency, not the I.F.'s amateur band; the converter's
+configured transmit limits and drive ceiling still apply. This tuning envelope
+does not extend the onboard PA or antenna filter specifications.
 Everything downstream follows the dial as it always has: the band buttons, the
 band-plan strip, the logbook, spots, the transmit gate, and on an HPSDR board
 with anything on its open-collector outputs, the control word the accessory

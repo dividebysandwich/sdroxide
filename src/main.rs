@@ -1731,7 +1731,7 @@ fn hpsdr_caps(board: &str, sample_rate: f64, protocol: u8, has_lna: bool, ddc: u
         audio_mode: false,
         freq_ranges_rx: vec![(0.0, nyquist)],
         freq_ranges_tx: if tx_channels > 0 {
-            vec![(1_800_000.0, if hermes_lite { 30_000_000.0 } else { 54_000_000.0 })]
+            vec![(1_800_000.0, if hermes_lite { nyquist } else { 54_000_000.0 })]
         } else {
             Vec::new()
         },
@@ -2938,6 +2938,29 @@ mod tests {
         // Already unlocked in the config: the flag changes nothing either way.
         assert!(!cli(false).tx_ham_only(&open));
         assert!(!cli(true).tx_ham_only(&open));
+    }
+
+    #[test]
+    fn hl2_transverter_tx_uses_the_hardware_bandwidth_not_the_ten_meter_band_edge() {
+        use sdroxide_radio::{ConverterPlan, ConverterStep, plan_caps};
+
+        let caps = hpsdr_caps("Hermes-Lite 2", 192_000.0, 1, true, 0);
+        assert!(caps.may_tx_hz(30_220_000.0));
+        assert!(caps.may_tx_hz(38_400_000.0));
+        assert!(!caps.may_tx_hz(38_400_001.0));
+        let plan = ConverterPlan::from_steps([ConverterStep {
+            band: Some((144_000_000.0, 148_000_000.0)),
+            rx_offset_hz: -116_000_000.0,
+            tx_offset_hz: Some(-116_000_000.0),
+            tx_drive: Some(0.02),
+        }]);
+        let converted = plan_caps(caps, &plan, &[], &[]);
+        assert!(converted.may_tx_hz(146_820_000.0 - 600_000.0));
+        assert!(converted.may_tx_hz(148_000_000.0));
+        assert!(!converted.may_tx_hz(148_000_001.0));
+        let secondary = hpsdr_caps("Hermes-Lite 2", 192_000.0, 1, true, 1);
+        assert_eq!(secondary.tx_channels, 0);
+        assert!(secondary.freq_ranges_tx.is_empty());
     }
 
     /// The flag is opt-in on the command line and nowhere else.
