@@ -4077,6 +4077,25 @@ dark and would vanish into a dark night.
 Drag (or one finger) to pan, wheel or pinch to zoom about the pointer, and
 double-click to hand the view back to the auto-fit.
 
+**MAP ▼**, first in the FT8/FT4 map's chip row (in the QSO header on a compact
+layout, which has no map in the column), is a small menu:
+
+- **Open in a window** moves the map into a window of its own, as big as you
+  drag it. It works on a compact layout too. Close the window to put the map
+  back in the QSO pane.
+- **Cities** switches the cities on this map alone; the other maps keep to
+  Settings → UI.
+- **Who is talking to whom** draws a violet dotted line between the two
+  stations of every exchange heard in the last ten minutes, where both have
+  sent a locator. It fades as the exchange ages; a CQ draws none.
+- **Callsigns at the dots** labels the station dots, fading with them.
+
+**A click on a station dot** picks it, as a click on its decode does, and two
+lines under the map say what is known from its newest decode: call, flag,
+entity, continent and CQ zone, grid, distance and heading from you, whether it
+is a new entity, grid or call, and the message with its report and time. ✕
+lets it go. Decoded stations stay on the FT8/FT4 map for ten minutes, fading.
+
 #### 3.2.3 Working stations
 
 - **Answer a call:** click **REPLY** on a decode. sdroxide adopts that station,
