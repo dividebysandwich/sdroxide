@@ -316,6 +316,34 @@ pub(in crate::app) fn settings_ui_tab(
             tr!("settings-ui-broadcast-schedule-download"),
         )
         .on_hover_text(tr!("settings-ui-broadcast-schedule-download", "hint"));
+        // Aoki's list: imported by hand, never fetched (no licence for reuse,
+        // its pages ask not to be crawled), so it makes no request at all.
+        // Why: HDZ 2026-11-11: "die Datenschutzerklärung braucht bei Katalogen
+        //      ein aktives Vorgehen".
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            let result_id = egui::Id::new("settings-ui-aoki-import-result");
+            if crate::chrome::chip(ui, false, tr!("settings-ui-aoki-import"))
+                .on_hover_text(tr!("settings-ui-aoki-import", "hint"))
+                .clicked()
+                && let Some(path) =
+                    rfd::FileDialog::new().add_filter("Aoki list (text)", &["txt"]).pick_file()
+            {
+                let r = std::fs::read(&path)
+                    .map_err(|e| format!("{}: {e}", path.display()))
+                    .and_then(|b| crate::catalogs::import_aoki(&b));
+                ui.ctx().data_mut(|d| d.insert_temp(result_id, Some(r)));
+            }
+            let last: Option<Result<usize, String>> =
+                ui.ctx().data(|d| d.get_temp(result_id)).unwrap_or(None);
+            let status = match last {
+                Some(Ok(n)) => tr!("settings-ui-aoki-imported", n = n as i64),
+                Some(Err(e)) => tr!("settings-ui-aoki-refused", why = e),
+                None if crate::catalogs::aoki_imported() => tr!("settings-ui-aoki-present"),
+                None => tr!("settings-ui-aoki-absent"),
+            };
+            ui.label(RichText::new(status).weak());
+        });
     }
 
     let Some(cloud_march) = cloud_march else { return };

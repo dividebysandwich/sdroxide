@@ -2208,6 +2208,16 @@ fn apply_broadcast_overrides(
     schedule
 }
 
+/// The cached season's schedule with every row kept (see
+/// [`sdroxide_types::broadcast::parse_schedule_all`]); empty when none has
+/// been downloaded.
+pub fn load_broadcast_schedule_all() -> Vec<sdroxide_types::BroadcastStation> {
+    let season = sdroxide_types::broadcast::season_file(now_unix());
+    let Ok(path) = broadcast_cache_path(&season) else { return Vec::new() };
+    let Ok(bytes) = fs::read(&path) else { return Vec::new() };
+    sdroxide_types::broadcast::parse_schedule_all(&sdroxide_types::broadcast::decode_latin1(&bytes))
+}
+
 /// The cached schedule for the season we are in, if it has been downloaded.
 fn cached_schedule() -> Option<Vec<sdroxide_types::BroadcastStation>> {
     let season = sdroxide_types::broadcast::season_file(now_unix());

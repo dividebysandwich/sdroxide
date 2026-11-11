@@ -179,6 +179,59 @@ impl SdroxideApp {
                 })
                 .collect();
             self.broadcast_spots.extend(extra);
+            // And the catalogues: the whole EiBi schedule (utility stations,
+            // fax, DRM and the rest the waterfall's list leaves out) and, once
+            // imported, Aoki's list — each transmission on the air now with no
+            // candidate within 3 kHz (the next channel is not a second station
+            // on the same signal), held to the PEAK test.
+            // Why: HDZ 2026-11-07: "mehr Kandidaten aus der Datenbank … nicht
+            //      so künstlich verknappten Kram"; "den Kanal in der Nähe würde
+            //      ich auch wegmachen".
+            self.catalog_load();
+            let whole = self.catalog_schedule.clone();
+            let aoki = match &self.catalog_aoki {
+                Some(Ok(a)) => Some(a.clone()),
+                _ => None,
+            };
+            let more = whole
+                .iter()
+                .flat_map(|w| w.iter())
+                .chain(aoki.iter().flat_map(|a| a.iter().filter(|e| !e.off).map(|e| &e.st)));
+            let mut strict = std::collections::HashSet::new();
+            for st in more {
+                if !st.on_air_at(now_utc) {
+                    continue;
+                }
+                let hz = st.freq_hz();
+                if self.broadcast_spots.iter().any(|s| (s.freq_hz - hz).abs() < 3_000.0) {
+                    continue;
+                }
+                let spot = st.to_spot(now_utc);
+                strict.insert(spot.id);
+                self.broadcast_spots.push(spot);
+            }
+            self.snr_labels.borrow_mut().strict = strict;
+        }
+    }
+
+    /// Read the catalogues once, when LABELS BY S/N first asks for them: the
+    /// whole EiBi schedule from the cached season file the broadcast-schedule
+    /// download keeps (no request of its own), and Aoki's list if imported.
+    /// An import under Settings → UI is read at the next minute.
+    pub(in crate::app) fn catalog_load(&mut self) {
+        if self.catalog_imports != crate::catalogs::imports() {
+            self.catalog_imports = crate::catalogs::imports();
+            self.catalog_aoki = None;
+        }
+        if self.catalog_schedule.is_none() {
+            #[cfg(not(target_arch = "wasm32"))]
+            let all = sdroxide_config::load_broadcast_schedule_all();
+            #[cfg(target_arch = "wasm32")]
+            let all = sdroxide_types::broadcast::builtin().to_vec();
+            self.catalog_schedule = Some(std::sync::Arc::new(all));
+        }
+        if self.catalog_aoki.is_none() {
+            self.catalog_aoki = Some(crate::catalogs::load_aoki().map(std::sync::Arc::new));
         }
     }
 

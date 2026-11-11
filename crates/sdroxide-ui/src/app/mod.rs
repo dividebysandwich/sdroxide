@@ -142,6 +142,13 @@ pub struct SdroxideApp {
     /// LABELS BY S/N: each spot's label decision and fade, see
     /// [`crate::app::spectrum::SnrLabels`].
     snr_labels: std::cell::RefCell<crate::app::spectrum::SnrLabels>,
+    /// The catalogues LABELS BY S/N offers beyond the broadcast list, read
+    /// once when it first needs them: the whole EiBi schedule, and Aoki's
+    /// list (`Err` says why there is none: not imported, unreadable).
+    catalog_schedule: Option<std::sync::Arc<Vec<sdroxide_types::BroadcastStation>>>,
+    catalog_aoki: Option<Result<std::sync::Arc<Vec<crate::catalogs::AokiEntry>>, String>>,
+    /// [`crate::catalogs::imports`] when Aoki's list was last read.
+    catalog_imports: u64,
     /// Latest full-band frame, from a direct-sampling front end that can see far
     /// more than the IQ it delivers. `None` on every other backend, which is
     /// also how the UI decides whether to offer the strip at all.
@@ -1513,6 +1520,9 @@ impl SdroxideApp {
             snr_grid: None,
             snr_last: None,
             snr_labels: Default::default(),
+            catalog_schedule: None,
+            catalog_aoki: None,
+            catalog_imports: 0,
             wide_frame: None,
             wide_wf: Default::default(),
             meters: None,
