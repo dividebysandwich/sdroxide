@@ -409,6 +409,11 @@ fn picture_moved(
     pan: WindowPan,
     cmds: &mut Vec<Command>,
 ) -> f64 {
+    // A rig whose window follows its dial has no window to move here: the
+    // dial takes the whole gesture and the window follows the retune (#133).
+    if !pan.movable {
+        return hand;
+    }
     pan_center(dev_center, state, over, pan, cmds);
     let (c, s) = pan.view_bounds(*dev_center, dev_span);
     view.clamp_to(c, s);
