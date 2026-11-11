@@ -30,7 +30,8 @@ const SESSION: u64 = 12 * 3600;
 /// A station of three radios — the shape in the report — behind one configured
 /// password.
 async fn spawn_station(port: u16) {
-    let access: AccessFn = Box::new(|| RemoteAccess { username: USER.into(), password: PASS.into() });
+    let access: AccessFn =
+        Box::new(|| RemoteAccess { username: USER.into(), password: PASS.into() });
     let mut radios = Vec::new();
     for id in 0..3 {
         let (audio_producer, audio_consumer) = sdroxide_radio::rtrb::RingBuffer::<f32>::new(96_000);
@@ -86,7 +87,8 @@ fn hello() -> ClientMsg {
 
 /// POST the credentials and hand back the `Set-Cookie` value, if there is one.
 fn sign_in(port: u16, username: &str, password: &str, remember: bool) -> Option<String> {
-    let body = serde_json::json!({ "username": username, "password": password, "remember": remember });
+    let body =
+        serde_json::json!({ "username": username, "password": password, "remember": remember });
     match ureq::post(&format!("http://127.0.0.1:{port}/signin"))
         .header("content-type", "application/json")
         .send(body.to_string())
@@ -187,7 +189,8 @@ async fn the_cookie_carries_the_answer_that_was_given() {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
     let kept = sign_in(port, USER, PASS, true).expect("a cookie");
-    let expiry: u64 = kept.rsplit(':').nth(1).expect("hex payload:expiry:mac").parse().expect("expiry");
+    let expiry: u64 =
+        kept.rsplit(':').nth(1).expect("hex payload:expiry:mac").parse().expect("expiry");
     assert!(
         (REMEMBERED - 5..=REMEMBERED).contains(&(expiry - now)),
         "a ticked box asked to be remembered, got {}s",
@@ -195,7 +198,8 @@ async fn the_cookie_carries_the_answer_that_was_given() {
     );
 
     let session = sign_in(port, USER, PASS, false).expect("a cookie");
-    let expiry: u64 = session.rsplit(':').nth(1).expect("hex payload:expiry:mac").parse().expect("expiry");
+    let expiry: u64 =
+        session.rsplit(':').nth(1).expect("hex payload:expiry:mac").parse().expect("expiry");
     assert!(
         (SESSION - 5..=SESSION).contains(&(expiry - now)),
         "an unticked box asked not to be, got {}s",

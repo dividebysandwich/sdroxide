@@ -1504,7 +1504,8 @@ pub fn wrapped_row_up<R>(ui: &mut Ui, salt: &str, add: impl FnOnce(&mut Ui) -> R
 /// composer was drawn at y = −204 in a 768-point window. This rule is one chip
 /// tall, whatever the row is given.
 pub fn row_rule(ui: &mut Ui) {
-    let (r, _) = ui.allocate_exact_size(egui::vec2(9.0, ui.spacing().interact_size.y), Sense::hover());
+    let (r, _) =
+        ui.allocate_exact_size(egui::vec2(9.0, ui.spacing().interact_size.y), Sense::hover());
     ui.painter().vline(r.center().x, r.y_range(), ui.visuals().widgets.noninteractive.bg_stroke);
 }
 

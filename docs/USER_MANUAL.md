@@ -3289,6 +3289,52 @@ This is the same data `--record-iq` ([12](#12-command-line-reference)) writes,
 in a container other programs can open — `--record-iq` writes the bare samples
 and starts with the program, which is what a headless capture wants.
 
+#### Playing a recording back into the decoders
+
+An audio recording is not only an archive. **▶ RECORDINGS…**, at the bottom of
+the REC picker under **Play back**, opens the **PLAYBACK** window: the files in
+the recordings folder, newest first, each read by what its name records — the time,
+the frequency and the mode — rather than by its file name. Press **▶ PLAY** on
+one and it goes back through the decoders as though it were on the air: the SSTV
+picture that was missed paints again line by line, CW, RTTY, PSK, Olivia, FT8
+and every other mode that decodes from audio decode it afresh, and the waterfall
+and the decode log fill as they did at the time.
+
+What happens when it plays:
+
+- **The radio stands down.** For the length of the playback the file *is* the
+  radio — it takes the path a sound-card radio's audio takes — and the
+  transmitter is out of reach. A strip above the waterfall says **▶ PLAYBACK —
+  not live** for as long as it lasts, so a recording is never taken for the band.
+- **The dial and the mode go to what the file's name records**, so the right
+  decoder is listening. Change the mode while it plays to try the recording in
+  another decoder; click on the waterfall to put a decoder's tones where the
+  signal is, exactly as on a sound-card radio.
+- **The transport:** **⏸ PAUSE** / **▶ PLAY**, **↺ AGAIN** back to the start,
+  **LOOP** to go round instead of stopping at the end, and the seek bar to go to
+  any point in the file. Paused, the decoders hear silence.
+- **■ STOP** puts the radio back on the dial and in the mode it was left in.
+- **CLEAR** beside **▶ PLAY** deletes a recording from the folder for good. The
+  first press turns it into **DELETE?** and only a second press on the same row
+  deletes, so a stray click costs nothing. The file playing back and one still
+  being recorded cannot be deleted until they stop.
+
+A stereo recording plays back in stereo: a WFM stereo broadcast comes back with
+its two channels, and **ST** lights while it does. ST still forces mono, and
+noise reduction or the auto-notch take it back to mono, exactly as on the air.
+The decoders always take the left channel — the receiver; on a recording made
+while transmitting, the right is your own transmit. Playback reads the
+recorder's own MP3 files and also WAV, OGG Vorbis and FLAC made elsewhere: copy
+one into the recordings folder and it is in the list. A file whose name carries no stamp plays in the mode you are in. An
+I/Q capture is listed but cannot be played here — it is spectrum, not audio, and
+plays with `--file`. A recording is played where the receiver is: from a
+browser, the list is the station's recordings folder and the engine opens the
+file there.
+
+This is a replay of the *demodulated audio*, not of the band: the frequency
+offset, the passband and the demodulator were fixed when the recording was
+made. To tune around inside a recording afterwards, record the spectrum instead.
+
 ### 2.22 QO-100 beacon plugin
 
 The QO-100 (Es'hail-2) narrowband transponder carries a beacon on its lower

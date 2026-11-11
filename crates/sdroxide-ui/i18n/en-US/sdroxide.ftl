@@ -5775,3 +5775,98 @@ settings-call-gateway-mercury = Call a gateway over the air on Mercury. Put the 
 settings-radio-data2g = Radio (Data2G)
 settings-call-gateway-data2g = Call a gateway over the air on Data2G. Put the radio in DATA2G first.
 settings-tnc-dial-note = The dial frequency, upper sideband, as the gateway's keeper publishes it. Zero leaves the dial where it is.
+
+# Playing a recording back into the decoders.
+playback-radio-n = { " " }· radio { $n }
+
+playback-no-stamp = no stamp in the name — plays in the mode you are in
+
+playback-title = PLAYBACK — recorded audio
+
+playback-find-hint = mode, MHz, date, name…
+
+playback-refresh-hint = Read the recordings folder again
+
+playback-asking = Asking the station for its recordings…
+
+playback-folder = Folder: { $dir }
+
+playback-none = No recordings yet. Press REC → MP3 while something is on the air; the file appears here, named with its time, frequency and mode.
+
+playback-on = ▶ ON
+
+playback-play = ▶ PLAY
+
+playback-iq-hint = An I/Q capture, not audio. Playback takes the audio the recorder writes; an I/Q capture is played with --file.
+
+playback-not-while-tx = Not while transmitting
+
+playback-play-hint = Play this recording into the decoders from the start
+
+playback-busy-playing = Playing back — stop it before deleting it
+
+playback-busy-recording = Still being recorded — stop REC before deleting it
+
+playback-delete-ask = DELETE?
+
+playback-delete-hint-armed = Press again to delete this file for good. It cannot be undone.
+
+playback-delete-hint = Delete this recording from the folder (asks once more first)
+
+playback-strip-label = ▶ PLAYBACK
+
+playback-not-live = not live — the radio is standing down
+
+playback-carry-on = Carry on playing
+
+playback-pause = ⏸ PAUSE
+
+playback-pause-hint = Pause — the decoders hear silence until you carry on
+
+playback-again = ↺ AGAIN
+
+playback-again-hint = Back to the start — another try at a picture or a decode
+
+playback-loop = LOOP
+
+playback-loop-hint = Start again from the top when the file ends
+
+playback-stop = ■ STOP
+
+playback-stop-hint = End the playback and put the radio back where it was
+
+playback-files = FILES
+
+playback-end-of-file = end of file
+
+playback-paused = paused
+
+playback-recorded-on-mode = Recorded on { $mhz } MHz in { $mode } — the dial and mode were set from the file's name.
+
+playback-recorded-on = Recorded on { $mhz } MHz — the dial and mode were set from the file's name.
+
+playback-no-dial-mode = The name records no dial or mode, so it plays in the mode you are in — pick the decoder from the mode menu.
+
+playback-format-stereo = { $rate } Hz, stereo — the left (receive) channel is played.
+
+playback-format-mono = { $rate } Hz, mono — the one channel is played.
+
+playback-stopped = Stopped: { $fault }
+
+playback-intro = Play a recording back into the decoders — SSTV, CW, RTTY, PSK, FT8 and every other mode that decodes from audio. The radio stands down while it plays, the dial and mode go to what the recording was made on, and STOP puts the radio back. Change the mode while it plays to try another decoder.
+
+topbar-stereo-yields-hint = WFM stereo is off while noise reduction or the auto-notch runs — they would smear the two channels. Switch them off to hear stereo
+
+topbar-stereo-playback-hint = Stereo: the recording is playing back in both ears, as recorded. Click to force mono
+
+topbar-stereo-mono-recording-hint = This recording is mono — there is no second channel to play
+
+topbar-caption-play-back = Play back
+
+topbar-recordings-chip = ▶ RECORDINGS…
+
+topbar-recordings-hint = Play a recording back into the decoders — a missed SSTV picture, a weak RTTY or CW signal, an FT8 slot — with the waterfall and the decode log, as if it were on the air. The radio stands down while it plays.
+
+playback-find = Find
+
+playback-refresh = REFRESH

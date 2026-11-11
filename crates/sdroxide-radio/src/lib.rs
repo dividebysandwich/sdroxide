@@ -9,6 +9,7 @@ pub mod engine;
 mod error;
 mod image_store;
 pub mod iq_wav;
+pub mod playback;
 mod recorder;
 pub mod scanner;
 mod source;

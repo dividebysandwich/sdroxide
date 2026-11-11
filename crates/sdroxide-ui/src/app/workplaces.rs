@@ -160,7 +160,9 @@ pub(in crate::app) fn workplace_rows(
     // The newborn's blink, started the first time it is drawn here.
     let now = ui.input(|i| i.time);
     let mut blink: Option<((Band, Mode), bool)> = None;
-    if let Some((b, m, start)) = ui.ctx().data(|d| d.get_temp::<(Band, Mode, Option<f64>)>(born_id())) {
+    if let Some((b, m, start)) =
+        ui.ctx().data(|d| d.get_temp::<(Band, Mode, Option<f64>)>(born_id()))
+    {
         let t0 = start.unwrap_or(now);
         match blink_inverted(now - t0) {
             Some(inv) => {
@@ -196,7 +198,12 @@ pub(in crate::app) fn workplace_rows(
                     }
                     None => {
                         ui.add_enabled_ui(false, |ui| {
-                            crate::chrome::chip_sized(ui, false, RichText::new("· · ·").size(SIZE), size)
+                            crate::chrome::chip_sized(
+                                ui,
+                                false,
+                                RichText::new("· · ·").size(SIZE),
+                                size,
+                            )
                         })
                         .inner
                         .on_disabled_hover_text(tr!("topbar-recent-empty"));
@@ -240,7 +247,11 @@ mod tests {
         };
         draw(100.0);
         let born = ctx.data(|d| d.get_temp::<(Band, Mode, Option<f64>)>(born_id()));
-        assert_eq!(born, Some((Band::M40, Mode::Ft8, Some(100.0))), "the blink did not start on drawing");
+        assert_eq!(
+            born,
+            Some((Band::M40, Mode::Ft8, Some(100.0))),
+            "the blink did not start on drawing"
+        );
         draw(100.0 + BLINK_S + 0.1);
         let born = ctx.data(|d| d.get_temp::<(Band, Mode, Option<f64>)>(born_id()));
         assert_eq!(born, None, "the blink was not forgotten");
@@ -301,7 +312,10 @@ mod tests {
         let width = 795.0;
         let mut first = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 900.0))),
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 900.0),
+                )),
                 ..Default::default()
             },
             |ui| {
@@ -316,7 +330,10 @@ mod tests {
         first.textures_delta.clear();
         let mut out = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 900.0))),
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 900.0),
+                )),
                 ..Default::default()
             },
             |ui| {
@@ -332,7 +349,11 @@ mod tests {
             .shapes
             .iter()
             .filter_map(|c| match &c.shape {
-                egui::epaint::Shape::Text(t) if t.galley.text().contains('·') || t.galley.text().contains("12M") || t.galley.text().contains("40M") => {
+                egui::epaint::Shape::Text(t)
+                    if t.galley.text().contains('·')
+                        || t.galley.text().contains("12M")
+                        || t.galley.text().contains("40M") =>
+                {
                     Some(t.visual_bounding_rect())
                 }
                 _ => None,

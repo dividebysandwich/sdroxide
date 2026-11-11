@@ -3054,12 +3054,25 @@ impl SdroxideApp {
             RxChip::Stereo => {
                 // WFM broadcast stereo: lit while a 19 kHz pilot is locked,
                 // click to force mono. Only WFM has a pilot to find.
-                let want = self.state.rx[0].wfm_stereo;
+                let rx0 = &self.state.rx[0];
+                let want = rx0.wfm_stereo;
                 let locked = self.meters.as_ref().is_some_and(|m| m.stereo);
+                // Stereo yields to noise reduction and the auto-notch (they
+                // would comb the matrix), and the chip has to say so: otherwise
+                // it reads as "no pilot" on a station that has one.
+                let yields = rx0.noise_reduction.is_on()
+                    || (rx0.auto_notch && rx0.mode.auto_notch_applies());
+                let playback = self.state.playback.as_ref();
                 let hover = if !want {
                     tr!("topbar-wfm-stereo-forced-off-click")
+                } else if yields {
+                    tr!("topbar-stereo-yields-hint")
+                } else if locked && playback.is_some() {
+                    tr!("topbar-stereo-playback-hint")
                 } else if locked {
                     tr!("topbar-wfm-stereo-pilot-locked-click")
+                } else if playback.is_some_and(|p| p.channels < 2) {
+                    tr!("topbar-stereo-mono-recording-hint")
                 } else {
                     tr!("topbar-wfm-stereo-automatic-no-pilot")
                 };
@@ -3832,6 +3845,19 @@ impl SdroxideApp {
         if let Some(f) = &self.state.iq_recording_file {
             ui.label(RichText::new(f).size(9.5).color(crate::theme::CYAN_DIM()));
         }
+
+        // The other half of the recorder: put a recording back through the
+        // decoders.
+        crate::chrome::menu_caption(ui, &tr!("topbar-caption-play-back"));
+        ui.horizontal_wrapped(|ui| {
+            let playing = self.state.playback.is_some();
+            if crate::chrome::chip(ui, self.playback.show || playing, tr!("topbar-recordings-chip"))
+                .on_hover_text(tr!("topbar-recordings-hint"))
+                .clicked()
+            {
+                self.playback.open();
+            }
+        });
     }
 
     /// The engine row and the strength row. Its own function because a menu has

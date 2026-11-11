@@ -36,6 +36,7 @@ pub(in crate::app) mod net;
 pub(in crate::app) mod palette;
 pub(in crate::app) mod panels;
 pub(crate) mod persist;
+pub(in crate::app) mod playback;
 pub(in crate::app) mod publicsdr;
 pub(in crate::app) mod qo100;
 pub(in crate::app) mod rds;
@@ -894,6 +895,8 @@ pub struct SdroxideApp {
     daylight_at: f64,
     /// The BANDS window.
     show_bands: bool,
+    /// The PLAYBACK window's state — see [`playback::PlaybackUi`].
+    pub(in crate::app) playback: playback::PlaybackUi,
     /// The propagation field rendered to pixels, rebuilt only when it moves.
     prop_heat: crate::prop_map::PropHeat,
     /// The grey-line (night/twilight) overlay rendered to pixels, rebuilt at
@@ -1757,6 +1760,7 @@ impl SdroxideApp {
             daylight: true,
             daylight_at: f64::NEG_INFINITY,
             show_bands: false,
+            playback: playback::PlaybackUi::default(),
             digi_stations: Default::default(),
             prop: Default::default(),
             prop_heat: Default::default(),

@@ -1315,6 +1315,9 @@ fn handle_event(shared: &Shared, ev: RadioEvent) {
             RadioEvent::WavelogProbe(p) => Some(ServerMsg::WavelogProbe(p)),
             // A download's pages stay on the machine the logbook is on.
             RadioEvent::WavelogBatch(_) => None,
+            // The recordings list: the files are this station's, and a
+            // browser has no other way to see them.
+            RadioEvent::Recordings(listing) => Some(ServerMsg::Recordings(listing)),
             RadioEvent::Profiles(p) => {
                 latest.profiles = p.clone();
                 Some(ServerMsg::Profiles(p))

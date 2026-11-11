@@ -418,6 +418,12 @@ pub enum RadioEvent {
     ///
     /// Appended last, for the usual reason.
     AmpStatus(Box<crate::AmpStatus>),
+    /// The answer to a [`crate::Command::ListRecordings`]: the files in the
+    /// station's recordings directory. The engine's, so it rides
+    /// `ServerMsg::Recordings` to a remote client.
+    ///
+    /// Appended last, for the usual reason.
+    Recordings(crate::RecordingListing),
 }
 
 /// Snapshot of the frontend's switchable sound devices (native clients).

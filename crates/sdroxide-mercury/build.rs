@@ -186,9 +186,8 @@ fn main() {
             vendor.display()
         );
     }
-    let vendor = without_verbatim_prefix(
-        vendor.canonicalize().expect("canonicalize vendor/mercury"),
-    );
+    let vendor =
+        without_verbatim_prefix(vendor.canonicalize().expect("canonicalize vendor/mercury"));
     for dir in ["common", "datalink_arq", "datalink_broadcast", "modem", "data_interfaces", "host"]
     {
         println!("cargo:rerun-if-changed={}", vendor.join(dir).display());

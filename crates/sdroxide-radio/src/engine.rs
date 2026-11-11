@@ -40,10 +40,10 @@ use sdroxide_tci::TciTuneClient;
 use sdroxide_tci::server::{ServerRequest, TciServerController, TciStateSnapshot};
 use sdroxide_types::{
     AgcMode, Band, BandStackEntry, Command, DeviceCaps, DigiConfig, Direction, ImageKind,
-    MemoryChannel, MemoryFolder, Meters, Mode, NrEngine, NrLevel, RadioEvent, RadioState,
-    RepeaterState, RigctldConfig, RxId, RxState, ScanKind, ScanResume, SpectrumConfig,
-    SpectrumFrame, TX_VOICE_TEST_MAX_S, TciServerConfig, TxMeters, TxVoiceLive, TxVoiceState,
-    TxVoiceTest, Vfo,
+    MemoryChannel, MemoryFolder, Meters, Mode, NrEngine, NrLevel, PlaybackCommand, RadioEvent,
+    RadioState, RecordingFile, RecordingListing, RepeaterState, RigctldConfig, RxId, RxState,
+    ScanKind, ScanResume, SpectrumConfig, SpectrumFrame, TX_VOICE_TEST_MAX_S, TciServerConfig,
+    TxMeters, TxVoiceLive, TxVoiceState, TxVoiceTest, Vfo,
 };
 use sdroxide_vdl2::{Vdl2Action, Vdl2Controller};
 
@@ -2282,6 +2282,67 @@ fn unix_now_f64() -> f64 {
     SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64())
 }
 
+/// Where the radio was when a playback took it over.
+struct PlaybackReturn {
+    vfo_a_hz: f64,
+    vfo_b_hz: f64,
+    mode: Mode,
+}
+
+/// Whether `path` is one of our I/Q captures rather than audio: by its name,
+/// or by the header only an I/Q capture carries.
+fn is_iq_capture(path: &std::path::Path, name: &str) -> bool {
+    name.ends_with("_IQ.wav") || crate::iq_wav::probe(path).is_some()
+}
+
+/// The station's recordings directory, newest first: every file playback can
+/// open, and the I/Q captures too, marked, so the operator learns why those
+/// cannot be played here instead of wondering where they went.
+fn list_recordings() -> RecordingListing {
+    /// A long-running station collects thousands; a list longer than this is
+    /// not one anybody scrolls.
+    const MAX_FILES: usize = 500;
+    let dir = match sdroxide_config::recordings_dir_path() {
+        Ok(d) => d,
+        Err(e) => {
+            return RecordingListing {
+                error: Some(format!("no recordings folder ({e})")),
+                ..RecordingListing::default()
+            };
+        }
+    };
+    let mut listing = RecordingListing { dir: dir.display().to_string(), ..Default::default() };
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        // Nothing has been recorded yet: an empty list, not a fault.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return listing,
+        Err(e) => {
+            listing.error = Some(format!("cannot read {}: {e}", dir.display()));
+            return listing;
+        }
+    };
+    for entry in entries.flatten() {
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        let Ok(name) = entry.file_name().into_string() else { continue };
+        if !sdroxide_types::playback::playable_name(&name) {
+            continue;
+        }
+        let iq = name.to_ascii_lowercase().ends_with(".wav") && is_iq_capture(&entry.path(), &name);
+        let modified_unix = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_secs() as i64);
+        listing.files.push(RecordingFile { name, bytes: meta.len(), modified_unix, iq });
+    }
+    listing.files.sort_by(|a, b| b.modified_unix.cmp(&a.modified_unix).then(b.name.cmp(&a.name)));
+    listing.files.truncate(MAX_FILES);
+    listing
+}
+
 /// Convert Unix seconds to a UTC civil date-time `(year, month, day, hour, min,
 /// sec)`. Howard Hinnant's `civil_from_days` algorithm — exact, no leap-second
 /// or timezone handling (UTC), and no external crate.
@@ -3292,6 +3353,18 @@ struct Engine {
     /// tell when either end has moved.
     audio_rs_in_rate: f64,
     audio_rs_out_rate: f64,
+    /// The right ear of a stereo recording being played back
+    /// ([`IqSource::audio_stereo`]), resampled beside the left by its own
+    /// resampler, built for the rate pair beside it.
+    audio_im: Vec<f32>,
+    audio_resampler_r: Option<MonoResampler>,
+    audio_rs_r_rates: (f64, f64),
+    /// Whether the last audio-mode block went out in true stereo — what lights
+    /// ST during a playback, where there is no pilot to lock.
+    audio_stereo_on: bool,
+    /// Set while a recording is being played back in place of the radio:
+    /// where the radio was, so stopping can put it back.
+    playback_return: Option<PlaybackReturn>,
     /// The rate [`IqSource::rx_audio`] last reported, for the arrangement where
     /// receive audio comes from a transceiver while an attached receiver
     /// supplies the I/Q ([`DeviceCaps::rx_audio_external`]). Remembered because
@@ -4663,6 +4736,11 @@ fn engine_thread(
         audio_resampler,
         audio_rs_in_rate: radio_fs,
         audio_rs_out_rate: audio_out_rate,
+        audio_im: Vec::new(),
+        audio_resampler_r: None,
+        audio_rs_r_rates: (0.0, 0.0),
+        audio_stereo_on: false,
+        playback_return: None,
         ext_audio_rate: 48_000.0,
         reopen: engine_cfg.reopen.map(|f| Arc::new(Mutex::new(f))),
         retry: None,
@@ -5038,6 +5116,7 @@ fn engine_thread(
         // Attach (or re-attach) the configured radio on its own when the
         // front-end is only a stand-in — no trip through Settings.
         engine.poll_reconnect();
+        engine.poll_playback();
 
         if engine.tx_active {
             // Blocking TX write paces this loop at ~10 ms per block.
@@ -5432,7 +5511,10 @@ fn engine_thread(
                 engine.swr_over = 0;
                 engine.swr_settle = 0;
                 engine.swr_tuning = false;
-                let stereo = engine.main.as_ref().is_some_and(|c| c.stereo_locked());
+                // A stereo recording being played back counts too: it has no
+                // pilot, but it is in the two ears all the same.
+                let stereo = engine.main.as_ref().is_some_and(|c| c.stereo_locked())
+                    || (engine.audio_mode && engine.audio_stereo_on);
                 let tone = engine.main.as_ref().and_then(|c| c.sub_tone());
                 // Read unconditionally, so the window is consumed whether or not
                 // a reading is published — otherwise a front end with no signal
@@ -6130,20 +6212,47 @@ impl Engine {
         self.analyzer.process(iq);
 
         self.play_rx_audio(self.radio_fs);
-        // A demod-audio rig has one receiver and no sub, so the second ear is
-        // free — and the binaural widener is the one thing that fills it. This
-        // is the front end a great many operators are listening on, so it gets
-        // the same treatment the demodulated path does.
         self.main_play_r.clear();
-        binaural_split(
-            &mut self.binaural,
-            &self.state.rx[0],
-            self.audio_out_rate,
-            true,
-            &mut self.audio_play,
-            &mut self.bin_left,
-            &mut self.main_play_r,
-        );
+        // A stereo recording played back brings its own right ear, and it goes
+        // to the speaker as recorded — a WFM stereo broadcast comes back in
+        // stereo. The same switch and the same rule as live stereo decide it
+        // ([`stereo_allowed`]): ST forces mono, and noise reduction or the notch,
+        // which only ran on the left, take it back to the left in both ears.
+        self.audio_stereo_on = self.source.audio_stereo()
+            && stereo_allowed(&self.state.rx[0])
+            && !self.audio_play.is_empty();
+        if self.audio_stereo_on {
+            let rates = (self.radio_fs, self.audio_out_rate);
+            if self.audio_rs_r_rates != rates {
+                self.audio_rs_r_rates = rates;
+                self.audio_resampler_r = MonoResampler::new(rates.0, rates.1);
+            }
+            self.audio_im.clear();
+            self.audio_im.extend(iq.iter().map(|c| c.im));
+            match self.audio_resampler_r.as_mut() {
+                Some(rs) => rs.push(&self.audio_im, &mut self.main_play_r),
+                None => self.main_play_r.extend_from_slice(&self.audio_im),
+            }
+            let rx0 = &self.state.rx[0];
+            let vol = if rx0.muted { 0.0 } else { rx0.volume };
+            for s in self.main_play_r.iter_mut() {
+                *s *= vol;
+            }
+        } else {
+            // A demod-audio rig has one receiver and no sub, so the second ear
+            // is free — and the binaural widener is the one thing that fills
+            // it. This is the front end a great many operators are listening
+            // on, so it gets the same treatment the demodulated path does.
+            binaural_split(
+                &mut self.binaural,
+                &self.state.rx[0],
+                self.audio_out_rate,
+                true,
+                &mut self.audio_play,
+                &mut self.bin_left,
+                &mut self.main_play_r,
+            );
+        }
         let right = (!self.main_play_r.is_empty()).then_some(&self.main_play_r[..]);
         if let Some(mixer) = self.mixer.as_mut() {
             mixer.push(&self.audio_play, right, &self.audio_play_rec, None);
@@ -10293,6 +10402,15 @@ impl Engine {
                 }
                 return;
             }
+            Playback(cmd) => {
+                self.playback_command(cmd);
+                return;
+            }
+            ListRecordings => {
+                // A question, answered once — the window asks when it opens.
+                let _ = self.event_tx.send(RadioEvent::Recordings(list_recordings()));
+                return;
+            }
             SetViewUncovered(on) => {
                 // A hole that has just appeared starts a rest of its own: a
                 // pan with the right button moves the view, not the dial, and
@@ -10831,6 +10949,218 @@ impl Engine {
         let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
     }
 
+    /// Open, steer or stop a playback.
+    fn playback_command(&mut self, cmd: PlaybackCommand) {
+        match cmd {
+            PlaybackCommand::Open { name } => self.start_playback(&name),
+            PlaybackCommand::Stop => self.stop_playback(),
+            PlaybackCommand::Delete { name } => {
+                if let Err(why) = self.delete_recording(&name) {
+                    self.notice(&why);
+                }
+                // The list is answered either way, so the window shows what is
+                // really on disk rather than what it expected.
+                let _ = self.event_tx.send(RadioEvent::Recordings(list_recordings()));
+            }
+            other => {
+                if self.source.playback_status().is_none() {
+                    self.notice("Nothing is being played back");
+                    return;
+                }
+                if let Err(e) = self.source.playback_control(&other) {
+                    self.notice(&format!("Playback: {e}"));
+                }
+                self.publish_playback(true);
+            }
+        }
+    }
+
+    /// Delete `name` from the recordings directory. Only a plain name the
+    /// listing could have offered is accepted — a remote client names a file,
+    /// never a path — and never the file playing back or one still being
+    /// written, since either is in use.
+    fn delete_recording(&mut self, name: &str) -> std::result::Result<(), String> {
+        if !sdroxide_types::playback::playable_name(name) {
+            return Err(format!("{name} is not a file in the recordings folder"));
+        }
+        if self.source.playback_status().is_some_and(|p| p.name == name) {
+            return Err(format!("{name} is playing back — stop it before deleting it"));
+        }
+        if [&self.state.recording_file, &self.state.iq_recording_file]
+            .iter()
+            .any(|f| f.as_deref() == Some(name))
+        {
+            return Err(format!("{name} is still being recorded — stop REC before deleting it"));
+        }
+        let dir = sdroxide_config::recordings_dir_path()
+            .map_err(|e| format!("Delete: no recordings folder ({e})"))?;
+        let path = dir.join(name);
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                self.notice(&format!("Deleted {name}"));
+                Ok(())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                Err(format!("{name} is no longer in the recordings folder"))
+            }
+            Err(e) => Err(format!("Could not delete {name}: {e}")),
+        }
+    }
+
+    /// Stand the radio down and play `name`, from the recordings directory,
+    /// through the path a sound-card radio's audio takes — so every audio
+    /// decoder, the waterfall and the speakers get the file instead.
+    ///
+    /// The dial and mode the file's name records are put on the receiver, so
+    /// the right decoder is listening; the operator can change either while it
+    /// plays, which is how a recording is tried in another decoder. Where the
+    /// radio was is kept, and [`Self::stop_playback`] puts it back.
+    fn start_playback(&mut self, name: &str) {
+        if !sdroxide_types::playback::playable_name(name) {
+            self.notice(&format!(
+                "{name} is not an audio file in the recordings folder (MP3, WAV, OGG or FLAC)"
+            ));
+            return;
+        }
+        if self.tx_active {
+            self.notice("Playback cannot start while transmitting");
+            return;
+        }
+        // Without the factory there is no way back to the radio afterwards,
+        // and a playback that cannot be ended is not one to start.
+        if self.reopen.is_none() {
+            self.notice("Playback is unavailable here: the radio could not be brought back");
+            return;
+        }
+        let dir = match sdroxide_config::recordings_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                self.notice(&format!("Playback: no recordings folder ({e})"));
+                return;
+            }
+        };
+        let path = dir.join(name);
+        if is_iq_capture(&path, name) {
+            self.notice(&format!(
+                "{name} is an I/Q capture, not audio — playback takes the audio the recorder \
+                 writes (an I/Q capture is played with --file)"
+            ));
+            return;
+        }
+        let src =
+            match crate::playback::PlaybackSource::open(&path, name, self.state.active_freq_hz()) {
+                Ok(s) => s,
+                Err(e) => {
+                    self.notice(&format!("Cannot play {name}: {e}"));
+                    return;
+                }
+            };
+        // The live recorders end here: the radio they were recording is about
+        // to stand down, and a recording of a playback is a copy of the file.
+        if self.recorder.is_some() {
+            self.stop_recording();
+            self.notice("Recording stopped — the radio stands down while a recording plays back");
+        }
+        if self.iq_wav.is_some() {
+            self.stop_iq_recording();
+        }
+        if self.playback_return.is_none() {
+            self.playback_return = Some(PlaybackReturn {
+                vfo_a_hz: self.state.vfo_a_hz,
+                vfo_b_hz: self.state.vfo_b_hz,
+                mode: self.state.rx[0].mode,
+            });
+            // Let the device go, and any reconnect in flight with it, exactly
+            // as an interface change does — a dongle held open and unread would
+            // only overflow, and one claimed exclusively blocks its own return.
+            self.source.release();
+            if let Some(factory) = self.reopen.clone() {
+                let _held = factory.lock().unwrap_or_else(|e| e.into_inner());
+                self.abandon_retry();
+            }
+            self.retry_at = None;
+            self.retry_every = RETRY_FIRST;
+        }
+        let stamp = src.status().stamp;
+        info!(file = %path.display(), "playing a recording back");
+        self.adopt_source(Box::new(src), crate::playback::playback_caps(name));
+        if let Some(stamp) = stamp {
+            if let Some(mode) = stamp.mode {
+                self.apply(Command::SetMode { rx: RxId::Main, mode });
+            }
+            if stamp.freq_hz > 0.0 {
+                let vfo = self.state.active_vfo;
+                self.apply(Command::SetVfo { vfo, hz: stamp.freq_hz });
+            }
+        }
+        self.publish_playback(true);
+    }
+
+    /// End a playback and put the radio back where it was.
+    fn stop_playback(&mut self) {
+        let Some(ret) = self.playback_return.take() else {
+            self.publish_playback(true);
+            return;
+        };
+        // The dial first: the radio is reopened on whatever the dial says.
+        self.state.vfo_a_hz = ret.vfo_a_hz;
+        self.state.vfo_b_hz = ret.vfo_b_hz;
+        self.state.band = Band::containing(self.state.active_freq_hz());
+        if self.state.rx[0].mode != ret.mode {
+            self.set_rx_mode(RxId::Main, ret.mode);
+        }
+        self.reopen_source();
+        if self.source.playback_status().is_some() {
+            // The radio would not open (it was unplugged meanwhile, say). The
+            // playback must not carry on as though it were the radio: hand the
+            // engine a stand-in that asks to be replaced, so the reconnect
+            // schedule takes over exactly as for a radio that dropped out.
+            let rate = self.radio_fs;
+            let caps = self.caps.clone();
+            self.adopt_source(Box::new(crate::playback::Standby::new(rate)), caps);
+        }
+        self.update_tuning();
+        self.publish_playback(true);
+    }
+
+    /// Notice a playback that something else ended — an interface change in
+    /// Settings reopens the radio over it — and keep the transport bar moving.
+    fn poll_playback(&mut self) {
+        if self.playback_return.is_some() && self.source.playback_status().is_none() {
+            self.playback_return = None;
+        }
+        self.publish_playback(false);
+    }
+
+    /// Put the playback's status on the state when it has moved enough to be
+    /// worth a frame: a quarter of a second of position, or anything else.
+    fn publish_playback(&mut self, force: bool) {
+        let now = self.source.playback_status();
+        let changed = match (&self.state.playback, &now) {
+            (None, None) => force,
+            (Some(a), Some(b)) => {
+                force
+                    || a.name != b.name
+                    || a.paused != b.paused
+                    || a.looping != b.looping
+                    || a.ended != b.ended
+                    || a.fault != b.fault
+                    || a.duration_s != b.duration_s
+                    || (a.position_s - b.position_s).abs() >= 0.25
+            }
+            _ => true,
+        };
+        if changed {
+            if let Some(f) = now.as_ref().and_then(|s| s.fault.clone())
+                && self.state.playback.as_ref().is_none_or(|p| p.fault.is_none())
+            {
+                self.notice(&format!("Playback stopped: {f}"));
+            }
+            self.state.playback = now;
+            self.emit_state();
+        }
+    }
+
     /// Begin recording both sides of the QSO to a new MP3 file (RX left, TX
     /// right where a second receiver is running, dual mono where none is, or a
     /// single mixed channel if `recording_mono` is set — see `rec_split`). The
@@ -10988,7 +11318,8 @@ impl Engine {
             .unwrap_or(0);
         let (y, mo, d, h, mi, s) = utc_civil(secs);
         let mhz = self.state.active_freq_hz() / 1_000_000.0;
-        let mode = self.state.rx[0].mode.label().replace(['/', ' '], "");
+        // The same tag playback reads back out of the name.
+        let mode = sdroxide_types::playback::recording_mode_tag(self.state.rx[0].mode);
         // All radios share one recordings directory, so two of them starting a
         // recording in the same second must not name the same file. Radio 0
         // keeps the historical name.
@@ -15653,6 +15984,11 @@ impl Engine {
     /// moves continuously while it is being spun, and none of those hundreds of
     /// intermediate frequencies is worth a file write.
     fn save_session(&mut self) {
+        // A playback's dial and mode are the recording's, not the station's:
+        // saved, they would be where the radio comes back after a restart.
+        if self.playback_return.is_some() {
+            return;
+        }
         let Some(saved) = self.session.as_ref() else { return };
         let mut now = self.current_session();
         // What the hardware reports, not what was asked for, and kept when it

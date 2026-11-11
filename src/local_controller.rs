@@ -255,9 +255,8 @@ impl RadioController for LocalController {
             let id = self.store.radio_id();
             // A copy for the thread; `req` stays here for the fallback below.
             let req2 = req.clone();
-            let spawned = std::thread::Builder::new()
-                .name("sdroxide-sdr-check".into())
-                .spawn(move || {
+            let spawned =
+                std::thread::Builder::new().name("sdroxide-sdr-check".into()).spawn(move || {
                     // A send fails only when this controller is gone, and then
                     // nobody is waiting for the answer.
                     let _ = tx.send(crate::devices::probe(req2, id));

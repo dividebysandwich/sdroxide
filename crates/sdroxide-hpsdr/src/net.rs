@@ -1023,9 +1023,8 @@ impl HpsdrBoard {
         // directed probe is silent, broadcast and keep the answer from `ip`.
         let probed = discovery::probe(ip, Duration::from_millis(800)).or_else(|| {
             let ip_s = ip.to_string();
-            let dev = discovery::discover(Duration::from_millis(800))
-                .into_iter()
-                .find(|d| d.ip == ip_s);
+            let dev =
+                discovery::discover(Duration::from_millis(800)).into_iter().find(|d| d.ip == ip_s);
             if dev.is_some() {
                 tracing::info!(
                     "HPSDR: {ip} ignored the directed probe but answered a broadcast one"

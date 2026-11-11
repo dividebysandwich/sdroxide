@@ -89,10 +89,8 @@ fn public_sdr_check(
             use std::net::{TcpStream, ToSocketAddrs};
             // Every address the name resolves to (IPv4 and IPv6), tried in turn;
             // the first that accepts answers.
-            let addrs: Vec<_> = address
-                .to_socket_addrs()
-                .map_err(|e| format!("{address}: {e}"))?
-                .collect();
+            let addrs: Vec<_> =
+                address.to_socket_addrs().map_err(|e| format!("{address}: {e}"))?.collect();
             // The reason reported if none accepts: the last error seen, or
             // that the name resolved to nothing at all.
             let mut last = format!("{address}: no address to connect to");

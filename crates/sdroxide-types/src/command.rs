@@ -1281,4 +1281,19 @@ pub enum Command {
     /// view inside the window is left where it is. An engine that is never
     /// told (an older client) does not centre. Appended for the usual reason.
     SetViewUncovered(bool),
+
+    /// Play a recording back into the decoders, or steer one that is playing.
+    /// See [`crate::playback`]: the radio is stood down for the length of it
+    /// and put back on [`crate::PlaybackCommand::Stop`].
+    ///
+    /// Appended last, for the usual reason — postcard numbers variants by
+    /// position.
+    Playback(crate::PlaybackCommand),
+
+    /// Ask which recordings the station has. A question, answered once with a
+    /// [`crate::RecordingListing`] — the files live where the engine runs, which
+    /// for a browser is not where the window is.
+    ///
+    /// Appended last, for the usual reason.
+    ListRecordings,
 }

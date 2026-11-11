@@ -46,6 +46,7 @@ mod netcfg;
 mod pi4;
 mod pictures;
 mod picupload;
+pub mod playback;
 mod probe;
 mod profile;
 mod prop_store;
@@ -214,6 +215,9 @@ pub use pictures::{
 pub use picupload::{
     FtpSecurity, PictureUploadConfig, PictureUploadStatus, TlsVerify, UploadFormat, UploadNaming,
     format_fingerprint, normalize_fingerprint,
+};
+pub use playback::{
+    PlaybackCommand, PlaybackStatus, RecordingFile, RecordingListing, RecordingStamp,
 };
 pub use probe::{DeviceProbe, ProbeAnswer, ProbeTest, ReportKind, TestKind};
 pub use profile::{ModeProfile, ModeProfiles};

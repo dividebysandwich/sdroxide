@@ -72,6 +72,9 @@ sdroxide-picup = { path = "../sdroxide-picup" }
 # operator picked, and the file picker offers both.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 shine-rs = "0.1.4"
+# Playing a recording back into the decoders: the recorder's MP3, and WAV,
+# OGG Vorbis and FLAC made elsewhere. Pure Rust, no system codec. MPL-2.0.
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "wav", "pcm", "ogg", "vorbis", "flac"] }
 
 [dev-dependencies]
 # The APRS codec, so the transmit test can read back what the engine sent.

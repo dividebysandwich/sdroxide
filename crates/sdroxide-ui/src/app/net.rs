@@ -648,10 +648,10 @@ mod tests {
         let file = vec![qso("19JV75", "11m", 1_789_279_546), qso("13WF01", "11m", 1_789_281_763)];
         let (first, skipped) = new_import_records(&[], file);
         assert_eq!((first.len(), skipped), (2, 0));
-        let (second, skipped) = new_import_records(&first, vec![
-            qso("19JV75", "11m", 1_789_279_546),
-            qso("13WF01", "11m", 1_789_281_763),
-        ]);
+        let (second, skipped) = new_import_records(
+            &first,
+            vec![qso("19JV75", "11m", 1_789_279_546), qso("13WF01", "11m", 1_789_281_763)],
+        );
         assert_eq!((second.len(), skipped), (0, 2));
     }
 }
