@@ -69,6 +69,10 @@ user name for you, which is your callsign unless you set a different one. To fin
 sdroxide lists your computer's network adapters and searches the local network.
 That information stays on your computer.
 
+Picking a receiver on the Public SDRs map checks whether it answers: a KiwiSDR
+`/status` request, a SpyServer greeting, or a connection to the address the
+directory lists. Nothing is checked until you pick one.
+
 sdroxide's own remote-operation server and TCI server only run if you start
 them, and they listen only on the addresses you configure.
 
