@@ -135,9 +135,19 @@ pub struct RxState {
     pub sk_filter_width: u8,
     /// Run the SK filter behind the NR engine instead of ahead of the AGC:
     /// HDZ heard it as a post-processor that lifts the formants RNN and DFNR
-    /// leave ("Variante B, Reihung gedreht").
-    #[serde(default)]
+    /// leave ("Variante B, Reihung gedreht"). On to start with: all four
+    /// presets were tuned behind NR.
+    // Why: HDZ 2026-11-11: "in NR der SK-Filter sollte 'nach NR' als Default
+    //      haben".
+    #[serde(default = "sk_filter_default_after_nr")]
     pub sk_filter_after_nr: bool,
+}
+
+/// Whether the SK filter runs behind the NR engine to start with.
+pub const SK_FILTER_DEFAULT_AFTER_NR: bool = true;
+
+fn sk_filter_default_after_nr() -> bool {
+    SK_FILTER_DEFAULT_AFTER_NR
 }
 
 /// The SK filter's time constant to start with, in seconds (HDZ 2026-11-10:
@@ -198,7 +208,7 @@ impl RxState {
             sk_filter_open_s: SK_FILTER_DEFAULT_OPEN_S,
             sk_filter_close_s: SK_FILTER_DEFAULT_CLOSE_S,
             sk_filter_width: SK_FILTER_DEFAULT_WIDTH,
-            sk_filter_after_nr: false,
+            sk_filter_after_nr: SK_FILTER_DEFAULT_AFTER_NR,
         }
     }
 }
@@ -775,5 +785,23 @@ mod zoom_lane_tests {
         // is the only thing that can resolve it, so let the client have it.
         assert_eq!(panadapter_fft_ceiling(2_000_000.0, 800_000.0, 2048), None);
         assert_eq!(panadapter_fft_ceiling(2_000_000.0, 500_000.0, 0), None);
+    }
+}
+
+#[cfg(test)]
+mod sk_filter_tests {
+    use super::{Mode, RxState};
+
+    /// The SK filter runs behind the NR engine to start with — for a fresh
+    /// receiver and for one stored before the switch existed, so an upgraded
+    /// station starts where the four presets were tuned.
+    #[test]
+    fn the_sk_filter_runs_after_nr_to_start_with() {
+        let fresh = RxState::with_mode(Mode::Usb);
+        assert!(fresh.sk_filter_after_nr);
+        let mut stored = serde_json::to_value(fresh).unwrap();
+        stored.as_object_mut().unwrap().remove("sk_filter_after_nr");
+        let read: RxState = serde_json::from_value(stored).unwrap();
+        assert!(read.sk_filter_after_nr, "a stored state without the field");
     }
 }

@@ -722,9 +722,10 @@ menu. Ordinary dragging and keyboard adjustment still work.
     the curve over that many bins either side (±1 to start with, a bin being
     about 47 Hz): narrow, the open peaks act as resonators the noise rings,
     heard as a robotic voice; wider takes them out at the price of a coarser
-    curve. It delays the audio by about 21 ms and runs ahead of HUM and the
-    AGC — or, with **after NR**, behind the NR engine, where it takes what RNN
-    or DFNR left and lifts the formants they found.
+    curve. It delays the audio by about 21 ms and runs behind the NR engine
+    (**after NR**, on to start with), where it takes what RNN or DFNR left and
+    lifts the formants they found; with after NR off it runs ahead of HUM and
+    the AGC.
 
 - **BIN** (CW and SSB) — **binaural** audio: the receive passband spread across
   the two ears, so that a signal's *pitch* becomes a *direction*. Whatever sits
