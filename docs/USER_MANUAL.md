@@ -15593,7 +15593,30 @@ Spots then appear two ways:
   FREEDV / BC**, or **IN VIEW** to show only spots inside the current panadapter
   span). Each row
   shows the source, callsign, frequency, mode, age and reference/comment, and a
-  green **NEW** flag when it is a DXCC entity you haven't worked yet.
+  green **NEW** flag when it is a DXCC entity you haven't worked yet. The row
+  of the spot the dial is on (within 250 Hz) is highlighted, with a bar in the
+  spot's colour down its left edge.
+- **On the SPOTS window's map** — **LIST** and **MAP** at the head of the
+  window switch between the list and a world map of the same spots: every spot
+  the buttons and the search let through that has a location, coloured by
+  category. A broadcast spot is placed at its transmitter site from the EiBi
+  site table (about three schedule lines in four have one; a few only at the
+  middle of their country). A broadcast spot the schedule gives no site is
+  placed approximately and drawn hollow: at a city its name contains (from
+  the map's city table, if near the station's country), else at the
+  transmitter site of its country that lies nearest to all the others; the
+  line under the map says which, after a "≈". Clicking a dot, a row in LIST or a label on the
+  panadapter picks that spot and every other shown spot on the same channel
+  (within 250 Hz, up to six: a broadcast frequency is often shared): the map
+  frames them, draws a numbered great-circle path from your grid to each, and
+  one line per spot under the map gives its frequency, mode, site, power,
+  distance and bearing, with **TUNE** to go there; LIST then shows the picked spot in the middle
+  of the list. A click on a picked dot, or
+  a right-click anywhere on the map, lets them all go. The map fills the window: resize the
+  window to make it larger (it grows no taller than it is wide). A broadcast transmitter's dot grows with
+  its power on a logarithmic scale, from the plain size at 1 kW to about three
+  times as wide at 1000 kW. **NAMES** writes the names beside the
+  dots (on to start with), **CITIES** the cities on this map; the status line says how many spots have no location and so no dot.
 
 Switching a category off hides it everywhere at once — the list, the panadapter
 labels and the world-map dots — and the six category buttons are remembered

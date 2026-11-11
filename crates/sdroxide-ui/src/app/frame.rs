@@ -992,6 +992,8 @@ impl eframe::App for SdroxideApp {
         // were already issued inside the widget).
         if let Some(spot) = clicked_spot {
             self.prefill_from_spot(&spot);
+            // The SPOTS window's map marks it too: where it is sent from.
+            self.pick_spot_on_map(&spot);
         }
 
         // **The operating pane, floating in this window**, drawn beside the tool

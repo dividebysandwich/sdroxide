@@ -276,6 +276,19 @@ pub struct ViewState {
     /// SPOTS window and this array have to stay in lockstep.
     #[serde(default = "spot_kinds_default")]
     pub spot_kinds_shown: [bool; SPOT_KINDS],
+    /// The SPOTS window shows its spots on a world map instead of as a list.
+    #[serde(default)]
+    pub spots_map: bool,
+    /// The SPOTS window's map without names beside its dots. Off as the
+    /// stored flag, so the derived default is names shown, as on the Public
+    /// SDRs map.
+    #[serde(default)]
+    pub spots_map_names_off: bool,
+    /// The SPOTS window's map without cities, whatever the shared setting says.
+    // Why: HDZ 2026-11-07: "auf der Karte noch Städtenamen togglen lassen wie
+    //      auf der SDR-Map".
+    #[serde(default)]
+    pub spots_map_cities_off: bool,
     /// Fraction of the FT8/FT4 layout height used by the operating panel (the
     /// decode list + QSO area); the rest is the waterfall. User-draggable.
     pub digi_panel_fraction: f32,
@@ -708,6 +721,9 @@ impl Default for ViewState {
             prop_map_band: prop_map_band_default(),
             map_night: false,
             spot_kinds_shown: spot_kinds_default(),
+            spots_map: false,
+            spots_map_names_off: false,
+            spots_map_cities_off: false,
             digi_panel_fraction: 0.46,
             digi_split_fraction: 0.52,
             js8_split_fraction: js8_split_default(),
