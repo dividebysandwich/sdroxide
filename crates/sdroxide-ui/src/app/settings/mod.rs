@@ -2763,40 +2763,7 @@ impl SdroxideApp {
                         tr!("settings-radio-packet"),
                     )
                     .on_hover_text(tr!("settings-call-rms-gateway-air-radio"));
-                    ui.selectable_value(
-                        &mut wl.lane,
-                        sdroxide_types::WinlinkLane::Vara,
-                        tr!("settings-radio-vara"),
-                    )
-                    .on_hover_text(tr!("settings-call-rms-gateway-vara"));
                 });
-
-                // VARA: a gateway and where it listens. No path and no speed —
-                // VARA has no digipeaters, and the speed is negotiated on air.
-                if wl.lane == sdroxide_types::WinlinkLane::Vara {
-                    ui.add_space(4.0);
-                    net_row(ui, &tr!("settings-gateway"), &mut wl.gateway, 140.0);
-                    let mut mhz = wl.gateway_freq_hz / 1e6;
-                    ui.horizontal(|ui| {
-                        ui.add_sized([96.0, 22.0], egui::Label::new(tr!("settings-frequency")));
-                        if ui
-                            .add(
-                                egui::DragValue::new(&mut mhz)
-                                    .speed(0.001)
-                                    .range(0.0..=1300.0)
-                                    .max_decimals(4)
-                                    .suffix(" MHz"),
-                            )
-                            .changed()
-                        {
-                            wl.gateway_freq_hz = mhz * 1e6;
-                        }
-                        if wl.gateway_freq_hz > 0.0 && ui.button(tr!("settings-clear")).clicked() {
-                            wl.gateway_freq_hz = 0.0;
-                        }
-                    });
-                    ui.label(RichText::new(tr!("settings-vara-dial-note")).weak());
-                }
 
                 if wl.lane == sdroxide_types::WinlinkLane::Packet {
                     ui.add_space(4.0);

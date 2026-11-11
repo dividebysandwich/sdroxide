@@ -1237,7 +1237,6 @@ impl DigiEngine for Js8Controller {
             transcript: Vec::new(),
             config: self.cfg.clone(),
             jtty: None,
-            vara: None,
             text_rx: String::new(),
             tx_sent: 0,
             fsq_heard: Vec::new(),

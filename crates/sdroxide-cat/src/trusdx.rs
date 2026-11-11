@@ -203,7 +203,6 @@ fn mode_digit(m: Mode) -> char {
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf
-        | Mode::VaraHf
         | Mode::AtChat
         | Mode::Jtty
         | Mode::Rade => '2',

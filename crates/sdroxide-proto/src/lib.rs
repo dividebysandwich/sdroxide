@@ -1627,7 +1627,11 @@ use sdroxide_types::{
 /// enums; [`sdroxide_types::Command`] gains the `Vara*` commands; `DigiStatus`
 /// gains `vara` (`Option<VaraStatus>`) and `DigiConfig` the `vara_*` settings,
 /// each on its tail, so a v189 peer reads digital status out of step.
-pub const PROTO_VERSION: u16 = 190;
+///
+/// v191: VARA HF removed. Everything v190 appended for it is gone again, so
+/// the layout is v189's — but a v190 peer still sends and expects the extra
+/// fields.
+pub const PROTO_VERSION: u16 = 191;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

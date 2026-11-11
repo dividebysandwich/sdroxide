@@ -1236,25 +1236,4 @@ pub enum Command {
     ///
     /// Appended for the usual reason — postcard numbers variants by position.
     ClearMemories,
-
-    /// VARA HF: call a station from the operator's panel. Refused, with a line
-    /// in the transcript, while another host (Winlink, a TCP program) holds the
-    /// modem. Appended for the usual reason.
-    VaraConnect {
-        call: String,
-    },
-    /// VARA HF: send one line to the connected station. A CR is added.
-    VaraSend {
-        text: String,
-    },
-    /// VARA HF: hang up cleanly, waiting for the far end to agree.
-    VaraDisconnect,
-    /// VARA HF: drop the link now, whoever holds the modem.
-    VaraAbort,
-    /// VARA HF: send (true) or stop (false) a tune tone for an antenna tuner.
-    VaraTune {
-        on: bool,
-    },
-    /// VARA HF: empty the panel's transcript. The link is untouched.
-    VaraTermClear,
 }

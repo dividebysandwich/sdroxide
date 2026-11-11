@@ -1304,8 +1304,6 @@ impl SdroxideApp {
                         self.aprs_panel(ui, cmds, panel_h);
                     } else if mode.is_packet() {
                         self.packet_panel(ui, cmds, panel_h);
-                    } else if mode.is_vara() {
-                        self.vara_panel(ui, cmds, panel_h);
                     } else if mode.is_fsq() {
                         self.fsq_panel(ui, cmds, panel_h);
                     } else if mode.is_hell() {

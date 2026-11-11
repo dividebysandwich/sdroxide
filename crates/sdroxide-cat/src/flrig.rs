@@ -599,7 +599,6 @@ fn candidates(m: Mode) -> &'static [&'static str] {
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf
-        | Mode::VaraHf
         | Mode::AtChat
         | Mode::Jtty
         | Mode::Rade => {

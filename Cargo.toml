@@ -5,7 +5,7 @@ default-members = [".", "crates/sdroxide-types", "crates/sdroxide-proto", "crate
 # The vendored crates are reached through `[patch.crates-io]`, not as members:
 # they are upstream's code under upstream's licences, not ours to lint or
 # version with the rest.
-exclude = ["vendor/soapysdr", "vendor/ewebsock", "vendor/xng", "vendor/xara"]
+exclude = ["vendor/soapysdr", "vendor/ewebsock", "vendor/xng"]
 
 [patch.crates-io]
 
@@ -145,7 +145,6 @@ sdroxide-kiwisdr = { path = "crates/sdroxide-kiwisdr" }
 sdroxide-net = { path = "crates/sdroxide-net" }
 sdroxide-winlink = { path = "crates/sdroxide-winlink" }
 sdroxide-ax25 = { path = "crates/sdroxide-ax25" }
-sdroxide-vara = { path = "crates/sdroxide-vara" }
 sdroxide-kiss = { path = "crates/sdroxide-kiss" }
 sdroxide-deepcw = { path = "crates/sdroxide-deepcw" }
 sdroxide-ism = { path = "crates/sdroxide-ism" }
@@ -184,12 +183,6 @@ rtrb = "0.4"
 # instead: `cargo fmt -p sdroxide-radio -p sdroxide-ui …`, or check with
 # `cargo fmt --all --check` and read past the `vendor/xng` lines.
 xng-mode-hfdl = { path = "vendor/xng/crates/xng-mode-hfdl" }
-# VARA HF modem core from x0rro/xara (MIT), copied in at a pinned commit rather
-# than a submodule — see `vendor/xara/PROVENANCE.md` for what was taken and
-# changed. Reached by path like xng, so the same `cargo fmt -p` note applies.
-xara-phy = { path = "vendor/xara/xara-phy" }
-xara-arq = { path = "vendor/xara/xara-arq" }
-xara-host = { path = "vendor/xara/xara-host" }
 # Pure-Rust USB — the RTL-SDR backend's only dependency. No libusb, so it needs
 # no system library on any target and ships in every build variant.
 nusb = "0.2.7"

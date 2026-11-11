@@ -215,7 +215,6 @@ impl NavtexController {
             transcript: Vec::<TranscriptLine>::new(),
             config: self.cfg.clone(),
             jtty: None,
-            vara: None,
             text_rx: String::new(),
             tx_sent: 0,
             fsq_heard: Vec::new(),

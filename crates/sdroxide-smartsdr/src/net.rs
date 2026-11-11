@@ -1793,7 +1793,6 @@ fn mode_to_flex(m: Mode) -> &'static str {
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf
-        | Mode::VaraHf
         | Mode::AtChat
         | Mode::Rade => "DIGU",
         Mode::Usb

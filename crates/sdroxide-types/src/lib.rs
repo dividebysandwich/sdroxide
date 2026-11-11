@@ -76,7 +76,6 @@ pub mod text;
 mod tone;
 mod tx_voice;
 mod ui;
-mod vara;
 mod vdl2;
 mod voice;
 mod wavelog;
@@ -309,7 +308,6 @@ pub use ui::{
     FontSize, LayoutMode, SmeterStyle, Solar3dWindow, SpectrumDetail, Speed, UiLanguage,
     UiSettings, UiTheme, WORKSPACE_MAX, Workspace,
 };
-pub use vara::{VARA_TRANSCRIPT_MAX, VaraBw, VaraHolder, VaraLine, VaraLineKind, VaraStatus};
 pub use vdl2::{
     VDL2_ALL_CHANNELS, VDL2_CHANNEL_LABELS, VDL2_CHANNEL_SPACING_HZ, VDL2_CHANNELS_HZ, VDL2_CSC_HZ,
     VDL2_DROP_LIST_S, VDL2_GOOD_SPS, VDL2_MESSAGE_MAX, VDL2_MESSAGES, VDL2_MIN_RATE_HZ,

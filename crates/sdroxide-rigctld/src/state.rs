@@ -290,7 +290,6 @@ pub fn to_hamlib_mode(m: Mode) -> &'static str {
         | Mode::Hell
         | Mode::RfPaint
         | Mode::PacketHf
-        | Mode::VaraHf
         | Mode::AtChat
         | Mode::Jtty
         | Mode::Rade => "PKTUSB",

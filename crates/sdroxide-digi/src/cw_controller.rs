@@ -567,7 +567,6 @@ impl CwController {
             transcript: Vec::<TranscriptLine>::new(),
             config: self.cfg.clone(),
             jtty: None,
-            vara: None,
             text_rx: self.rx_display(),
             tx_sent: self.sent_chars(now),
             fsq_heard: Vec::new(),
