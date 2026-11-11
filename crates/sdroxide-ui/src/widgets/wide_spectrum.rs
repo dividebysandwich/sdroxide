@@ -88,6 +88,10 @@ pub struct WideWaterfall {
     /// The centre and span the history was drawn against — see
     /// [`WideWaterfall::push`].
     window: Option<(f64, f64)>,
+    /// The span the main panadapter is showing, low and high edge in Hz, as
+    /// last drawn: what the strip's outline frames. Set by the app after each
+    /// strip, so the outline runs at most one frame behind a zoom or a pan.
+    pub view_span: Option<(f64, f64)>,
 }
 
 impl WideWaterfall {
@@ -299,20 +303,20 @@ pub fn show(
         );
     }
 
-    // The slice the main panadapter is receiving. Outlined rather than filled,
-    // so it does not tint the waterfall underneath it.
-    let sx0 = x_of(state.center_hz - state.sample_rate / 2.0);
-    let sx1 = x_of(state.center_hz + state.sample_rate / 2.0);
-    painter.rect_stroke(
-        Rect::from_min_max(
-            Pos2::new(sx0, rect.top()),
-            Pos2::new(sx1.max(sx0 + 2.0), rect.bottom()),
-        ),
-        0.0,
-        // In the mark's colour, like the tuned line: see [`MARK`].
-        Stroke::new(1.0, MARK),
-        StrokeKind::Inside,
-    );
+    // What the panadapter below is showing, outlined rather than filled so it
+    // does not tint the waterfall underneath it. Not the I/Q window behind
+    // it: that jumps with every retune and says nothing about the picture.
+    // Why: HDZ 2026-11-10: "mich interessiert am Kasten nicht, wie viel im
+    //      Puffer ist, sondern der Kasten sollte mir zeigen, was ich sehe".
+    if let Some((sx0, sx1)) = view_box_x(wf.view_span, &x_of) {
+        painter.rect_stroke(
+            Rect::from_min_max(Pos2::new(sx0, rect.top()), Pos2::new(sx1, rect.bottom())),
+            0.0,
+            // In the mark's colour, like the tuned line: see [`MARK`].
+            Stroke::new(1.0, MARK),
+            StrokeKind::Inside,
+        );
+    }
 
     // Frequency scale, ticked and labelled along the top so it stays clear of the
     // newest rows. The step is the panadapter's own, so a strip and the
@@ -522,9 +526,40 @@ fn tuned(hz: f64) -> f64 {
     (hz / CLICK_STEP).round() * CLICK_STEP
 }
 
+/// Narrowest outline worth drawing, pt: below it the box is a line that hides
+/// the tuned mark beside it (a KiwiSDR's 12 kHz on a 30 MHz strip is under one).
+const VIEW_BOX_MIN_W: f32 = 3.0;
+
+/// Where the panadapter's view sits on the strip, as left and right x; `None`
+/// before there is a view, or where it is narrower than [`VIEW_BOX_MIN_W`].
+fn view_box_x(view: Option<(f64, f64)>, x_of: &dyn Fn(f64) -> f32) -> Option<(f32, f32)> {
+    let (lo, hi) = view?;
+    let (x0, x1) = (x_of(lo), x_of(hi));
+    (x1 - x0 >= VIEW_BOX_MIN_W).then_some((x0, x1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Proves: the outline frames the span the panadapter shows, moving with
+    /// it as a pan or a zoom does — not the I/Q window, which a retune moves
+    /// in jumps — and stands aside where it would be narrower than a line.
+    #[test]
+    fn the_outline_frames_what_the_panadapter_shows() {
+        // 1000 pt over 0–30 MHz: 30 kHz a point.
+        let x_of = |hz: f64| -> f32 { (hz / 30_000.0).clamp(0.0, 1000.0) as f32 };
+        let at = |lo: f64, hi: f64| view_box_x(Some((lo, hi)), &x_of);
+        assert_eq!(at(14.0e6, 14.3e6), Some((14.0e6 as f32 / 30_000.0, 14.3e6 as f32 / 30_000.0)));
+        // A pan of 150 kHz moves it 5 pt, smoothly, both edges alike.
+        let (a, b) = at(14.0e6, 14.3e6).unwrap();
+        let (c, d) = at(14.15e6, 14.45e6).unwrap();
+        assert!(((c - a) - 5.0).abs() < 1e-3 && ((d - b) - 5.0).abs() < 1e-3);
+        // A KiwiSDR zoomed in on its 12 kHz: 0.4 pt, not drawn.
+        assert_eq!(at(14.0e6, 14.012e6), None);
+        // No view yet: nothing.
+        assert_eq!(view_box_x(None, &x_of), None);
+    }
 
     fn frame(seq: u32, bins: Vec<u8>) -> SpectrumFrame {
         SpectrumFrame {

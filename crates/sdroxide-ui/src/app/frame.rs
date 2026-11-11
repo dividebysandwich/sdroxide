@@ -744,6 +744,8 @@ impl eframe::App for SdroxideApp {
                     &mut cmds,
                 );
                 ui.add_space(2.0);
+                // What the strip's outline frames on the next frame.
+                self.wide_wf.view_span = Some((self.view.view_lo_hz, self.view.view_hi_hz));
             }
             let inputs = self.panadapter_inputs(now);
             let frame = self.frame.take();

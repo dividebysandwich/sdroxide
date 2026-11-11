@@ -1065,7 +1065,8 @@ them all at once.
   ![The SPEC popup](images/spec-popup.png)
 - **WIDE** — show or hide the **full-band strip**: a shallow second waterfall
   above the panadapter covering everything the receiver can see at once, with a
-  blue outline around the slice the panadapter is receiving and an amber line on
+  outline around the span the panadapter below is showing (left out where it
+  would be narrower than a line) and an amber line on
   the tuned frequency. A scale along its top labels round frequencies across the
   band and both of its **limits** — the lowest and highest frequency the strip
   covers, named in MHz at the two ends, so it is always clear what the strip is
