@@ -264,12 +264,17 @@ const SNR_LABEL_MIN_FRAMES: u32 = 60;
 /// [`SNR_LABEL_MIN_FRAMES`] frames in their mean. A cell not reached counts as
 /// no signal once its neighbours are judged.
 fn guide_max(g: &crate::mean_spectrum::Guide, hz: f64) -> Option<f32> {
+    guide_peak(g, hz - SNR_LABEL_REACH_HZ, hz + SNR_LABEL_REACH_HZ).map(|(v, _)| v)
+}
+
+/// The strongest cell of `g` between `lo_hz` and `hi_hz`: its S/N and the
+/// frequency of its middle. `None` as for [`guide_max`].
+fn guide_peak(g: &crate::mean_spectrum::Guide, lo_hz: f64, hi_hz: f64) -> Option<(f32, f64)> {
     if g.cell_hz <= 0.0 || g.snr_db.is_empty() {
         return None;
     }
-    let first = ((hz - SNR_LABEL_REACH_HZ - g.lo_hz) / g.cell_hz).floor().max(0.0) as usize;
-    let last = (((hz + SNR_LABEL_REACH_HZ - g.lo_hz) / g.cell_hz).ceil().max(0.0) as usize)
-        .min(g.snr_db.len() - 1);
+    let first = ((lo_hz - g.lo_hz) / g.cell_hz).floor().max(0.0) as usize;
+    let last = (((hi_hz - g.lo_hz) / g.cell_hz).ceil().max(0.0) as usize).min(g.snr_db.len() - 1);
     if first > last {
         return None;
     }
@@ -277,12 +282,42 @@ fn guide_max(g: &crate::mean_spectrum::Guide, hz: f64) -> Option<f32> {
     if frames < SNR_LABEL_MIN_FRAMES {
         return None;
     }
-    Some(
-        g.snr_db[first..=last]
-            .iter()
-            .filter(|v| v.is_finite())
-            .fold(f32::NEG_INFINITY, |a, &v| a.max(v)),
-    )
+    let (i, v) = g.snr_db[first..=last]
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| v.is_finite())
+        .fold((0, f32::NEG_INFINITY), |a, (i, &v)| if v > a.1 { (i, v) } else { a });
+    Some((v, g.lo_hz + (first + i) as f64 * g.cell_hz + g.cell_hz / 2.0))
+}
+
+/// How far either side of a strong station FLANKS keeps other labels away: its
+/// sidebands and splatter, about a cursor's width in all.
+// Why: HDZ 2026-11-11: "es werden noch zu viele Sender insbesondere in den
+//      Seitenbändern erlaubt … wenn ein Sender einen großen Wert (say >10 S/N)
+//      oder 15 hat, die Umgebung in typischer Cursorbreite, vielleicht 20 kHz,
+//      blacklisten … einen Regler wie 'keine Labels an Sendergrenzen'".
+const SNR_FLANK_REACH_HZ: f64 = 10_000.0;
+/// How far under its strong neighbour a label's own S/N must stay for it to
+/// count as that neighbour's flank rather than a station of its own.
+const SNR_FLANK_MARGIN_DB: f32 = 6.0;
+
+/// Whether a label at `hz` stands on a strong station's flank: within
+/// [`SNR_FLANK_REACH_HZ`] a cell reaches `flank_db`, it lies outside the label's
+/// own [`SNR_LABEL_REACH_HZ`], and the label's own S/N there is
+/// [`SNR_FLANK_MARGIN_DB`] or more under it. The strong station keeps its own
+/// label; `flank_db` at [`crate::view::SNR_FLANK_OFF`] or below blocks nothing.
+fn on_a_flank(g: &crate::mean_spectrum::Guide, hz: f64, flank_db: f32) -> bool {
+    if flank_db <= crate::view::SNR_FLANK_OFF {
+        return false;
+    }
+    let (Some(own), Some((strong, at))) =
+        (guide_max(g, hz), guide_peak(g, hz - SNR_FLANK_REACH_HZ, hz + SNR_FLANK_REACH_HZ))
+    else {
+        return false;
+    };
+    strong >= flank_db
+        && (at - hz).abs() > SNR_LABEL_REACH_HZ
+        && own <= strong - SNR_FLANK_MARGIN_DB
 }
 
 /// LABELS BY S/N: per spot id, whether its label is wanted and its present
@@ -797,11 +832,15 @@ impl SdroxideApp {
         let mut st = self.snr_labels.borrow_mut();
         let entry = st.shown.entry(id).or_insert((true, 0.0));
         if recheck {
-            entry.0 = match guide_max(g, hz) {
-                None => true,
-                Some(v) if v >= on => true,
-                Some(v) if v < off => false,
-                Some(_) => entry.0,
+            entry.0 = if on_a_flank(g, hz, self.view.snr_label_flank_db) {
+                false
+            } else {
+                match guide_max(g, hz) {
+                    None => true,
+                    Some(v) if v >= on => true,
+                    Some(v) if v < off => false,
+                    Some(_) => entry.0,
+                }
             };
         }
         let target = if entry.0 { 1.0 } else { 0.0 };
@@ -1222,6 +1261,43 @@ mod tests {
         assert_eq!(super::guide_max(&g(100), 9_650_000.0), Some(6.0));
         assert_eq!(super::guide_max(&g(100), 9_620_000.0), Some(0.0));
         assert_eq!(super::guide_max(&g(10), 9_650_000.0), None, "too early to judge");
+    }
+
+    /// FLANKS (HDZ's picture on 7.305 MHz, 2026-11-11): a broadcast carrier
+    /// 25 dB up with sidebands 10 dB up for 5 kHz either side. A label 6 kHz off
+    /// it stands on the flank and goes; the strong station keeps its own; one
+    /// 15 kHz off is beyond the flank; with the rail off nothing is blocked; a
+    /// second station of its own 4 kHz off, 20 dB up, is no flank.
+    #[test]
+    fn a_strong_station_keeps_labels_off_its_flanks() {
+        let mut snr = vec![0.0f32; 1000];
+        for (i, v) in snr.iter_mut().enumerate().take(550).skip(450) {
+            *v = if i == 500 { 25.0 } else { 10.0 };
+        }
+        let g = crate::mean_spectrum::Guide {
+            lo_hz: 7_255_000.0,
+            cell_hz: 100.0,
+            snr_db: snr.clone(),
+            count: vec![100; 1000],
+            frames: 100,
+        };
+        let carrier = 7_255_000.0 + 500.0 * 100.0 + 50.0;
+        assert!(super::on_a_flank(&g, carrier + 6_000.0, 15.0), "sideband label kept");
+        assert!(!super::on_a_flank(&g, carrier, 15.0), "the station lost its own label");
+        assert!(!super::on_a_flank(&g, carrier + 15_000.0, 15.0), "blocked past the flank");
+        assert!(
+            !super::on_a_flank(&g, carrier + 6_000.0, crate::view::SNR_FLANK_OFF),
+            "off blocks"
+        );
+        // Counter-check on the threshold: a carrier under it blocks nothing.
+        assert!(
+            !super::on_a_flank(&g, carrier + 6_000.0, 26.0),
+            "a carrier under the rail blocked"
+        );
+        let mut two = snr;
+        two[540] = 20.0;
+        let g2 = crate::mean_spectrum::Guide { snr_db: two, ..g };
+        assert!(!super::on_a_flank(&g2, carrier + 4_000.0, 15.0), "a station of its own blocked");
     }
 
     use super::WIDER_THAN_PASSBAND;

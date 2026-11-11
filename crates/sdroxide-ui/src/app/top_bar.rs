@@ -5794,6 +5794,32 @@ impl SdroxideApp {
                 .on_hover_text(tr!("topbar-snr-min-tip"))
                 .on_disabled_hover_text(tr!("topbar-snr-min-tip"));
             });
+            // FLANKS: a strong station keeps other labels off its sidebands.
+            // Why: HDZ 2026-11-11: "einen Regler wie 'keine Labels an
+            //      Sendergrenzen'".
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(tr!("topbar-caption-snr-flank"))
+                        .size(10.0)
+                        .color(crate::theme::CYAN_DIM()),
+                );
+                let off = tr!("topbar-snr-flank-off");
+                ui.add_enabled(
+                    self.view.snr_guide,
+                    Slider::new(&mut self.view.snr_label_flank_db, crate::view::SNR_FLANK_RANGE)
+                        .step_by(1.0)
+                        .show_value(true)
+                        .custom_formatter(move |v, _| {
+                            if v as f32 <= crate::view::SNR_FLANK_OFF {
+                                off.clone()
+                            } else {
+                                format!("{v:.0} dB")
+                            }
+                        }),
+                )
+                .on_hover_text(tr!("topbar-snr-flank-tip"))
+                .on_disabled_hover_text(tr!("topbar-snr-flank-tip"));
+            });
             if crate::chrome::chip(ui, self.view.decode_labels, tr!("topbar-decode-labels"))
                 .on_hover_text(tr!("topbar-mark-every-decoded-station-waterfall"))
                 .clicked()

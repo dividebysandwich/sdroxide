@@ -1102,6 +1102,12 @@ them all at once.
     2 dB to start with. 2 dB is where a weak steady station such as the
     Shannon VOLMET stands once the line has averaged it; 0 dB shows whatever
     the line has not ruled out. Live while S/N is on.
+  - **FLANKS** — the rail under S/N MIN: a strong station's sidebands lift
+    the S/N line for several kilohertz either side, enough for a weak station
+    listed there to pass S/N MIN. From the S/N set here (10 to 30 dB; at the
+    left end, *off*, the rail blocks nothing), a station keeps every other
+    label off ±10 kHz around it, unless that label's own S/N is within 6 dB of
+    the strong one — a station of its own. The strong station keeps its label.
   - In the SPOTS window, **S/N** beside **IN VIEW** narrows what IN VIEW shows
     to the spots the S/N line sees a signal at: S/N MIN or more within 2 kHz
     of the spot's frequency. It works with IN VIEW only, because the line
