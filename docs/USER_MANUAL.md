@@ -1109,7 +1109,9 @@ them all at once.
   covers, named in MHz at the two ends, so it is always clear what the strip is
   showing. Click anywhere on it to tune there. Hovering it shows a
   crosshair and the frequency under the cursor, and **shift+drag** measures a
-  span across it, both exactly as on the main waterfall. The button appears
+  span across it, both exactly as on the main waterfall. A thin row along its
+  bottom edge carries the band plan in the waterfall strip's colours —
+  amateur, broadcast, CB and AM — without labels. The button appears
   only on receivers that produce a full-band view — a direct-sampling front end
   such as the RX-888, a KiwiSDR, a SpyServer; on an RTL-SDR, HPSDR or TCI radio
   the panadapter span is all the hardware delivers — and the setting is

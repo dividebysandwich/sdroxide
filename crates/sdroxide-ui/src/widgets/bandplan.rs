@@ -151,6 +151,42 @@ fn coarse(region: Region) -> Vec<Seg> {
     v
 }
 
+/// Depth of the allocation row along the bottom of the full-band strip, pt.
+// Why: HDZ 2026-11-10: "zum Panorama unten gerne noch Bänder in den unteren
+//      6–8 Pixeln als Overlay".
+pub const WIDE_ROW_H: f32 = 7.0;
+
+/// The coarse allocation row alone — ham, broadcast, CB and AM — as a thin
+/// coloured band along the bottom of the full-band strip. No labels: a row
+/// this shallow holds no legible text, and the colours are the waterfall
+/// strip's own, so they read the same.
+pub fn wide_row(p: &Painter, rect: &Rect, x_of: &dyn Fn(f64) -> f32) {
+    for (r, c) in wide_row_cells(rect, x_of) {
+        p.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 170));
+        p.vline(
+            r.left(),
+            r.y_range(),
+            Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 120)),
+        );
+    }
+}
+
+/// Where [`wide_row`] paints: one cell per allocation, clipped to the strip,
+/// the bottom [`WIDE_ROW_H`] of it, none narrower than a point.
+fn wide_row_cells(rect: &Rect, x_of: &dyn Fn(f64) -> f32) -> Vec<(Rect, Color32)> {
+    let top = rect.bottom() - WIDE_ROW_H;
+    coarse(sdroxide_types::region())
+        .into_iter()
+        .filter_map(|seg| {
+            let x0 = x_of(seg.lo).max(rect.left());
+            let x1 = x_of(seg.hi).min(rect.right());
+            (x1 - x0 >= 1.0).then(|| {
+                (Rect::from_min_max(pos2(x0, top), pos2(x1, rect.bottom())), color(seg.kind))
+            })
+        })
+        .collect()
+}
+
 /// The fine tier: the region's sub-segments where there are any, and the whole
 /// band where there are not (everything above 30 MHz).
 fn fine(region: Region) -> Vec<Seg> {
@@ -474,4 +510,32 @@ pub fn overlay(p: &Painter, view: &ViewState, wf: &Rect, panel_below: bool) -> f
         Stroke::new(1.0, theme::scope().line),
     );
     total_h
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Proves: the allocation row of the full-band strip sits in its bottom
+    /// 7 pt and inside it left to right, whatever the receiver's span — a
+    /// KiwiSDR's 0–30 MHz lane as an RX-888's 0–64.8 MHz — and carries the
+    /// 20 m band where it belongs.
+    #[test]
+    fn the_wide_row_lies_along_the_bottom_of_the_strip() {
+        let rect = Rect::from_min_max(pos2(10.0, 100.0), pos2(1010.0, 160.0));
+        for span in [30.0e6, 64.8e6] {
+            let x_of = |hz: f64| -> f32 { 10.0 + (hz / span * 1000.0) as f32 };
+            let cells = wide_row_cells(&rect, &x_of);
+            assert!(!cells.is_empty());
+            for (r, _) in &cells {
+                assert_eq!((r.top(), r.bottom()), (160.0 - WIDE_ROW_H, 160.0));
+                assert!(r.left() >= rect.left() && r.right() <= rect.right() && r.width() >= 1.0);
+            }
+            let m20 = x_of(14.1e6);
+            assert!(
+                cells.iter().any(|(r, _)| r.left() <= m20 && m20 <= r.right()),
+                "20 m at {span}"
+            );
+        }
+    }
 }
