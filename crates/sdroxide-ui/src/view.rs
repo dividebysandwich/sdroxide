@@ -177,6 +177,12 @@ pub struct ViewState {
     //      use S/N for label visibility".
     #[serde(default)]
     pub snr_label_filter: bool,
+    /// Under [`Self::snr_label_filter`], a label also needs a peak of its own:
+    /// its S/N at least 3 dB over the median of the ring 0.6–2 kHz around it.
+    // Why: HDZ 2026-11-11, strong QRM: "sind die Label in der Lage, einen Peak
+    //      im S/N zu sehen?".
+    #[serde(default)]
+    pub snr_label_peak: bool,
     /// The S/N, dB over the noise floor, a spot needs under
     /// [`Self::snr_label_filter`] for its label; set on the S/N rail.
     #[serde(default = "snr_label_min_default")]
@@ -729,6 +735,7 @@ impl Default for ViewState {
             sk_presets: sk_presets_default(),
             snr_guide: false,
             snr_label_filter: false,
+            snr_label_peak: false,
             snr_label_min_db: snr_label_min_default(),
             snr_label_flank_db: snr_flank_default(),
             snr_guide_top_db: snr_guide_top_default(),

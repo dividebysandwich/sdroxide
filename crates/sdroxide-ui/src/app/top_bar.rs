@@ -5771,6 +5771,23 @@ impl SdroxideApp {
                 // Rebuild the candidates now rather than at the next minute.
                 self.broadcast_minute = -1;
             }
+            // PEAK: a label needs a peak of its own, not just height over the
+            // band's floor, so a broad hump (interference, a sideband) lifts
+            // none.
+            // Why: HDZ 2026-11-11, strong QRM: "sind die Label in der Lage,
+            //      einen Peak im S/N zu sehen?" — "ja bitte hänge die
+            //      Spitzen-Algorithmik mit rein".
+            if crate::chrome::chip_enabled(
+                ui,
+                self.view.snr_guide,
+                self.view.snr_label_peak,
+                &tr!("topbar-snr-label-peak"),
+            )
+            .on_hover_text(tr!("topbar-snr-label-peak-tip"))
+            .clicked()
+            {
+                self.view.snr_label_peak = !self.view.snr_label_peak;
+            }
             // The S/N threshold for labels and candidates, on a rail under
             // LABELS BY S/N, live while the guide runs.
             // Why: HDZ 2026-11-07: "S/N mit 6 ist viel zu streng, Shannon hat

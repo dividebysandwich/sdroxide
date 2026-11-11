@@ -1102,6 +1102,12 @@ them all at once.
     2 dB to start with. 2 dB is where a weak steady station such as the
     Shannon VOLMET stands once the line has averaged it; 0 dB shows whatever
     the line has not ruled out. Live while S/N is on.
+  - **PEAK** — beside LABELS BY S/N: a label also needs a peak of its own,
+    its S/N at least 3 dB over the median of the band 0.6 to 2 kHz either side
+    of it. Height over the floor alone lets a broad hump through — strong
+    interference over part of the band, a station's sideband — and with it
+    every station listed there; a carrier of its own stands out of its
+    surroundings. Off to start with.
   - **FLANKS** — the rail under S/N MIN: a strong station's sidebands lift
     the S/N line for several kilohertz either side, enough for a weak station
     listed there to pass S/N MIN. From the S/N set here (10 to 30 dB; at the

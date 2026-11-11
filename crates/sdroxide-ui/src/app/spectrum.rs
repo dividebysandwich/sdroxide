@@ -290,6 +290,41 @@ fn guide_peak(g: &crate::mean_spectrum::Guide, lo_hz: f64, hi_hz: f64) -> Option
     Some((v, g.lo_hz + (first + i) as f64 * g.cell_hz + g.cell_hz / 2.0))
 }
 
+/// PEAK: how far a label's S/N must stand over its surroundings, dB.
+const PEAK_PROMINENCE_DB: f32 = 3.0;
+/// The ring a label's peak is measured against, Hz from its frequency: past a
+/// carrier's own cells, inside its sidebands.
+// Why: HDZ 2026-11-07, picture 7.305 MHz: catalogue guesses on the sideband of
+//      the strong carrier 5 kHz away — a modulated sideband stands S/N MIN over
+//      the noise as a broad hump; a station of its own stands out of its
+//      surroundings as a peak. 2026-11-11 the same for interference.
+const PEAK_RING_HZ: (f64, f64) = (600.0, 2_000.0);
+
+/// Whether a label at `hz` has a peak of its own: its S/N within
+/// [`SNR_LABEL_REACH_HZ`] at least [`PEAK_PROMINENCE_DB`] over the median of
+/// the cells [`PEAK_RING_HZ`] from it. A broad hump — interference over part of
+/// the band, a strong station's sideband — lifts the ring with it and so has
+/// none. `None` where the guide cannot tell, as [`guide_max`].
+fn has_a_peak(g: &crate::mean_spectrum::Guide, hz: f64) -> Option<bool> {
+    let top = guide_max(g, hz)?;
+    let (near, far) = PEAK_RING_HZ;
+    let mut ring: Vec<f32> = g
+        .snr_db
+        .iter()
+        .enumerate()
+        .filter(|(i, v)| {
+            let d = (g.lo_hz + (*i as f64 + 0.5) * g.cell_hz - hz).abs();
+            v.is_finite() && (near..=far).contains(&d)
+        })
+        .map(|(_, v)| *v)
+        .collect();
+    if ring.is_empty() {
+        return None;
+    }
+    ring.sort_by(f32::total_cmp);
+    Some(top - ring[ring.len() / 2] >= PEAK_PROMINENCE_DB)
+}
+
 /// How far either side of a strong station FLANKS keeps other labels away: its
 /// sidebands and splatter, about a cursor's width in all.
 // Why: HDZ 2026-11-11: "es werden noch zu viele Sender insbesondere in den
@@ -832,7 +867,9 @@ impl SdroxideApp {
         let mut st = self.snr_labels.borrow_mut();
         let entry = st.shown.entry(id).or_insert((true, 0.0));
         if recheck {
-            entry.0 = if on_a_flank(g, hz, self.view.snr_label_flank_db) {
+            entry.0 = if on_a_flank(g, hz, self.view.snr_label_flank_db)
+                || (self.view.snr_label_peak && has_a_peak(g, hz) == Some(false))
+            {
                 false
             } else {
                 match guide_max(g, hz) {
@@ -1261,6 +1298,37 @@ mod tests {
         assert_eq!(super::guide_max(&g(100), 9_650_000.0), Some(6.0));
         assert_eq!(super::guide_max(&g(100), 9_620_000.0), Some(0.0));
         assert_eq!(super::guide_max(&g(10), 9_650_000.0), None, "too early to judge");
+    }
+
+    /// PEAK (HDZ 2026-11-11, strong QRM): interference lifts 30 kHz of the band
+    /// 8 dB over the floor. Every label in it passes S/N MIN by height alone;
+    /// with PEAK none does, except a carrier standing 6 dB out of the hump. A
+    /// broadcast carrier on quiet band keeps its peak, and the sideband hump of
+    /// the 7.305 MHz picture has none.
+    #[test]
+    fn a_label_needs_a_peak_of_its_own() {
+        let mut snr = vec![0.0f32; 1000];
+        for v in snr.iter_mut().take(650).skip(350) {
+            *v = 8.0;
+        }
+        snr[400] = 14.0; // a carrier standing out of the hump
+        snr[800] = 12.0; // a carrier on quiet band
+        for v in snr.iter_mut().take(880).skip(850) {
+            *v = 6.0; // a sideband hump, 3 kHz wide
+        }
+        let g = crate::mean_spectrum::Guide {
+            lo_hz: 7_000_000.0,
+            cell_hz: 100.0,
+            snr_db: snr,
+            count: vec![100; 1000],
+            frames: 100,
+        };
+        let at = |cell: f64| 7_000_000.0 + cell * 100.0 + 50.0;
+        assert_eq!(super::guide_max(&g, at(500.0)), Some(8.0), "the hump passes by height");
+        assert_eq!(super::has_a_peak(&g, at(500.0)), Some(false), "a label in the QRM kept");
+        assert_eq!(super::has_a_peak(&g, at(400.0)), Some(true), "the carrier in the QRM lost");
+        assert_eq!(super::has_a_peak(&g, at(800.0)), Some(true), "a carrier on quiet band lost");
+        assert_eq!(super::has_a_peak(&g, at(865.0)), Some(false), "the sideband hump kept");
     }
 
     /// FLANKS (HDZ's picture on 7.305 MHz, 2026-11-11): a broadcast carrier
