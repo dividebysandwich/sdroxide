@@ -253,9 +253,9 @@ impl Protocol for TrUsdx {
         // (olgierd/trusdx-audio, ilikehamradio's Linux driver). On a sound
         // card the audio arrives at the mic/line input, so `TX;` it stays.
         match (on, self.one_cable) {
-            (true, true) => b"TX0;".to_vec(),
-            (true, false) => b"TX;".to_vec(),
-            (false, _) => b"RX;".to_vec(),
+            (true, true) => b";TX0;".to_vec(),
+            (true, false) => b";TX;".to_vec(),
+            (false, _) => b";RX;".to_vec(),
         }
     }
 
@@ -295,7 +295,7 @@ impl Protocol for TrUsdx {
     /// only accepts a CAT frame with the stream stopped, and only resumes when
     /// it is asked to.
     fn stream_pause(&self) -> Vec<u8> {
-        b"UA0;".to_vec()
+        b";RX;".to_vec()
     }
 
     fn stream_resume(&self) -> Vec<u8> {
@@ -358,7 +358,7 @@ impl Protocol for TrUsdx {
     /// call idempotent whatever state the radio is in — safe on a stream that
     /// is running, on one that never started, and on one that has died.
     fn stream_start(&self) -> Vec<u8> {
-        b"UA0;UA1;".to_vec()
+        b";RX;UA1;".to_vec()
     }
 
     fn stream_active(&self) -> bool {
@@ -493,12 +493,12 @@ mod tests {
         assert_eq!(p.set_mode(Mode::Usb), b"MD2;".to_vec());
         assert_eq!(p.set_mode(Mode::Cw), b"MD3;".to_vec());
         // In-band audio keys with `TX0;`, the CAT-audio transmit (#724)...
-        assert_eq!(p.ptt(true), b"TX0;".to_vec());
-        assert_eq!(p.ptt(false), b"RX;".to_vec());
+        assert_eq!(p.ptt(true), b";TX0;".to_vec());
+        assert_eq!(p.ptt(false), b";RX;".to_vec());
         // ...and a sound card with the bare `TX;`, the mic/line input.
         let q = TrUsdx::new(false);
-        assert_eq!(q.ptt(true), b"TX;".to_vec());
-        assert_eq!(q.ptt(false), b"RX;".to_vec());
+        assert_eq!(q.ptt(true), b";TX;".to_vec());
+        assert_eq!(q.ptt(false), b";RX;".to_vec());
     }
 
     /// A digital mode goes to the sideband its name carries. There is no DATA
@@ -542,8 +542,8 @@ mod tests {
         assert!(!open.iter().any(|f| f.contains("UA1")), "the enable must not open: {open:?}");
         assert!(p.streams_audio());
         // The retry stops and starts, so it is safe over a live stream too.
-        assert_eq!(p.stream_start(), b"UA0;UA1;".to_vec());
-        assert_eq!(p.stream_pause(), b"UA0;".to_vec());
+        assert_eq!(p.stream_start(), b";RX;UA1;".to_vec());
+        assert_eq!(p.stream_pause(), b";RX;".to_vec());
         assert_eq!(p.stream_resume(), b"UA1;".to_vec());
         // The in-band mode asks for nothing of its own — a poll would kill the
         // stream — and it asserts `UA0;` at open all the same, to clear any
