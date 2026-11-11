@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use sdroxide_radio::{Complex32, EngineConfig, IqSource, Result, start_engine};
-use sdroxide_types::{Command, DeviceCaps, Mode, RxId};
+use sdroxide_types::{Command, DeviceCaps, Mode, RadioEvent, RxId};
 
 #[derive(Default)]
 struct Log {
@@ -92,6 +92,16 @@ fn ptt_in_cw_keys_the_transmitter_without_a_carrier() {
     std::thread::sleep(Duration::from_millis(600));
     assert!(log.lock().unwrap().ended, "releasing PTT did not unkey");
 
+    for _ in 0..3 {
+        *log.lock().unwrap() = Log::default();
+        h.cmd_tx.send(Command::SetPtt(true)).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(log.lock().unwrap().began, "PTT did not key again");
+        h.cmd_tx.send(Command::SetPtt(false)).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(log.lock().unwrap().ended, "PTT could not be turned off");
+    }
+
     drop(h.cmd_tx);
     if let Some(t) = thread {
         let _ = t.join();
@@ -100,7 +110,8 @@ fn ptt_in_cw_keys_the_transmitter_without_a_carrier() {
 
 /// Issue #716: releasing PTT on an over the key started, not PTT, used to unkey
 /// the radio while the keyer stayed latched, and nothing keyed again until
-/// CLEAR.
+/// CLEAR. Repeated releases must also wait for the CW tail to finish, rather
+/// than bypassing the controller's completion callback through plain PTT.
 #[test]
 fn a_ptt_release_on_a_keyed_over_leaves_the_key_working() {
     let log = Arc::new(Mutex::new(Log::default()));
@@ -115,24 +126,49 @@ fn a_ptt_release_on_a_keyed_over_leaves_the_key_working() {
 
     h.cmd_tx.send(Command::SetMode { rx: RxId::Main, mode: Mode::Cw }).unwrap();
     std::thread::sleep(Duration::from_millis(400));
+    // The Pico's PTT note can arrive before its first key note, so render
+    // some text-path silence before the MIDI note engages straight keying.
+    h.cmd_tx.send(Command::SetPtt(true)).unwrap();
+    std::thread::sleep(Duration::from_millis(100));
     h.cmd_tx.send(Command::CwStraight(true)).unwrap();
     std::thread::sleep(Duration::from_millis(100));
     h.cmd_tx.send(Command::CwKey(true)).unwrap();
     std::thread::sleep(Duration::from_millis(300));
     h.cmd_tx.send(Command::CwKey(false)).unwrap();
     assert!(log.lock().unwrap().began, "the key did not key the transmitter");
-    h.cmd_tx.send(Command::SetPtt(false)).unwrap();
+    for _ in 0..3 {
+        h.cmd_tx.send(Command::SetPtt(false)).unwrap();
+    }
     std::thread::sleep(Duration::from_millis(1500));
     assert!(log.lock().unwrap().ended, "releasing PTT did not end the over");
 
-    *log.lock().unwrap() = Log::default();
-    h.cmd_tx.send(Command::CwKey(true)).unwrap();
-    std::thread::sleep(Duration::from_millis(600));
-    h.cmd_tx.send(Command::CwKey(false)).unwrap();
-    {
-        let l = log.lock().unwrap();
-        assert!(l.began, "the key no longer keys after the PTT release");
-        assert!(l.peak > 1e-3, "keyed, but no carrier");
+    for hold_ptt in [false, true] {
+        *log.lock().unwrap() = Log::default();
+        if hold_ptt {
+            h.cmd_tx.send(Command::SetPtt(true)).unwrap();
+        }
+        h.cmd_tx.send(Command::CwKey(true)).unwrap();
+        std::thread::sleep(Duration::from_millis(600));
+        h.cmd_tx.send(Command::CwKey(false)).unwrap();
+        {
+            let l = log.lock().unwrap();
+            assert!(l.began, "the key no longer keys after the PTT release");
+            assert!(l.peak > 1e-3, "keyed, but no carrier");
+        }
+        for _ in 0..3 {
+            h.cmd_tx.send(Command::SetPtt(false)).unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(600));
+        assert!(log.lock().unwrap().ended, "repeated PTT releases did not unkey");
+        let last_ptt = h
+            .event_rx
+            .try_iter()
+            .filter_map(|e| match e {
+                RadioEvent::State(s) => Some(s.tx.ptt),
+                _ => None,
+            })
+            .last();
+        assert_eq!(last_ptt, Some(false), "the UI was left showing PTT on");
     }
 
     drop(h.cmd_tx);
