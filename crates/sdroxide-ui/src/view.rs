@@ -171,6 +171,25 @@ pub struct ViewState {
     //      Guide im gleichen Grün".
     #[serde(default)]
     pub snr_guide: bool,
+    /// With the S/N guide, its spectral kurtosis per frequency as a second
+    /// line: noise 1, a steady carrier 0, modulation above 1.
+    // Why: HDZ 2026-11-08: "manche Kanäle senden einen einfachen Träger ohne
+    //      Modulation … ein Spectral-Kurtosis-Spektrum ähnlich wie S/N bauen
+    //      und tunen, das kann man dann evtl. beides kombinieren".
+    #[serde(default)]
+    pub sk_guide: bool,
+    /// Spectral kurtosis at the SK line's full height.
+    // Why: HDZ 2026-11-08: "den Wertebereich des SK wählbar machen".
+    /// The SK line's full height, dB (10·log10 SK; noise 0 dB).
+    // Why: HDZ 2026-11-08: "wäre für SK auch im 1D-Spektrum eine
+    //      Log-Darstellung besser? S/N ist doch mit dB log".
+    #[serde(default = "sk_guide_top_default")]
+    pub sk_guide_top_db: f32,
+    /// Time constant of the SK guide's rolling moments, s.
+    // Why: HDZ 2026-11-08: "im Augenblick ist das Spektrum nicht langlebig
+    //      genug".
+    #[serde(default = "sk_tau_default")]
+    pub sk_tau_s: f32,
     /// While the S/N guide runs, label a spot only where the guide sees a
     /// signal at its frequency.
     // Why: HDZ 2026-11-07: "wenn da nichts ist, sollte auch kein Label hin …
@@ -734,6 +753,9 @@ impl Default for ViewState {
             peak_hold: false,
             sk_presets: sk_presets_default(),
             snr_guide: false,
+            sk_guide: false,
+            sk_guide_top_db: sk_guide_top_default(),
+            sk_tau_s: sk_tau_default(),
             snr_label_filter: false,
             snr_label_peak: false,
             snr_label_flanks: false,
@@ -954,6 +976,33 @@ pub const SNR_GUIDE_TOP_RANGE: std::ops::RangeInclusive<f32> = 12.0..=30.0;
 
 fn snr_guide_top_default() -> f32 {
     SNR_GUIDE_TOP_DEFAULT
+}
+
+/// The SK line's full height to start with. Sporadic overs read about 2/d,
+/// d the share of the time a channel is on air: a CB round with long pauses
+/// read 40–50 (HDZ 2026-11-08), so the line has to reach that far.
+pub const SK_GUIDE_TOP_DEFAULT: f32 = 20.0;
+/// The SK TOP rail's range.
+pub const SK_GUIDE_TOP_RANGE: std::ops::RangeInclusive<f32> = 3.0..=30.0;
+/// Where the SK line's base sits, dB: a carrier reads far below the noise's
+/// 0 dB, and this much of that is shown.
+pub const SK_GUIDE_BASE_DB: f32 = -10.0;
+
+fn sk_guide_top_default() -> f32 {
+    SK_GUIDE_TOP_DEFAULT
+}
+
+/// The SK moments' time constant to start with, s (see
+/// `mean_spectrum::SK_TAU_S`).
+pub const SK_TAU_DEFAULT_S: f32 = 10.0;
+/// The SK τ rail's range, s.
+// Why: HDZ 2026-11-08: "die Zeitkonstante zwischen 0,1 s … das ist ja wie ein
+//      Speicher, vielleicht 10 Sekunden, dann ist es ja fast eine Minute
+//      sichtbar" — a 30 dB over stays about 8 τ, a 10 dB one about 4.6 τ.
+pub const SK_TAU_RANGE: std::ops::RangeInclusive<f32> = 0.1..=20.0;
+
+fn sk_tau_default() -> f32 {
+    SK_TAU_DEFAULT_S
 }
 
 /// Default for [`ViewState::prop_map_mode`] — every band at once, which reads
