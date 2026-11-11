@@ -18830,6 +18830,10 @@ impl Engine {
             || self.audio_mode
             || self.source.center_is_dial()
             || !self.source.recentre_on_dwell()
+            // Never under a transmission: the window must not jump mid-over,
+            // and a front end that shares its LO must not be retuned keyed.
+            || self.tx_active
+            || self.rig_tx
         {
             return;
         }
