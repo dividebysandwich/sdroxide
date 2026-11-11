@@ -24,28 +24,27 @@ fn main() {
             vendor.display()
         );
     }
-    let vendor = vendor.canonicalize().expect("canonicalize vendor/data2g/native");
+    let vendor =
+        without_verbatim_prefix(vendor.canonicalize().expect("canonicalize vendor/data2g/native"));
     println!("cargo:rerun-if-changed={}", vendor.join("core").display());
 
     let target = std::env::var("TARGET").unwrap();
     let msvc = target.contains("msvc");
     let windows = target.contains("windows");
 
-    // The windows-gnu build runs through MSYS make, which cannot take a
-    // drive-letter path in a rule; building from a copy in place keeps every
-    // path relative (sdroxide-ism carries the same workaround).
+    // Built from a copy in place, on every platform:
+    // - the windows-gnu build runs through MSYS make, which cannot take a
+    //   drive-letter path in a rule; in-tree, every path is relative
+    //   (sdroxide-ism carries the same workaround);
+    // - the copy's CMakeLists can take a lower minimum (`relax_cmake_minimum`)
+    //   than upstream's, which the Ubuntu 22.04 release container needs.
     let cmake_out = out.join("data2g");
-    let src = if windows && !msvc {
-        let in_tree = cmake_out.join("build");
-        if stale_cache(&in_tree) {
-            fs::remove_dir_all(&in_tree)
-                .unwrap_or_else(|e| panic!("clear {}: {e}", in_tree.display()));
-        }
-        copy_tree(&vendor, &in_tree);
-        in_tree
-    } else {
-        vendor.clone()
-    };
+    let src = cmake_out.join("build");
+    if stale_cache(&src) {
+        fs::remove_dir_all(&src).unwrap_or_else(|e| panic!("clear {}: {e}", src.display()));
+    }
+    copy_tree(&vendor, &src);
+    relax_cmake_minimum(&vendor.join("CMakeLists.txt"), &src.join("CMakeLists.txt"));
 
     let dst = cmake::Config::new(&src)
         .out_dir(&cmake_out)
@@ -81,8 +80,10 @@ fn main() {
     let mut shim = cc::Build::new();
     shim.cpp(true)
         .file(manifest.join("shim/data2g_shim.cpp"))
-        .include(vendor.join("core"))
-        .include(vendor.join("third_party/pocketfft"))
+        // The copy, not `vendor`: a path from `canonicalize` is a verbatim
+        // `\\?\D:\…` one on Windows, which MinGW g++ cannot open.
+        .include(src.join("core"))
+        .include(src.join("third_party/pocketfft"))
         .define("DATA2G_VERSION", Some(&*format!("\"{}\"", upstream_version(&vendor))))
         .opt_level(2);
     if msvc {
@@ -97,6 +98,48 @@ fn main() {
 
     if !windows {
         println!("cargo:rustc-link-lib=dylib=pthread");
+    }
+}
+
+/// The oldest CMake the copy accepts. Upstream asks for 3.24, but nothing on
+/// the `data2g_core` path (every app, binding and test off) needs more than
+/// 3.22 — the newest the Ubuntu 22.04 container of the `-compat` release
+/// builds has. A range keeps upstream's figure as the policy version, so a
+/// newer CMake behaves exactly as it does for upstream.
+const CMAKE_FLOOR: &str = "3.22";
+
+/// Write `from` to `to` with `cmake_minimum_required(VERSION x)` turned into
+/// `VERSION 3.22...x`. Rewritten on every build because `copy_tree` would
+/// otherwise keep a stale copy: the patched file is newer than its source.
+fn relax_cmake_minimum(from: &Path, to: &Path) {
+    let text = fs::read_to_string(from).unwrap_or_else(|e| panic!("read {}: {e}", from.display()));
+    let needle = "cmake_minimum_required(VERSION ";
+    let patched = match text.find(needle) {
+        Some(at) => {
+            let rest = &text[at + needle.len()..];
+            let end = rest.find(')').expect("cmake_minimum_required without ')'");
+            let version = rest[..end].trim();
+            if version.contains("...") {
+                text.clone()
+            } else {
+                format!("{}{needle}{CMAKE_FLOOR}...{version}{}", &text[..at], &rest[end..])
+            }
+        }
+        None => text.clone(),
+    };
+    if fs::read_to_string(to).ok().as_deref() != Some(&patched) {
+        fs::write(to, patched).unwrap_or_else(|e| panic!("write {}: {e}", to.display()));
+    }
+}
+
+/// On Windows `canonicalize` returns a verbatim `\\?\D:\…` path, which MinGW
+/// gcc cannot open. Drop the prefix for plain drive paths; anything else is
+/// left as it is (same as sdroxide-mercury).
+fn without_verbatim_prefix(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy();
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => p,
     }
 }
 
