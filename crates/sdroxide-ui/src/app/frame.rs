@@ -2413,7 +2413,7 @@ impl SdroxideApp {
 mod tests {
     use sdroxide_types::{Band, Mode};
 
-    use super::{digi_split, qsy_clears_decodes, BODY_MARGIN};
+    use super::{BODY_MARGIN, digi_split, qsy_clears_decodes};
 
     /// The reported bug: 20 m to 40 m left the previous band's decodes in the
     /// list, because the only thing that cleared it was a mode change and the
@@ -2547,8 +2547,14 @@ mod tests {
         for spectrum_3d in [false, true] {
             for (w, h) in [(1366.0f32, 768.0f32), (1900.0, 1000.0)] {
                 let ctx = egui::Context::default();
-                let mut app =
-                    crate::app::SdroxideApp::new_tab(&ctx, None, None, Box::new(NullCtrl), 0, false);
+                let mut app = crate::app::SdroxideApp::new_tab(
+                    &ctx,
+                    None,
+                    None,
+                    Box::new(NullCtrl),
+                    0,
+                    false,
+                );
                 app.state.rx[0].mode = Mode::Ft8;
                 app.view.spectrum_3d = spectrum_3d;
                 let mut frame = eframe::Frame::_new_kittest();
@@ -2604,13 +2610,13 @@ mod tests {
     #[test]
     #[ignore = "draws the whole app, which changes process-wide settings"]
     fn every_panel_stays_out_of_the_docked_band_column() {
+        use Mode::*;
         use eframe::egui;
         use sdroxide_types::{LayoutMode, UiLanguage};
-        use Mode::*;
         let modes = [
-            Usb, Cw, Ft8, Ft4, Ft2, Psk, Rtty, RttyFm, Sstv, SstvFm, Olivia, Thor, Fsq, RfPaint, Rade, Hell,
-            Rifp, Wefax, Js8, Wspr, Packet, PacketHf, Aprs, Adsb, Navtex, Vdl2, Ais, AtChat, Acars,
-            Hfdl, Pi4, Msk144, Jt65, Jt9, Fst4, Q65, Fsk441, Jtty, Mercury, Data2g,
+            Usb, Cw, Ft8, Ft4, Ft2, Psk, Rtty, RttyFm, Sstv, SstvFm, Olivia, Thor, Fsq, RfPaint,
+            Rade, Hell, Rifp, Wefax, Js8, Wspr, Packet, PacketHf, Aprs, Adsb, Navtex, Vdl2, Ais,
+            AtChat, Acars, Hfdl, Pi4, Msk144, Jt65, Jt9, Fst4, Q65, Fsk441, Jtty, Mercury, Data2g,
         ];
         let mut over = Vec::new();
         let layouts = [LayoutMode::Desktop, LayoutMode::Tablet];
@@ -2622,8 +2628,14 @@ mod tests {
             for tag in ["de", "en"] {
                 for (w, h) in [(1366.0f32, 768.0f32), (1700.0, 1000.0)] {
                     let ctx = egui::Context::default();
-                    let mut app =
-                        crate::app::SdroxideApp::new_tab(&ctx, None, None, Box::new(NullCtrl), 0, false);
+                    let mut app = crate::app::SdroxideApp::new_tab(
+                        &ctx,
+                        None,
+                        None,
+                        Box::new(NullCtrl),
+                        0,
+                        false,
+                    );
                     app.ui_settings.layout = layout;
                     app.ui_settings.language = UiLanguage::from_tag(tag).unwrap();
                     app.state.rx[0].mode = m;
@@ -2651,7 +2663,11 @@ mod tests {
                     let dock_left = shapes
                         .iter()
                         .map(|c| c.clip_rect)
-                        .filter(|r| r.left() > w * 0.5 && r.right() >= w - BODY_MARGIN - 1.0 && r.height() > h * 0.3)
+                        .filter(|r| {
+                            r.left() > w * 0.5
+                                && r.right() >= w - BODY_MARGIN - 1.0
+                                && r.height() > h * 0.3
+                        })
                         .map(|r| r.left())
                         .fold(f32::MAX, f32::min);
                     // Undocked, the body's right edge stands in for the column.
@@ -2705,7 +2721,10 @@ mod tests {
                         }
                         let seen = r.intersect(c.clip_rect);
                         if seen.is_positive() {
-                            margin = margin.min(seen.left()).min(w - seen.right()).min(h - seen.bottom());
+                            margin = margin
+                                .min(seen.left())
+                                .min(w - seen.right())
+                                .min(h - seen.bottom());
                         }
                     }
                     if right > dock_left + 1.0 || cut > 1.0 || border > 0.0 || margin < 7.5 {
@@ -2852,21 +2871,32 @@ mod tests {
                 // The chips that are the same in every language, and the
                 // composer's SEND, which stands for the row it is in.
                 let send = crate::i18n::tr!("js8-send");
-                let wanted = ["CQ", "HB", "SNR?", "GRID?", "HEARING?", "STATUS?", "HW CPY?", "RR", "73"];
+                let wanted =
+                    ["CQ", "HB", "SNR?", "GRID?", "HEARING?", "STATUS?", "HW CPY?", "RR", "73"];
                 for want in wanted.iter().map(|s| s.to_string()).chain([send]) {
                     match texts.iter().find(|(_, t)| t.trim() == want.trim()) {
                         None => out_of.push(format!("{layout:?} {w}x{h}: {want:?} not drawn")),
-                        Some((r, _)) if r.bottom() > h + 1.0 || r.top() < -1.0 => out_of.push(
-                            format!("{layout:?} {w}x{h}: {want:?} at y {:.0}..{:.0}", r.top(), r.bottom()),
-                        ),
+                        Some((r, _)) if r.bottom() > h + 1.0 || r.top() < -1.0 => {
+                            out_of.push(format!(
+                                "{layout:?} {w}x{h}: {want:?} at y {:.0}..{:.0}",
+                                r.top(),
+                                r.bottom()
+                            ))
+                        }
                         _ => {}
                     }
                 }
                 // The second line of the action row: whatever is drawn lowest
                 // in the panel's right column must still be in the window.
-                let lowest = texts.iter().filter(|(r, _)| r.is_finite() && r.left() > w * 0.45).map(|(r, _)| r.bottom()).fold(0.0, f32::max);
+                let lowest = texts
+                    .iter()
+                    .filter(|(r, _)| r.is_finite() && r.left() > w * 0.45)
+                    .map(|(r, _)| r.bottom())
+                    .fold(0.0, f32::max);
                 if lowest > h + 1.0 {
-                    out_of.push(format!("{layout:?} {w}x{h}: right column drawn down to {lowest:.0}"));
+                    out_of.push(format!(
+                        "{layout:?} {w}x{h}: right column drawn down to {lowest:.0}"
+                    ));
                 }
             }
         }
@@ -2925,7 +2955,9 @@ mod tests {
                         .map(|(r, clip)| r.right() - clip.right())
                         .fold(0.0f32, f32::max);
                     if worst > 1.0 {
-                        over.push(format!("{tag} {layout:?} {w}x{h}: {worst:.1} pt past the frame"));
+                        over.push(format!(
+                            "{tag} {layout:?} {w}x{h}: {worst:.1} pt past the frame"
+                        ));
                     }
                 }
             }

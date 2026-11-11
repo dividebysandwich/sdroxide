@@ -218,7 +218,7 @@ things that page covers stand right now.
 | **Radio** | Pick what you have — an SDR on USB, a transceiver on CAT, a radio on the network, another sdroxide running as a server, or no radio yet — and the page lists the problems that kind of radio usually has (the WinUSB driver and udev rule, a device held by another program, the wrong CAT family or sound card, DATA mode, UDP blocked by a firewall…), with the button that opens where it is set up. Below that, the radio link, receiver, input level and audio lines of the station check, live, so the page says when the radio has started working. |
 | **Before you transmit** | The clock, the audio level and ALC, the drive, the band lockout and IARU region, the T/R switch for an SDR sharing an antenna, and virtual audio cables. |
 | **Online** | Callsign lookup, spot feeds, log uploads and alerts — all optional and all off until configured. |
-| **Tour** | The features worth knowing about, each with an **OPEN** button: FT8/FT4, JS8, the keyboard modes, CW, SSTV, the logbook, spots, band conditions, awards, memories, the scanner, satellites, Winlink, public SDRs, the TCI/rigctld servers, controllers, profiles, the command palette and help. The mode buttons only change what is received. |
+| **Tour** | What is easy to miss, each with an **OPEN** button: the command palette (Ctrl+K), the TCI/rigctld servers for WSJT-X and other programs, public SDRs, profiles, keys and controllers, band conditions, Winlink and help. The modes, the logbook and the spots are on the main screen and are not repeated here. |
 | **Check** | The station check's verdict, what is still left to look at (each with its fix button), and where to go next. |
 
 The window is not modal: what it opens is meant to be used beside it, and it

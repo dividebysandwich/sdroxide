@@ -202,29 +202,22 @@ pub(in crate::app) enum Go {
     Palette,
 }
 
-/// The tour, in the order a newcomer is likely to want them: what each
-/// feature is called, what it is for, and where its button goes.
+/// The window's width, in points (less on a smaller screen).
+const WIDTH: f32 = 470.0;
+
+/// The tour: only what a newcomer is unlikely to find by looking at the main
+/// screen (the modes, the logbook and the spots are on it already), what each
+/// is for, and where its button goes.
 pub(in crate::app) fn tour() -> Vec<(String, String, Go)> {
     let m = |(a, b): (String, String), go| (a, b, go);
     vec![
-        m(pair!("welcome-tour-ft8"), Go::Act(Action::ModeSelect(Mode::Ft8))),
-        m(pair!("welcome-tour-js8"), Go::Act(Action::ModeSelect(Mode::Js8))),
-        m(pair!("welcome-tour-keyboard"), Go::Act(Action::ModeSelect(Mode::Psk))),
-        m(pair!("welcome-tour-cw"), Go::Act(Action::ModeSelect(Mode::Cw))),
-        m(pair!("welcome-tour-sstv"), Go::Act(Action::ModeSelect(Mode::Sstv))),
-        m(pair!("welcome-tour-logbook"), Go::Act(Action::ToggleLogbook)),
-        m(pair!("welcome-tour-spots"), Go::Act(Action::ToggleSpots)),
-        m(pair!("welcome-tour-bands"), Go::Window(Win::Bands)),
-        m(pair!("welcome-tour-awards"), Go::Window(Win::Awards)),
-        m(pair!("welcome-tour-memories"), Go::Act(Action::ToggleMemories)),
-        m(pair!("welcome-tour-scanner"), Go::Window(Win::Scanner)),
-        m(pair!("welcome-tour-sat"), Go::Window(Win::Satellite)),
-        m(pair!("welcome-tour-winlink"), Go::Mail),
-        m(pair!("welcome-tour-public"), Go::PublicSdrs),
-        m(pair!("welcome-tour-servers"), Go::Settings(SettingsTab::Servers)),
-        m(pair!("welcome-tour-controls"), Go::Settings(SettingsTab::Controls)),
-        m(pair!("welcome-tour-profiles"), Go::Settings(SettingsTab::Profiles)),
         m(pair!("welcome-tour-palette"), Go::Palette),
+        m(pair!("welcome-tour-servers"), Go::Settings(SettingsTab::Servers)),
+        m(pair!("welcome-tour-public"), Go::PublicSdrs),
+        m(pair!("welcome-tour-profiles"), Go::Settings(SettingsTab::Profiles)),
+        m(pair!("welcome-tour-controls"), Go::Settings(SettingsTab::Controls)),
+        m(pair!("welcome-tour-bands"), Go::Window(Win::Bands)),
+        m(pair!("welcome-tour-winlink"), Go::Mail),
         m(pair!("welcome-tour-help"), Go::Act(Action::ToggleHelp)),
     ]
 }
@@ -243,6 +236,9 @@ pub(in crate::app) struct Welcome {
     pub(in crate::app) shown: bool,
     pub(in crate::app) step: Option<Step>,
     pub(in crate::app) kind: Option<RadioKind>,
+    /// Dragged away by hand: from then on it stays where it was put rather
+    /// than being kept in the middle of the application.
+    pub(in crate::app) moved: bool,
 }
 
 impl Welcome {
@@ -444,98 +440,111 @@ impl SdroxideApp {
         let mut save_station = false;
         let mut language_changed = false;
 
-        let resp = egui::Window::new(tr!("welcome-title"))
+        // One fixed width: the pages are wrapped text, so the window is as
+        // wide as this and no wider, whatever page is showing.
+        let width = crate::layout::window_w(ctx, WIDTH);
+        let mut win = egui::Window::new(tr!("welcome-title"))
             .id(crate::layout::salted_id(ctx, "welcome"))
             .frame(crate::chrome::window_frame())
             .collapsible(false)
             .resizable(false)
+            .min_width(width)
+            .max_width(width)
             .pivot(egui::Align2::CENTER_CENTER)
-            .default_pos(ctx.content_rect().center())
-            .open(&mut open)
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                ui.set_width(crate::layout::window_w(ctx, 600.0));
+            .default_pos(ctx.content_rect().center());
+        // Kept in the middle of the application until it is dragged away.
+        if !self.welcome.moved {
+            win = win.current_pos(ctx.content_rect().center());
+        }
+        let resp = win.open(&mut open).show(ctx, |ui| {
+            crate::chrome::window_body_bg(ui);
+            // `width` is the window's outer width (egui counts the frame in
+            // it); the content fills what is left inside, so it is exactly as
+            // wide as the title bar above it.
+            ui.set_width(ui.available_width());
 
-                // The step strip: every page by name, each a button, with a
-                // mark saying how the things it covers stand right now.
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    for (n, s) in Step::ALL.iter().enumerate() {
-                        let mut text = format!("{} {}", n + 1, s.title());
-                        if let Some(l) = step_level(*s, &checks) {
-                            text.push(' ');
-                            text.push_str(level_mark(l).0);
+            // The step strip: every page by name, each a button, with a
+            // mark saying how the things it covers stand right now.
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                for (n, s) in Step::ALL.iter().enumerate() {
+                    let mut text = format!("{} {}", n + 1, s.title());
+                    if let Some(l) = step_level(*s, &checks) {
+                        text.push(' ');
+                        text.push_str(level_mark(l).0);
+                    }
+                    if crate::chrome::chip(ui, *s == step, RichText::new(text).size(10.5)).clicked()
+                    {
+                        goto = Some(*s);
+                    }
+                }
+            });
+            ui.add_space(6.0);
+            ui.separator();
+
+            let body_h = (ctx.content_rect().height() - 200.0).clamp(200.0, 430.0);
+            egui::ScrollArea::vertical()
+                .id_salt(("welcome-body", step.index()))
+                .max_height(body_h)
+                .show_themed(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    match step {
+                        Step::Welcome => {
+                            language_changed = self.welcome_page_intro(ui);
                         }
-                        if crate::chrome::chip(ui, *s == step, RichText::new(text).size(10.5))
-                            .clicked()
-                        {
-                            goto = Some(*s);
+                        Step::Station => {
+                            save_station = self.welcome_page_station(ui, &checks, &mut go);
                         }
+                        Step::Radio => self.welcome_page_radio(ui, &checks, &mut go),
+                        Step::Transmit => welcome_page_transmit(ui, &checks, &mut go),
+                        Step::Online => welcome_page_online(ui, &checks, &mut go),
+                        Step::Tour => self.welcome_page_tour(ui, &mut go),
+                        Step::Check => welcome_page_check(ui, &checks, &mut go),
                     }
                 });
-                ui.add_space(6.0);
-                ui.separator();
 
-                let body_h = (ctx.content_rect().height() - 200.0).clamp(200.0, 430.0);
-                egui::ScrollArea::vertical()
-                    .id_salt(("welcome-body", step.index()))
-                    .max_height(body_h)
-                    .show_themed(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        match step {
-                            Step::Welcome => {
-                                language_changed = self.welcome_page_intro(ui);
-                            }
-                            Step::Station => {
-                                save_station = self.welcome_page_station(ui, &checks, &mut go);
-                            }
-                            Step::Radio => self.welcome_page_radio(ui, &checks, &mut go),
-                            Step::Transmit => welcome_page_transmit(ui, &checks, &mut go),
-                            Step::Online => welcome_page_online(ui, &checks, &mut go),
-                            Step::Tour => self.welcome_page_tour(ui, &mut go),
-                            Step::Check => welcome_page_check(ui, &checks, &mut go),
-                        }
-                    });
-
-                ui.add_space(8.0);
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if step != Step::Welcome
-                        && crate::chrome::chip(ui, false, tr!("welcome-back")).clicked()
-                    {
-                        goto = Some(step.prev());
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if step == Step::Check {
-                            if crate::chrome::chip_accent(
-                                ui,
-                                false,
-                                RichText::new(tr!("welcome-finish")).strong(),
-                                crate::theme::GREEN(),
-                                crate::theme::INK_ON_CYAN(),
-                            )
-                            .on_hover_text(tr!("welcome-finish", "hint"))
-                            .clicked()
-                            {
-                                finish = true;
-                            }
-                        } else if crate::chrome::chip_accent(
+            ui.add_space(8.0);
+            ui.separator();
+            ui.horizontal(|ui| {
+                if step != Step::Welcome
+                    && crate::chrome::chip(ui, false, tr!("welcome-back")).clicked()
+                {
+                    goto = Some(step.prev());
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if step == Step::Check {
+                        if crate::chrome::chip_accent(
                             ui,
                             false,
-                            RichText::new(tr!("welcome-next")).strong(),
-                            crate::theme::CYAN(),
+                            RichText::new(tr!("welcome-finish")).strong(),
+                            crate::theme::GREEN(),
                             crate::theme::INK_ON_CYAN(),
                         )
+                        .on_hover_text(tr!("welcome-finish", "hint"))
                         .clicked()
                         {
-                            goto = Some(step.next());
+                            finish = true;
                         }
-                        note(ui, tr!("welcome-reopen-note"));
-                    });
+                    } else if crate::chrome::chip_accent(
+                        ui,
+                        false,
+                        RichText::new(tr!("welcome-next")).strong(),
+                        crate::theme::CYAN(),
+                        crate::theme::INK_ON_CYAN(),
+                    )
+                    .clicked()
+                    {
+                        goto = Some(step.next());
+                    }
+                    note(ui, tr!("welcome-reopen-note"));
                 });
             });
+        });
         if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);
+            if r.response.dragged() {
+                self.welcome.moved = true;
+            }
         }
 
         if save_station {
@@ -721,59 +730,28 @@ impl SdroxideApp {
         }
     }
 
-    /// Page 6: the tour.
+    /// Page 6: the tour, one feature per line, its OPEN button first.
     fn welcome_page_tour(&mut self, ui: &mut egui::Ui, go: &mut Option<Go>) {
         para(ui, tr!("welcome-tour-intro"));
         ui.add_space(6.0);
-        let cols = if ui.available_width() > 480.0 { 2 } else { 1 };
-        let col_w = (ui.available_width() - 8.0 * (cols as f32 - 1.0)) / cols as f32;
-        let tour = tour();
-        for row in tour.chunks(cols) {
+        for (name, what, target) in tour() {
+            let enabled = self.tour_available(target);
             ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
-                for (name, what, target) in row {
-                    let enabled = self.tour_available(*target);
-                    ui.allocate_ui(egui::vec2(col_w, 0.0), |ui| {
-                        egui::Frame::new()
-                            .fill(crate::theme::ROW_BG())
-                            .inner_margin(egui::Margin::symmetric(8, 6))
-                            .show(ui, |ui| {
-                                ui.set_width(col_w - 16.0);
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        RichText::new(name)
-                                            .size(12.0)
-                                            .strong()
-                                            .color(crate::theme::TEXT_STRONG()),
-                                    );
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            ui.add_enabled_ui(enabled, |ui| {
-                                                if crate::chrome::chip(
-                                                    ui,
-                                                    false,
-                                                    RichText::new(tr!("welcome-tour-open"))
-                                                        .size(10.5),
-                                                )
-                                                .clicked()
-                                                {
-                                                    *go = Some(*target);
-                                                }
-                                            });
-                                        },
-                                    );
-                                });
-                                ui.label(
-                                    RichText::new(what).size(10.5).color(crate::theme::gray(150)),
-                                );
-                            });
-                    });
-                }
+                ui.add_enabled_ui(enabled, |ui| {
+                    let open = RichText::new(tr!("welcome-tour-open")).size(10.5);
+                    if crate::chrome::chip(ui, false, open).clicked() {
+                        *go = Some(target);
+                    }
+                });
+                ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new(name).size(12.0).strong().color(crate::theme::TEXT_STRONG()),
+                    );
+                    ui.label(RichText::new(what).size(11.0).color(crate::theme::gray(160)));
+                });
             });
-            ui.add_space(6.0);
+            ui.add_space(5.0);
         }
-        note(ui, tr!("welcome-tour-modes-note"));
     }
 }
 

@@ -1000,9 +1000,7 @@ impl SdroxideApp {
             .all_spots()
             .filter(|s| is_ft8_or_ft4(&s.mode))
             .filter(|s| self.spot_visible(s))
-            .filter_map(|s| {
-                s.loc.map(|(lat, lon)| (lat, lon, crate::theme::spot_color(s.kind)))
-            })
+            .filter_map(|s| s.loc.map(|(lat, lon)| (lat, lon, crate::theme::spot_color(s.kind))))
             .collect();
         let heat = self.prop_texture(ui.ctx(), self.state.rx_freq_hz());
         let night = self.night_texture(ui.ctx());
@@ -1081,7 +1079,8 @@ impl SdroxideApp {
         let dial_hz = self.state.active_freq_hz();
         let band = if dial_hz > 0.0 { sdroxide_types::adif_band(dial_hz) } else { "" };
         self.log_index();
-        let d = self.digi_decodes.iter().find(|d| d.from.as_deref() == Some(call.as_str())).cloned();
+        let d =
+            self.digi_decodes.iter().find(|d| d.from.as_deref() == Some(call.as_str())).cloned();
         let novelty = d.as_ref().map(|d| {
             let log_ix = &self.log_index_cache.as_ref().expect("just refreshed").1;
             log_ix.novelty(&call, d.grid.as_deref(), band)
@@ -1337,8 +1336,9 @@ impl SdroxideApp {
                 self.view.digi_map_window = false;
             }
         }
-        let map_here =
-            show_map && !self.view.digi_map_window && map_budget >= crate::widgets::worldmap::MIN_HEIGHT;
+        let map_here = show_map
+            && !self.view.digi_map_window
+            && map_budget >= crate::widgets::worldmap::MIN_HEIGHT;
         // With no map in the column (compact layout, a window too short) the
         // chip that pops it out stands alone; beside the map it joins the map's
         // own chip row rather than costing a row of its own.
@@ -1834,11 +1834,10 @@ fn digi_links(
     stations: &[crate::digi_map::DigiStation],
     now_utc: i64,
 ) -> Vec<((f64, f64), (f64, f64), f32)> {
-    let at: std::collections::HashMap<&str, (f64, f64)> = stations
-        .iter()
-        .filter_map(|s| s.call.as_deref().map(|c| (c, (s.lat, s.lon))))
-        .collect();
-    let mut pairs: std::collections::HashMap<(String, String), i64> = std::collections::HashMap::new();
+    let at: std::collections::HashMap<&str, (f64, f64)> =
+        stations.iter().filter_map(|s| s.call.as_deref().map(|c| (c, (s.lat, s.lon)))).collect();
+    let mut pairs: std::collections::HashMap<(String, String), i64> =
+        std::collections::HashMap::new();
     for d in decodes {
         if d.is_cq || d.free_text || now_utc - d.slot_utc > LINK_S {
             continue;
@@ -1847,7 +1846,11 @@ fn digi_links(
         if from == to || !at.contains_key(from) || !at.contains_key(to) {
             continue;
         }
-        let key = if from < to { (from.to_string(), to.to_string()) } else { (to.to_string(), from.to_string()) };
+        let key = if from < to {
+            (from.to_string(), to.to_string())
+        } else {
+            (to.to_string(), from.to_string())
+        };
         let slot = pairs.entry(key).or_insert(i64::MIN);
         *slot = (*slot).max(d.slot_utc);
     }
