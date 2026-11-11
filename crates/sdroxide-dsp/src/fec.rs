@@ -226,6 +226,116 @@ pub fn viterbi_soft(sym: &[f32], code: ConvCode, terminated: bool) -> Vec<u8> {
     bits
 }
 
+/// Streaming soft-decision Viterbi, for a signal that never stops.
+///
+/// [`viterbi_soft`] decodes a *finished block*: it starts its metrics at state 0
+/// and traces back from whichever state ended best. A continuous stream (Meteor
+/// LRPT's, for one) has neither of those — the trellis runs for the length of
+/// the pass and there is no final state to start from — so restarting it every
+/// block would put a discontinuity in the middle of the data.
+///
+/// So the survivor history is kept in a ring and each bit is emitted once it is
+/// five constraint lengths old. By then the path has forgotten where it
+/// started, which is the property the traceback depends on.
+///
+/// Feed it two soft symbols per message bit — positive for a received `1` — and
+/// [`ViterbiStream::flush`] at the end to collect what is still in the ring.
+pub struct ViterbiStream {
+    code: ConvCode,
+    metric: [f32; NSTATES],
+    /// One survivor mask per step: bit `s` is the winning predecessor of state
+    /// `s`.
+    ring: std::collections::VecDeque<u64>,
+    started: bool,
+}
+
+impl ViterbiStream {
+    /// Steps a bit waits in the ring before it is decided.
+    const DEPTH: usize = 5 * K;
+
+    pub fn new(code: ConvCode) -> Self {
+        ViterbiStream {
+            code,
+            metric: [0.0; NSTATES],
+            ring: std::collections::VecDeque::new(),
+            started: false,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.metric = [0.0; NSTATES];
+        self.ring.clear();
+        self.started = false;
+    }
+
+    fn best_state(&self) -> usize {
+        (0..NSTATES).max_by(|&a, &b| self.metric[a].total_cmp(&self.metric[b])).unwrap_or(0)
+    }
+
+    /// Walk back through the ring from the best state and return the oldest bit.
+    fn traceback_oldest(&self) -> u8 {
+        let mut s = self.best_state();
+        let mut bit = 0u8;
+        for mask in self.ring.iter().rev() {
+            bit = (s & 1) as u8;
+            let from = (mask >> s) & 1;
+            s = (s >> 1) | ((from as usize) * (NSTATES / 2));
+        }
+        bit
+    }
+
+    /// Feed the two soft symbols for one message bit; returns the bit that has
+    /// fallen out the far end of the traceback window, once there is one.
+    pub fn push(&mut self, a: f32, b: f32) -> Option<u8> {
+        if !self.started {
+            self.metric = [f32::NEG_INFINITY; NSTATES];
+            self.metric[0] = 0.0;
+            self.started = true;
+        }
+        let sign = |o: u8| if o == 1 { 1.0 } else { -1.0 };
+        let mut next = [f32::NEG_INFINITY; NSTATES];
+        let mut mask = 0u64;
+        for (ns, slot) in next.iter_mut().enumerate() {
+            let bit = (ns & 1) as u8;
+            let (p0, p1) = (ns >> 1, (ns >> 1) | (NSTATES / 2));
+            let (o0a, o0b) = self.code.outputs(p0, bit);
+            let (o1a, o1b) = self.code.outputs(p1, bit);
+            let m0 = self.metric[p0] + sign(o0a) * a + sign(o0b) * b;
+            let m1 = self.metric[p1] + sign(o1a) * a + sign(o1b) * b;
+            let (m, from) = if m0 >= m1 { (m0, 0u64) } else { (m1, 1u64) };
+            mask |= from << ns;
+            *slot = m;
+        }
+        // Only differences matter, and the absolute values would run away.
+        let best = next.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        if best.is_finite() {
+            next.iter_mut().for_each(|m| *m -= best);
+        }
+        self.metric = next;
+        self.ring.push_back(mask);
+        if self.ring.len() > Self::DEPTH {
+            // Trace *before* dropping the oldest step: that step's mask is what
+            // says which input bit reached each state, so popping first throws
+            // away the very bit about to be emitted.
+            let bit = self.traceback_oldest();
+            self.ring.pop_front();
+            Some(bit)
+        } else {
+            None
+        }
+    }
+
+    /// Collect what is still inside the traceback window, oldest first.
+    pub fn flush(&mut self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.ring.len());
+        while !self.ring.is_empty() {
+            out.push(self.traceback_oldest());
+            self.ring.pop_front();
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,6 +353,34 @@ mod tests {
             s = ((s << 1) | b as usize) & (NSTATES - 1);
         }
         out
+    }
+
+    /// The stream decodes a message that never stops, clean and through a
+    /// channel that flips one symbol in seventeen.
+    #[test]
+    fn the_stream_decodes_a_continuous_message_and_corrects_a_channel() {
+        let code = ConvCode::THOR;
+        let bits: Vec<u8> = (0..600u32).map(|i| ((i * 7 + i / 3) % 2) as u8).collect();
+        let coded = encode_with(&bits, code);
+        for flip in [false, true] {
+            let mut softs = soft(&coded, 1.0);
+            if flip {
+                for (i, v) in softs.iter_mut().enumerate() {
+                    if i % 17 == 0 {
+                        *v = -*v;
+                    }
+                }
+            }
+            let mut v = ViterbiStream::new(code);
+            let mut got = Vec::new();
+            for pair in softs.chunks(2) {
+                if let Some(b) = v.push(pair[0], pair[1]) {
+                    got.push(b);
+                }
+            }
+            got.extend(v.flush());
+            assert_eq!(&got[..bits.len()], &bits[..], "flip={flip}: the stream lost the message");
+        }
     }
 
     /// Coded bits as ideal soft values: ±`amp`.

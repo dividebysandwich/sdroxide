@@ -1038,6 +1038,7 @@ impl eframe::App for SdroxideApp {
         self.morse_window(&ctx);
         self.poll_playback_list(&mut cmds);
         self.playback_window(&ctx, &mut cmds);
+        self.wxsat_window(&ctx, &mut cmds);
         self.help.ui(&ctx);
         // Last, so it lands on top of everything else that opened this frame.
         self.oob_tx_window(&ctx);
@@ -1915,6 +1916,7 @@ impl SdroxideApp {
                 RadioEvent::IsmReports(r) => self.ism_reports = r,
                 RadioEvent::IsmStatus(st) => self.ism_status = Some(st),
                 RadioEvent::Recordings(listing) => self.playback.accept(listing),
+                RadioEvent::WxsatStatus(st) => self.wxsat.accept(st),
                 RadioEvent::AdsbStatus(st) => self.adsb_status = Some(st),
                 RadioEvent::Vdl2Status(st) => self.vdl2_status = Some(st),
                 RadioEvent::AisStatus(st) => self.ais_status = Some(st),

@@ -343,6 +343,10 @@ pub enum RadioEvent {
     /// this to a remote/WASM client would mean a matching variant in
     /// `sdroxide_proto::ServerMsg` — not done yet.
     HfdlStatus(crate::HfdlStatus),
+    /// The weather-satellite decoder's state and the picture lines (APT) or
+    /// rows (LRPT) new since the last one. Bridged to remote and web clients as
+    /// `ServerMsg::WxsatStatus`.
+    WxsatStatus(Box<crate::WxsatStatus>),
     /// Everything the VDL Mode 2 decoder has: the message log, the station
     /// table, and what every channel of the plan is doing. A whole snapshot, a
     /// couple of times a second.

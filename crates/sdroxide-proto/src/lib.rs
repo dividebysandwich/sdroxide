@@ -1666,7 +1666,14 @@ use sdroxide_types::{
 /// gains `Recordings(RecordingListing)` last; and `RadioState` gains
 /// `playback: Option<PlaybackStatus>` at its tail, which changes the layout of
 /// every state frame.
-pub const PROTO_VERSION: u16 = 197;
+///
+/// v198: the weather-satellite decoder (NOAA APT and Meteor LRPT).
+/// `Command` gains `SetWxsatConfig(WxsatSettings)` last; `ServerMsg` gains
+/// `WxsatStatus(Box<WxsatStatus>)` last, carrying the picture lines (APT) and
+/// rows (LRPT) new since the previous one; and `RadioState` gains
+/// `wxsat: WxsatSettings` at its tail, which changes the layout of every state
+/// frame.
+pub const PROTO_VERSION: u16 = 198;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
@@ -2162,6 +2169,13 @@ pub enum ServerMsg {
     ///
     /// Appended last, for the usual reason.
     Recordings(sdroxide_types::RecordingListing),
+
+    /// `RadioEvent::WxsatStatus`: the weather-satellite decoder's state and the
+    /// picture lines (APT) or rows (LRPT) new since the previous message; the
+    /// client builds the image.
+    ///
+    /// Appended last, for the usual reason.
+    WxsatStatus(Box<sdroxide_types::WxsatStatus>),
 }
 
 /// One radio in a station's roster, as a client sees it.
@@ -2282,6 +2296,41 @@ mod tests {
         });
         let frame = ServerMsg::State(state);
         assert_eq!(decode::<ServerMsg>(&encode(&frame).unwrap()).unwrap(), frame);
+
+        // The weather-satellite decoder: its settings both ways (the command,
+        // and the state's tail), and a status carrying APT lines and LRPT rows.
+        let wx = sdroxide_types::WxsatSettings {
+            enabled: true,
+            frequency_hz: 137_900_000.0,
+            kind: sdroxide_types::WxsatKind::Lrpt,
+        };
+        let cmd = Command::SetWxsatConfig(wx);
+        assert_eq!(decode::<Command>(&encode(&cmd).unwrap()).unwrap(), cmd);
+        let state = RadioState { wxsat: wx, ..Default::default() };
+        let frame = ServerMsg::State(state);
+        assert_eq!(decode::<ServerMsg>(&encode(&frame).unwrap()).unwrap(), frame);
+        let st = ServerMsg::WxsatStatus(Box::new(sdroxide_types::WxsatStatus {
+            running: true,
+            level_dbfs: -31.5,
+            locked: true,
+            quality: 0.8,
+            pass: 3,
+            total_lines: 5,
+            first_line: 4,
+            new_lines: vec![vec![9; sdroxide_types::WXSAT_LINE_PIXELS]],
+            kind: sdroxide_types::WxsatKind::Lrpt,
+            frames_ok: 41,
+            carrier_hz: -812.5,
+            rows: vec![sdroxide_types::WxsatRow {
+                apid: 65,
+                row: 7,
+                lines: vec![
+                    3;
+                    sdroxide_types::WXSAT_LRPT_WIDTH * sdroxide_types::WXSAT_LRPT_ROW_LINES
+                ],
+            }],
+        }));
+        assert_eq!(decode::<ServerMsg>(&encode(&st).unwrap()).unwrap(), st);
 
         // The picture upload: both commands, the answer, and the settings
         // riding the station bundle's tail.

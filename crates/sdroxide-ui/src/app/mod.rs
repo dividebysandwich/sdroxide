@@ -55,6 +55,7 @@ pub(crate) mod util;
 pub(in crate::app) mod windows;
 pub(in crate::app) mod winlink;
 pub(in crate::app) mod workplaces;
+pub(in crate::app) mod wxsat;
 
 use crate::i18n::tr;
 use std::sync::{Arc, Mutex};
@@ -897,6 +898,9 @@ pub struct SdroxideApp {
     show_bands: bool,
     /// The PLAYBACK window's state — see [`playback::PlaybackUi`].
     pub(in crate::app) playback: playback::PlaybackUi,
+    /// The WEATHER SATELLITES window and the picture it shows — see
+    /// [`wxsat::WxsatUi`].
+    wxsat: wxsat::WxsatUi,
     /// The propagation field rendered to pixels, rebuilt only when it moves.
     prop_heat: crate::prop_map::PropHeat,
     /// The grey-line (night/twilight) overlay rendered to pixels, rebuilt at
@@ -1761,6 +1765,7 @@ impl SdroxideApp {
             daylight_at: f64::NEG_INFINITY,
             show_bands: false,
             playback: playback::PlaybackUi::default(),
+            wxsat: wxsat::WxsatUi::default(),
             digi_stations: Default::default(),
             prop: Default::default(),
             prop_heat: Default::default(),

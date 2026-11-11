@@ -1296,4 +1296,10 @@ pub enum Command {
     ///
     /// Appended last, for the usual reason.
     ListRecordings,
+
+    /// Whether the weather-satellite (NOAA APT / Meteor LRPT) decoder runs,
+    /// which signal it reads and which downlink channel it centres on. Kept in
+    /// `wxsat.json`, echoed back in [`crate::RadioState::wxsat`]. Appended last,
+    /// for the usual reason.
+    SetWxsatConfig(crate::WxsatSettings),
 }

@@ -74,7 +74,7 @@ pub use demod::{
 pub use dfnr::DeepFilterNr;
 pub use diversity::{Diversity, DiversityMode};
 pub use eq::ParametricEq;
-pub use fec::{ConvCode, viterbi_soft};
+pub use fec::{ConvCode, ViterbiStream, viterbi_soft};
 pub use fir::{ComplexFir, RealFir, bandpass_taps};
 pub use fsk441::{
     DEFAULT_DFTOL as FSK441_DFTOL, FSK441_BAUD, FSK441_CHARSET, FSK441_NSPD, FSK441_RATE,

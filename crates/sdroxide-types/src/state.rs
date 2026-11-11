@@ -596,6 +596,11 @@ pub struct RadioState {
     /// received. Appended last: postcard numbers fields by position.
     #[serde(default)]
     pub playback: Option<crate::PlaybackStatus>,
+    /// The weather-satellite (NOAA APT / Meteor LRPT) decoder: whether it runs,
+    /// which signal and which channel. The picture is [`crate::WxsatStatus`],
+    /// sent separately. Appended last: postcard numbers fields by position.
+    #[serde(default)]
+    pub wxsat: crate::WxsatSettings,
 }
 
 /// Where a radio's built-in antenna tuner stands, as the radio reports it.
@@ -680,6 +685,7 @@ impl Default for RadioState {
             hfdl: crate::HfdlSettings::default(),
             atu: AtuState::default(),
             playback: None,
+            wxsat: crate::WxsatSettings::default(),
         }
     }
 }

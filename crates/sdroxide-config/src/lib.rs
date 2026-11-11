@@ -1877,6 +1877,18 @@ pub fn save_ais_config(cfg: &sdroxide_types::AisSettings) -> Result<(), ConfigEr
     save_json("ais.json", cfg)
 }
 
+/// Weather-satellite decoder preferences (`wxsat.json`): on or off, which
+/// signal (APT or LRPT) and which channel. Kept apart from the live
+/// `RadioState.wxsat` for the same reason as the AIS config: a front end that
+/// hands over demodulated audio forces the live one off.
+pub fn load_wxsat_config() -> sdroxide_types::WxsatSettings {
+    load_json::<sdroxide_types::WxsatSettings>("wxsat.json").sane()
+}
+
+pub fn save_wxsat_config(cfg: &sdroxide_types::WxsatSettings) -> Result<(), ConfigError> {
+    save_json("wxsat.json", cfg)
+}
+
 pub fn load_vdl2_config() -> sdroxide_types::Vdl2Settings {
     load_json::<sdroxide_types::Vdl2Settings>("vdl2.json").sane()
 }

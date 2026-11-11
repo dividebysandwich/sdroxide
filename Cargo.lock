@@ -5799,6 +5799,7 @@ dependencies = [
  "sdroxide-vdl2",
  "sdroxide-winlink",
  "sdroxide-wsjtx",
+ "sdroxide-wxsat",
  "shine-rs",
  "soapysdr",
  "symphonia",
@@ -6109,6 +6110,17 @@ dependencies = [
 name = "sdroxide-wsjtx"
 version = "1.7.0"
 dependencies = [
+ "sdroxide-types",
+ "tracing",
+]
+
+[[package]]
+name = "sdroxide-wxsat"
+version = "1.7.0"
+dependencies = [
+ "crossbeam-channel",
+ "rustfft",
+ "sdroxide-dsp",
  "sdroxide-types",
  "tracing",
 ]

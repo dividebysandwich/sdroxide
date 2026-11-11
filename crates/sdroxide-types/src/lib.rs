@@ -85,6 +85,7 @@ mod wefax;
 mod winlink;
 mod wsjtx;
 mod wspr;
+mod wxsat;
 
 pub use access::{AUTH_BUSY, AUTH_REFUSED, AuthPhase, RemoteAccess, RemoteServer, is_auth_busy};
 pub use adsb::{
@@ -344,4 +345,10 @@ pub use wspr::{
     POWERS_W as WSPR_POWERS_W, SLOT_S as WSPR_SLOT_S, TX_OFFSET_S as WSPR_TX_OFFSET_S,
     WINDOW_HI_HZ as WSPR_WINDOW_HI_HZ, WINDOW_LO_HZ as WSPR_WINDOW_LO_HZ, WsprSpot, WsprStatus,
     dbm_to_mw, grid4 as wspr_grid4, power_dbm_for_watts, power_label, round_power_dbm,
+};
+pub use wxsat::{
+    WXSAT_BAND_HZ, WXSAT_DEFAULT_HZ, WXSAT_LINE_PIXELS, WXSAT_LRPT_DEFAULT_HZ, WXSAT_LRPT_MAX_ROWS,
+    WXSAT_LRPT_ROW_LINES, WXSAT_LRPT_WIDTH, WXSAT_MAX_NEW_LINES, WXSAT_MAX_NEW_ROWS,
+    WXSAT_PICTURE_MAX_LINES, WxsatKind, WxsatPicture, WxsatRow, WxsatSettings, WxsatStatus,
+    window_covers as wxsat_window_covers,
 };

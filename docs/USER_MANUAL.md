@@ -2507,6 +2507,43 @@ sdroxide runs on. Until it answers the status line says so — PSTRotator stays
 silent while it has no controller connected — but the pointing commands still
 go out.
 
+#### 2.16.2 Weather satellites (NOAA APT and Meteor LRPT)
+
+The **WEATHER SATELLITES** chip at the top right of the SAT window opens a
+window of its own with the picture a weather satellite sends on 137 MHz, drawn
+as it comes in. It is not a radio mode: the decoder runs off its own
+downconversion of the sample window and the radio keeps its mode, so it needs a
+wideband source (a receiver that sends I/Q) and is off for a rig that only hands
+over audio.
+
+The *Signal* choice picks the kind. **APT** is the analogue signal of NOAA-15
+(137.620 MHz), NOAA-18 (137.9125 MHz) and NOAA-19 (137.100 MHz): channel A on
+the left and channel B on the right, line by line, two lines a second. **LRPT**
+is the digital signal of Meteor-M2-3 (137.900 MHz) and Meteor-M2-4
+(137.100 MHz): QPSK at 72 ksym/s, picture rows of 1568 pixels, and one separate
+picture for each channel the satellite sends (*Channel 1* to *Channel 6*, the
+visible and infrared bands), shown one at a time.
+
+Pick the satellite, then **Tune here** switches the decoder on and brings the
+dial to its channel. The window has to hold the whole signal — about 40 kHz for
+APT and 115 kHz for LRPT — and a note says so when it does not. Quicker still:
+pick the satellite on the SATELLITES tab and press **PICTURE** under its APT or
+LRPT link, which opens the window on that satellite's signal and channel and
+tunes there. With the **Weather** CelesTrak group subscribed
+([6.10](#610-tle-satellites-and-their-frequencies)) the PASSES tab tells you
+when the next one rises.
+
+Start it when the satellite rises; a pass lasts about ten minutes. The status
+line shows the level, the sync (line sync for APT, frame sync for LRPT) and the
+lines, or the good frames and rows, so far. LRPT needs a signal about 8 dB above
+the noise to lock; the receiver follows the Doppler and the drift of the sample
+clock by itself. **Flip** turns the picture over (a satellite flying south is
+drawn upside down), **Clear** empties it and **Save PNG** writes it out (the
+channel shown, for LRPT). A window opened in the middle of a pass — a remote or
+browser screen that joined late, say — starts the picture where it joined.
+
+The setting is kept in `wxsat.json`.
+
 ### 2.17 Running more than one radio
 
 SDR Oxide can run several radios at once — an HF transceiver and a VHF dongle,
@@ -15986,6 +16023,7 @@ and not the station's.
 | `adsb.json` | JSON | ADS-B decoder ([§3.13](#313-ads-b-aircraft-on-1090-mhz)): the two timeouts, how many history dots to keep, how far ahead the speed vectors reach, and the ceiling on the aircraft table. Restored at startup, and — like `ism.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
 | `vdl2.json` | JSON | VDL2 decoder ([§3.15](#315-vdl2-what-the-aircraft-are-saying)): which of the fourteen channels to listen on, the burst threshold in dB, how much log and how many stations to keep, and how long a silent station stays on the list. Restored at startup, and — like `adsb.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
 | `ais.json` | JSON | AIS decoder ([§3.16](#316-ais-ships-on-162-mhz)): which of the two channels to listen on, the slot threshold in dB, the two timeouts, how many minutes of trail to keep, how far ahead the vectors reach, and the ceiling on the vessel table. Restored at startup, and — like `adsb.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
+| `wxsat.json` | JSON | Weather-satellite decoder ([§2.16.2](#2162-weather-satellites-noaa-apt-and-meteor-lrpt)): whether it runs, which signal (APT or LRPT) and which channel. Restored at startup; a receiver that only hands over audio forces it off without disturbing what you picked. |
 | `ism.json` | JSON | ISM decoder: whether it runs, which device families it listens for, the burst threshold in dB, and whether the rtl_433 decoders are on, which band they watch and how wide a window they get. Restored at startup, and — like `skimmer.json` — a narrowband (audio-mode) radio forces it off without disturbing what you picked. |
 | `rtl433_flex.conf` | text | Your own ISM decoders, in rtl_433's "flex" syntax ([§5.5](#55-adding-your-own-decoders-flex-specs)). Written with a commented example the first time the ISM decoder runs, and never rewritten afterwards — like `bandplan.json`, it is yours to edit. A specification that does not pass its check is listed in the ISM window and skipped; the rest still load. **RELOAD DECODERS** in the ISM window applies an edit without a restart. |
 | `input.json` | JSON | Control inputs: keyboard bindings, panadapter mouse behaviour, mouse-button bindings, and the MIDI controller mapping. Belongs to the machine running the user interface, not the engine. |

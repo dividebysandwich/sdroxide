@@ -1179,6 +1179,10 @@ fn handle_event(shared: &Shared, ev: RadioEvent) {
             // Native-only for the same reason as QO-100 above — the live HFDL
             // decode log is engine-internal, bridged nowhere yet.
             RadioEvent::HfdlStatus(_) => None,
+            // Not kept for replay: each carries only the lines new since the
+            // last, so a client that attaches late picks the picture up from
+            // the next ones.
+            RadioEvent::WxsatStatus(st) => Some(ServerMsg::WxsatStatus(st)),
             RadioEvent::SstvLine { image_id, y, rgb } => {
                 Some(ServerMsg::SstvLine { image_id, y, rgb })
             }
