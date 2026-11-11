@@ -4705,6 +4705,32 @@ variants (MFSK8's with a gap) and part of the two long ones, and reads its own
 transmission back; transmitting has not yet been tried against fldigi on the
 air.
 
+#### 3.4.3 DominoEX
+
+**DOMINOEX** is THOR's sibling: the same 18 tones and the same incremental
+frequency keying — the data is the *step* from one tone to the next, so a
+small tuning error does not matter — but with no error correction. Each
+character is one to three four-bit nibbles of DominoEX's own alphabet, so it
+types faster than THOR at the same speed and prints as it arrives.
+
+- **Speed** — the chips in the panel header: **4, 5, 8, 11, 16, 22, 44, 88**
+  and **M** (MICRO, two symbols a second). DominoEX 11 is the default and the
+  usual one on HF; hover a chip for its symbol rate. The waterfall marks the
+  edges of the tone bank. Both stations must use the same speed.
+- **Tuning** — the bank is centred on the tone offset (1500 Hz by default);
+  put the middle of the signal on the cursor.
+- **RV** inverts the tone steps, receive and transmit, for a station on the
+  other sideband.
+- **Transmitting** — an over opens with a short preamble; while you hold
+  **TX** with nothing typed the modem sends idle characters, and releasing it
+  closes the over with the end-of-text mark.
+
+THOR keeps its own modem ([3.4](#34-olivia-thor-and-fsq)). DominoEX runs on
+the IFK receiver from sdroxide-brown, which reads fldigi's recordings of six of
+the nine speeds whole (8, 11, 16, 22, 44 and 88), most of DominoEX 5 and little
+of 4 and MICRO. It reads its own transmission back at every speed; transmitting
+has not yet been tried against fldigi on the air.
+
 ### 3.5 Hellschreiber
 
 Choose **HELL** from the DIGITAL row for **Hellschreiber** — the oldest digital

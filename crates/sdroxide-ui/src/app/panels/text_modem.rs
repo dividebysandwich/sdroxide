@@ -641,7 +641,13 @@ impl SdroxideApp {
         let mode = self.state.rx[0].mode;
         if !matches!(
             mode,
-            Mode::Rtty | Mode::RttyFm | Mode::Olivia | Mode::Thor | Mode::Mt63 | Mode::Mfsk
+            Mode::Rtty
+                | Mode::RttyFm
+                | Mode::Olivia
+                | Mode::Thor
+                | Mode::Mt63
+                | Mode::Mfsk
+                | Mode::DominoEx
         ) {
             return; // PSK (and anything else) has no per-mode settings
         }
@@ -765,6 +771,35 @@ impl SdroxideApp {
                             .color(crate::theme::YELLOW()),
                     )
                     .on_hover_text(tr!("textmodem-mt63-not-offered-hint"));
+                }
+                Mode::DominoEx => {
+                    // Nine speeds of one modem. Nothing in the signal says
+                    // which, and a decoder set to the wrong one hears nothing
+                    // rather than something wrong. The chips carry the number
+                    // only — nine "DOMINOEX nn" would not fit the row.
+                    cap(ui, &tr!("textmodem-mode"));
+                    for m in sdroxide_types::DominoMode::ALL {
+                        let sel = cfg.domino_mode == m;
+                        let hint = tr!(
+                            "textmodem-domino-hint",
+                            name = m.name(),
+                            baud = format!("{:.1}", m.baud())
+                        );
+                        let chip = m.label().trim_start_matches("DOMEX");
+                        if ui.selectable_label(sel, chip).on_hover_text(hint).clicked() && !sel {
+                            cfg.domino_mode = m;
+                            changed = true;
+                        }
+                    }
+                    ui.add_space(8.0);
+                    if ui
+                        .selectable_label(cfg.domino_reverse, "RV")
+                        .on_hover_text(tr!("textmodem-ifk-reverse-hint"))
+                        .clicked()
+                    {
+                        cfg.domino_reverse = !cfg.domino_reverse;
+                        changed = true;
+                    }
                 }
                 Mode::Mfsk => {
                     // One modem at many speeds: nothing in the signal says

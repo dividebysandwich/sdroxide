@@ -5754,3 +5754,7 @@ textmodem-mt63-not-offered-hint = MT63-1K e l'interleave lungo a 500 Hz si leggo
 ## Keyboard modes: MFSK (src/app/panels/text_modem.rs)
 textmodem-mfsk-hint = { $label } — { $baud } baud, { $tones } toni, larghezza { $bw } Hz{ $caveat }
 textmodem-mfsk-reverse-hint = Inverte l'ordine dei toni. Una stazione ricevuta sulla banda laterale opposta a quella con cui è stata trasmessa arriva speculare rispetto al suo centro e viene letta come rumore finché questa opzione non è attiva.
+
+## Keyboard modes: DominoEX (src/app/panels/text_modem.rs)
+textmodem-domino-hint = { $name } — { $baud } baud, 18 toni, modulazione incrementale di frequenza senza correzione d'errore in avanti
+textmodem-ifk-reverse-hint = Inverte i passi dei toni. IFK+ porta i dati nel passo tra toni successivi, quindi una stazione ricevuta sulla banda laterale opposta ha ogni passo negativo e viene letta come rumore finché questa opzione non è attiva.

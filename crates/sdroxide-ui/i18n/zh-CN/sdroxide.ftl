@@ -5685,3 +5685,7 @@ textmodem-mt63-not-offered-hint = MT63-1K 和 500 Hz 长交织可用批处理解
 ## Keyboard modes: MFSK (src/app/panels/text_modem.rs)
 textmodem-mfsk-hint = { $label }，{ $baud } 波特，{ $tones } 个音调，带宽 { $bw } Hz{ $caveat }
 textmodem-mfsk-reverse-hint = 反转音调顺序。在与发送时相反的边带上接收的电台会以中心为轴镜像，在开启之前读出来只是噪声。
+
+## Keyboard modes: DominoEX (src/app/panels/text_modem.rs)
+textmodem-domino-hint = { $name }，{ $baud } 波特，18 个音调，增量频移键控，无前向纠错
+textmodem-ifk-reverse-hint = 反转音调步进。IFK+ 的数据承载于相邻音调之间的步进，因此在相反边带上收到的电台每个步进都是负的，在开启之前读出来只是噪声。

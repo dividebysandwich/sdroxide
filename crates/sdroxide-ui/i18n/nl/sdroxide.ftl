@@ -5744,3 +5744,7 @@ textmodem-mt63-not-offered-hint = MT63-1K en de lange interleave van 500 Hz word
 ## Keyboard modes: MFSK (src/app/panels/text_modem.rs)
 textmodem-mfsk-hint = { $label } — { $baud } baud, { $tones } tonen, { $bw } Hz breed{ $caveat }
 textmodem-mfsk-reverse-hint = Draai de toonvolgorde om. Een station dat is ontvangen op de andere zijband dan waarop het is verzonden, komt gespiegeld om zijn midden binnen en klinkt als ruis totdat dit aan staat.
+
+## Keyboard modes: DominoEX (src/app/panels/text_modem.rs)
+textmodem-domino-hint = { $name } — { $baud } baud, 18 tonen, incrementele frequentiesleuteling zonder foutcorrectie vooraf
+textmodem-ifk-reverse-hint = Draai de toonstappen om. IFK+ draagt zijn data in de stap tussen opeenvolgende tonen, dus een station dat op de andere zijband is ontvangen heeft elke stap negatief en klinkt als ruis totdat dit aan staat.

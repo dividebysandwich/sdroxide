@@ -5743,3 +5743,7 @@ textmodem-mt63-not-offered-hint = MT63-1K ve 500 Hz uzun serpiştirme toplu çö
 ## Keyboard modes: MFSK (src/app/panels/text_modem.rs)
 textmodem-mfsk-hint = { $label } — { $baud } baud, { $tones } ton, { $bw } Hz genişlik{ $caveat }
 textmodem-mfsk-reverse-hint = Ton sırasını ters çevirir. Gönderildiğinin karşı yan bandında alınan bir istasyon merkezine göre aynalanmış gelir ve bu açılana kadar gürültü gibi okunur.
+
+## Keyboard modes: DominoEX (src/app/panels/text_modem.rs)
+textmodem-domino-hint = { $name } — { $baud } baud, 18 ton, ileri hata düzeltmesiz artımlı frekans anahtarlama
+textmodem-ifk-reverse-hint = Ton adımlarını ters çevirir. IFK+ verisini ardışık tonlar arasındaki adımda taşır; bu yüzden karşı yan bantta alınan bir istasyonun her adımı negatiftir ve bu açılana kadar gürültü gibi okunur.

@@ -382,7 +382,6 @@ impl Bank {
         self.xr[j] * self.xr[j] + self.xi[j] * self.xi[j]
     }
 
-    #[allow(dead_code)] // the IFK modes read it
     pub(crate) fn bins(&self) -> usize {
         self.xr.len()
     }

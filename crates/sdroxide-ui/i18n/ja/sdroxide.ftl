@@ -5700,3 +5700,7 @@ textmodem-mt63-not-offered-hint = MT63-1Kと500 Hz長インターリーブは、
 ## Keyboard modes: MFSK (src/app/panels/text_modem.rs)
 textmodem-mfsk-hint = { $label } — { $baud } ボー、{ $tones } トーン、帯域幅 { $bw } Hz{ $caveat }
 textmodem-mfsk-reverse-hint = トーン順序を反転します。送信時とは反対のサイドバンドで受信した局は中心を軸に鏡像になって届き、これをオンにするまでノイズとして受信されます。
+
+## Keyboard modes: DominoEX (src/app/panels/text_modem.rs)
+textmodem-domino-hint = { $name } — { $baud } ボー、18トーン、前方誤り訂正なしのインクリメンタル周波数キーイング
+textmodem-ifk-reverse-hint = トーンのステップを反転します。IFK+はデータを連続するトーン間のステップで運ぶため、反対側のサイドバンドで受信した局はすべてのステップが負になり、これをオンにするまでノイズとして受信されます。

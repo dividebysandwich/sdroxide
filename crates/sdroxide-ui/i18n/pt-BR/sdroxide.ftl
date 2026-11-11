@@ -5752,3 +5752,7 @@ textmodem-mt63-not-offered-hint = O MT63-1K e o entrelaçamento longo de 500 Hz 
 ## Keyboard modes: MFSK (src/app/panels/text_modem.rs)
 textmodem-mfsk-hint = { $label } — { $baud } baud, { $tones } tons, { $bw } Hz de largura{ $caveat }
 textmodem-mfsk-reverse-hint = Inverte a ordem dos tons. Uma estação recebida na banda lateral oposta àquela em que foi transmitida chega espelhada em torno do seu centro e soa como ruído até isto ser ativado.
+
+## Keyboard modes: DominoEX (src/app/panels/text_modem.rs)
+textmodem-domino-hint = { $name } — { $baud } baud, 18 tons, modulação incremental de frequência sem correção de erros direta
+textmodem-ifk-reverse-hint = Inverte os passos de tom. O IFK+ leva seus dados no passo entre tons sucessivos, então uma estação recebida na banda lateral oposta tem todos os passos negativos e soa como ruído até isto ser ativado.

@@ -1237,6 +1237,98 @@ pub fn worked_before(
 }
 
 /// Operator configuration for digital-mode operation. Persisted engine-side,
+/// DominoEX submode: nine variants of the IFK+ family, one modem at different
+/// symbol rates.
+///
+/// The numbers behind each (symbol length, tone spacing, sample rate) are
+/// protocol constants and live beside the decoder in `sdroxide_dsp::ifk::IfkVariant`;
+/// this enum is the part that rides [`DigiConfig`], and the two are tied by
+/// **label**, so there is only ever one table. The names are fldigi's, which is
+/// also the decoder's key — a spelling change here would silently retune the
+/// receiver, and `the_domino_mode_labels_are_the_decoders` pins it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum DominoMode {
+    Dom4,
+    Dom5,
+    Dom8,
+    #[default]
+    Dom11,
+    Dom16,
+    Dom22,
+    Micro,
+    Dom44,
+    Dom88,
+}
+
+impl DominoMode {
+    pub const ALL: [DominoMode; 9] = [
+        DominoMode::Dom4,
+        DominoMode::Dom5,
+        DominoMode::Dom8,
+        DominoMode::Dom11,
+        DominoMode::Dom16,
+        DominoMode::Dom22,
+        DominoMode::Micro,
+        DominoMode::Dom44,
+        DominoMode::Dom88,
+    ];
+
+    /// The decoder's own key (`IfkVariant::name`), which is fldigi's spelling.
+    pub fn label(self) -> &'static str {
+        match self {
+            DominoMode::Dom4 => "DOMEX4",
+            DominoMode::Dom5 => "DOMEX5",
+            DominoMode::Dom8 => "DOMEX8",
+            DominoMode::Dom11 => "DOMEX11",
+            DominoMode::Dom16 => "DOMEX16",
+            DominoMode::Dom22 => "DOMEX22",
+            DominoMode::Micro => "DOMEXM",
+            DominoMode::Dom44 => "DOMEX44",
+            DominoMode::Dom88 => "DOMEX88",
+        }
+    }
+
+    /// What the chip says: DominoEX's own name for it.
+    pub fn name(self) -> &'static str {
+        match self {
+            DominoMode::Dom4 => "DOMINOEX 4",
+            DominoMode::Dom5 => "DOMINOEX 5",
+            DominoMode::Dom8 => "DOMINOEX 8",
+            DominoMode::Dom11 => "DOMINOEX 11",
+            DominoMode::Dom16 => "DOMINOEX 16",
+            DominoMode::Dom22 => "DOMINOEX 22",
+            DominoMode::Micro => "DOMINOEX MICRO",
+            DominoMode::Dom44 => "DOMINOEX 44",
+            DominoMode::Dom88 => "DOMINOEX 88",
+        }
+    }
+
+    /// Nominal symbol rate, for the chip's hover.
+    pub fn baud(self) -> f32 {
+        match self {
+            DominoMode::Dom4 => 3.90625,
+            DominoMode::Dom5 => 5.383,
+            DominoMode::Dom8 => 7.8125,
+            DominoMode::Dom11 => 10.766,
+            DominoMode::Dom16 => 15.625,
+            DominoMode::Dom22 => 21.53,
+            DominoMode::Micro => 2.0,
+            DominoMode::Dom44 => 43.07,
+            DominoMode::Dom88 => 86.13,
+        }
+    }
+
+    /// The occupied width: eighteen tones, a symbol rate apart — two apart on
+    /// the double-spaced speeds (4, 5, 8 and 44), as in fldigi's table.
+    pub fn bandwidth_hz(self) -> f32 {
+        let ds = match self {
+            DominoMode::Dom4 | DominoMode::Dom5 | DominoMode::Dom8 | DominoMode::Dom44 => 2.0,
+            _ => 1.0,
+        };
+        18.0 * self.baud() * ds
+    }
+}
+
 /// MFSK submode — fldigi's IZ8BLY family: one of eleven symbol rates and tone
 /// counts, sharing one modem.
 ///
@@ -2426,6 +2518,16 @@ pub struct DigiConfig {
     /// reads as noise until this is set.
     #[serde(default)]
     pub mfsk_reverse: bool,
+    /// DominoEX: which of its nine variants. One modem at different symbol
+    /// rates, so the rate moves with the tone spacing in fldigi's table and
+    /// this is one choice rather than two.
+    #[serde(default)]
+    pub domino_mode: DominoMode,
+    /// DominoEX: mirror the tones, receive and transmit. IFK+ carries its data
+    /// in the step between tones, so a station on the opposite sideband has
+    /// every step negative and reads as noise until this is set.
+    #[serde(default)]
+    pub domino_reverse: bool,
 }
 
 fn default_tnc_host_port() -> u16 {
@@ -2691,6 +2793,8 @@ impl Default for DigiConfig {
             mt63_mode: Mt63Mode::default(),
             mfsk_mode: MfskMode::default(),
             mfsk_reverse: false,
+            domino_mode: DominoMode::default(),
+            domino_reverse: false,
         }
     }
 }

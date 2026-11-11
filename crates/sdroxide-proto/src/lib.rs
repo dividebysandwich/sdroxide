@@ -1685,7 +1685,10 @@ use sdroxide_types::{
 ///
 /// v201: MFSK. `Mode::Mfsk` appended, and `DigiConfig` gains `mfsk_mode` and
 /// `mfsk_reverse` at its tail.
-pub const PROTO_VERSION: u16 = 201;
+///
+/// v202: DominoEX. `Mode::DominoEx` appended, and `DigiConfig` gains
+/// `domino_mode` and `domino_reverse` at its tail.
+pub const PROTO_VERSION: u16 = 202;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
@@ -3145,18 +3148,20 @@ mod tests {
     /// than failing.
     #[test]
     fn roundtrip_fldigi_keyboard_modes() {
-        use sdroxide_types::{DigiConfig, MfskMode, Mode, Mt63Mode};
+        use sdroxide_types::{DigiConfig, DominoMode, MfskMode, Mode, Mt63Mode};
 
         let cfg = DigiConfig {
             mt63_mode: Mt63Mode::Mt6500S,
             mfsk_mode: MfskMode::Mfsk64L,
             mfsk_reverse: true,
+            domino_mode: DominoMode::Dom88,
+            domino_reverse: true,
             ..DigiConfig::default()
         };
         let m = ClientMsg::Command(Command::SetDigiConfig(cfg.clone()));
         assert_eq!(decode::<ClientMsg>(&encode(&m).unwrap()).unwrap(), m);
 
-        for mode in [Mode::Mt63, Mode::Mfsk] {
+        for mode in [Mode::Mt63, Mode::Mfsk, Mode::DominoEx] {
             let mut status = DigiStatus::idle(cfg.clone());
             status.mode = mode;
             let m = ServerMsg::Ft8Status(status);
@@ -3167,6 +3172,8 @@ mod tests {
             assert_eq!(s.config.mt63_mode, Mt63Mode::Mt6500S);
             assert_eq!(s.config.mfsk_mode, MfskMode::Mfsk64L);
             assert!(s.config.mfsk_reverse);
+            assert_eq!(s.config.domino_mode, DominoMode::Dom88);
+            assert!(s.config.domino_reverse);
         }
     }
 

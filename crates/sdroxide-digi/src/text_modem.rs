@@ -10,6 +10,7 @@
 use std::collections::VecDeque;
 use std::time::SystemTime;
 
+use sdroxide_dsp::ifk::{IfkRx, IfkTx, IfkVariant};
 use sdroxide_dsp::mfsk_rx::{MfskReceiver, MfskTx, MfskVariant};
 use sdroxide_dsp::mt63::{Mt63Receiver, Mt63Tx};
 use sdroxide_dsp::{
@@ -33,6 +34,7 @@ enum RxModem {
     Thor(ThorRx),
     Mt63(Box<Mt63Receiver>),
     Mfsk(Box<MfskReceiver>),
+    Domino(Box<DominoRx>),
 }
 
 impl RxModem {
@@ -44,6 +46,7 @@ impl RxModem {
             RxModem::Thor(r) => r.process(audio),
             RxModem::Mt63(r) => r.process(audio),
             RxModem::Mfsk(r) => r.process(audio),
+            RxModem::Domino(r) => r.process(audio),
         }
     }
     fn magnitude(&self) -> f32 {
@@ -54,6 +57,7 @@ impl RxModem {
             RxModem::Thor(r) => r.magnitude(),
             RxModem::Mt63(r) => r.magnitude(),
             RxModem::Mfsk(r) => r.magnitude(),
+            RxModem::Domino(r) => r.magnitude(),
         }
     }
 }
@@ -65,6 +69,7 @@ enum TxModem {
     Thor(ThorTx),
     Mt63(Box<Mt63Tx>),
     Mfsk(Box<MfskTx>),
+    Domino(Box<IfkTx>),
 }
 
 impl TxModem {
@@ -76,6 +81,7 @@ impl TxModem {
             TxModem::Thor(m) => m.push_text(t),
             TxModem::Mt63(m) => m.push_text(t),
             TxModem::Mfsk(m) => m.push_text(t),
+            TxModem::Domino(m) => m.push_text(t),
         }
     }
     fn next_block(&mut self, out: &mut [f32]) {
@@ -98,24 +104,30 @@ impl TxModem {
             TxModem::Mfsk(m) => {
                 m.next_block(out);
             }
+            TxModem::Domino(m) => {
+                m.next_block(out);
+            }
         }
     }
     /// The operator has released transmit and everything typed has gone into
     /// the modem: a modem that idles while it waits for text closes the over
-    /// now instead (MFSK's `EOT` and interleaver drain).
+    /// now instead (MFSK's and DominoEX's `EOT` and drain).
     fn finish(&mut self) {
-        if let TxModem::Mfsk(m) = self {
-            m.finish();
+        match self {
+            TxModem::Mfsk(m) => m.finish(),
+            TxModem::Domino(m) => m.finish(),
+            _ => {}
         }
     }
 
     /// True while a modem is still playing a tail that has to follow the last
     /// character for the text to arrive whole — the interleaver flush of MT63
-    /// and MFSK.
+    /// and MFSK, and the idle that hands DominoEX's last character over.
     fn tail_pending(&self) -> bool {
         match self {
             TxModem::Mt63(m) => m.tail_pending(),
             TxModem::Mfsk(m) => m.tail_pending(),
+            TxModem::Domino(m) => m.tail_pending(),
             _ => false,
         }
     }
@@ -127,6 +139,7 @@ impl TxModem {
             TxModem::Thor(m) => m.sent_chars(),
             TxModem::Mt63(m) => m.sent_chars(),
             TxModem::Mfsk(m) => m.sent_chars(),
+            TxModem::Domino(m) => m.sent_chars(),
         }
     }
     fn total_chars(&self) -> usize {
@@ -137,6 +150,7 @@ impl TxModem {
             TxModem::Thor(m) => m.total_chars(),
             TxModem::Mt63(m) => m.total_chars(),
             TxModem::Mfsk(m) => m.total_chars(),
+            TxModem::Domino(m) => m.total_chars(),
         }
     }
     fn clear(&mut self) {
@@ -147,7 +161,74 @@ impl TxModem {
             TxModem::Thor(m) => m.clear(),
             TxModem::Mt63(m) => m.clear(),
             TxModem::Mfsk(m) => m.clear(),
+            TxModem::Domino(m) => m.clear(),
         }
+    }
+}
+
+/// The IFK variant behind the configured DominoEX speed. The two tables are
+/// tied by fldigi's name, and `the_dominoex_labels_are_the_decoders` pins them.
+fn domino_variant(cfg: &DigiConfig) -> IfkVariant {
+    IfkVariant::named(cfg.domino_mode.label()).expect("the DominoEX tables agree")
+}
+
+/// DominoEX's receiver: the IFK front end in `sdroxide_dsp::ifk`, shaped the
+/// way the controller drives a modem — `process` hands back only what arrived
+/// in this block.
+struct DominoRx {
+    rx: IfkRx,
+    variant: IfkVariant,
+    centre: f64,
+    rate: f64,
+    emitted: usize,
+    mag: f32,
+}
+
+impl DominoRx {
+    fn new(rate: f64, audio_hz: f64, variant: IfkVariant) -> Self {
+        DominoRx {
+            rx: IfkRx::new(rate, audio_hz, variant),
+            variant,
+            centre: audio_hz,
+            rate,
+            emitted: 0,
+            mag: 0.0,
+        }
+    }
+
+    /// Retune, or change speed. The bank is built around a centre, so a move
+    /// **rebuilds** it — moving only a number would leave the receiver
+    /// listening where the operator no longer is.
+    fn set_params(&mut self, audio_hz: f64, variant: IfkVariant) {
+        if variant.name != self.variant.name || (audio_hz - self.centre).abs() > 0.5 {
+            let reverse = self.rx.reverse;
+            self.variant = variant;
+            self.rx = IfkRx::new(self.rate, audio_hz, variant);
+            self.rx.reverse = reverse;
+            self.emitted = 0;
+        }
+        self.centre = audio_hz;
+    }
+
+    fn set_reverse(&mut self, on: bool) {
+        self.rx.reverse = on;
+    }
+
+    fn magnitude(&self) -> f32 {
+        self.mag
+    }
+
+    fn process(&mut self, audio: &[f32]) -> String {
+        let peak = audio.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        self.mag += 0.02 * (peak - self.mag);
+        self.rx.feed(audio);
+        let text = self.rx.text();
+        if self.emitted >= text.len() {
+            return String::new();
+        }
+        let out = text[self.emitted..].to_string();
+        self.emitted = text.len();
+        out
     }
 }
 
@@ -191,7 +272,9 @@ impl TextModemController {
         // 2125/2295 Hz is what every other RTTY program sends and expects, and
         // it is the offset the log has to take off again to name the contact.
         let audio_hz = match mode {
-            Mode::Olivia | Mode::Thor | Mode::Fsq | Mode::Mt63 | Mode::Mfsk => 1500.0f32,
+            Mode::Olivia | Mode::Thor | Mode::Fsq | Mode::Mt63 | Mode::Mfsk | Mode::DominoEx => {
+                1500.0f32
+            }
             Mode::Rtty | Mode::RttyFm => sdroxide_types::RTTY_CENTER_HZ,
             _ => 1000.0f32,
         };
@@ -214,6 +297,11 @@ impl TextModemController {
                 audio_hz as f64,
                 cfg.mt63_mode.into(),
             ))),
+            Mode::DominoEx => {
+                let mut r = DominoRx::new(MODEM_RATE, audio_hz as f64, domino_variant(&cfg));
+                r.set_reverse(cfg.domino_reverse);
+                RxModem::Domino(Box::new(r))
+            }
             Mode::Mfsk => RxModem::Mfsk(Box::new(MfskReceiver::new(
                 MODEM_RATE,
                 audio_hz as f64,
@@ -235,6 +323,11 @@ impl TextModemController {
                 MODEM_RATE,
                 audio_hz as f64,
             ))),
+            Mode::DominoEx => {
+                let mut t = IfkTx::new(domino_variant(&cfg), MODEM_RATE, audio_hz as f64);
+                t.set_mirror(cfg.domino_reverse);
+                TxModem::Domino(Box::new(t))
+            }
             Mode::Mfsk => {
                 let mut t =
                     MfskTx::new(MfskVariant::from(cfg.mfsk_mode), MODEM_RATE, audio_hz as f64);
@@ -282,6 +375,10 @@ impl TextModemController {
             RxModem::Olivia(r) => r.set_params(hz, o_tones, o_bw),
             RxModem::Thor(r) => r.set_params(hz, t_baud),
             RxModem::Mt63(r) => r.set_params(hz, self.cfg.mt63_mode.into()),
+            RxModem::Domino(r) => {
+                r.set_params(hz, domino_variant(&self.cfg));
+                r.set_reverse(self.cfg.domino_reverse);
+            }
             RxModem::Mfsk(r) => {
                 r.set_mirror(self.cfg.mfsk_reverse);
                 r.set_params(hz, self.cfg.mfsk_mode);
@@ -293,6 +390,10 @@ impl TextModemController {
             TxModem::Olivia(m) => m.set_params(hz, o_tones, o_bw),
             TxModem::Thor(m) => m.set_params(hz, t_baud),
             TxModem::Mt63(m) => m.set_params(hz, self.cfg.mt63_mode.into()),
+            TxModem::Domino(m) => {
+                m.set_params(hz, domino_variant(&self.cfg));
+                m.set_mirror(self.cfg.domino_reverse);
+            }
             TxModem::Mfsk(m) => {
                 m.set_params(hz, self.cfg.mfsk_mode.into());
                 m.set_mirror(self.cfg.mfsk_reverse);
@@ -478,7 +579,9 @@ impl DigiEngine for TextModemController {
             || cfg.thor_mode != self.cfg.thor_mode
             || cfg.mt63_mode != self.cfg.mt63_mode
             || cfg.mfsk_mode != self.cfg.mfsk_mode
-            || cfg.mfsk_reverse != self.cfg.mfsk_reverse;
+            || cfg.mfsk_reverse != self.cfg.mfsk_reverse
+            || cfg.domino_mode != self.cfg.domino_mode
+            || cfg.domino_reverse != self.cfg.domino_reverse;
         self.cfg = cfg;
         if retune {
             self.retune_modems();
@@ -656,6 +759,63 @@ mod tests {
             150,
         );
         assert!(text.contains("EAGLE HAS LANDED K"), "a held over lost its text: {text:?}");
+    }
+
+    /// DominoEX through the controller at every speed but the two slowest
+    /// (DOMEX4 and MICRO take minutes for a line), mirrored once, and once
+    /// keyed before anything is typed.
+    #[test]
+    fn a_dominoex_transmission_reads_back_through_the_controller() {
+        use sdroxide_types::DominoMode;
+        let mut cases: Vec<(DominoMode, bool)> = DominoMode::ALL
+            .into_iter()
+            .filter(|m| !matches!(m, DominoMode::Dom4 | DominoMode::Micro))
+            .map(|m| (m, false))
+            .collect();
+        cases.push((DominoMode::Dom16, true));
+        for (m, reverse) in cases {
+            let cfg =
+                DigiConfig { domino_mode: m, domino_reverse: reverse, ..DigiConfig::default() };
+            let text =
+                through_the_controller(Mode::DominoEx, cfg, "CQ DE TEST THE EAGLE HAS LANDED K\n");
+            assert!(
+                text.contains("EAGLE HAS LANDED K"),
+                "{} (reverse {reverse}) did not read back to its last word: {text:?}",
+                m.label()
+            );
+        }
+        let text = through_the_controller_after(
+            Mode::DominoEx,
+            DigiConfig::default(),
+            "CQ DE TEST THE EAGLE HAS LANDED K\n",
+            150,
+        );
+        assert!(text.contains("EAGLE HAS LANDED K"), "a held over lost its text: {text:?}");
+    }
+
+    /// Every DominoEX speed the panel offers has an IFK variant behind it, by
+    /// fldigi's name: a spelling drift would offer a speed with no decoder.
+    #[test]
+    fn the_dominoex_labels_are_the_decoders() {
+        for m in sdroxide_types::DominoMode::ALL {
+            let v = IfkVariant::named(m.label())
+                .unwrap_or_else(|| panic!("no variant for {}", m.label()));
+            assert!(!v.thor, "{} resolved to a THOR variant", m.label());
+            let baud = v.fs / v.symlen as f64;
+            assert!(
+                (baud - m.baud() as f64).abs() < 0.05 * baud,
+                "{}: the panel says {} baud, the decoder runs {baud:.3}",
+                m.label(),
+                m.baud()
+            );
+            let bw = 18.0 * v.spacing();
+            assert!(
+                (bw - m.bandwidth_hz() as f64).abs() < 0.02 * bw,
+                "{}: the panel draws {} Hz, the bank is {bw:.1}",
+                m.label(),
+                m.bandwidth_hz()
+            );
+        }
     }
 
     #[test]

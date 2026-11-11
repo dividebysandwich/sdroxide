@@ -22,6 +22,7 @@ pub mod g3ruh;
 mod hell;
 mod hell_font;
 mod hum;
+pub mod ifk;
 mod interp;
 mod iqcorrect;
 pub mod jtty;

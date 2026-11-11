@@ -5828,3 +5828,7 @@ textmodem-mt63-not-offered-hint = MT63-1K und die lange 500-Hz-Verschachtelung w
 ## Keyboard modes: MFSK (src/app/panels/text_modem.rs)
 textmodem-mfsk-hint = { $label } — { $baud } Baud, { $tones } Töne, { $bw } Hz breit{ $caveat }
 textmodem-mfsk-reverse-hint = Kehrt die Tonreihenfolge um. Eine Station, die auf dem entgegengesetzten Seitenband empfangen wird, kommt an ihrer Mitte gespiegelt an und wird als Rauschen gelesen, bis dies eingeschaltet ist.
+
+## Keyboard modes: DominoEX (src/app/panels/text_modem.rs)
+textmodem-domino-hint = { $name } — { $baud } Baud, 18 Töne, inkrementelle Frequenztastung ohne Vorwärtsfehlerkorrektur
+textmodem-ifk-reverse-hint = Kehrt die Tonschritte um. IFK+ trägt seine Daten im Schritt zwischen aufeinanderfolgenden Tönen, eine auf dem entgegengesetzten Seitenband empfangene Station hat daher lauter negative Schritte und wird als Rauschen gelesen, bis dies eingeschaltet ist.
