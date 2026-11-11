@@ -1643,7 +1643,12 @@ use sdroxide_types::{
 /// `sk_filter*` settings, and `RadioConfig` gains `dwell_recentre_off`, each
 /// on its tail. `RxState` rides whole in `RadioState`, so a v192 peer reads
 /// receiver state out of step.
-pub const PROTO_VERSION: u16 = 193;
+///
+/// v194: Wavelog's connection check reaches a remote screen.
+/// `ServerMsg` gains `WavelogProbe` (the station locations and any untrusted
+/// certificate), appended, so a v193 peer has no variant to decode it into. The
+/// v184 note saying the probe has no `ServerMsg` is superseded by this.
+pub const PROTO_VERSION: u16 = 194;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
@@ -2119,6 +2124,19 @@ pub enum ServerMsg {
     ///
     /// Appended last, for the usual reason.
     AmpStatus(Box<sdroxide_types::AmpStatus>),
+    /// `RadioEvent::WavelogProbe`: what a connection check found out about the
+    /// Wavelog server — the station locations to choose from, and a certificate
+    /// it presented that nothing vouches for. Forwarded for the picture upload's
+    /// reason: the settings are edited from whichever screen, but only the
+    /// station connects, so a remote screen could not list the locations or
+    /// pick one. It carries no key. Sent with a `LoginTest` in the same breath,
+    /// which the remote screen is given from it, so the Test row can say how it
+    /// went.
+    ///
+    /// Not cached: an answer to a test, like `PictureUpload`.
+    ///
+    /// Appended last, for the usual reason.
+    WavelogProbe(Box<sdroxide_types::WavelogProbe>),
 }
 
 /// One radio in a station's roster, as a client sees it.
@@ -2218,6 +2236,22 @@ mod tests {
             fingerprint: Some("cd".repeat(32)),
             is_test: true,
         });
+        let back: ServerMsg = decode(&encode(&m).unwrap()).unwrap();
+        assert_eq!(back, m);
+        let m = ServerMsg::WavelogProbe(Box::new(sdroxide_types::WavelogProbe {
+            ok: true,
+            message: "Wavelog 2.x, key reads and writes".into(),
+            read_write: Some(true),
+            version: "2.x".into(),
+            stations: vec![sdroxide_types::WavelogStation {
+                id: 3,
+                name: "Home".into(),
+                callsign: "EA5ABC".into(),
+                grid: "IM99".into(),
+                active: false,
+            }],
+            untrusted_cert: Some("ef".repeat(32)),
+        }));
         let back: ServerMsg = decode(&encode(&m).unwrap()).unwrap();
         assert_eq!(back, m);
         let m = ServerMsg::StationConfig(Box::new(sdroxide_types::StationConfig {

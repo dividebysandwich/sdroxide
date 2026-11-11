@@ -106,12 +106,10 @@ impl SdroxideApp {
             });
         }
 
+        // Also on a remote screen: the check runs on the station, and its answer
+        // (the locations and the result) is sent back to this screen (#814).
         ui.add_space(4.0);
-        if self.ctrl.engine_is_remote() {
-            hint(ui, tr!("settings-wavelog-connection-check-runs-machine-radio"));
-        } else {
-            self.login_test_row(ui, cmds, io.net_edit, LoginTarget::Wavelog);
-        }
+        self.login_test_row(ui, cmds, io.net_edit, LoginTarget::Wavelog);
 
         let probe = self.wavelog_probe.as_ref();
 

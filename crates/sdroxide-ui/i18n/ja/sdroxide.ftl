@@ -988,7 +988,6 @@ settings-wavelog-plain-http-address-internet-api = インターネット上の�
 settings-wavelog-trusted-cert = 信頼された証明書
 settings-wavelog-forget-certificate = この証明書を削除
 settings-wavelog-go-back-ordinary-checking-against = 公開の認証局に対する通常の確認に戻します。適切な証明書を持つサーバー用です。
-settings-wavelog-connection-check-runs-machine-radio = 接続確認は、無線機が接続されているマシンで実行されます。そこの設定でテストしてステーションの所在地を一覧できます。
 settings-wavelog-server-presented-certificate-sha-256 = サーバーはこの証明書を提示しました（SHA-256）：
 settings-wavelog-compare-your-server-s-e = サーバーの値と照合してください。例：`openssl x509 -noout -fingerprint -sha256 -in cert.pem`。一致する場合にのみ信頼してください。以後、この証明書だけが受け入れられ、それ以外は拒否されます。
 settings-wavelog-trust-certificate = この証明書を信頼

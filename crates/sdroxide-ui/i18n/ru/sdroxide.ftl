@@ -992,7 +992,6 @@ settings-wavelog-plain-http-address-internet-api = Обычный http:// на �
 settings-wavelog-trusted-cert = Доверенный сертификат
 settings-wavelog-forget-certificate = Забыть этот сертификат
 settings-wavelog-go-back-ordinary-checking-against = Вернуться к обычной проверке по публичным центрам сертификации — для сервера, у которого теперь нормальный сертификат.
-settings-wavelog-connection-check-runs-machine-radio = Проверка соединения выполняется на машине, к которой подключено радио — там используйте настройки, чтобы проверить его и вывести список местоположений станции.
 settings-wavelog-server-presented-certificate-sha-256 = Сервер предъявил этот сертификат (SHA-256):
 settings-wavelog-compare-your-server-s-e = Сравните его с сертификатом вашего сервера — например, `openssl x509 -noout -fingerprint -sha256 -in cert.pem` — и доверяйте, только если они совпадают. С этого момента принимается ровно этот сертификат, а любой другой отклоняется.
 settings-wavelog-trust-certificate = Доверять этому сертификату

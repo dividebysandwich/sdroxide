@@ -985,7 +985,6 @@ settings-wavelog-plain-http-address-internet-api = Gewone http:// naar een adres
 settings-wavelog-trusted-cert = Vertrouwd certificaat
 settings-wavelog-forget-certificate = Dit certificaat vergeten
 settings-wavelog-go-back-ordinary-checking-against = Terug naar gewone controle tegen de publieke certificaatautoriteiten — voor een server die nu een goed certificaat heeft.
-settings-wavelog-connection-check-runs-machine-radio = De verbindingscontrole draait op de machine waarop de radio is aangesloten — gebruik daar de instellingen om hem te testen en de stationslocaties op te sommen.
 settings-wavelog-server-presented-certificate-sha-256 = De server toonde dit certificaat (SHA-256):
 settings-wavelog-compare-your-server-s-e = Vergelijk het met dat van je server — bijv. `openssl x509 -noout -fingerprint -sha256 -in cert.pem` — en vertrouw het alleen als ze overeenkomen. Vanaf dan wordt precies dit certificaat geaccepteerd en elk ander geweigerd.
 settings-wavelog-trust-certificate = Dit certificaat vertrouwen

@@ -1308,8 +1308,12 @@ fn handle_event(shared: &Shared, ev: RadioEvent) {
             // client's, and it is only ever asked for from the machine the
             // credentials live on. Same treatment as `RadioEvent::Notice`.
             RadioEvent::LoginTest(_) => None,
-            // The rest of the same answer, kept local for the same reason.
-            RadioEvent::WavelogProbe(_) => None,
+            // The station locations and the certificate to trust. Forwarded,
+            // unlike the login's pass-or-fail: a remote screen cannot choose a
+            // Wavelog location without the list (issue #814). Not cached, as
+            // with `PictureUpload`: it answers a test the client asked for.
+            RadioEvent::WavelogProbe(p) => Some(ServerMsg::WavelogProbe(p)),
+            // A download's pages stay on the machine the logbook is on.
             RadioEvent::WavelogBatch(_) => None,
             RadioEvent::Profiles(p) => {
                 latest.profiles = p.clone();

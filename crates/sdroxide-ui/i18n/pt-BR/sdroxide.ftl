@@ -990,7 +990,6 @@ settings-wavelog-plain-http-address-internet-api = http:// simples para um ender
 settings-wavelog-trusted-cert = Certificado confiável
 settings-wavelog-forget-certificate = Esquecer este certificado
 settings-wavelog-go-back-ordinary-checking-against = Volta à verificação comum com as autoridades certificadoras públicas — para um servidor que agora tem um certificado adequado.
-settings-wavelog-connection-check-runs-machine-radio = A verificação de conexão roda na máquina à qual o rádio está conectado — use as configurações de lá para testá-la e listar os locais da estação.
 settings-wavelog-server-presented-certificate-sha-256 = O servidor apresentou este certificado (SHA-256):
 settings-wavelog-compare-your-server-s-e = Compare com o do seu servidor — por exemplo, `openssl x509 -noout -fingerprint -sha256 -in cert.pem` — e confie só se coincidirem. A partir daí este certificado exato é aceito e qualquer outro é recusado.
 settings-wavelog-trust-certificate = Confiar neste certificado
