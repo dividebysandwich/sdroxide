@@ -752,6 +752,13 @@ impl<'de> Deserialize<'de> for UiLanguage {
 pub struct UiSettings {
     /// GUI repaint + spectrum frame rate, in frames per second.
     pub frame_rate_fps: u32,
+    /// How long the pointer rests on a control before its tooltip shows, in
+    /// seconds. egui's own half second unless the operator sets another.
+    pub tooltip_delay_s: f32,
+    /// Once a tooltip has shown, how long the next control's shows without
+    /// waiting, in seconds (egui's grace time). 0: every tooltip waits its
+    /// delay.
+    pub tooltip_grace_s: f32,
     /// How fast the waterfall scrolls.
     pub waterfall_speed: Speed,
     /// How fast the spectrum line reacts (averaging; slower = smoother).
@@ -1038,6 +1045,15 @@ where
     Ok(out)
 }
 
+/// egui's own tooltip delay, the default for [`UiSettings::tooltip_delay_s`].
+pub const TOOLTIP_DELAY_DEFAULT_S: f32 = 0.5;
+/// The range the tooltip delay is set in.
+pub const TOOLTIP_DELAY_RANGE_S: std::ops::RangeInclusive<f32> = 0.0..=1.5;
+/// egui's own grace time, the default for [`UiSettings::tooltip_grace_s`].
+pub const TOOLTIP_GRACE_DEFAULT_S: f32 = 0.2;
+/// The range the tooltip grace time is set in.
+pub const TOOLTIP_GRACE_RANGE_S: std::ops::RangeInclusive<f32> = 0.0..=1.0;
+
 impl Default for UiSettings {
     fn default() -> Self {
         UiSettings {
@@ -1046,6 +1062,8 @@ impl Default for UiSettings {
             // reading differently from the rig beside it.
             cw_qrg: false,
             frame_rate_fps: 60,
+            tooltip_delay_s: TOOLTIP_DELAY_DEFAULT_S,
+            tooltip_grace_s: TOOLTIP_GRACE_DEFAULT_S,
             waterfall_speed: Speed::Medium,
             spectrum_speed: Speed::Medium,
             spectrum_3d_speed: Speed::Medium,
