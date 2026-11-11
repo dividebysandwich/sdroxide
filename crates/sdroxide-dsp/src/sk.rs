@@ -10,7 +10,7 @@
 //! a weak 80 m LSB signal, against 1.5–2 in the noise above it). So each bin
 //! keeps its two moments as exponential means over [`SkFilter::tau_s`], and its
 //! gain runs smoothly from [`FLOOR_DB`] at a kurtosis of [`SK_NOISE`] to unity
-//! at [`SK_VOICE`], smoothed over three bins. It is the panadapter's SK guide
+//! at [`SK_VOICE`], smoothed over `±width` bins. It is the panadapter's SK guide
 //! turned into a mask, on the audio.
 //!
 //! With a long `tau_s` (seconds) the curve settles into the shape of the
@@ -87,6 +87,9 @@ pub struct SkFilter {
     /// with the open and close times.
     power: Vec<f32>,
     act: Vec<f32>,
+    /// Per bin: the kurtosis's voice weight this frame (scratch, kept so a hop
+    /// does not allocate on the audio thread).
+    voice: Vec<f32>,
     frames: usize,
 }
 
@@ -122,6 +125,7 @@ impl SkFilter {
             gain: vec![1.0; bins],
             power: vec![0.0; bins],
             act: vec![1.0; bins],
+            voice: vec![1.0; bins],
             open_s: DEFAULT_OPEN_S,
             width: DEFAULT_WIDTH,
             close_s: DEFAULT_CLOSE_S,
@@ -211,12 +215,17 @@ impl SkFilter {
             && self.frames >= 20;
         let floor = 10f32.powf(FLOOR_DB / 20.0);
         let bins = self.spec.len();
-        let mut u = vec![1.0f32; bins];
+        // `m1²` must stay a normal float: through a long digital silence `m1`
+        // and `top` decay together, and an underflowed square would make the
+        // kurtosis 0/0.
+        let quiet = (1e-9 * top).max(1e-15);
+        let mut u = std::mem::take(&mut self.voice);
+        u.fill(1.0);
         if settled {
             for (k, uk) in u.iter_mut().enumerate() {
                 // A bin with next to nothing in it reads as anything at all;
                 // there is nothing there to cut either.
-                if self.m1[k] <= 1e-9 * top {
+                if self.m1[k] <= quiet {
                     continue;
                 }
                 let sk = self.m2[k] / (self.m1[k] * self.m1[k]) - 1.0;
@@ -235,7 +244,7 @@ impl SkFilter {
         let hop_s = self.hop as f32 / self.rate;
         let (up, down) = (1.0 - (-hop_s / self.open_s).exp(), 1.0 - (-hop_s / self.close_s).exp());
         for k in 0..bins {
-            let target = if settled && self.m1[k] > 1e-9 * top {
+            let target = if settled && self.m1[k] > quiet {
                 let db = 10.0 * (self.power[k] / self.m1[k]).max(1e-12).log10();
                 let t = ((db - ACTIVE_BELOW_DB) / -ACTIVE_BELOW_DB).clamp(0.0, 1.0);
                 t * t * (3.0 - 2.0 * t)
@@ -252,6 +261,7 @@ impl SkFilter {
             let act = self.act[lo..=hi].iter().sum::<f32>() / (hi - lo + 1) as f32;
             self.gain[k] = floor + (1.0 - floor) * mean * act;
         }
+        self.voice = u;
         for (c, &g) in self.spec.iter_mut().zip(&self.gain) {
             *c *= g;
         }
