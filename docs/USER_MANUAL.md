@@ -4800,19 +4800,23 @@ mode still in regular amateur use, and the only one you read with your eyes
 instead of a decoder.
 
 Hell does not send characters. It sends *pictures* of characters: the
-transmitter scans a 7-column by 14-row dot matrix per letter, top to bottom then
-left to right, switching the carrier on and off as it goes. The receiver simply
-free-runs at the same dot rate and paints whatever it hears onto a scrolling
-strip. There is no synchronisation, no framing and no error correction — which is
+transmitter scans a 7-column by 14-row dot matrix per letter, bottom to top then
+left to right, switching the carrier on and off as it goes. The receiver runs at
+the same dot rate and paints whatever it hears onto a scrolling strip. The mode
+carries no synchronisation, no framing and no error correction — which is
 exactly why Hell stays readable in conditions that break real decoders. A burst of
 noise smudges a few dots instead of corrupting a whole character, and your eye
 does the rest.
 
 ![The Hellschreiber panel: the scrolling receive raster above the transmit box](images/hellschreiber.jpg)
 
-**Reading the strip.** Received text scrolls in from the right. Because nothing
-synchronises the vertical position, a character can straddle the top and bottom
-of the strip — so, like fldigi, sdroxide draws **every column twice, stacked**.
+**Reading the strip.** Received text scrolls in from the right. The receiver
+finds where a character begins by itself: every Hell font leaves a blank dot
+above and below the letter, and the run of quiet dots they make together is
+where it puts the cell boundary, so once a few characters have arrived the text
+sits level in the strip instead of wrapping over the edge. Until then — and on a
+signal too weak to find it in — a character can straddle the top and bottom of
+the strip, so, like fldigi, sdroxide draws **every column twice, stacked**.
 Whatever the alignment happens to be, one complete legible copy of the text is
 always on screen. That is what the **2ROW** button controls; turn it off for a
 single-height strip and drag the raster up or down to line the text up yourself.
@@ -4859,6 +4863,11 @@ between lines anyway.
 | **FSK245** | 2.5 char/s | 490 Hz | frequency-shifted |
 | **FSK105** | 2.5 char/s | 220 Hz | frequency-shifted |
 | **HELL80** | 5 char/s | 1200 Hz | frequency-shifted |
+
+The transmit font is **fldigi's glyph set**, dot for dot, so a station reading
+you on fldigi sees the letters it would have sent itself. **HELL80** sends seven
+dots a column, not fourteen — each is shown twice — which is how the mode is
+defined and what MultiPSK sends.
 
 **FELD** (classic Feld Hell) is what essentially all on-air activity uses; the
 others are worth knowing about but you will rarely meet them. **SLOW** trades

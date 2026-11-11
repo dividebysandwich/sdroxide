@@ -134,8 +134,13 @@ impl HellUi {
             let x = (x0 + c) % RING_COLS;
             for r in 0..ROWS {
                 let col = shade(gray[x * ROWS + r], view);
-                px[r * n + c] = col;
-                px[(r + ROWS) * n + c] = col;
+                // Row 0 is the **first dot transmitted**, which is the bottom of
+                // the cell: Hell scans a column upwards. Drawing row 0 at the
+                // top put the picture upside down, in the receive strip and in
+                // the transmit echo alike (#444).
+                let y = ROWS - 1 - r;
+                px[y * n + c] = col;
+                px[(y + ROWS) * n + c] = col;
             }
         }
         egui::ColorImage::new([n, DISPLAY_ROWS], px)
@@ -278,6 +283,27 @@ mod tests {
         assert_eq!(ui.head, RING_COLS as u64 + 3);
         assert!(ui.gray[(RING_COLS - 1) * ROWS] == 200, "pre-seam column");
         assert!(ui.gray[0] == 200, "post-seam column");
+    }
+
+    /// Row 0 of a column is the first dot transmitted, and Hell scans a column
+    /// upwards, so it belongs at the bottom of the picture. Drawn at the top it
+    /// put the received strip and the transmit echo upside down (#444).
+    #[test]
+    fn the_first_transmitted_dot_is_drawn_at_the_bottom() {
+        let mut gray = vec![0u8; RING_COLS * ROWS];
+        // Only the first dot of column 0 is lit.
+        gray[0] = 255;
+        let view = HellView::default();
+        let img = HellUi::patch(&gray, 0, 1, &view);
+        // n = 1, so pixel index == row index. Row 0 is the top of the image.
+        let bottom = img.pixels[ROWS - 1];
+        let top = img.pixels[0];
+        assert!(
+            bottom.r() < top.r(),
+            "the first dot must be drawn on the bottom row (bottom {:?}, top {:?})",
+            bottom,
+            top
+        );
     }
 
     #[test]
