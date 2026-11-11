@@ -183,15 +183,15 @@ pub struct ViewState {
     //      im S/N zu sehen?".
     #[serde(default)]
     pub snr_label_peak: bool,
+    /// Under [`Self::snr_label_filter`], a station 15 dB or more over the noise
+    /// keeps other labels off its flanks (±10 kHz).
+    // Why: HDZ 2026-11-11: "Flanke bitte doch an/aus, Schwelle 15 dB".
+    #[serde(default)]
+    pub snr_label_flanks: bool,
     /// The S/N, dB over the noise floor, a spot needs under
     /// [`Self::snr_label_filter`] for its label; set on the S/N rail.
     #[serde(default = "snr_label_min_default")]
     pub snr_label_min_db: f32,
-    /// FLANKS: from this S/N, dB, a station keeps other labels off its flanks
-    /// (±10 kHz) under [`Self::snr_label_filter`]; [`SNR_FLANK_OFF`] = off.
-    // Why: HDZ 2026-11-11: "einen Regler wie 'keine Labels an Sendergrenzen'".
-    #[serde(default = "snr_flank_default")]
-    pub snr_label_flank_db: f32,
     /// The S/N, dB, at which the S/N guide reaches its full height (a quarter
     /// of the strip); set on the S/N TOP rail.
     // Why: HDZ 2026-11-08: "einen Schieberegler, der die Toppinggrenze des
@@ -736,8 +736,8 @@ impl Default for ViewState {
             snr_guide: false,
             snr_label_filter: false,
             snr_label_peak: false,
+            snr_label_flanks: false,
             snr_label_min_db: snr_label_min_default(),
-            snr_label_flank_db: snr_flank_default(),
             snr_guide_top_db: snr_guide_top_default(),
             spots_snr_only: false,
             spectrum_3d: false,
@@ -945,16 +945,6 @@ pub const SNR_LABEL_MIN_RANGE: std::ops::RangeInclusive<f32> = 0.0..=6.0;
 
 fn snr_label_min_default() -> f32 {
     SNR_LABEL_MIN_DEFAULT
-}
-
-/// The FLANKS rail's left end, dB, which reads "off": no station blocks its
-/// flanks. Where it starts, so labels behave as before until it is moved.
-pub const SNR_FLANK_OFF: f32 = 9.0;
-/// The FLANKS rail's range, dB: off, then 10 to 30 dB.
-pub const SNR_FLANK_RANGE: std::ops::RangeInclusive<f32> = SNR_FLANK_OFF..=30.0;
-
-fn snr_flank_default() -> f32 {
-    SNR_FLANK_OFF
 }
 
 /// The S/N guide's full-height S/N to start with, dB: what it was fixed at.

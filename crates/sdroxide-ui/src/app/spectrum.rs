@@ -325,26 +325,25 @@ fn has_a_peak(g: &crate::mean_spectrum::Guide, hz: f64) -> Option<bool> {
     Some(top - ring[ring.len() / 2] >= PEAK_PROMINENCE_DB)
 }
 
-/// How far either side of a strong station FLANKS keeps other labels away: its
-/// sidebands and splatter, about a cursor's width in all.
+/// How far either side of a strong station other labels are kept away: its
+/// sidebands and splatter, about a cursor's width in all. The FLANKS switch.
 // Why: HDZ 2026-11-11: "es werden noch zu viele Sender insbesondere in den
-//      Seitenbändern erlaubt … wenn ein Sender einen großen Wert (say >10 S/N)
-//      oder 15 hat, die Umgebung in typischer Cursorbreite, vielleicht 20 kHz,
-//      blacklisten … einen Regler wie 'keine Labels an Sendergrenzen'".
+//      Seitenbändern erlaubt … die Umgebung in typischer Cursorbreite,
+//      vielleicht 20 kHz, blacklisten"; then "Flanke bitte doch an/aus,
+//      Schwelle 15 dB".
 const SNR_FLANK_REACH_HZ: f64 = 10_000.0;
 /// How far under its strong neighbour a label's own S/N must stay for it to
 /// count as that neighbour's flank rather than a station of its own.
 const SNR_FLANK_MARGIN_DB: f32 = 6.0;
+/// From this S/N, dB, a station keeps other labels off its flanks.
+const SNR_FLANK_DB: f32 = 15.0;
 
 /// Whether a label at `hz` stands on a strong station's flank: within
 /// [`SNR_FLANK_REACH_HZ`] a cell reaches `flank_db`, it lies outside the label's
 /// own [`SNR_LABEL_REACH_HZ`], and the label's own S/N there is
 /// [`SNR_FLANK_MARGIN_DB`] or more under it. The strong station keeps its own
-/// label; `flank_db` at [`crate::view::SNR_FLANK_OFF`] or below blocks nothing.
+/// label.
 fn on_a_flank(g: &crate::mean_spectrum::Guide, hz: f64, flank_db: f32) -> bool {
-    if flank_db <= crate::view::SNR_FLANK_OFF {
-        return false;
-    }
     let (Some(own), Some((strong, at))) =
         (guide_max(g, hz), guide_peak(g, hz - SNR_FLANK_REACH_HZ, hz + SNR_FLANK_REACH_HZ))
     else {
@@ -856,7 +855,10 @@ impl SdroxideApp {
         guide_max(g, s.freq_hz).is_some_and(|v| v >= self.view.snr_label_min_db)
     }
 
-    fn snr_label_alpha(&self, id: u64, hz: f64, recheck: bool, step: f32) -> f32 {
+    /// `carrier`: the label is of a mode with a carrier (AM, CW), the only
+    /// kind PEAK can judge — SSB, DRM, FAX or FT8 spread over their channel
+    /// and have no peak of their own.
+    fn snr_label_alpha(&self, id: u64, hz: f64, carrier: bool, recheck: bool, step: f32) -> f32 {
         let Some(g) =
             self.snr_last.as_deref().filter(|_| self.view.snr_guide && self.view.snr_label_filter)
         else {
@@ -867,8 +869,8 @@ impl SdroxideApp {
         let mut st = self.snr_labels.borrow_mut();
         let entry = st.shown.entry(id).or_insert((true, 0.0));
         if recheck {
-            entry.0 = if on_a_flank(g, hz, self.view.snr_label_flank_db)
-                || (self.view.snr_label_peak && has_a_peak(g, hz) == Some(false))
+            entry.0 = if (self.view.snr_label_flanks && on_a_flank(g, hz, SNR_FLANK_DB))
+                || (self.view.snr_label_peak && carrier && has_a_peak(g, hz) == Some(false))
             {
                 false
             } else {
@@ -921,7 +923,8 @@ impl SdroxideApp {
             if !self.spot_visible(s) {
                 continue;
             }
-            let snr_alpha = self.snr_label_alpha(s.id, s.freq_hz, recheck, step);
+            let carrier = ["AM", "CW"].iter().any(|m| s.mode.eq_ignore_ascii_case(m));
+            let snr_alpha = self.snr_label_alpha(s.id, s.freq_hz, carrier, recheck, step);
             if snr_alpha < 0.15 {
                 continue;
             }
@@ -1334,8 +1337,8 @@ mod tests {
     /// FLANKS (HDZ's picture on 7.305 MHz, 2026-11-11): a broadcast carrier
     /// 25 dB up with sidebands 10 dB up for 5 kHz either side. A label 6 kHz off
     /// it stands on the flank and goes; the strong station keeps its own; one
-    /// 15 kHz off is beyond the flank; with the rail off nothing is blocked; a
-    /// second station of its own 4 kHz off, 20 dB up, is no flank.
+    /// 15 kHz off is beyond the flank; a carrier under the threshold blocks
+    /// nothing; a second station of its own 4 kHz off, 20 dB up, is no flank.
     #[test]
     fn a_strong_station_keeps_labels_off_its_flanks() {
         let mut snr = vec![0.0f32; 1000];
@@ -1353,14 +1356,10 @@ mod tests {
         assert!(super::on_a_flank(&g, carrier + 6_000.0, 15.0), "sideband label kept");
         assert!(!super::on_a_flank(&g, carrier, 15.0), "the station lost its own label");
         assert!(!super::on_a_flank(&g, carrier + 15_000.0, 15.0), "blocked past the flank");
-        assert!(
-            !super::on_a_flank(&g, carrier + 6_000.0, crate::view::SNR_FLANK_OFF),
-            "off blocks"
-        );
         // Counter-check on the threshold: a carrier under it blocks nothing.
         assert!(
             !super::on_a_flank(&g, carrier + 6_000.0, 26.0),
-            "a carrier under the rail blocked"
+            "a carrier under the threshold blocked"
         );
         let mut two = snr;
         two[540] = 20.0;

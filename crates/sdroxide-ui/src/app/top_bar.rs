@@ -5756,38 +5756,59 @@ impl SdroxideApp {
                 &Speed::WATERFALL,
                 &tr!("topbar-how-fast-waterfall-scrolls-lines"),
             );
-            // Labels by S/N: a spot keeps its label only where the S/N guide
-            // sees a signal. Greyed while the guide is off.
-            if crate::chrome::chip_enabled(
-                ui,
-                self.view.snr_guide,
-                self.view.snr_label_filter,
-                &tr!("topbar-snr-label-filter"),
-            )
-            .on_hover_text(tr!("topbar-snr-label-filter-tip"))
-            .clicked()
-            {
-                self.view.snr_label_filter = !self.view.snr_label_filter;
-                // Rebuild the candidates now rather than at the next minute.
-                self.broadcast_minute = -1;
-            }
-            // PEAK: a label needs a peak of its own, not just height over the
-            // band's floor, so a broad hump (interference, a sideband) lifts
-            // none.
-            // Why: HDZ 2026-11-11, strong QRM: "sind die Label in der Lage,
-            //      einen Peak im S/N zu sehen?" — "ja bitte hänge die
-            //      Spitzen-Algorithmik mit rein".
-            if crate::chrome::chip_enabled(
-                ui,
-                self.view.snr_guide,
-                self.view.snr_label_peak,
-                &tr!("topbar-snr-label-peak"),
-            )
-            .on_hover_text(tr!("topbar-snr-label-peak-tip"))
-            .clicked()
-            {
-                self.view.snr_label_peak = !self.view.snr_label_peak;
-            }
+            // One row: LABELS BY S/N, WITH PEAKS, IGNORE FLANKS side by side; the
+            // S/N MIN rail on the next.
+            // Why: HDZ 2026-11-11: "räume den Dialog auf, nebeneinander (Labels
+            //      nach S/N) (mit Peaks) (ignoriere Flanken), dann nächste Reihe
+            //      mit dem S/N-Schieberegler".
+            ui.horizontal(|ui| {
+                // Labels by S/N: a spot keeps its label only where the S/N guide
+                // sees a signal. Greyed while the guide is off.
+                if crate::chrome::chip_enabled(
+                    ui,
+                    self.view.snr_guide,
+                    self.view.snr_label_filter,
+                    &tr!("topbar-snr-label-filter"),
+                )
+                .on_hover_text(tr!("topbar-snr-label-filter-tip"))
+                .clicked()
+                {
+                    self.view.snr_label_filter = !self.view.snr_label_filter;
+                    // Rebuild the candidates now rather than at the next minute.
+                    self.broadcast_minute = -1;
+                }
+                // PEAK: a label needs a peak of its own, not just height over the
+                // band's floor, so a broad hump (interference, a sideband) lifts
+                // none.
+                // Why: HDZ 2026-11-11, strong QRM: "sind die Label in der Lage,
+                //      einen Peak im S/N zu sehen?" — "ja bitte hänge die
+                //      Spitzen-Algorithmik mit rein".
+                if crate::chrome::chip_enabled(
+                    ui,
+                    self.view.snr_guide,
+                    self.view.snr_label_peak,
+                    &tr!("topbar-snr-label-peak"),
+                )
+                .on_hover_text(tr!("topbar-snr-label-peak-tip"))
+                .clicked()
+                {
+                    self.view.snr_label_peak = !self.view.snr_label_peak;
+                }
+                // FLANKS: a station 15 dB up keeps other labels off its sidebands.
+                // Why: HDZ 2026-11-11: "keine Labels an Sendergrenzen"; "Flanke
+                //      bitte doch an/aus, Schwelle 15 dB".
+                if crate::chrome::chip_enabled(
+                    ui,
+                    self.view.snr_guide,
+                    self.view.snr_label_flanks,
+                    &tr!("topbar-snr-label-flanks"),
+                )
+                .on_hover_text(tr!("topbar-snr-label-flanks-tip"))
+                .clicked()
+                {
+                    self.view.snr_label_flanks = !self.view.snr_label_flanks;
+                }
+            });
             // The S/N threshold for labels and candidates, on a rail under
             // LABELS BY S/N, live while the guide runs.
             // Why: HDZ 2026-11-07: "S/N mit 6 ist viel zu streng, Shannon hat
@@ -5810,32 +5831,6 @@ impl SdroxideApp {
                 )
                 .on_hover_text(tr!("topbar-snr-min-tip"))
                 .on_disabled_hover_text(tr!("topbar-snr-min-tip"));
-            });
-            // FLANKS: a strong station keeps other labels off its sidebands.
-            // Why: HDZ 2026-11-11: "einen Regler wie 'keine Labels an
-            //      Sendergrenzen'".
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(tr!("topbar-caption-snr-flank"))
-                        .size(10.0)
-                        .color(crate::theme::CYAN_DIM()),
-                );
-                let off = tr!("topbar-snr-flank-off");
-                ui.add_enabled(
-                    self.view.snr_guide,
-                    Slider::new(&mut self.view.snr_label_flank_db, crate::view::SNR_FLANK_RANGE)
-                        .step_by(1.0)
-                        .show_value(true)
-                        .custom_formatter(move |v, _| {
-                            if v as f32 <= crate::view::SNR_FLANK_OFF {
-                                off.clone()
-                            } else {
-                                format!("{v:.0} dB")
-                            }
-                        }),
-                )
-                .on_hover_text(tr!("topbar-snr-flank-tip"))
-                .on_disabled_hover_text(tr!("topbar-snr-flank-tip"));
             });
             if crate::chrome::chip(ui, self.view.decode_labels, tr!("topbar-decode-labels"))
                 .on_hover_text(tr!("topbar-mark-every-decoded-station-waterfall"))

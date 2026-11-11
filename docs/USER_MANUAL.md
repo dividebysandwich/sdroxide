@@ -1097,23 +1097,23 @@ them all at once.
     and RAF VOLMETs and the published FT8, FT4, JS8, WSPR, FSQ and PSK31
     dials — only those that come in get a label. Greyed while S/N
     is off.
-  - **S/N MIN** — the rail under LABELS BY S/N: how far over the noise a
+  - **S/N MIN** — the rail in the row under LABELS BY S/N: how far over the noise a
     frequency must stand on the S/N line for a label or a candidate, 0 to 6 dB,
     2 dB to start with. 2 dB is where a weak steady station such as the
     Shannon VOLMET stands once the line has averaged it; 0 dB shows whatever
     the line has not ruled out. Live while S/N is on.
-  - **PEAK** — beside LABELS BY S/N: a label also needs a peak of its own,
-    its S/N at least 3 dB over the median of the band 0.6 to 2 kHz either side
-    of it. Height over the floor alone lets a broad hump through — strong
-    interference over part of the band, a station's sideband — and with it
-    every station listed there; a carrier of its own stands out of its
-    surroundings. Off to start with.
-  - **FLANKS** — the rail under S/N MIN: a strong station's sidebands lift
-    the S/N line for several kilohertz either side, enough for a weak station
-    listed there to pass S/N MIN. From the S/N set here (10 to 30 dB; at the
-    left end, *off*, the rail blocks nothing), a station keeps every other
-    label off ±10 kHz around it, unless that label's own S/N is within 6 dB of
-    the strong one — a station of its own. The strong station keeps its label.
+  - **WITH PEAKS** — beside LABELS BY S/N: the label of an AM or CW station also
+    needs a peak of its own, its S/N at least 3 dB over the median of the band
+    0.6 to 2 kHz either side of it. Height over the floor alone lets a broad
+    hump through — strong interference over part of the band, a station's
+    sideband — and with it every station listed there; a carrier of its own
+    stands out of its surroundings. SSB, DRM, FAX and the digital modes spread
+    over their channel and have no peak, so WITH PEAKS leaves them to the height
+    test. Off to start with.
+  - **IGNORE FLANKS** — beside WITH PEAKS: a station 15 dB or more over the noise keeps
+    every other label off ±10 kHz around it, its sidebands and splatter,
+    unless that label's own S/N is within 6 dB of the strong one — a station
+    of its own. Off to start with. The strong station keeps its label.
   - In the SPOTS window, **S/N** beside **IN VIEW** narrows what IN VIEW shows
     to the spots the S/N line sees a signal at: S/N MIN or more within 2 kHz
     of the spot's frequency. It works with IN VIEW only, because the line
