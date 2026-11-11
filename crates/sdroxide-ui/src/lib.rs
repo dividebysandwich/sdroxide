@@ -38,6 +38,7 @@ mod login_globe;
 /// browser client drives a single (remote) radio.
 mod multi;
 mod prop_map;
+mod rc28;
 #[cfg(feature = "remote")]
 mod remote;
 /// Pinned certificates for `wss://` stations nothing public vouches for.

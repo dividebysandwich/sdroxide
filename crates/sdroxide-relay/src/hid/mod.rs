@@ -12,7 +12,7 @@
 //! (`serialport` carries `default-features = false` for exactly that reason)
 //! and which would complicate the glibc-2.35 compatibility builds.
 //!
-//! What is actually needed is three calls and an enumeration. So they are here:
+//! What is actually needed is four calls and an enumeration. So they are here:
 //! `hidraw` ioctls on Linux, SetupAPI plus `hid.dll` on Windows, `IOHIDManager`
 //! on macOS. No new system dependency on any target, and every byte-level
 //! decision lives in [`crate::frame`] where it is tested.
@@ -24,7 +24,15 @@
 //! buffer — Linux strips a zero id on the way out and does not add one back on
 //! the way in, Windows keeps it in byte 0 in both directions, macOS passes the
 //! body alone — so normalising here is the only way the callers can be written
-//! once. Both devices supported use report id 0.
+//! once. Every device supported uses report id 0.
+//!
+//! # Not only relays
+//!
+//! The Icom RC-28 tuning knob (`sdroxide-rc28`) is a HID device too, and the
+//! one reason [`HidDev::read_input`] exists: a relay is only ever written to,
+//! a knob is only ever listened to. It lives here rather than in a HID crate
+//! of its own because the platform code is the expensive part, and it is
+//! already here.
 
 use crate::error::Result;
 
@@ -57,6 +65,24 @@ pub trait HidDev: Send {
 
     /// An output report — how a CM108's GPIO pins are driven.
     fn write_output(&mut self, report_id: u8, body: &[u8]) -> Result<()>;
+
+    /// Wait up to `timeout` for the next input report from the interrupt
+    /// endpoint, and copy its body — report id excluded, as everywhere here —
+    /// into `body`.
+    ///
+    /// `Ok(Some(n))` is a report of `n` bytes, `Ok(None)` is the timeout with
+    /// nothing arriving, and an error means the device has gone. Only devices
+    /// with no numbered reports are read, so there is no id to strip.
+    ///
+    /// The default says so rather than pretending to time out, for the test
+    /// doubles of devices that are never read.
+    fn read_input(
+        &mut self,
+        _body: &mut [u8],
+        _timeout: std::time::Duration,
+    ) -> Result<Option<usize>> {
+        Err(crate::error::Error::Unsupported("this device has no input reports to read".into()))
+    }
 }
 
 /// A HID device seen on the bus, before anything is opened.

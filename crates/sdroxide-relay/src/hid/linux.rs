@@ -13,7 +13,7 @@
 //! and a probe that opened every candidate to find out would be opening
 //! arbitrary devices on the operator's bus.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 
 use crate::error::{Error, Result};
@@ -86,6 +86,37 @@ impl HidDev for HidRaw {
         buf.extend_from_slice(body);
         self.file.write_all(&buf)?;
         Ok(())
+    }
+
+    fn read_input(
+        &mut self,
+        body: &mut [u8],
+        timeout: std::time::Duration,
+    ) -> Result<Option<usize>> {
+        // `poll` rather than a non-blocking descriptor, so the write path above
+        // keeps its ordinary blocking semantics.
+        let mut pfd = libc::pollfd { fd: self.file.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+        let ms = timeout.as_millis().min(i32::MAX as u128) as i32;
+        let rc = unsafe { libc::poll(&mut pfd, 1, ms) };
+        if rc < 0 {
+            let e = std::io::Error::last_os_error();
+            if e.kind() == std::io::ErrorKind::Interrupted {
+                return Ok(None);
+            }
+            return Err(e.into());
+        }
+        if rc == 0 {
+            return Ok(None);
+        }
+        // An unplug shows up as POLLHUP/POLLERR, and the read below then fails
+        // with ENODEV — which is the error the caller treats as "gone".
+        // hidraw hands over exactly one report per read, without an id byte
+        // for a device that has no numbered reports.
+        let n = self.file.read(body)?;
+        if n == 0 {
+            return Err(Error::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)));
+        }
+        Ok(Some(n))
     }
 }
 
