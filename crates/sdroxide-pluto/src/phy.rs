@@ -108,6 +108,27 @@ const AD9364_LO_HZ: (f64, f64) = (70_000_000.0, 6_000_000_000.0);
 /// the ceiling is the part's, not the link's — see `PlutoConfig::SAMPLE_RATES`
 /// for what a USB Ethernet gadget can actually carry.
 const RATE_HZ: (f64, f64) = (521_000.0, 61_440_000.0);
+/// The lowest rate an AD9361 reaches with its FIR bypassed: the ADC's 25 MHz
+/// floor over the ×12 of the half-band chain behind it. Anything slower needs
+/// the FIR decimating by four, see [`Phy::load_decimating_fir`].
+const NO_FIR_FLOOR_HZ: f64 = 25_000_000.0 / 12.0;
+/// Taps in the FIR [`Phy::load_decimating_fir`] loads — the most the part takes,
+/// and what libad9361 loads for the same job.
+const FIR_TAPS: usize = 128;
+/// …and its decimation (receive) and interpolation (transmit).
+const FIR_DECIMATION: u32 = 4;
+/// The FIR's -6 dB point as a fraction of its input rate: just under the
+/// Nyquist of its output (1/8), so the band the operator asked for is flat to
+/// about 90% of the way to the edge.
+const FIR_CUTOFF: f64 = 0.1245;
+/// Kaiser window shape: about 65 dB of stopband from 128 taps.
+const FIR_KAISER_BETA: f64 = 5.65;
+/// Rate parked on while the FIR is swapped: inside what the part takes with or
+/// without a FIR, and slow enough for 128 taps (see `load_decimating_fir`).
+const FIR_SWAP_RATE_HZ: i64 = 3_000_000;
+/// The phy channel holding the switch for both FIRs at once
+/// (`in_out_voltage_filter_fir_en`).
+const FIR_EN_CHAN: (bool, &str) = (false, "out");
 /// AD9361 analog filter range.
 const BANDWIDTH_HZ: (f64, f64) = (200_000.0, 56_000_000.0);
 /// Receive gain, dB: (min, max, step).
@@ -200,6 +221,9 @@ pub struct Phy {
     /// firmware that publishes none is a board this cannot be done on, which
     /// is worth saying plainly rather than as four rejected writes.
     pub debug_attrs: Vec<String>,
+    /// Whether the phy takes a FIR (`filter_fir_config` and the switch that
+    /// enables it), which is what rates under [`NO_FIR_FLOOR_HZ`] need.
+    pub fir_loadable: bool,
     pub limits: PlutoLimits,
     pub model: String,
     pub firmware: String,
@@ -244,6 +268,10 @@ impl Phy {
 
         let mut limits = PlutoLimits::fallback(ctx.is_ad9364());
         let phy_id = phy.id.clone();
+        let fir_loadable = phy.has_attr("filter_fir_config")
+            && phy
+                .channel(FIR_EN_CHAN.1, FIR_EN_CHAN.0)
+                .is_some_and(|c| c.has_attr("voltage_filter_fir_en"));
 
         // Each of these only issues a READ when the context says the attribute
         // is there — an -ENOENT per missing attribute would fill the trace with
@@ -346,6 +374,7 @@ impl Phy {
             rx2_control,
             dds_channels,
             debug_attrs: phy.debug_attrs.clone(),
+            fir_loadable,
             limits,
             model: ctx.hw_model().to_string(),
             firmware: ctx.fw_version().to_string(),
@@ -378,10 +407,77 @@ impl Phy {
     /// tree, so this moves both; the transmit rate is read back rather than
     /// assumed.
     pub fn set_sample_rate(&self, conn: &mut Connection, hz: f64) -> Result<f64> {
-        let (min, max) = self.limits.sample_rate_hz;
+        let (mut min, max) = self.limits.sample_rate_hz;
+        // A floor above the rate asked for is a FIR that is off or decimating
+        // too little — left that way by whatever used the board last (SDRangel
+        // loads its own, non-decimating one and switches it off, which puts
+        // the floor at 2.083 Msps). Load one that decimates rather than settle
+        // for a rate nobody asked for.
+        if hz < min && self.fir_loadable {
+            match self.load_decimating_fir(conn) {
+                Ok(()) => {
+                    let text = conn.read_attr(
+                        &self.phy_id,
+                        Some(RX_CHAN),
+                        "sampling_frequency_available",
+                    )?;
+                    min = parse_range(&text).map_or(RATE_HZ.0, |r| r.0);
+                    tracing::info!(
+                        "PlutoSDR: loaded a decimate-by-{FIR_DECIMATION} FIR for {:.3} Msps; the floor is now {:.3} Msps",
+                        hz / 1e6,
+                        min / 1e6
+                    );
+                }
+                Err(e) => tracing::warn!("PlutoSDR: could not load a decimating FIR ({e})"),
+            }
+        }
         let want = hz.clamp(min, max).round() as i64;
         self.write_on_a_floor(conn, RX_CHAN, "sampling_frequency", want, min)?;
         self.sample_rate(conn)
+    }
+
+    /// Load [`decimating_fir`] into both of the part's FIRs and switch them on,
+    /// in the order libad9361's `ad9361_set_bb_rate` uses.
+    ///
+    /// The driver refuses to change a FIR while it is enabled, and refuses to
+    /// enable one whose taps the clock tree is too fast for — the transmit FIR
+    /// gets 16 taps per DAC clock of each sample. So the rate is parked on
+    /// [`FIR_SWAP_RATE_HZ`] whenever the current one would not survive the
+    /// switch, and the caller sets the real rate afterwards.
+    fn load_decimating_fir(&self, conn: &mut Connection) -> Result<()> {
+        let enabled = conn
+            .read_attr(&self.phy_id, Some(FIR_EN_CHAN), "voltage_filter_fir_en")
+            .is_ok_and(|v| v.trim() == "1");
+        if enabled {
+            if self.sample_rate(conn)? <= NO_FIR_FLOOR_HZ {
+                conn.write_attr(
+                    &self.phy_id,
+                    Some(RX_CHAN),
+                    "sampling_frequency",
+                    &FIR_SWAP_RATE_HZ.to_string(),
+                )?;
+            }
+            conn.write_attr(&self.phy_id, Some(FIR_EN_CHAN), "voltage_filter_fir_en", "0")?;
+        }
+        conn.write_attr(
+            &self.phy_id,
+            None,
+            "filter_fir_config",
+            &fir_config_text(&decimating_fir()),
+        )?;
+        let rates = conn.read_attr(&self.phy_id, None, "tx_path_rates")?;
+        let taps_allowed = parse_tx_path_rates(&rates)
+            .map(|(dac, txsamp)| (dac / txsamp).floor() as usize * 16)
+            .ok_or_else(|| Error::Msg(format!("tx_path_rates answered {rates:?}")))?;
+        if taps_allowed < FIR_TAPS {
+            conn.write_attr(
+                &self.phy_id,
+                Some(RX_CHAN),
+                "sampling_frequency",
+                &FIR_SWAP_RATE_HZ.to_string(),
+            )?;
+        }
+        conn.write_attr(&self.phy_id, Some(FIR_EN_CHAN), "voltage_filter_fir_en", "1")
     }
 
     /// Write an integer attribute that may be sitting exactly on the floor the
@@ -1281,6 +1377,74 @@ fn usable_ports(
 ///
 /// The brackets are part of the value, and the fields are in that order — not
 /// min/max/step, which is the natural reading and the wrong one.
+/// A low-pass for the AD9361's FIRs decimating (receive) and interpolating
+/// (transmit) by [`FIR_DECIMATION`]: a Kaiser-windowed sinc, symmetric, with
+/// its taps summing to 2 × 32768.
+///
+/// That sum is libad9361's convention, and the gains in [`fir_config_text`]
+/// are set for it: unity through the receive FIR with its -6 dB stage on, and
+/// the same level out of the transmit one as the filter libad9361 loads, so a
+/// Drive setting means the same power whichever program loaded the FIR.
+fn decimating_fir() -> [i16; FIR_TAPS] {
+    let mid = (FIR_TAPS - 1) as f64 / 2.0;
+    let window_norm = bessel_i0(FIR_KAISER_BETA);
+    let h: Vec<f64> = (0..FIR_TAPS)
+        .map(|i| {
+            let n = i as f64 - mid;
+            let x = 2.0 * FIR_CUTOFF * n;
+            let sinc = if x == 0.0 {
+                1.0
+            } else {
+                (std::f64::consts::PI * x).sin() / (std::f64::consts::PI * x)
+            };
+            let r = n / mid;
+            let window = bessel_i0(FIR_KAISER_BETA * (1.0 - r * r).max(0.0).sqrt()) / window_norm;
+            2.0 * FIR_CUTOFF * sinc * window
+        })
+        .collect();
+    let scale = 65536.0 / h.iter().sum::<f64>();
+    std::array::from_fn(|i| (h[i] * scale).round() as i16)
+}
+
+/// The zeroth-order modified Bessel function of the first kind, which the
+/// Kaiser window is made of. The series converges long before 50 terms for
+/// any argument a window uses.
+fn bessel_i0(x: f64) -> f64 {
+    let mut sum = 1.0;
+    let mut term = 1.0;
+    for k in 1..50 {
+        term *= (x / (2.0 * k as f64)).powi(2);
+        sum += term;
+        if term < sum * 1e-17 {
+            break;
+        }
+    }
+    sum
+}
+
+/// The text `filter_fir_config` takes: a header per direction, then one
+/// `rx,tx` line per tap.
+fn fir_config_text(taps: &[i16]) -> String {
+    let mut text = format!("RX 3 GAIN -6 DEC {FIR_DECIMATION}\nTX 3 GAIN 0 INT {FIR_DECIMATION}\n");
+    for t in taps {
+        text.push_str(&format!("{t},{t}\n"));
+    }
+    text.push('\n');
+    text
+}
+
+/// The DAC clock and transmit sample rate out of `tx_path_rates`
+/// (`BBPLL:… DAC:32000000 T2:… T1:… TF:… TXSAMP:1000000`).
+fn parse_tx_path_rates(text: &str) -> Option<(f64, f64)> {
+    let field = |name: &str| {
+        text.split_whitespace()
+            .find_map(|f| f.strip_prefix(name)?.strip_prefix(':'))
+            .and_then(|v| v.parse::<f64>().ok())
+    };
+    let (dac, txsamp) = (field("DAC")?, field("TXSAMP")?);
+    (txsamp > 0.0).then_some((dac, txsamp))
+}
+
 fn parse_range(text: &str) -> Option<(f64, f64, f64)> {
     let inner = text.trim().trim_start_matches('[').trim_end_matches(']');
     let mut it = inner.split_whitespace();
@@ -1296,6 +1460,51 @@ fn parse_range(text: &str) -> Option<(f64, f64, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// |H(f)| of `taps` relative to DC, `f` in cycles per input sample.
+    fn response_db(taps: &[i16], f: f64) -> f64 {
+        let (mut re, mut im) = (0.0, 0.0);
+        for (n, t) in taps.iter().enumerate() {
+            let w = -2.0 * std::f64::consts::PI * f * n as f64;
+            re += *t as f64 * w.cos();
+            im += *t as f64 * w.sin();
+        }
+        let dc: f64 = taps.iter().map(|t| *t as f64).sum();
+        20.0 * ((re * re + im * im).sqrt() / dc).log10()
+    }
+
+    #[test]
+    fn the_decimating_fir_passes_the_band_and_stops_its_aliases() {
+        let taps = decimating_fir();
+        let sum: i64 = taps.iter().map(|t| *t as i64).sum();
+        assert!((sum - 65536).abs() <= FIR_TAPS as i64 / 2, "taps sum to {sum}");
+        assert!(taps.iter().eq(taps.iter().rev()), "linear phase needs symmetric taps");
+        // Flat across 90% of the output band…
+        for i in 0..=90 {
+            let f = 0.125 * i as f64 / 100.0;
+            assert!(response_db(&taps, f).abs() < 0.2, "{f}: {} dB", response_db(&taps, f));
+        }
+        // …and everything that folds back onto it after decimating by four
+        // is at least 60 dB down.
+        for i in 0..=350 {
+            let f = 0.15 + 0.35 * i as f64 / 350.0;
+            assert!(response_db(&taps, f) < -60.0, "{f}: {} dB", response_db(&taps, f));
+        }
+    }
+
+    #[test]
+    fn the_fir_config_text_has_a_header_and_a_line_per_tap() {
+        let text = fir_config_text(&[1, -2, 3]);
+        assert_eq!(text, "RX 3 GAIN -6 DEC 4\nTX 3 GAIN 0 INT 4\n1,1\n-2,-2\n3,3\n\n");
+    }
+
+    #[test]
+    fn tx_path_rates_give_the_dac_clock_and_the_sample_rate() {
+        let text = "BBPLL:1024000004 DAC:32000000 T2:16000000 T1:8000000 TF:4000000 TXSAMP:1000000";
+        assert_eq!(parse_tx_path_rates(text), Some((32e6, 1e6)));
+        assert_eq!(parse_tx_path_rates("BBPLL:1 DAC:2 TXSAMP:0"), None);
+        assert_eq!(parse_tx_path_rates(""), None);
+    }
     use crate::context::Channel;
 
     /// A capture/DMA buffer device whose scan elements sit at `indices`.
