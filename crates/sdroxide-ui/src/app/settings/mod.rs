@@ -1671,6 +1671,8 @@ impl SdroxideApp {
             // diff next frame; waterfall speed is read each frame. Persist too.
             self.ui_settings = ui_edit;
             persist_ui_settings(&self.ui_settings);
+            // The channel plans follow on this frame, like the region below.
+            crate::widgets::channels::set_country(self.ui_settings.country);
         }
         if &speech_edit != self.speech.settings() {
             // Live too: rate and volume reach the running worker, and only a
@@ -1863,6 +1865,47 @@ impl SdroxideApp {
                     RichText::new(tr!("settings-region-note", region = io.region_edit.number()))
                         .weak(),
                 );
+                // The country: national law, which the IARU region does not
+                // reach — the licence-free channel plans.
+                // Why: HDZ 2026-11-09: "Freenet und PMR als Bandplan mit der
+                //      Regions-Erklärung Deutschland in Preferences, wo der
+                //      Locator ist … das Land steuert die CB-, Freenet- und
+                //      PMR-Kanalraster".
+                ui.add_space(8.0);
+                egui::Grid::new("general-country-grid").num_columns(2).spacing([12.0, 8.0]).show(
+                    ui,
+                    |ui| {
+                        use crate::widgets::channels::{Country, resolve};
+                        ui.label(tr!("settings-country"));
+                        let fixed = |c: Country| match c {
+                            Country::Germany => tr!("settings-country-germany"),
+                            Country::Off | Country::System => tr!("settings-country-off"),
+                        };
+                        // "Like this computer" names what it comes to, so the
+                        // operator sees which plans that is without picking.
+                        let name = |c: Country| match c {
+                            Country::System => tr!(
+                                "settings-country-system",
+                                country = fixed(resolve(Country::System))
+                            ),
+                            c => fixed(c),
+                        };
+                        let country = &mut io.ui_edit.country;
+                        ComboBox::from_id_salt("country")
+                            .width(360.0)
+                            .selected_text(name(*country))
+                            .show_styled(ui, |ui| {
+                                for c in Country::ALL {
+                                    if ui.selectable_label(*country == c, name(c)).clicked() {
+                                        *country = c;
+                                    }
+                                }
+                            });
+                        ui.end_row();
+                    },
+                );
+                ui.add_space(6.0);
+                ui.label(RichText::new(tr!("settings-country-note")).weak());
                 ui.add_space(6.0);
                 self.settings_band_plan_file(ui, cmds);
 
