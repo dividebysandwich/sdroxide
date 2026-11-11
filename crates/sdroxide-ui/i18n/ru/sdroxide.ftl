@@ -3724,6 +3724,16 @@ js8-message = Сообщение…
 
 ## Журнал (src/app/logbook.rs)
 
+palette-hint = Перейти к… режиму, диапазону, окну, настройке, памяти или частоте (14.074)
+palette-nothing = ничего с таким названием
+palette-group-window = Окно
+palette-group-settings = Настройки
+palette-group-memory = Память
+palette-group-tune = Настройка
+palette-tune-to = Настроиться на { $mhz } МГц
+palette-win-bands = Условия прохождения
+palette-win-awards = Награды
+palette-win-windows = Список окон
 logbook-logbook = ЖУРНАЛ
 logbook-new-entry = + НОВАЯ ЗАПИСЬ
 logbook-adif = ADIF

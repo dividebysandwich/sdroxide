@@ -3688,6 +3688,16 @@ js8-message = 消息……
 
 ## 日志（src/app/logbook.rs）
 
+palette-hint = 前往……模式、频段、窗口、设置、记忆或频率（14.074）
+palette-nothing = 没有此名称的项目
+palette-group-window = 窗口
+palette-group-settings = 设置
+palette-group-memory = 记忆
+palette-group-tune = 调谐
+palette-tune-to = 调谐到 { $mhz } MHz
+palette-win-bands = 频段条件
+palette-win-awards = 奖项
+palette-win-windows = 窗口列表
 logbook-logbook = 日志
 logbook-new-entry = + 新建条目
 logbook-adif = ADIF

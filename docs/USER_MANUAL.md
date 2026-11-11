@@ -213,6 +213,26 @@ onto more rows as the window narrows, and the **panadapter** (spectrum plus
 waterfall) filling the rest of the window. In FT8/FT4/FT2 the lower part of the
 window is shared with the digital operating panel.
 
+**Ctrl+K — go to anything by name.** `Ctrl+K` (`⌘K` on a Mac) opens a search
+box over the window. Type a few letters and press Enter:
+
+- a **mode** or a **band** — `ft8`, `cw`, `40m` — switches to it;
+- a **window** — `log`, `spots`, `scan`, `awards`, `manual` — opens it (or closes
+  it, if it is open);
+- a **settings page** — `uploads`, `controls`, `t/r` — opens Settings on that
+  page;
+- a **switch** — `mute`, `notch`, `split`, `peak` — flips it: every action the
+  Controls tab can bind a key to is here under the same name;
+- a **memory** by its name recalls it;
+- a **frequency** tunes the active VFO: `14.074` and `14,074` are megahertz,
+  `7100k` kilohertz, `145500000` hertz.
+
+↑ and ↓ move through the matches, Enter or a click chooses, Esc or a click
+outside closes. The letters need not be adjacent — `bndcnd` finds *Band
+conditions* — but an exact match is always listed first. Nothing that transmits
+is offered: PTT, TUNE, the voice keyer and the tone burst stay on controls a
+mistyped letter cannot reach.
+
 ![The top control bar modules](images/02-top-bar.jpg)
 
 The control-bar modules, left to right, are: Frequency, S-meter, Band/Mode,
@@ -17001,6 +17021,7 @@ right.
 | M | Toggle mute. |
 | N | Toggle noise blanker. |
 | F | Fit the view to the full receiver span. |
+| Ctrl+K (⌘K) | Open the go-to box: a mode, band, window, settings page, switch, memory or frequency by name ([2.2](#22-the-main-window)). Works while a text field has focus. |
 | V | Flip the waterfall (scroll upwards). |
 | 1 – 9, 0 (numpad) | Transmit voice-keyer slots 1–10 (nothing if the slot is empty). |
 | − (numpad) | Stop a voice-keyer message. |

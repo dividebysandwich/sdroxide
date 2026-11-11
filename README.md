@@ -1711,6 +1711,7 @@ them, plus PTT, band, mode, filter and much else, are rebindable on the
 | `M` | Toggle mute |
 | `N` | Toggle the noise blanker |
 | `F` | Fit the panadapter to the full device passband |
+| `Ctrl+K` / `⌘K` | Go to anything by name: a mode, band, window, settings page, switch, memory, or a typed frequency |
 
 ## Mouse operation
 

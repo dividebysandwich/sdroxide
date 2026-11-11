@@ -3695,6 +3695,16 @@ js8-message = メッセージ…
 
 ## ログブック（src/app/logbook.rs）
 
+palette-hint = 移動… モード、バンド、ウィンドウ、設定、記憶、周波数（14.074）
+palette-nothing = その名前のものはありません
+palette-group-window = ウィンドウ
+palette-group-settings = 設定
+palette-group-memory = 記憶
+palette-group-tune = 同調
+palette-tune-to = { $mhz } MHz に同調
+palette-win-bands = バンド状況
+palette-win-awards = アワード
+palette-win-windows = ウィンドウ一覧
 logbook-logbook = ログブック
 logbook-new-entry = + 新規エントリー
 logbook-adif = ADIF

@@ -33,6 +33,7 @@ pub(in crate::app) mod ism;
 pub(in crate::app) mod logbook;
 pub(in crate::app) mod morse;
 pub(in crate::app) mod net;
+pub(in crate::app) mod palette;
 pub(in crate::app) mod panels;
 pub(crate) mod persist;
 pub(in crate::app) mod publicsdr;
@@ -647,6 +648,8 @@ pub struct SdroxideApp {
     /// the logbook list does not re-sort and re-group the whole log on every
     /// frame it is open. See `logbook::LogView`.
     log_view: crate::app::logbook::LogView,
+    /// The command palette (Ctrl+K). See [`palette`].
+    palette: crate::app::palette::Palette,
     /// QSOs worked since this run started, which is what the FT8 panel's
     /// "Session" readout counts. Deliberately not derived from the logbook: the
     /// log is persisted and grows for ever, so counting it would report every
@@ -1633,6 +1636,7 @@ impl SdroxideApp {
             text_tx: String::new(),
             qso_log: load_qso_log(storage),
             log_view: Default::default(),
+            palette: Default::default(),
             session_qsos: 0,
             show_digi_settings: false,
             digi_cfg_edit: sdroxide_types::DigiConfig::default(),

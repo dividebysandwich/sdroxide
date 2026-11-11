@@ -3720,6 +3720,16 @@ js8-message = Messaggio…
 
 ## logbook (src/app/logbook.rs)
 
+palette-hint = Vai a… una modalità, una banda, una finestra, un'impostazione, una memoria o una frequenza (14.074)
+palette-nothing = nulla con questo nome
+palette-group-window = Finestra
+palette-group-settings = Impostazioni
+palette-group-memory = Memoria
+palette-group-tune = Sintonia
+palette-tune-to = Sintonizza su { $mhz } MHz
+palette-win-bands = Condizioni di banda
+palette-win-awards = Premi
+palette-win-windows = Elenco finestre
 logbook-logbook = LOGBOOK
 logbook-new-entry = + NUOVA VOCE
 logbook-adif = ADIF
