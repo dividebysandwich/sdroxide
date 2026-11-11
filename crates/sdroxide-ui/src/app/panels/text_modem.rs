@@ -650,6 +650,7 @@ impl SdroxideApp {
             Mode::Rtty
                 | Mode::RttyFm
                 | Mode::Olivia
+                | Mode::Contestia
                 | Mode::Thor
                 | Mode::Mt63
                 | Mode::Mfsk
@@ -726,9 +727,16 @@ impl SdroxideApp {
                         changed = true;
                     }
                 }
-                Mode::Olivia => {
+                Mode::Olivia | Mode::Contestia => {
+                    // The two share these fields. Contestia's narrowest is four
+                    // tones, so its row starts there.
                     cap(ui, &tr!("textmodem-tones"));
-                    for t in [2u8, 4, 8, 16, 32, 64] {
+                    let tones: &[u8] = if mode == Mode::Contestia {
+                        &[4, 8, 16, 32, 64]
+                    } else {
+                        &[2, 4, 8, 16, 32, 64]
+                    };
+                    for &t in tones {
                         if ui.selectable_label(cfg.olivia_tones == t, t.to_string()).clicked() {
                             cfg.olivia_tones = t;
                             changed = true;

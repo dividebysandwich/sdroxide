@@ -4774,6 +4774,25 @@ the nine speeds whole (8, 11, 16, 22, 44 and 88), most of DominoEX 5 and little
 of 4 and MICRO. It reads its own transmission back at every speed; transmitting
 has not yet been tried against fldigi on the air.
 
+#### 3.4.4 Contestia
+
+**CONTESTIA** is Olivia with a smaller alphabet: six-bit characters instead of
+seven, so a block is 32 symbols rather than 64 and text goes out about twice as
+fast at the same tones and bandwidth, for a little less robustness. It has no
+lower case — everything is sent and printed in capitals.
+
+- **Tones and bandwidth** are the same chips as Olivia's, and the same settings:
+  changing them in one mode changes them in the other. Contestia starts at four
+  tones; 8/250 and 16/500 are common. Both stations must agree.
+- Everything else — tuning, the search either side of the cursor, the delay
+  before a block prints, the idle blocks that close an over — is Olivia's.
+
+The modem is upstream's fldigi-exact Olivia with Contestia's block, scrambler
+(`0xEDB88320`, five bits a slot), character map and tone placement from fldigi's
+`pj_mfsk.h` and `contestia.cxx`. It reads fldigi's own Contestia 4/125
+recording whole and its own transmission back; it has not yet been tried
+against fldigi on the air.
+
 ### 3.5 Hellschreiber
 
 Choose **HELL** from the DIGITAL row for **Hellschreiber** — the oldest digital

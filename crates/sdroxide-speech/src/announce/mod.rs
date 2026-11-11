@@ -875,6 +875,7 @@ fn mode_has_text(m: Mode) -> bool {
             | Mode::Psk
             | Mode::Olivia
             | Mode::Thor
+            | Mode::Contestia
             | Mode::DominoEx
             | Mode::Fsq
             | Mode::Mt63

@@ -1792,6 +1792,7 @@ fn mode_to_flex(m: Mode) -> &'static str {
         | Mode::Rtty
         | Mode::Olivia
         | Mode::Thor
+        | Mode::Contestia
         | Mode::DominoEx
         | Mode::Mfsk
         | Mode::Mt63

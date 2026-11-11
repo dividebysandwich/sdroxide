@@ -1692,7 +1692,10 @@ use sdroxide_types::{
 /// v203: PSK's families. `DigiConfig` gains `psk_speed`, `psk_modulation` and
 /// `psk_coded` at its tail: PSK31's six speeds, BPSK or 8PSK, and fldigi's
 /// coded single- and multi-carrier families.
-pub const PROTO_VERSION: u16 = 203;
+///
+/// v204: Contestia. `Mode::Contestia` appended; it shares Olivia's tones and
+/// bandwidth fields, so `DigiConfig` is unchanged.
+pub const PROTO_VERSION: u16 = 204;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
@@ -3170,7 +3173,7 @@ mod tests {
         let m = ClientMsg::Command(Command::SetDigiConfig(cfg.clone()));
         assert_eq!(decode::<ClientMsg>(&encode(&m).unwrap()).unwrap(), m);
 
-        for mode in [Mode::Mt63, Mode::Mfsk, Mode::DominoEx, Mode::Psk] {
+        for mode in [Mode::Mt63, Mode::Mfsk, Mode::DominoEx, Mode::Psk, Mode::Contestia] {
             let mut status = DigiStatus::idle(cfg.clone());
             status.mode = mode;
             let m = ServerMsg::Ft8Status(status);

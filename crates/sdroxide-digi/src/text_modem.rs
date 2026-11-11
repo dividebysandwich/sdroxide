@@ -133,6 +133,7 @@ impl TxModem {
             TxModem::Mfsk(m) => m.finish(),
             TxModem::Domino(m) => m.finish(),
             TxModem::Psk(m) => m.finish(),
+            TxModem::Olivia(m) => m.finish(),
             TxModem::PskCoded(m) => m.finish(),
             TxModem::Psk8(m) => m.finish(),
             _ => {}
@@ -148,6 +149,7 @@ impl TxModem {
             TxModem::Mfsk(m) => m.tail_pending(),
             TxModem::Domino(m) => m.tail_pending(),
             TxModem::Psk(m) => m.tail_pending(),
+            TxModem::Olivia(m) => m.tail_pending(),
             TxModem::PskCoded(m) => m.tail_pending(),
             TxModem::Psk8(m) => m.tail_pending(),
             _ => false,
@@ -396,9 +398,13 @@ impl TextModemController {
         // 2125/2295 Hz is what every other RTTY program sends and expects, and
         // it is the offset the log has to take off again to name the contact.
         let audio_hz = match mode {
-            Mode::Olivia | Mode::Thor | Mode::Fsq | Mode::Mt63 | Mode::Mfsk | Mode::DominoEx => {
-                1500.0f32
-            }
+            Mode::Olivia
+            | Mode::Contestia
+            | Mode::Thor
+            | Mode::Fsq
+            | Mode::Mt63
+            | Mode::Mfsk
+            | Mode::DominoEx => 1500.0f32,
             Mode::Rtty | Mode::RttyFm => sdroxide_types::RTTY_CENTER_HZ,
             Mode::Psk => fit_psk_centre(&cfg, 1000.0),
             _ => 1000.0f32,
@@ -415,6 +421,11 @@ impl TextModemController {
             }
             Mode::Olivia => {
                 RxModem::Olivia(OliviaRx::new(MODEM_RATE, audio_hz as f64, o_tones, o_bw))
+            }
+            // Olivia's engine with Contestia's block, scrambler and character
+            // map; the tones and bandwidth are Olivia's fields.
+            Mode::Contestia => {
+                RxModem::Olivia(OliviaRx::contestia(MODEM_RATE, audio_hz as f64, o_tones, o_bw))
             }
             Mode::Thor => RxModem::Thor(ThorRx::new(MODEM_RATE, audio_hz as f64, t_baud)),
             Mode::Mt63 => RxModem::Mt63(Box::new(Mt63Receiver::new(
@@ -441,6 +452,9 @@ impl TextModemController {
             }
             Mode::Olivia => {
                 TxModem::Olivia(OliviaTx::new(MODEM_RATE, audio_hz as f64, o_tones, o_bw))
+            }
+            Mode::Contestia => {
+                TxModem::Olivia(OliviaTx::contestia(MODEM_RATE, audio_hz as f64, o_tones, o_bw))
             }
             Mode::Thor => TxModem::Thor(ThorTx::new(MODEM_RATE, audio_hz as f64, t_baud)),
             Mode::Mt63 => TxModem::Mt63(Box::new(Mt63Tx::new(
@@ -1080,6 +1094,37 @@ mod tests {
         let mut p = TextModemController::new(Mode::Psk, DigiConfig::default(), OUT_RATE);
         p.set_audio_hz(300.0);
         assert_eq!(p.audio_hz(), 300.0);
+    }
+
+    /// Olivia through the controller, to its last word: the over closes with
+    /// idle blocks so the receiver's decode pipeline gives up the last one.
+    #[test]
+    fn an_olivia_transmission_reads_back_through_the_controller() {
+        for (tones, bw) in [(8u8, 250.0f32), (16, 500.0), (32, 1000.0)] {
+            let cfg = DigiConfig { olivia_tones: tones, olivia_bw_hz: bw, ..DigiConfig::default() };
+            let text =
+                through_the_controller(Mode::Olivia, cfg, "CQ DE TEST THE EAGLE HAS LANDED K\n");
+            assert!(
+                text.contains("EAGLE HAS LANDED K"),
+                "Olivia {tones}/{bw:.0} did not read back to its last word: {text:?}"
+            );
+        }
+    }
+
+    /// Contestia through the controller: the mode reaches Olivia's engine with
+    /// Contestia's block and scrambler, at the shared tones and bandwidth.
+    /// Upper case only — Contestia's alphabet has no lower case.
+    #[test]
+    fn a_contestia_transmission_reads_back_through_the_controller() {
+        for (tones, bw) in [(4u8, 250.0f32), (8, 250.0), (16, 500.0), (32, 1000.0)] {
+            let cfg = DigiConfig { olivia_tones: tones, olivia_bw_hz: bw, ..DigiConfig::default() };
+            let text =
+                through_the_controller(Mode::Contestia, cfg, "cq de test the eagle has landed k\n");
+            assert!(
+                text.contains("EAGLE HAS LANDED K"),
+                "Contestia {tones}/{bw:.0} did not read back to its last word: {text:?}"
+            );
+        }
     }
 
     #[test]
