@@ -2035,7 +2035,13 @@ pub fn show_ext(
                                     vfo: state.active_vfo,
                                     hz: spot_hz - pitch,
                                 });
-                                cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Cw });
+                                // Only when it is a change: the engine sets a
+                                // mode's default filter whenever a mode is set,
+                                // so re-sending CW threw away the operator's
+                                // own width (#821).
+                                if state.rx[0].mode != Mode::Cw {
+                                    cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Cw });
+                                }
                             }
                             SkimmerKind::Psk | SkimmerKind::Rtty => {
                                 // Put the signal at the mode's own audio offset
@@ -2058,7 +2064,10 @@ pub fn show_ext(
                                     vfo: state.active_vfo,
                                     hz: spot_hz - af,
                                 });
-                                cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
+                                // See the CW arm: re-sending the mode resets the filter.
+                                if state.rx[0].mode != m {
+                                    cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
+                                }
                                 cmds.push(Command::SetDigiAudioFreq(af as f32));
                             }
                         }
