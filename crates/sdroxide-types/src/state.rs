@@ -138,6 +138,39 @@ pub struct RxState {
     /// leave ("Variante B, Reihung gedreht").
     #[serde(default)]
     pub sk_filter_after_nr: bool,
+    /// NFM "FM-Decrackle": the click eliminator that takes out the 2π phase
+    /// slips a weak FM signal turns into crackle, ~1 ms look-ahead. Ignored
+    /// outside NFM.
+    #[serde(default = "fm_decrackle_default_on")]
+    pub fm_decrackle: bool,
+    /// NFM de-emphasis, 6 dB per octave above 300 Hz. Ignored outside NFM.
+    #[serde(default = "fm_decrackle_default_on")]
+    pub fm_deemph: bool,
+    /// How deep the magnitude must dip, as a share of its mean over ±1 ms, for
+    /// a phase jump to count as a slip. Higher repairs more.
+    #[serde(default = "fm_decrackle_default_dip")]
+    pub fm_decrackle_dip: f32,
+}
+
+/// FM-Decrackle sensitivity: the bench optimum, and the range the NR menu
+/// offers. The share is a window's minimum magnitude against its mean, so from
+/// about 1 the test holds everywhere and only the phase jump is left. On the
+/// bench (NFM, 5.4 kHz filter, ±2 kHz deviation) a clean signal is left
+/// untouched up to 0.7 and loses 22 → 15 dB SINAD at 0.8 (fast modulation
+/// taken for slips); the top sits one step short of that.
+//
+// Why: HDZ 2026-11-10: "am festen Träger könnte noch ne Schippe mehr drauf"
+//      (0.3 → 0.5); 2026-11-11: "0.5 habe ich selber gehört und es war gut",
+//      top at 0.6.
+pub const FM_DECRACKLE_DEFAULT_DIP: f32 = 0.2;
+pub const FM_DECRACKLE_DIP_RANGE: (f32, f32) = (0.1, 0.6);
+
+fn fm_decrackle_default_on() -> bool {
+    true
+}
+
+fn fm_decrackle_default_dip() -> f32 {
+    FM_DECRACKLE_DEFAULT_DIP
 }
 
 /// The SK filter's time constant to start with, in seconds (HDZ 2026-11-10:
@@ -199,6 +232,9 @@ impl RxState {
             sk_filter_close_s: SK_FILTER_DEFAULT_CLOSE_S,
             sk_filter_width: SK_FILTER_DEFAULT_WIDTH,
             sk_filter_after_nr: false,
+            fm_decrackle: true,
+            fm_deemph: true,
+            fm_decrackle_dip: FM_DECRACKLE_DEFAULT_DIP,
         }
     }
 }

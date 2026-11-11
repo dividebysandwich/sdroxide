@@ -1147,6 +1147,9 @@ impl Mode {
             noise_reduction: Some(NrLevel::Off),
             auto_notch: Some(false),
             wfm_stereo: Some(true),
+            fm_decrackle: Some(true),
+            fm_deemph: Some(true),
+            fm_decrackle_dip: Some(crate::FM_DECRACKLE_DEFAULT_DIP),
             binaural: Some(false),
         }
     }

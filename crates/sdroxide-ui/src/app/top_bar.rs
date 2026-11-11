@@ -4069,6 +4069,46 @@ impl SdroxideApp {
                 }
             }
         });
+
+        // FM-Decrackle: its own row (HDZ 2026-11-10: "baue einen Schalter in NR
+        // ein und nenne es FM-Decrackle, eigene Reihe"). Acts in NFM only, so it
+        // is greyed out elsewhere, as ANC is in AM.
+        crate::chrome::menu_caption(ui, &tr!("topbar-fm-decrackle"));
+        let nfm = self.state.rx[0].mode == Mode::Nfm;
+        ui.add_enabled_ui(nfm, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                let r = self.state.rx[0];
+                let (on, deemph, dip) = (r.fm_decrackle, r.fm_deemph, r.fm_decrackle_dip);
+                let mut want = None;
+                if crate::chrome::chip(ui, on, tr!("topbar-fm-decrackle-chip"))
+                    .on_hover_text(tr!("topbar-fm-decrackle-hint"))
+                    .clicked()
+                {
+                    want = Some((!on, deemph, dip));
+                }
+                if crate::chrome::chip(ui, deemph, tr!("topbar-fm-deemph"))
+                    .on_hover_text(tr!("topbar-fm-deemph-hint"))
+                    .clicked()
+                {
+                    want = Some((on, !deemph, dip));
+                }
+                let (lo, hi) = sdroxide_types::FM_DECRACKLE_DIP_RANGE;
+                let mut d = dip;
+                if crate::chrome::slider(ui, Slider::new(&mut d, lo..=hi).fixed_decimals(2))
+                    .on_hover_text(tr!("topbar-fm-decrackle-sens-hint"))
+                    .changed()
+                {
+                    want = Some((on, deemph, d));
+                }
+                if let Some((on, deemph, dip)) = want {
+                    let r = &mut self.state.rx[0]; // optimistic echo
+                    r.fm_decrackle = on;
+                    r.fm_deemph = deemph;
+                    r.fm_decrackle_dip = dip;
+                    cmds.push(Command::SetFmDecrackle { rx: RxId::Main, on, deemph, dip });
+                }
+            });
+        });
     }
 
     /// The sub-audible readout: the CTCSS tone or DCS code being received, and a

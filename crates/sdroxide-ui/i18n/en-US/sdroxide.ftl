@@ -2158,6 +2158,12 @@ topbar-what-capture-costs-sample-rate = What a capture costs at this sample rate
 topbar-engine = ENGINE
 topbar-no-noise-reduction-decoders-never = No noise reduction — the decoders never saw it anyway
 topbar-strength = STRENGTH
+topbar-fm-decrackle = FM-DECRACKLE
+topbar-fm-decrackle-chip = DECRACKLE
+topbar-fm-decrackle-hint = NFM: phase slips (crackle on weak signals) found and repaired in a ring buffer; ~1 ms delay
+topbar-fm-deemph = DE-EMPH
+topbar-fm-deemph-hint = De-emphasis 6 dB/octave above 300 Hz; off for transmitters without pre-emphasis
+topbar-fm-decrackle-sens-hint = Sensitivity: magnitude dip below this share of its mean; 0.2 default, higher repairs more
 topbar-nr-filters = FILTERS
 topbar-sk-filter-hint = SK post-filter refines neural or other noise removal: penalises unwanted noise
     (the filter resonates, leading to echo) · filter by HDZ
