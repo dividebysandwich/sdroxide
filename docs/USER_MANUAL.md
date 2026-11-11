@@ -7909,6 +7909,10 @@ table holds up to ten rows, and each has:
 Rows are tried in the order they are listed, and a dial no row covers falls
 through to the single **Offset** above and then to the bare radio — which is
 what keeps HF working on a station whose only converter is a 2 m transverter.
+When a radio connects or reconnects, its remembered dial selects the row even
+when several transverters share the same I.F.; their I.F. alone cannot identify
+which band was in use.
+
 The Hermes-Lite transmit tuning envelope extends to its 38.4 MHz hardware
 limit, so a 2 m transverter may use an I.F. above 30 MHz. The transmit band
 check uses the on-air frequency, not the I.F.'s amateur band; the converter's
