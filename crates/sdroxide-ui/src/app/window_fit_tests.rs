@@ -586,7 +586,7 @@ fn check_card(
 ) -> Vec<String> {
     let mut bad = Vec::new();
     if matches!(what, Fill::SondeCardWindow) {
-        let id = egui::Id::new("sonde-card-window");
+        let id = crate::layout::salted_id(ctx, "sonde-card-window");
         bad.extend(
             check_window(ctx, shapes, id, screen, &[])
                 .into_iter()
@@ -594,7 +594,7 @@ fn check_card(
         );
         return bad;
     }
-    let id = egui::Id::new("sonde-pinned-card");
+    let id = crate::layout::salted_id(ctx, "sonde-pinned-card");
     let (Some(card), Some(map)) = (ctx.memory(|m| m.area_rect(id)), app.sonde.map_bounds()) else {
         bad.push("pinned card or map not drawn".into());
         return bad;

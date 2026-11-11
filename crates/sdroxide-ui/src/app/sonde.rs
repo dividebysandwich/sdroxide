@@ -373,8 +373,12 @@ impl SdroxideApp {
                     if r.changed() {
                         cfg.frequency_hz = (mhz * 1e6).round();
                     }
-                    ui.checkbox(&mut cfg.scan, RichText::new(tr!("sonde-scan")).size(11.0))
-                        .on_hover_text(tr!("sonde-scan-hover"));
+                    crate::chrome::checkbox(
+                        ui,
+                        &mut cfg.scan,
+                        RichText::new(tr!("sonde-scan")).size(11.0),
+                    )
+                    .on_hover_text(tr!("sonde-scan-hover"));
                     // A type to look for: choosing one starts the scan, which walks
                     // the window across the band until that kind of sonde is heard.
                     let shown = filter.map_or_else(|| tr!("sonde-type-all"), str::to_string);
@@ -452,7 +456,8 @@ impl SdroxideApp {
                 let want = self.sonde.map.selected.clone().filter(|_| self.sonde.online.on);
                 self.sonde.map.flight.tick(ui.ctx(), want.as_deref(), now, peer.as_deref());
                 ui.horizontal_wrapped(|ui| {
-                    ui.checkbox(
+                    crate::chrome::checkbox(
+                        ui,
                         &mut self.sonde.online.on,
                         RichText::new(tr!("sonde-online")).size(11.0),
                     )
@@ -648,7 +653,7 @@ impl SdroxideApp {
         let anchor = self.sonde.map.anchor.unwrap_or(bounds.center());
         let size = self.sonde.map.card_size.unwrap_or(egui::vec2(CARD_W, 230.0));
         let at = sonde_map::pin_placement(anchor, size, bounds);
-        let id = egui::Id::new("sonde-pinned-card");
+        let id = crate::layout::salted_id(ctx, "sonde-pinned-card");
         // No wider or taller than the map on show: a card with SondeHub's
         // rows is taller than a short window's map, and scrolls instead.
         let margin = egui::Frame::popup(&ctx.global_style()).total_margin().sum();
@@ -687,22 +692,26 @@ impl SdroxideApp {
         listen: Listen,
     ) -> CardAct {
         let mut open = true;
+        // Salted per radio, as the tool windows are, and dressed as they are.
         let mut window = egui::Window::new(card.title.clone())
-            .id(egui::Id::new("sonde-card-window"))
+            .id(crate::layout::salted_id(ctx, "sonde-card-window"))
+            .frame(crate::chrome::window_frame())
             .open(&mut open)
             .resizable(true)
             .default_width(CARD_W);
         if let Some(b) = self.sonde.map.bounds {
             window = window.default_pos(b.min + egui::vec2(24.0, 24.0));
         }
-        let act = window
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .show_themed(ui, |ui| draw_card(ui, card, true, listen))
-                    .inner
-            })
-            .and_then(|r| r.inner)
-            .unwrap_or(CardAct::None);
+        let shown = window.show(ctx, |ui| {
+            crate::chrome::window_body_bg(ui);
+            egui::ScrollArea::vertical()
+                .show_themed(ui, |ui| draw_card(ui, card, true, listen))
+                .inner
+        });
+        if let Some(r) = &shown {
+            crate::chrome::paint_window_border(ctx, &r.response);
+        }
+        let act = shown.and_then(|r| r.inner).unwrap_or(CardAct::None);
         if open { act } else { CardAct::Close }
     }
 
