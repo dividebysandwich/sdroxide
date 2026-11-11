@@ -510,34 +510,26 @@ impl SdroxideApp {
         {
             self.mem_edit = None;
         }
-        ui.horizontal(|ui| {
-            crate::chrome::field(
-                ui,
-                egui::TextEdit::singleline(&mut self.mem_name)
-                    .hint_text(tr!("windows-memory-name"))
-                    .desired_width(ui.available_width() - 100.0),
-            );
-            let name_ok = !self.mem_name.trim().is_empty();
-            if ui.add_enabled(name_ok, egui::Button::new(tr!("windows-store"))).clicked() {
-                cmds.push(Command::StoreMemory { name: self.mem_name.trim().to_string() });
-                self.mem_name.clear();
-            }
-        });
-        ui.horizontal(|ui| {
-            crate::chrome::field(
-                ui,
-                egui::TextEdit::singleline(&mut self.mem_folder_name)
-                    .hint_text(tr!("windows-folder-name"))
-                    .desired_width(ui.available_width() - 100.0),
-            );
-            let name_ok = !self.mem_folder_name.trim().is_empty();
-            if ui.add_enabled(name_ok, egui::Button::new(tr!("windows-new-folder"))).clicked() {
-                cmds.push(Command::CreateMemoryFolder {
-                    name: self.mem_folder_name.trim().to_string(),
-                });
-                self.mem_folder_name.clear();
-            }
-        });
+        if name_and_button(
+            ui,
+            &mut self.mem_name,
+            &tr!("windows-memory-name"),
+            &tr!("windows-store"),
+        ) {
+            cmds.push(Command::StoreMemory { name: self.mem_name.trim().to_string() });
+            self.mem_name.clear();
+        }
+        if name_and_button(
+            ui,
+            &mut self.mem_folder_name,
+            &tr!("windows-folder-name"),
+            &tr!("windows-new-folder"),
+        ) {
+            cmds.push(Command::CreateMemoryFolder {
+                name: self.mem_folder_name.trim().to_string(),
+            });
+            self.mem_folder_name.clear();
+        }
         // A channel list from somewhere else. CHIRP's CSV because that is what
         // every repeater directory hands out — RepeaterBook exports it by
         // county, and the marine and PMR tables circulate as it — so an
@@ -1104,5 +1096,79 @@ impl SdroxideApp {
             crate::repaint::after_ms(ctx, 100);
         }
         self.show_voice = open;
+    }
+}
+
+/// A name field and the button that acts on it, on one row of the memories
+/// window. True when the button was pressed (it is enabled only while the
+/// field holds more than blanks).
+///
+/// The button is laid out first, from the right, and the field takes what is
+/// left. The field used to ask for the row's width less a fixed 100 pt, and a
+/// button wider than that — "Neuer Ordner", "New folder" with its padding —
+/// pushed the row past the window. A resizable egui window grows to its
+/// content, the next frame's row asked for the new width less 100 again, and
+/// the window crept a few points a frame until it filled the screen.
+fn name_and_button(ui: &mut egui::Ui, text: &mut String, hint: &str, button: &str) -> bool {
+    let ok = !text.trim().is_empty();
+    let mut pressed = false;
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            pressed = ui.add_enabled(ok, egui::Button::new(button)).clicked();
+            // Rounding to the pixel grid can leave the field a hair wider than
+            // the room it was given; the slack keeps the row inside the window
+            // (see the manual's window in `help.rs` for the same ratchet).
+            let room = (ui.available_width() - 2.0).max(40.0);
+            crate::chrome::field(
+                ui,
+                egui::TextEdit::singleline(text).hint_text(hint).desired_width(room),
+            );
+        });
+    });
+    pressed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::name_and_button;
+    use eframe::egui;
+
+    /// The memories window keeps its width: the name rows used to be wider
+    /// than the window by a few points, and a resizable window that grows to
+    /// its content crept wider every frame until it filled the screen. Sixty
+    /// frames of the window with both rows, in the language with the widest
+    /// button; it must not move after the first.
+    #[test]
+    fn the_memories_rows_do_not_widen_their_window() {
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx);
+        crate::layout::set_tier(&ctx, crate::layout::Tier::Desktop);
+        crate::theme::apply_metrics(&ctx, crate::layout::Tier::Desktop);
+        let (mut name, mut folder) = (String::new(), String::new());
+        let mut widths = Vec::new();
+        for _ in 0..60 {
+            ctx.begin_pass(egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(2560.0, 1440.0),
+                )),
+                ..Default::default()
+            });
+            let r = egui::Window::new("Memories").resizable(true).default_width(460.0).show(
+                &ctx,
+                |ui| {
+                    name_and_button(ui, &mut name, "Name", "Speichern");
+                    name_and_button(ui, &mut folder, "Ordnername", "Neuer Ordner");
+                },
+            );
+            let rect = r.map(|r| r.response.rect).expect("the window is shown");
+            widths.push(rect.width());
+            // Two rows of one line each: right-to-left must not stretch a row
+            // down the window.
+            assert!(rect.height() < 150.0, "the window is {} pt tall", rect.height());
+            ctx.end_pass().drop_without_applying_deltas();
+        }
+        let (first, last) = (widths[2], widths[59]);
+        assert!((last - first).abs() < 0.5, "the window crept from {first} to {last} pt");
     }
 }
