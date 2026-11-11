@@ -766,7 +766,8 @@ impl SdroxideApp {
     pub(in crate::app) fn ft8_overlay(&self) -> (Vec<SkimmerSpot>, Vec<f32>) {
         let mut spots = Vec::new();
         let mut alpha = Vec::new();
-        if !self.view.decode_labels {
+        // LABELS off is every label off, the decoded calls included.
+        if !self.view.decode_labels || !self.view.spot_labels {
             return (spots, alpha);
         }
         let Some(latest) = self.digi_decodes.first().map(|d| d.slot_utc) else {
@@ -950,6 +951,10 @@ impl SdroxideApp {
         let max_age = self.net_cfg_edit.spot_max_age_secs.max(60) as i64;
         let mut spots = Vec::new();
         let mut alpha = Vec::new();
+        // LABELS off: no spot label on the waterfall at all.
+        if !self.view.spot_labels {
+            return (spots, alpha);
+        }
         for s in self.all_spots() {
             if !self.spot_visible(s) {
                 continue;

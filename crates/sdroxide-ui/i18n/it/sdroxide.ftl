@@ -2464,7 +2464,6 @@ topbar-recording = registrazione
 topbar-sql = sql
 topbar-stations = stazioni
 topbar-caption-reaction = reazione
-topbar-caption-scroll = scorrimento
 topbar-caption-flow = flusso
 topbar-caption-detail = dettaglio
 topbar-floor = pavimento

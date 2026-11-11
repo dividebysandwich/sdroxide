@@ -2458,7 +2458,6 @@ topbar-recording = enregistrement
 topbar-sql = sql
 topbar-stations = stations
 topbar-caption-reaction = réaction
-topbar-caption-scroll = défilement
 topbar-caption-flow = flux
 topbar-caption-detail = détail
 topbar-floor = plancher

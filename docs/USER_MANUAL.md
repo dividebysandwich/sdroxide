@@ -1042,10 +1042,10 @@ them all at once.
 
 - **☀ 3D** — open the [solar system 3D view](#7-solar-system-3d-view): a second
   window in the native app, a second browser tab in the web client.
-- **SPEC** — opens the **panadapter popup**, which holds everything the
-  panadapter is drawn by, in two boxes: one for the **spectrum** line across
-  the top, one for the **waterfall** under it. The button is lit while both
-  layers are shown.
+- **SPEC** — opens the **spectrum popup**: everything about the spectrum line
+  across the top of the panadapter. The button is lit while the spectrum is
+  shown. The **waterfall** under it has its own popup behind **FFT** (lit while
+  the waterfall is shown), so each popup holds one layer.
 
   In the **Spectrum** box:
 
@@ -1092,13 +1092,23 @@ them all at once.
     with; the width in force is named beside the button. See
     [Panadapter detail](#panadapter-detail) below.
 
-  In the **Waterfall** box:
+  Behind **FFT**, in the **Waterfall** box (together with **FLIP**, the
+  waterfall's contrast — **floor** / **ceil** — and the **Resolution** box with
+  the FFT size and the columns, see the FFT module below):
 
   - **SHOW WATERFALL** — draw the scrolling waterfall, or leave the height to
     the spectrum line.
   - **scroll** — how fast it scrolls. See
     [Waterfall scroll speed](#waterfall-scroll-speed) below.
-  - **LABELS BY S/N** — on its own switch (the S/N mean runs for it whether
+  - **LABELS** — the master switch for every label on the waterfall (lit
+    while on). Off, there are none at all — the spot labels (broadcast, DX
+    cluster, POTA, SOTA, PSK Reporter, FreeDV) and the decoded calls — and the
+    switches that refine them grey out: **BY S/N**, **WITH PEAKS** and
+    **IGNORE FLANKS** beside it in the same row, **S/N MIN** and **DECODE
+    LABELS** under it. Which kinds are shown is still chosen in the **SPOTS**
+    window, and that choice is kept; the spot lists and the maps are not
+    touched.
+  - **BY S/N** (LABELS BY S/N) — on its own switch (the S/N mean runs for it whether
     the S/N line shows or not), a spot keeps its label only
     where that line stands at least **S/N MIN** over the noise within 2 kHz of
     the spot's frequency: a station on the schedule that is not coming in here
@@ -1237,7 +1247,9 @@ them all at once.
 - **SCAN** — opens the scanner window; lit while a scan is running, green while
   it has stopped on a signal. See [Scanning](#213-scanning).
 
-**FFT module:**
+**FFT module** — the waterfall's popup: the **Waterfall** box described under
+SPEC above (SHOW WATERFALL and **FLIP** in one row, the scroll speed, the labels,
+**floor** / **ceil**), then the **Resolution** box (FFT size, columns):
 
 - **floor** / **ceil** — the waterfall's dB range, one slider each. Bring the
   floor up until the noise just darkens and the ceiling down until the strongest
@@ -1250,7 +1262,7 @@ them all at once.
 
   A word on what the larger sizes buy. The transform is pooled down to the
   panadapter's own columns — 2048 of them by default, more on a screen that can
-  show more ([Panadapter detail](#panadapter-detail), on the SPEC popup) — so up to that
+  show more ([Panadapter detail](#panadapter-detail), the **Columns** row behind FFT) — so up to that
   width a bigger FFT is more columns, and past it, it is *sharper* ones: each
   column becomes the strongest of more bins, so a weak carrier stands further
   out of the noise instead of being averaged into it. That is why the largest
@@ -1308,8 +1320,8 @@ slides the band along under the picture. The sideways drag moves the *window*
 and never the dial — it is how to look somewhere else without leaving the
 frequency you are listening to — and once the view is the whole span it takes
 the receiver's own centre with it, so it keeps going rather than stopping at the
-edge. Either layer can also be hidden altogether from the **SPEC** popup in the
-Display module.
+edge. Either layer can also be hidden altogether: the spectrum from the **SPEC**
+popup, the waterfall from the **FFT** popup, both in the Display module.
 
 The scale carries a labelled frequency every hundred points or so with
 unlabelled ticks between them, so a wide panadapter gets more markers to read
@@ -1320,7 +1332,7 @@ against than a narrow one rather than the same handful stretched across it.
 #### Panadapter detail
 
 How many columns the panadapter and its waterfall are drawn with, on the
-**detail** row of the SPEC popup. **AUTO** is the default and is what nearly
+**Columns** row of the FFT popup's **Resolution** box. **AUTO** is the default and is what nearly
 everyone should leave it on: it reads this machine's graphics — the largest
 texture it will hold, whether it is drawing on a real GPU or in software, which
 renderer is in use, whether the radio is across a network — together with how
@@ -1406,8 +1418,8 @@ struggling cannot slow the station down.
 
 #### Waterfall scroll speed
 
-How fast the waterfall scrolls, in lines a second, on the **scroll** row of the
-SPEC popup: **Slow** (5), **Medium** (28), **Fast** (56), **Faster** (112) or
+How fast the waterfall scrolls, in lines a second, on the speed row of the FFT
+popup (the words where they fit, else **Tempo 1–5**): **Slow** (5), **Medium** (28), **Fast** (56), **Faster** (112) or
 **Fastest** (224). Faster trades screen time for vertical resolution, which is
 what you want when a CW or FT8 trace is smearing into the line above it; Slow
 keeps several minutes of band on screen at once.
@@ -12801,9 +12813,10 @@ spoken announcements below them under `[speech]`:
   on modest graphics: the radio itself is unaffected (the engine still processes
   every sample and audio never stutters), you simply see fewer spectrum frames,
   and the waterfall repeats rows to keep its scroll speed.
-- **Panadapter detail**, the spectrum's **reaction** and the waterfall's
-  **scroll** speed are not here: they moved to the **SPEC** popup in the Display
-  module, beside the picture they change — see
+- **Panadapter detail** (columns), the spectrum's **reaction** and the
+  waterfall's **scroll** speed are not here: they are in the Display module
+  beside the picture they change — reaction on **SPEC**, scroll and columns on
+  **FFT** — see
   [§2.8](#28-the-display-and-fft-controls).
 - **Waterfall palette** — the waterfall colour scheme (see
   [2.8](#28-the-display-and-fft-controls) and the [appendix](#waterfall-colour-schemes)).

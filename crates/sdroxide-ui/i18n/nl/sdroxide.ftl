@@ -2454,7 +2454,6 @@ topbar-recording = opnemen
 topbar-sql = sql
 topbar-stations = stations
 topbar-caption-reaction = reactie
-topbar-caption-scroll = scroll
 topbar-caption-flow = stroom
 topbar-caption-detail = detail
 topbar-floor = vloer

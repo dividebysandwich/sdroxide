@@ -5612,12 +5612,15 @@ impl SdroxideApp {
         }
     }
 
-    /// The SPEC chip: the spectrum/waterfall layer switches, behind a popup.
-    /// Lit while both layers are drawn, so a display with one of them switched
-    /// off says so from the strip without the popup being opened.
+    /// The SPEC chip: the spectrum's controls, behind a popup. Lit while the
+    /// spectrum is drawn; the waterfall's controls and light are the FFT chip's.
     fn layers_button(&mut self, ui: &mut egui::Ui, label: &str, extra: f32) {
-        let both = self.view.spectrum_visible() && self.view.waterfall_visible();
-        let btn = chip_stretched(ui, both, label, extra)
+        // Lit while the spectrum is drawn: the chip is the spectrum's, the
+        // waterfall has its own behind FFT.
+        // Why: HDZ 2026-11-11: "wenn ich WF anzeigen da klicke, wird der Knopf
+        //      SPEC hell, brrrr".
+        let shown = self.view.spectrum_visible();
+        let btn = chip_stretched(ui, shown, label, extra)
             .on_hover_text(tr!("topbar-spectrum-waterfall-either-layer-both"));
         let popup_id = egui::Popup::default_response_id(&btn);
         let now = ui.input(|i| i.time);
@@ -5630,7 +5633,7 @@ impl SdroxideApp {
                 ui.set_opacity(alpha);
                 crate::chrome::window_body_bg(ui);
                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                self.panadapter_controls(ui);
+                self.panadapter_controls(ui, false);
             });
         if let Some(r) = &resp {
             crate::chrome::paint_popup_cut_border(ui.ctx(), &r.response, alpha);
@@ -5661,13 +5664,13 @@ impl SdroxideApp {
     ///
     /// Its own function because the DISP menu has to inline it rather than
     /// open it as a popup, for the reason given on [`Self::skimmer_controls`].
-    fn panadapter_controls(&mut self, ui: &mut egui::Ui) {
-        // A phone draws the waterfall alone: there is no spectrum line to
-        // switch on, to peak-hold, or to slow down, so its box is left out —
-        // and the detail row, which sizes both layers, moves into the box that
-        // is still there rather than going with it.
+    fn panadapter_controls(&mut self, ui: &mut egui::Ui, in_menu: bool) {
+        // The spectrum's controls only; the waterfall's are behind FFT
+        // ([`Self::spectrum_controls`]). A phone draws the waterfall alone:
+        // there is no spectrum line to switch on, to peak-hold, or to slow
+        // down, so this box is left out there.
         let picks_layers = !crate::layout::tier(ui.ctx()).waterfall_only();
-        let w = panadapter_group_w(ui);
+        let w = panadapter_group_w(ui, in_menu);
         let mut cfg = self.ui_settings;
         if picks_layers {
             crate::chrome::menu_group(ui, &tr!("topbar-spectrum"), w, |ui| {
@@ -5773,7 +5776,8 @@ impl SdroxideApp {
                     .on_hover_text(tr!("topbar-sk-tau-tip"))
                     .on_disabled_hover_text(tr!("topbar-sk-tau-tip"));
                 });
-                self.spectrum_3d_rows(ui, &mut cfg);
+                self.spectrum_3d_rows(ui);
+                self.spectrum_3d_flow_row(ui, &mut cfg);
                 speed_row(
                     ui,
                     &tr!("topbar-caption-reaction"),
@@ -5781,129 +5785,23 @@ impl SdroxideApp {
                     &Speed::ALL,
                     &tr!("topbar-how-quickly-spectrum-line-follows"),
                 );
-                self.detail_row(ui, &mut cfg);
             });
         }
-        crate::chrome::menu_group(ui, &tr!("topbar-waterfall"), w, |ui| {
-            if picks_layers {
-                let on = self.view.waterfall_visible();
-                if crate::chrome::chip(ui, on, tr!("topbar-show-waterfall"))
-                    .on_hover_text(tr!("topbar-draw-scrolling-waterfall-below-spectrum"))
-                    .clicked()
-                {
-                    self.view.set_waterfall_visible(!on);
-                }
-            }
-            speed_row(
-                ui,
-                &tr!("topbar-caption-scroll"),
-                &mut cfg.waterfall_speed,
-                &Speed::WATERFALL,
-                &tr!("topbar-how-fast-waterfall-scrolls-lines"),
-            );
-            // One row: LABELS BY S/N, WITH PEAKS, IGNORE FLANKS side by side
-            // (wrapping on a narrow screen); the S/N MIN rail on the next.
-            // Why: HDZ 2026-11-11: "räume den Dialog auf, nebeneinander (Labels
-            //      nach S/N) (mit Peaks) (ignoriere Flanken), dann nächste Reihe
-            //      mit dem S/N-Schieberegler".
-            ui.horizontal_wrapped(|ui| {
-                // Labels by S/N: a spot keeps its label only where the S/N mean
-                // sees a signal. On its own switch: the mean runs for it whether
-                // the S/N line shows or not.
-                if crate::chrome::chip_enabled(
-                    ui,
-                    true,
-                    self.view.snr_label_filter,
-                    &tr!("topbar-snr-label-filter"),
-                )
-                .on_hover_text(tr!("topbar-snr-label-filter-tip"))
-                .clicked()
-                {
-                    self.view.snr_label_filter = !self.view.snr_label_filter;
-                    // Rebuild the candidates now rather than at the next minute.
-                    self.broadcast_minute = -1;
-                }
-                // PEAK: a label needs a peak of its own, not just height over the
-                // band's floor, so a broad hump (interference, a sideband) lifts
-                // none.
-                // Why: HDZ 2026-11-11, strong QRM: "sind die Label in der Lage,
-                //      einen Peak im S/N zu sehen?" — "ja bitte hänge die
-                //      Spitzen-Algorithmik mit rein".
-                if crate::chrome::chip_enabled(
-                    ui,
-                    true,
-                    self.view.snr_label_peak,
-                    &tr!("topbar-snr-label-peak"),
-                )
-                .on_hover_text(tr!("topbar-snr-label-peak-tip"))
-                .clicked()
-                {
-                    self.view.snr_label_peak = !self.view.snr_label_peak;
-                }
-                // FLANKS: a station 15 dB up keeps other labels off its sidebands.
-                // Why: HDZ 2026-11-11: "keine Labels an Sendergrenzen"; "Flanke
-                //      bitte doch an/aus, Schwelle 15 dB".
-                if crate::chrome::chip_enabled(
-                    ui,
-                    true,
-                    self.view.snr_label_flanks,
-                    &tr!("topbar-snr-label-flanks"),
-                )
-                .on_hover_text(tr!("topbar-snr-label-flanks-tip"))
-                .clicked()
-                {
-                    self.view.snr_label_flanks = !self.view.snr_label_flanks;
-                }
-            });
-            // The S/N threshold for labels and candidates, on a rail under
-            // LABELS BY S/N, live while the guide runs.
-            // Why: HDZ 2026-11-07: "S/N mit 6 ist viel zu streng, Shannon hat
-            //      hier 2 … du kannst unter SPEC einen Schieberegler machen
-            //      für S/N, dann habe ich das in der Hand, mit Default 2 und
-            //      Range von 0..6"; then "der Regler mit S/N Minimum gehört nach
-            //      unten, wo die Labels mit S/N geholt werden".
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(tr!("topbar-caption-snr-min"))
-                        .size(10.0)
-                        .color(crate::theme::CYAN_DIM()),
-                );
-                ui.add_enabled(
-                    true,
-                    Slider::new(&mut self.view.snr_label_min_db, crate::view::SNR_LABEL_MIN_RANGE)
-                        .step_by(0.5)
-                        .show_value(true)
-                        .custom_formatter(|v, _| format!("{v:.1} dB")),
-                )
-                .on_hover_text(tr!("topbar-snr-min-tip"))
-                .on_disabled_hover_text(tr!("topbar-snr-min-tip"));
-            });
-            if crate::chrome::chip(ui, self.view.decode_labels, tr!("topbar-decode-labels"))
-                .on_hover_text(tr!("topbar-mark-every-decoded-station-waterfall"))
-                .clicked()
-            {
-                self.view.decode_labels = !self.view.decode_labels;
-            }
-            if !picks_layers {
-                self.detail_row(ui, &mut cfg);
-            }
-        });
         if cfg != self.ui_settings {
             self.ui_settings = cfg;
             crate::app::persist::persist_ui_settings(&self.ui_settings);
         }
     }
 
-    /// The two rows of [`Self::panadapter_controls`] that belong to the 3D
-    /// display: how the surface is drawn, and how fast it flows away from the
-    /// viewer. Both are live only once the 3D chip at the head of the first is
-    /// lit.
+    /// The 3D row of [`Self::panadapter_controls`]: the 3D chip, and how the
+    /// surface is drawn beside it, live only once the chip is lit (the flow
+    /// rate under it is [`Self::spectrum_3d_flow_row`]).
     ///
     /// Greyed rather than hidden while the flat line is showing, the way the
     /// detail row greys a width this machine cannot hold: rows that come and go
     /// resize the popup under the pointer, and the choices they hold are still
     /// real ones — they are what the 3D chip will show when it is clicked.
-    fn spectrum_3d_rows(&mut self, ui: &mut egui::Ui, cfg: &mut sdroxide_types::UiSettings) {
+    fn spectrum_3d_rows(&mut self, ui: &mut egui::Ui) {
         let on = self.view.spectrum_3d;
         let grey = tr!("topbar-switch-3d-set");
         // 3D heads its own row, LINES and SOLID beside it: the chip that
@@ -5941,6 +5839,13 @@ impl SdroxideApp {
                 }
             }
         });
+    }
+
+    /// How fast the 3D surface flows away from the viewer, under the 3D row.
+    /// Live only while 3D is on.
+    fn spectrum_3d_flow_row(&mut self, ui: &mut egui::Ui, cfg: &mut sdroxide_types::UiSettings) {
+        let on = self.view.spectrum_3d;
+        let grey = tr!("topbar-switch-3d-set");
         // The flow rate, and what each step of it means on the surface: the
         // depth is a fixed number of rows, so the rate *is* the seconds of band
         // the picture holds, and that is the number worth putting on the hover
@@ -6060,8 +5965,9 @@ impl SdroxideApp {
             return;
         }
         self.skimmer_button(ui, cmds, extra);
-        // Floor/ceiling + FFT size live in a popup off this button.
-        let fft_btn = chip_stretched(ui, false, fft, extra)
+        // The waterfall's controls live in a popup off this button, lit while
+        // the waterfall is drawn.
+        let fft_btn = chip_stretched(ui, self.view.waterfall_visible(), fft, extra)
             .on_hover_text(tr!("topbar-spectrum-floor-ceiling-fft-size"));
         let fft_id = egui::Popup::default_response_id(&fft_btn);
         let now = ui.input(|i| i.time);
@@ -6074,7 +5980,7 @@ impl SdroxideApp {
                 ui.set_opacity(alpha);
                 crate::chrome::window_body_bg(ui);
                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                self.spectrum_controls(ui);
+                self.spectrum_controls(ui, false);
             });
         if let Some(r) = &fft_resp {
             crate::chrome::paint_popup_cut_border(ui.ctx(), &r.response, alpha);
@@ -6096,10 +6002,10 @@ impl SdroxideApp {
             // out: the panadapter box holds more than the layer switches it is
             // the only home for, and it hides the switches itself where there
             // are no layers to pick.
-            self.panadapter_controls(ui);
+            self.panadapter_controls(ui, true);
             crate::chrome::menu_caption(ui, &tr!("topbar-skimmers"));
             self.skimmer_controls(ui, cmds);
-            self.spectrum_controls(ui);
+            self.spectrum_controls(ui, true);
         }
     }
 
@@ -6131,88 +6037,221 @@ impl SdroxideApp {
         });
     }
 
-    /// Spectrum floor/ceiling, FFT size and the waterfall's scroll direction.
-    /// Inlined by the DISP menu, behind the FFT chip in the Display box — see
+    /// Everything the waterfall is: whether it shows and which way it runs,
+    /// how fast it scrolls, its contrast (floor/ceiling, which FIT sets), the
+    /// labels on it, and the resolution under it (FFT size, columns). Behind
+    /// the FFT chip, which stays FFT; inlined by the DISP menu — see
     /// [`Self::skimmer_controls`] for why a menu cannot use the popup.
-    fn spectrum_controls(&mut self, ui: &mut egui::Ui) {
-        crate::chrome::menu_caption(ui, &tr!("topbar-spectrum"));
-        // Rails, not spinners. These are the two controls an operator moving
-        // between band segments touches constantly, and a number box has to be
-        // dragged by the digit or typed into — so the picture arrived at the
-        // level it was left at and had to be re-fitted by hand every time
-        // (issue #375). A slider is one grab from either stop, and the FIT chip
-        // above sets both at once from what is on screen.
-        // Through a copy, because a level set by hand switches FIT off — left
-        // on, it pulled the level straight back (#642).
-        let (mut floor, mut ceil) = (self.view.db_floor, self.view.db_ceil);
-        ui.horizontal(|ui| {
-            ui.label(tr!("topbar-floor"));
-            let r = crate::chrome::slider_wheel(
-                crate::chrome::slider_readout(
-                    ui,
-                    value_field_w(ui, "-888 dB"),
-                    Slider::new(&mut floor, -160.0..=-40.0)
-                        .show_value(true)
-                        .custom_formatter(|v, _| format!("{v:.0} dB")),
-                ),
-                &mut floor,
-                -160.0..=-40.0,
-                1.0,
-            )
-            .on_hover_text(tr!("topbar-level-drawn-bottom-spectrum-darkest"));
-            if r.changed() {
-                self.view.set_levels_by_hand(floor, self.view.db_ceil);
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.label(tr!("topbar-ceil"));
-            let r = crate::chrome::slider_wheel(
-                crate::chrome::slider_readout(
-                    ui,
-                    value_field_w(ui, "-888 dB"),
-                    Slider::new(&mut ceil, -100.0..=20.0)
-                        .show_value(true)
-                        .custom_formatter(|v, _| format!("{v:.0} dB")),
-                ),
-                &mut ceil,
-                -100.0..=20.0,
-                1.0,
-            )
-            .on_hover_text(tr!("topbar-level-drawn-top-bring-down"));
-            if r.changed() {
-                self.view.set_levels_by_hand(self.view.db_floor, ceil);
-            }
-        });
-        // Chips rather than a ComboBox: the combo opens a second popup
-        // layer, and clicking it counts as "outside" and closes this one.
-        crate::chrome::menu_caption(ui, &tr!("topbar-fft-size"));
-        ui.horizontal_wrapped(|ui| {
-            let cols = self.panadapter_bins();
-            for n in [2048u32, 4096, 8192, 16384, 32768, 65536, 131_072] {
-                // Past the panadapter's own width a bigger transform stops
-                // adding columns and starts sharpening the ones there are —
-                // each is the maximum of more bins, so a weak carrier stands
-                // further out of the noise. Worth saying, because "no more
-                // detail" is what it looks like otherwise.
-                let hint = if n <= cols {
-                    tr!("topbar-fft-bins-whole", n = n)
-                } else {
-                    tr!("topbar-fft-bins-pooled", n = n, cols = cols)
-                };
-                if crate::chrome::chip(ui, self.view.fft_size == n, format!("{n}"))
-                    .on_hover_text(hint)
+    // Why: HDZ 2026-11-11: "ich hätte gerne eine Separation of Concerns: eins
+    //      für Spectrum und eins für den Wasserfall … wenn man nicht will, dass
+    //      das Label FFT verschwindet, würde ich alles, was Wasserfall ist,
+    //      darunter bündeln".
+    fn spectrum_controls(&mut self, ui: &mut egui::Ui, in_menu: bool) {
+        let picks_layers = !crate::layout::tier(ui.ctx()).waterfall_only();
+        let w = panadapter_group_w(ui, in_menu);
+        let mut cfg = self.ui_settings;
+        crate::chrome::menu_group(ui, &tr!("topbar-waterfall"), w, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                if picks_layers {
+                    let on = self.view.waterfall_visible();
+                    if crate::chrome::chip(ui, on, tr!("topbar-show-waterfall"))
+                        .on_hover_text(tr!("topbar-draw-scrolling-waterfall-below-spectrum"))
+                        .clicked()
+                    {
+                        self.view.set_waterfall_visible(!on);
+                    }
+                }
+                if crate::chrome::chip(ui, self.view.waterfall_flip, tr!("topbar-flip"))
+                    .on_hover_text(tr!("topbar-scroll-waterfall-upwards-newest-row"))
                     .clicked()
                 {
-                    self.view.fft_size = n;
+                    self.view.waterfall_flip = !self.view.waterfall_flip;
                 }
+            });
+            speed_row_words_or_numbers(
+                ui,
+                &mut cfg.waterfall_speed,
+                &Speed::WATERFALL,
+                &tr!("topbar-how-fast-waterfall-scrolls-lines"),
+            );
+            // Rails, not spinners. These are the two controls an operator moving
+            // between band segments touches constantly, and a number box has to be
+            // dragged by the digit or typed into — so the picture arrived at the
+            // level it was left at and had to be re-fitted by hand every time
+            // (issue #375). A slider is one grab from either stop, and the FIT chip
+            // above sets both at once from what is on screen.
+            // Through a copy, because a level set by hand switches FIT off — left
+            // on, it pulled the level straight back (#642).
+            let (mut floor, mut ceil) = (self.view.db_floor, self.view.db_ceil);
+            ui.horizontal(|ui| {
+                ui.label(tr!("topbar-floor"));
+                let r = crate::chrome::slider_wheel(
+                    crate::chrome::slider_readout(
+                        ui,
+                        value_field_w(ui, "-888 dB"),
+                        Slider::new(&mut floor, -160.0..=-40.0)
+                            .show_value(true)
+                            .custom_formatter(|v, _| format!("{v:.0} dB")),
+                    ),
+                    &mut floor,
+                    -160.0..=-40.0,
+                    1.0,
+                )
+                .on_hover_text(tr!("topbar-level-drawn-bottom-spectrum-darkest"));
+                if r.changed() {
+                    self.view.set_levels_by_hand(floor, self.view.db_ceil);
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label(tr!("topbar-ceil"));
+                let r = crate::chrome::slider_wheel(
+                    crate::chrome::slider_readout(
+                        ui,
+                        value_field_w(ui, "-888 dB"),
+                        Slider::new(&mut ceil, -100.0..=20.0)
+                            .show_value(true)
+                            .custom_formatter(|v, _| format!("{v:.0} dB")),
+                    ),
+                    &mut ceil,
+                    -100.0..=20.0,
+                    1.0,
+                )
+                .on_hover_text(tr!("topbar-level-drawn-top-bring-down"));
+                if r.changed() {
+                    self.view.set_levels_by_hand(self.view.db_floor, ceil);
+                }
+            });
+            // One row: LABELS BY S/N, WITH PEAKS, IGNORE FLANKS side by side
+            // (wrapping on a narrow screen); the S/N MIN rail on the next.
+            // Why: HDZ 2026-11-11: "räume den Dialog auf, nebeneinander (Labels
+            //      nach S/N) (mit Peaks) (ignoriere Flanken), dann nächste Reihe
+            //      mit dem S/N-Schieberegler".
+            ui.horizontal_wrapped(|ui| {
+                // LABELS: the master switch. Off, no label at all — spots and
+                // decoded calls — and the switches that refine them grey out;
+                // which kinds are shown stays the SPOTS window's choice.
+                // Why: HDZ 2026-11-07 / 11-11: "gab es nirgendwo einen Schalter,
+                //      Labels überhaupt auszuschalten?"; "Labels als eigener
+                //      Knopf, wenn aus, dann alles aus".
+                if crate::chrome::chip(ui, self.view.spot_labels, tr!("topbar-spot-labels-chip"))
+                    .on_hover_text(tr!("topbar-spot-labels"))
+                    .clicked()
+                {
+                    self.view.spot_labels = !self.view.spot_labels;
+                }
+                // Labels by S/N: a spot keeps its label only where the S/N mean
+                // sees a signal. On its own switch: the mean runs for it whether
+                // the S/N line shows or not.
+                if crate::chrome::chip_enabled(
+                    ui,
+                    self.view.spot_labels,
+                    self.view.snr_label_filter,
+                    &tr!("topbar-snr-label-filter"),
+                )
+                .on_hover_text(tr!("topbar-snr-label-filter-tip"))
+                .clicked()
+                {
+                    self.view.snr_label_filter = !self.view.snr_label_filter;
+                    // Rebuild the candidates now rather than at the next minute.
+                    self.broadcast_minute = -1;
+                }
+                // PEAK: a label needs a peak of its own, not just height over the
+                // band's floor, so a broad hump (interference, a sideband) lifts
+                // none.
+                // Why: HDZ 2026-11-11, strong QRM: "sind die Label in der Lage,
+                //      einen Peak im S/N zu sehen?" — "ja bitte hänge die
+                //      Spitzen-Algorithmik mit rein".
+                if crate::chrome::chip_enabled(
+                    ui,
+                    self.view.spot_labels,
+                    self.view.snr_label_peak,
+                    &tr!("topbar-snr-label-peak"),
+                )
+                .on_hover_text(tr!("topbar-snr-label-peak-tip"))
+                .clicked()
+                {
+                    self.view.snr_label_peak = !self.view.snr_label_peak;
+                }
+                // FLANKS: a station 15 dB up keeps other labels off its sidebands.
+                // Why: HDZ 2026-11-11: "keine Labels an Sendergrenzen"; "Flanke
+                //      bitte doch an/aus, Schwelle 15 dB".
+                if crate::chrome::chip_enabled(
+                    ui,
+                    self.view.spot_labels,
+                    self.view.snr_label_flanks,
+                    &tr!("topbar-snr-label-flanks"),
+                )
+                .on_hover_text(tr!("topbar-snr-label-flanks-tip"))
+                .clicked()
+                {
+                    self.view.snr_label_flanks = !self.view.snr_label_flanks;
+                }
+            });
+            // The S/N threshold for labels and candidates, on a rail under
+            // LABELS BY S/N, live while the guide runs.
+            // Why: HDZ 2026-11-07: "S/N mit 6 ist viel zu streng, Shannon hat
+            //      hier 2 … du kannst unter SPEC einen Schieberegler machen
+            //      für S/N, dann habe ich das in der Hand, mit Default 2 und
+            //      Range von 0..6"; then "der Regler mit S/N Minimum gehört nach
+            //      unten, wo die Labels mit S/N geholt werden".
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(tr!("topbar-caption-snr-min"))
+                        .size(10.0)
+                        .color(crate::theme::CYAN_DIM()),
+                );
+                ui.add_enabled(
+                    self.view.spot_labels,
+                    Slider::new(&mut self.view.snr_label_min_db, crate::view::SNR_LABEL_MIN_RANGE)
+                        .step_by(0.5)
+                        .show_value(true)
+                        .custom_formatter(|v, _| format!("{v:.1} dB")),
+                )
+                .on_hover_text(tr!("topbar-snr-min-tip"))
+                .on_disabled_hover_text(tr!("topbar-snr-min-tip"));
+            });
+            if crate::chrome::chip_enabled(
+                ui,
+                self.view.spot_labels,
+                self.view.decode_labels,
+                &tr!("topbar-decode-labels"),
+            )
+            .on_hover_text(tr!("topbar-mark-every-decoded-station-waterfall"))
+            .clicked()
+            {
+                self.view.decode_labels = !self.view.decode_labels;
             }
         });
-        crate::chrome::menu_caption(ui, &tr!("topbar-waterfall"));
-        if crate::chrome::chip(ui, self.view.waterfall_flip, tr!("topbar-flip"))
-            .on_hover_text(tr!("topbar-scroll-waterfall-upwards-newest-row"))
-            .clicked()
-        {
-            self.view.waterfall_flip = !self.view.waterfall_flip;
+        crate::chrome::menu_group(ui, &tr!("topbar-resolution"), w, |ui| {
+            // Chips rather than a ComboBox: the combo opens a second popup
+            // layer, and clicking it counts as "outside" and closes this one.
+            crate::chrome::menu_caption(ui, &tr!("topbar-fft-size"));
+            ui.horizontal_wrapped(|ui| {
+                let cols = self.panadapter_bins();
+                for n in [2048u32, 4096, 8192, 16384, 32768, 65536, 131_072] {
+                    // Past the panadapter's own width a bigger transform stops
+                    // adding columns and starts sharpening the ones there are —
+                    // each is the maximum of more bins, so a weak carrier stands
+                    // further out of the noise. Worth saying, because "no more
+                    // detail" is what it looks like otherwise.
+                    let hint = if n <= cols {
+                        tr!("topbar-fft-bins-whole", n = n)
+                    } else {
+                        tr!("topbar-fft-bins-pooled", n = n, cols = cols)
+                    };
+                    if crate::chrome::chip(ui, self.view.fft_size == n, format!("{n}"))
+                        .on_hover_text(hint)
+                        .clicked()
+                    {
+                        self.view.fft_size = n;
+                    }
+                }
+            });
+            self.detail_row(ui, &mut cfg);
+        });
+        if cfg != self.ui_settings {
+            self.ui_settings = cfg;
+            crate::app::persist::persist_ui_settings(&self.ui_settings);
         }
     }
 
@@ -7524,6 +7563,36 @@ fn speed_row(ui: &mut egui::Ui, caption: &str, value: &mut Speed, steps: &[Speed
     });
 }
 
+/// A speed row with no caption: the steps' words if they fit the row, else
+/// TEMPO and the steps numbered 1, 2, 3 … with the word on each hover.
+// Why: HDZ 2026-11-11: "Scroll brauchst du nicht schreiben: langsam, mittel,
+//      schnell, schneller, noch schneller, ansonsten machst du Tempo 1 2 3 4 5".
+fn speed_row_words_or_numbers(ui: &mut egui::Ui, value: &mut Speed, steps: &[Speed], hint: &str) {
+    let gap = ui.spacing().item_spacing.x;
+    let words: Vec<String> = steps.iter().map(|s| s.tr().to_uppercase()).collect();
+    let need: f32 =
+        words.iter().map(|w| crate::chrome::chip_width(ui, w, None) + gap).sum::<f32>() - gap;
+    let fits = need <= ui.available_width();
+    ui.horizontal_wrapped(|ui| {
+        if !fits {
+            ui.label(
+                RichText::new(tr!("topbar-caption-tempo"))
+                    .size(10.0)
+                    .color(crate::theme::CYAN_DIM()),
+            )
+            .on_hover_text(hint);
+        }
+        for (i, (step, word)) in steps.iter().zip(&words).enumerate() {
+            let label = if fits { word.clone() } else { (i + 1).to_string() };
+            let r = crate::chrome::chip(ui, value == step, label);
+            let r = if fits { r.on_hover_text(hint) } else { r.on_hover_text(word) };
+            if r.clicked() {
+                *value = *step;
+            }
+        }
+    });
+}
+
 /// What a [`SpectrumDetail`] step is called on its chip: the column count it
 /// asks for, which is the whole of what it means. Read off `columns()` rather
 /// than written out again, so the chips can never disagree with the widths.
@@ -7541,7 +7610,7 @@ fn detail_chip_label(d: SpectrumDetail) -> String {
 /// against a width the layout knows. The rows are measured with one gap per
 /// chip rather than one between them, which leaves the margin that keeps the
 /// longest row off the edge.
-fn panadapter_group_w(ui: &egui::Ui) -> f32 {
+fn panadapter_group_w(ui: &egui::Ui, in_menu: bool) -> f32 {
     let gap = ui.spacing().item_spacing.x;
     let chips = |labels: &[&str]| -> f32 {
         labels.iter().map(|l| crate::chrome::chip_width(ui, l, None) + gap).sum()
@@ -7568,7 +7637,7 @@ fn panadapter_group_w(ui: &egui::Ui) -> f32 {
         chips(&["3D", &tr!("topbar-lines"), &tr!("topbar-solid")]),
         caption(&tr!("topbar-caption-flow")) + speeds(&Speed::SURFACE),
         caption(&tr!("topbar-caption-reaction")) + speeds(&Speed::ALL),
-        caption(&tr!("topbar-caption-scroll")) + speeds(&Speed::WATERFALL),
+        speeds(&Speed::WATERFALL),
         caption(&tr!("topbar-caption-detail"))
             + detail
             + caption(&tr!("topbar-n-columns", n = 8192)),
@@ -7584,7 +7653,13 @@ fn panadapter_group_w(ui: &egui::Ui) -> f32 {
     // an auto-sizing popup is the width the popup came out as last frame: a
     // box measured against that shrinks the popup, which shrinks the next
     // measurement, and it never grows back.
-    let cap = (ui.ctx().content_rect().width() - 40.0).clamp(140.0, 414.0);
+    // A popup of its own may be a little wider, so the waterfall's five speeds
+    // fit one row in German too (431 pt); inlined in a menu it keeps the
+    // menu's cap, and the speeds fall back to numbers there.
+    // Why: HDZ 2026-11-11: "mach den Dialog etwas breiter und versuche die
+    //      Geschwindigkeiten in einer Reihe zu bekommen".
+    let most = if in_menu { 414.0 } else { 450.0 };
+    let cap = (ui.ctx().content_rect().width() - 40.0).clamp(140.0, most);
     widest.min(cap)
 }
 
