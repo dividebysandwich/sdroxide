@@ -5956,6 +5956,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdroxide-sonde"
+version = "1.7.0"
+dependencies = [
+ "crossbeam-channel",
+ "rustfft",
+ "sdroxide-dsp",
+ "sdroxide-types",
+ "tracing",
+ "xng-mode-sonde",
+]
+
+[[package]]
 name = "sdroxide-speech"
 version = "1.7.0"
 dependencies = [
@@ -8689,6 +8701,18 @@ dependencies = [
  "serde",
  "serde_json",
  "xng-acars",
+ "xng-dsp",
+ "xng-types",
+]
+
+[[package]]
+name = "xng-mode-sonde"
+version = "0.21.0"
+dependencies = [
+ "chrono",
+ "num-complex",
+ "serde",
+ "serde_json",
  "xng-dsp",
  "xng-types",
 ]

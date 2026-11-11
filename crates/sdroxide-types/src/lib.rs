@@ -66,6 +66,9 @@ mod satcfg;
 mod satlock;
 mod scanner;
 mod skimmer;
+mod sonde;
+pub mod sonde_export;
+pub mod sonde_online;
 mod spectrum;
 mod speech;
 mod spot;
@@ -285,6 +288,10 @@ pub use satlock::{
 pub use scanner::{SCAN_STEPS_HZ, ScanKind, ScanResume, ScanState, ScannerConfig};
 pub use skimmer::{
     CW_SLOT_CHOICES, CW_SLOTS_DEFAULT, CwEngine, SkimmerKind, SkimmerSettings, SkimmerSpot,
+};
+pub use sonde::{
+    SONDE_BAND_HZ, SONDE_DEFAULT_HZ, SONDE_MAX_TRACKS, SONDE_TRACK_DEPTH, SondePoint,
+    SondeSettings, SondeStatus, SondeTrack, window_reaches_band as sonde_window_reaches_band,
 };
 pub use spectrum::{
     DEFAULT_DISPLAY_BINS, DEFAULT_ROWS_PER_SEC, MAX_DISPLAY_BINS, MAX_ROWS_PER_SEC, SpectrumConfig,
