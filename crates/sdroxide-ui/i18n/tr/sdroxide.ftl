@@ -5739,3 +5739,7 @@ textmodem-mt63-long-hint = MT63-{ $label }, { $bw } Hz genişlik — uzun serpi�
 textmodem-mt63-short-hint = MT63-{ $label }, { $bw } Hz genişlik, kısa serpiştirme — kısa serpiştirme bir patlamayı { $chars } karakter üzerine yayar
 textmodem-mt63-not-offered = 1K ve 500L henüz sunulmuyor
 textmodem-mt63-not-offered-hint = MT63-1K ve 500 Hz uzun serpiştirme toplu çözücüyle okunur ama henüz canlı alıcıdan geçmez: kilit sembol fazını ve polariteyi arar ama bant merkezini aramaz, ve bunu arayan bir aramanın bir varyantı diğeriyle takas ettiği görüldü.
+
+## Keyboard modes: MFSK (src/app/panels/text_modem.rs)
+textmodem-mfsk-hint = { $label } — { $baud } baud, { $tones } ton, { $bw } Hz genişlik{ $caveat }
+textmodem-mfsk-reverse-hint = Ton sırasını ters çevirir. Gönderildiğinin karşı yan bandında alınan bir istasyon merkezine göre aynalanmış gelir ve bu açılana kadar gürültü gibi okunur.

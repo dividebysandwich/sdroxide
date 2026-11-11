@@ -5824,3 +5824,7 @@ textmodem-mt63-long-hint = MT63-{ $label }, { $bw } Hz breit — die lange Versc
 textmodem-mt63-short-hint = MT63-{ $label }, { $bw } Hz breit, kurze Verschachtelung — die kurze Verschachtelung verteilt einen Burst auf { $chars } Zeichen
 textmodem-mt63-not-offered = 1K und 500L noch nicht angeboten
 textmodem-mt63-not-offered-hint = MT63-1K und die lange 500-Hz-Verschachtelung werden mit dem Batch-Decoder gelesen, aber noch nicht mit dem Live-Empfänger: Die Synchronisation sucht Symbolphase und Polarität, aber nicht die Bandmitte, und eine Suche, die das tut, tauschte nachweislich eine Variante gegen eine andere ein.
+
+## Keyboard modes: MFSK (src/app/panels/text_modem.rs)
+textmodem-mfsk-hint = { $label } — { $baud } Baud, { $tones } Töne, { $bw } Hz breit{ $caveat }
+textmodem-mfsk-reverse-hint = Kehrt die Tonreihenfolge um. Eine Station, die auf dem entgegengesetzten Seitenband empfangen wird, kommt an ihrer Mitte gespiegelt an und wird als Rauschen gelesen, bis dies eingeschaltet ist.

@@ -5696,3 +5696,7 @@ textmodem-mt63-long-hint = MT63-{ $label }、帯域幅 { $bw } Hz — 長いイ�
 textmodem-mt63-short-hint = MT63-{ $label }、帯域幅 { $bw } Hz、短いインターリーブ — 短いインターリーブによりバーストが { $chars } 文字に分散されます
 textmodem-mt63-not-offered = 1Kと500Lは未対応
 textmodem-mt63-not-offered-hint = MT63-1Kと500 Hz長インターリーブは、バッチデコーダでは読み取れますが、ライブ受信機ではまだ対応していません。ロックはシンボル位相と極性を探索しますが帯域中心は探索せず、それを探索すると一方の変種と引き換えに別の変種が犠牲になることが分かりました。
+
+## Keyboard modes: MFSK (src/app/panels/text_modem.rs)
+textmodem-mfsk-hint = { $label } — { $baud } ボー、{ $tones } トーン、帯域幅 { $bw } Hz{ $caveat }
+textmodem-mfsk-reverse-hint = トーン順序を反転します。送信時とは反対のサイドバンドで受信した局は中心を軸に鏡像になって届き、これをオンにするまでノイズとして受信されます。

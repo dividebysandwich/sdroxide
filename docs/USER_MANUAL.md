@@ -4676,6 +4676,35 @@ The modem is a port of fldigi's MT63 (after Pawel Jalocha, SP9VRC). Five of
 fldigi's six variants decode fldigi's own recordings, and every variant reads
 its own transmission back; it has not yet been tried against fldigi on the air.
 
+#### 3.4.2 MFSK
+
+**MFSK** is fldigi's IZ8BLY family — MFSK4, 8, 11, 16, 22, 31, 32, 64 and 128,
+and the long-interleave MFSK64L and MFSK128L. One tone is sent at a time out of
+16 (32 for MFSK4 and MFSK8, 8 for MFSK31), and every character goes through a
+K=7 convolutional code and an interleaver, so it copies well below the noise.
+MFSK16 is the usual one and the default.
+
+- **Variant** — the chips in the panel header. The tone count and the symbol
+  rate are one choice, as they are in fldigi; hover a chip for its speed and
+  width. Nothing in the signal says which variant a station is using, so set
+  the one they are sending. The waterfall marks the edges of the tone bank.
+- **Tuning** — the bank is centred on the tone offset (1500 Hz by default), and
+  the receiver pulls in only a few tone spacings either side, so put the middle
+  of the signal on the cursor.
+- **RV** inverts the tone order, receive and transmit, for a station on the
+  other sideband: it reads as noise until it is on.
+- **Transmitting** — an over opens with a short preamble, and while you hold
+  **TX** with nothing typed the modem sends idle characters, so the far
+  receiver stays locked while you type. Releasing it sends the end-of-text mark
+  and enough idle to empty the interleaver, so the last word arrives; the
+  transmitter stays keyed for that after the text has turned green. The long
+  interleaves need minutes of text before the far end starts printing.
+
+The receiver reads fldigi's own recordings of the nine short-interleave
+variants (MFSK8's with a gap) and part of the two long ones, and reads its own
+transmission back; transmitting has not yet been tried against fldigi on the
+air.
+
 ### 3.5 Hellschreiber
 
 Choose **HELL** from the DIGITAL row for **Hellschreiber** — the oldest digital

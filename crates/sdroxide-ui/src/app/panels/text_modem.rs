@@ -639,7 +639,10 @@ impl SdroxideApp {
     /// PSK has no parameters, so nothing is drawn.
     fn text_modem_params_row(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let mode = self.state.rx[0].mode;
-        if !matches!(mode, Mode::Rtty | Mode::RttyFm | Mode::Olivia | Mode::Thor | Mode::Mt63) {
+        if !matches!(
+            mode,
+            Mode::Rtty | Mode::RttyFm | Mode::Olivia | Mode::Thor | Mode::Mt63 | Mode::Mfsk
+        ) {
             return; // PSK (and anything else) has no per-mode settings
         }
         fn cap(ui: &mut egui::Ui, text: &str) {
@@ -762,6 +765,37 @@ impl SdroxideApp {
                             .color(crate::theme::YELLOW()),
                     )
                     .on_hover_text(tr!("textmodem-mt63-not-offered-hint"));
+                }
+                Mode::Mfsk => {
+                    // One modem at many speeds: nothing in the signal says
+                    // which is in use, so the operator has to — and a decoder
+                    // set to the wrong one hears nothing at all.
+                    cap(ui, &tr!("textmodem-mode"));
+                    for m in sdroxide_types::MfskMode::ALL {
+                        let sel = cfg.mfsk_mode == m;
+                        let hint = tr!(
+                            "textmodem-mfsk-hint",
+                            label = m.label(),
+                            baud = format!("{:.1}", m.baud()),
+                            tones = m.tones(),
+                            bw = format!("{:.0}", m.bandwidth_hz()),
+                            caveat = ""
+                        );
+                        if ui.selectable_label(sel, m.label()).on_hover_text(hint).clicked() && !sel
+                        {
+                            cfg.mfsk_mode = m;
+                            changed = true;
+                        }
+                    }
+                    ui.add_space(8.0);
+                    if ui
+                        .selectable_label(cfg.mfsk_reverse, "RV")
+                        .on_hover_text(tr!("textmodem-mfsk-reverse-hint"))
+                        .clicked()
+                    {
+                        cfg.mfsk_reverse = !cfg.mfsk_reverse;
+                        changed = true;
+                    }
                 }
                 _ => {}
             }

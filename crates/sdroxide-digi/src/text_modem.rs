@@ -10,6 +10,7 @@
 use std::collections::VecDeque;
 use std::time::SystemTime;
 
+use sdroxide_dsp::mfsk_rx::{MfskReceiver, MfskTx, MfskVariant};
 use sdroxide_dsp::mt63::{Mt63Receiver, Mt63Tx};
 use sdroxide_dsp::{
     MonoResampler, OliviaRx, OliviaTx, PskRx, PskTx, RttyRx, RttyTx, ThorRx, ThorTx,
@@ -31,6 +32,7 @@ enum RxModem {
     Olivia(OliviaRx),
     Thor(ThorRx),
     Mt63(Box<Mt63Receiver>),
+    Mfsk(Box<MfskReceiver>),
 }
 
 impl RxModem {
@@ -41,6 +43,7 @@ impl RxModem {
             RxModem::Olivia(r) => r.process(audio),
             RxModem::Thor(r) => r.process(audio),
             RxModem::Mt63(r) => r.process(audio),
+            RxModem::Mfsk(r) => r.process(audio),
         }
     }
     fn magnitude(&self) -> f32 {
@@ -50,6 +53,7 @@ impl RxModem {
             RxModem::Olivia(r) => r.magnitude(),
             RxModem::Thor(r) => r.magnitude(),
             RxModem::Mt63(r) => r.magnitude(),
+            RxModem::Mfsk(r) => r.magnitude(),
         }
     }
 }
@@ -60,6 +64,7 @@ enum TxModem {
     Olivia(OliviaTx),
     Thor(ThorTx),
     Mt63(Box<Mt63Tx>),
+    Mfsk(Box<MfskTx>),
 }
 
 impl TxModem {
@@ -70,6 +75,7 @@ impl TxModem {
             TxModem::Olivia(m) => m.push_text(t),
             TxModem::Thor(m) => m.push_text(t),
             TxModem::Mt63(m) => m.push_text(t),
+            TxModem::Mfsk(m) => m.push_text(t),
         }
     }
     fn next_block(&mut self, out: &mut [f32]) {
@@ -89,13 +95,27 @@ impl TxModem {
             TxModem::Mt63(m) => {
                 m.next_block(out);
             }
+            TxModem::Mfsk(m) => {
+                m.next_block(out);
+            }
         }
     }
+    /// The operator has released transmit and everything typed has gone into
+    /// the modem: a modem that idles while it waits for text closes the over
+    /// now instead (MFSK's `EOT` and interleaver drain).
+    fn finish(&mut self) {
+        if let TxModem::Mfsk(m) = self {
+            m.finish();
+        }
+    }
+
     /// True while a modem is still playing a tail that has to follow the last
-    /// character for the text to arrive whole — MT63's interleaver flush.
+    /// character for the text to arrive whole — the interleaver flush of MT63
+    /// and MFSK.
     fn tail_pending(&self) -> bool {
         match self {
             TxModem::Mt63(m) => m.tail_pending(),
+            TxModem::Mfsk(m) => m.tail_pending(),
             _ => false,
         }
     }
@@ -106,6 +126,7 @@ impl TxModem {
             TxModem::Olivia(m) => m.sent_chars(),
             TxModem::Thor(m) => m.sent_chars(),
             TxModem::Mt63(m) => m.sent_chars(),
+            TxModem::Mfsk(m) => m.sent_chars(),
         }
     }
     fn total_chars(&self) -> usize {
@@ -115,6 +136,7 @@ impl TxModem {
             TxModem::Olivia(m) => m.total_chars(),
             TxModem::Thor(m) => m.total_chars(),
             TxModem::Mt63(m) => m.total_chars(),
+            TxModem::Mfsk(m) => m.total_chars(),
         }
     }
     fn clear(&mut self) {
@@ -124,6 +146,7 @@ impl TxModem {
             TxModem::Olivia(m) => m.clear(),
             TxModem::Thor(m) => m.clear(),
             TxModem::Mt63(m) => m.clear(),
+            TxModem::Mfsk(m) => m.clear(),
         }
     }
 }
@@ -168,7 +191,7 @@ impl TextModemController {
         // 2125/2295 Hz is what every other RTTY program sends and expects, and
         // it is the offset the log has to take off again to name the contact.
         let audio_hz = match mode {
-            Mode::Olivia | Mode::Thor | Mode::Fsq | Mode::Mt63 => 1500.0f32,
+            Mode::Olivia | Mode::Thor | Mode::Fsq | Mode::Mt63 | Mode::Mfsk => 1500.0f32,
             Mode::Rtty | Mode::RttyFm => sdroxide_types::RTTY_CENTER_HZ,
             _ => 1000.0f32,
         };
@@ -191,6 +214,12 @@ impl TextModemController {
                 audio_hz as f64,
                 cfg.mt63_mode.into(),
             ))),
+            Mode::Mfsk => RxModem::Mfsk(Box::new(MfskReceiver::new(
+                MODEM_RATE,
+                audio_hz as f64,
+                cfg.mfsk_mode,
+                cfg.mfsk_reverse,
+            ))),
             _ => RxModem::Psk(PskRx::new(MODEM_RATE, audio_hz as f64)),
         };
         let tx = match mode {
@@ -206,6 +235,12 @@ impl TextModemController {
                 MODEM_RATE,
                 audio_hz as f64,
             ))),
+            Mode::Mfsk => {
+                let mut t =
+                    MfskTx::new(MfskVariant::from(cfg.mfsk_mode), MODEM_RATE, audio_hz as f64);
+                t.set_mirror(cfg.mfsk_reverse);
+                TxModem::Mfsk(Box::new(t))
+            }
             _ => TxModem::Psk(PskTx::new(MODEM_RATE, audio_hz as f64)),
         };
         TextModemController {
@@ -247,6 +282,10 @@ impl TextModemController {
             RxModem::Olivia(r) => r.set_params(hz, o_tones, o_bw),
             RxModem::Thor(r) => r.set_params(hz, t_baud),
             RxModem::Mt63(r) => r.set_params(hz, self.cfg.mt63_mode.into()),
+            RxModem::Mfsk(r) => {
+                r.set_mirror(self.cfg.mfsk_reverse);
+                r.set_params(hz, self.cfg.mfsk_mode);
+            }
         }
         match &mut self.tx {
             TxModem::Psk(m) => m.set_carrier(hz, MODEM_RATE),
@@ -254,6 +293,10 @@ impl TextModemController {
             TxModem::Olivia(m) => m.set_params(hz, o_tones, o_bw),
             TxModem::Thor(m) => m.set_params(hz, t_baud),
             TxModem::Mt63(m) => m.set_params(hz, self.cfg.mt63_mode.into()),
+            TxModem::Mfsk(m) => {
+                m.set_params(hz, self.cfg.mfsk_mode.into());
+                m.set_mirror(self.cfg.mfsk_reverse);
+            }
         }
     }
 
@@ -363,6 +406,11 @@ impl DigiEngine for TextModemController {
     }
 
     fn fill_tx_block(&mut self, out: &mut [f32]) -> bool {
+        // Released with everything typed already in the modem: let a modem
+        // that idles while it waits close the over instead.
+        if !self.tx_active && self.tx.sent_chars() >= self.tx.total_chars() {
+            self.tx.finish();
+        }
         // Generate 8 kHz modem audio and resample to 48 kHz until we have enough.
         while self.tx48.len() < out.len() && self.producing() {
             self.scratch8.clear();
@@ -428,7 +476,9 @@ impl DigiEngine for TextModemController {
             || cfg.olivia_tones != self.cfg.olivia_tones
             || cfg.olivia_bw_hz != self.cfg.olivia_bw_hz
             || cfg.thor_mode != self.cfg.thor_mode
-            || cfg.mt63_mode != self.cfg.mt63_mode;
+            || cfg.mt63_mode != self.cfg.mt63_mode
+            || cfg.mfsk_mode != self.cfg.mfsk_mode
+            || cfg.mfsk_reverse != self.cfg.mfsk_reverse;
         self.cfg = cfg;
         if retune {
             self.retune_modems();
@@ -490,8 +540,19 @@ mod tests {
     /// run at 48 kHz, the rate the audio thread hands them, so this covers the
     /// resamplers and the config wiring as well as the modems.
     fn through_the_controller(mode: Mode, cfg: DigiConfig, text: &str) -> String {
+        through_the_controller_after(mode, cfg, text, 0)
+    }
+
+    /// As [`through_the_controller`], but keyed `idle_blocks` 20 ms blocks
+    /// before anything is typed — an operator who keys up and then starts
+    /// typing.
+    fn through_the_controller_after(
+        mode: Mode,
+        cfg: DigiConfig,
+        text: &str,
+        idle_blocks: usize,
+    ) -> String {
         let mut tx = TextModemController::new(mode, cfg.clone(), OUT_RATE);
-        tx.set_tx_text(text.into());
         tx.set_tx_active(true);
         tx.poll(SystemTime::now(), 0.0);
         assert!(tx.tx_burst_active(), "{} did not key", mode.label());
@@ -500,6 +561,12 @@ mod tests {
         let mut peak = 0.0f32;
         // A second of silence either side, as a receiver hears a real over.
         rx.on_rx_audio(&vec![0.0; 48_000]);
+        for _ in 0..idle_blocks {
+            assert!(!tx.fill_tx_block(&mut block), "{} ended a held over", mode.label());
+            peak = block.iter().fold(peak, |m, s| m.max(s.abs()));
+            rx.on_rx_audio(&block);
+        }
+        tx.set_tx_text(text.into());
         let mut guard = 0;
         loop {
             // Release once the text is queued, so the over ends after it.
@@ -554,6 +621,43 @@ mod tests {
     /// unexplained offset between the dial and the contact (issue #143).
     ///
     /// PSK keeps its own carrier: one tone, no convention to keep.
+    /// MFSK through the controller: `mfsk_mode` and `mfsk_reverse` reach both
+    /// halves, the over idles while it is held, and releasing it plays the
+    /// `EOT` and the interleaver's drain so the last word arrives.
+    ///
+    /// The long-interleave variants are left out: they need minutes of text
+    /// before the interleaver has filled.
+    #[test]
+    fn an_mfsk_transmission_reads_back_through_the_controller() {
+        use sdroxide_types::MfskMode;
+        for (m, reverse) in [
+            (MfskMode::Mfsk16, false),
+            (MfskMode::Mfsk16, true),
+            (MfskMode::Mfsk11, false),
+            (MfskMode::Mfsk32, false),
+            (MfskMode::Mfsk64, false),
+            (MfskMode::Mfsk128, false),
+        ] {
+            let cfg = DigiConfig { mfsk_mode: m, mfsk_reverse: reverse, ..DigiConfig::default() };
+            let text =
+                through_the_controller(Mode::Mfsk, cfg, "CQ DE TEST THE EAGLE HAS LANDED K\n");
+            assert!(
+                text.contains("EAGLE HAS LANDED K"),
+                "{} (reverse {reverse}) did not read back to its last word: {text:?}",
+                m.label()
+            );
+        }
+        // Keyed for three seconds before the first character: the modem idles
+        // rather than closing an over that has not started.
+        let text = through_the_controller_after(
+            Mode::Mfsk,
+            DigiConfig::default(),
+            "CQ DE TEST THE EAGLE HAS LANDED K\n",
+            150,
+        );
+        assert!(text.contains("EAGLE HAS LANDED K"), "a held over lost its text: {text:?}");
+    }
+
     #[test]
     fn rtty_starts_on_the_standard_tone_pair() {
         let cfg = DigiConfig::default();

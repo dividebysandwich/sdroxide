@@ -5750,3 +5750,7 @@ textmodem-mt63-long-hint = MT63-{ $label }, larghezza { $bw } Hz — l'interleav
 textmodem-mt63-short-hint = MT63-{ $label }, larghezza { $bw } Hz, interleave corto — l'interleave corto distribuisce una raffica su { $chars } caratteri
 textmodem-mt63-not-offered = 1K e 500L non ancora offerti
 textmodem-mt63-not-offered-hint = MT63-1K e l'interleave lungo a 500 Hz si leggono con il decodificatore batch ma non ancora attraverso il ricevitore in tempo reale: l'aggancio cerca la fase dei simboli e la polarità ma non il centro banda, e una ricerca che lo faccia si è rivelata scambiare una variante con un'altra.
+
+## Keyboard modes: MFSK (src/app/panels/text_modem.rs)
+textmodem-mfsk-hint = { $label } — { $baud } baud, { $tones } toni, larghezza { $bw } Hz{ $caveat }
+textmodem-mfsk-reverse-hint = Inverte l'ordine dei toni. Una stazione ricevuta sulla banda laterale opposta a quella con cui è stata trasmessa arriva speculare rispetto al suo centro e viene letta come rumore finché questa opzione non è attiva.

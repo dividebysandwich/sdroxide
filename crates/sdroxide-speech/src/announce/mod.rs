@@ -870,6 +870,13 @@ impl Announcer {
 fn mode_has_text(m: Mode) -> bool {
     matches!(
         m,
-        Mode::Cw | Mode::Rtty | Mode::Psk | Mode::Olivia | Mode::Thor | Mode::Fsq | Mode::Mt63
+        Mode::Cw
+            | Mode::Rtty
+            | Mode::Psk
+            | Mode::Olivia
+            | Mode::Thor
+            | Mode::Fsq
+            | Mode::Mt63
+            | Mode::Mfsk
     )
 }

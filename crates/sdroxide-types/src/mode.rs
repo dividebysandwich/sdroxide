@@ -402,6 +402,13 @@ pub enum Mode {
     /// The bandwidth and interleave are [`crate::DigiConfig::mt63_mode`].
     /// Appended for the same reason as [`Mode::Hell`].
     Mt63,
+    /// MFSK — fldigi's IZ8BLY multi-tone family (MFSK4/8/11/16/22/31/32/64/128
+    /// and the two long-interleave variants), a keyboard mode. USB underneath.
+    ///
+    /// The variant is [`crate::DigiConfig::mfsk_mode`], because they are one
+    /// modem at different symbol rates rather than eleven decoders. Appended
+    /// for the same reason as [`Mode::Hell`].
+    Mfsk,
 }
 
 /// The bands on which a mode that keeps phone practice rides the lower
@@ -422,7 +429,7 @@ const PHONE_LSB_BANDS: [(f64, f64); 3] =
 impl Mode {
     /// Every mode, in the order they cycle and appear in the picker — which is
     /// deliberately *not* the enum's declaration order (see [`Mode::Hell`]).
-    pub const ALL: [Mode; 53] = [
+    pub const ALL: [Mode; 54] = [
         Mode::Lsb,
         Mode::Usb,
         Mode::Cw,
@@ -462,6 +469,7 @@ impl Mode {
         Mode::Acars,
         Mode::Olivia,
         Mode::Thor,
+        Mode::Mfsk,
         Mode::Mt63,
         Mode::Fsq,
         Mode::AtChat,
@@ -483,7 +491,7 @@ impl Mode {
     /// packet, RF Paint). All are USB underneath except RIFP, VHF packet and
     /// VHF SSTV, which frequency-modulate the carrier, and ACARS, which is
     /// received in AM.
-    pub const DIGITAL: [Mode; 35] = [
+    pub const DIGITAL: [Mode; 36] = [
         Mode::Ft8,
         Mode::Ft4,
         Mode::Ft2,
@@ -502,6 +510,7 @@ impl Mode {
         Mode::RttyFm,
         Mode::Olivia,
         Mode::Thor,
+        Mode::Mfsk,
         Mode::Mt63,
         Mode::Fsq,
         Mode::AtChat,
@@ -540,6 +549,7 @@ impl Mode {
                 | Mode::Rifp
                 | Mode::Olivia
                 | Mode::Thor
+                | Mode::Mfsk
                 | Mode::Mt63
                 | Mode::Fsq
                 | Mode::AtChat
@@ -725,6 +735,7 @@ impl Mode {
                 | Mode::RttyFm
                 | Mode::Olivia
                 | Mode::Thor
+                | Mode::Mfsk
                 | Mode::Fsq
                 | Mode::Mt63
         )
@@ -1001,6 +1012,7 @@ impl Mode {
             Mode::SstvFm => "SSTV-FM",
             Mode::Olivia => "OLIVIA",
             Mode::Thor => "THOR",
+            Mode::Mfsk => "MFSK",
             Mode::Mt63 => "MT63",
             Mode::Fsq => "FSQ",
             Mode::Hell => "HELL",
@@ -1081,6 +1093,7 @@ impl Mode {
                 | Mode::Rtty
                 | Mode::Olivia
                 | Mode::Thor
+                | Mode::Mfsk
                 | Mode::Mt63
                 | Mode::Fsq
                 | Mode::Hell
@@ -1184,6 +1197,7 @@ impl Mode {
             | Mode::Sstv
             | Mode::Olivia
             | Mode::Thor
+            | Mode::Mfsk
             | Mode::Mt63
             | Mode::Fsq
             | Mode::Hell
@@ -1427,6 +1441,7 @@ impl Mode {
             | Mode::Navtex
             | Mode::Olivia
             | Mode::Thor
+            | Mode::Mfsk
             | Mode::Mt63
             | Mode::Fsq
             | Mode::Hell
@@ -1688,6 +1703,7 @@ impl Mode {
             | Mode::Sstv
             | Mode::Olivia
             | Mode::Thor
+            | Mode::Mfsk
             | Mode::Mt63
             | Mode::Fsq
             | Mode::Hell
@@ -2335,6 +2351,7 @@ mod tests {
             (Mode::Mercury, 50),
             (Mode::Data2g, 51),
             (Mode::Mt63, 52),
+            (Mode::Mfsk, 53),
         ];
         for (mode, index) in pinned {
             assert_eq!(mode as u8, index, "{} moved", mode.label());
@@ -2381,7 +2398,7 @@ mod tests {
         // dropped and nothing listed twice.
         // The last variant *by discriminant*, which is the one appended most
         // recently — not the one that reads last in the picker.
-        let last = Mode::Mt63 as u8;
+        let last = Mode::Mfsk as u8;
         for i in 0..=last {
             let present = Mode::ALL.iter().filter(|m| **m as u8 == i).count();
             assert_eq!(present, 1, "discriminant {i} appears {present} times in Mode::ALL");

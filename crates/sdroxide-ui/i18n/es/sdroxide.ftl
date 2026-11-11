@@ -5731,3 +5731,7 @@ textmodem-mt63-long-hint = MT63-{ $label }, { $bw } Hz de ancho — el entrelaza
 textmodem-mt63-short-hint = MT63-{ $label }, { $bw } Hz de ancho, entrelazado corto — el entrelazado corto reparte una ráfaga en { $chars } caracteres
 textmodem-mt63-not-offered = 1K y 500L aún no disponibles
 textmodem-mt63-not-offered-hint = MT63-1K y el entrelazado largo de 500 Hz se leen con el decodificador por lotes pero aún no con el receptor en vivo: el enganche busca la fase de símbolo y la polaridad pero no el centro de banda, y una búsqueda que lo hace resultó cambiar una variante por otra.
+
+## Keyboard modes: MFSK (src/app/panels/text_modem.rs)
+textmodem-mfsk-hint = { $label } — { $baud } baudios, { $tones } tonos, { $bw } Hz de ancho{ $caveat }
+textmodem-mfsk-reverse-hint = Invierte el orden de los tonos. Una estación recibida en la banda lateral opuesta a la de envío llega reflejada respecto a su centro y se lee como ruido hasta que esto se activa.

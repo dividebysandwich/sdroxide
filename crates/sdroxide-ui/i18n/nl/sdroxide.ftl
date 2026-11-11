@@ -5740,3 +5740,7 @@ textmodem-mt63-long-hint = MT63-{ $label }, { $bw } Hz breed — de lange interl
 textmodem-mt63-short-hint = MT63-{ $label }, { $bw } Hz breed, korte interleave — de korte interleave spreidt een burst over { $chars } tekens
 textmodem-mt63-not-offered = 1K en 500L nog niet beschikbaar
 textmodem-mt63-not-offered-hint = MT63-1K en de lange interleave van 500 Hz worden gelezen met de batchdecoder, maar nog niet via de live ontvanger: de lock zoekt de symboolfase en de polariteit maar niet het bandcentrum, en een zoekactie die dat wel doet bleek de ene variant voor de andere in te ruilen.
+
+## Keyboard modes: MFSK (src/app/panels/text_modem.rs)
+textmodem-mfsk-hint = { $label } — { $baud } baud, { $tones } tonen, { $bw } Hz breed{ $caveat }
+textmodem-mfsk-reverse-hint = Draai de toonvolgorde om. Een station dat is ontvangen op de andere zijband dan waarop het is verzonden, komt gespiegeld om zijn midden binnen en klinkt als ruis totdat dit aan staat.

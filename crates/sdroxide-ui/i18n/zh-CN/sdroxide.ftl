@@ -5681,3 +5681,7 @@ textmodem-mt63-long-hint = MT63-{ $label }，带宽 { $bw } Hz，长交织将突
 textmodem-mt63-short-hint = MT63-{ $label }，带宽 { $bw } Hz，短交织，短交织将突发错误分散到 { $chars } 个字符上
 textmodem-mt63-not-offered = 暂不提供 1K 和 500L
 textmodem-mt63-not-offered-hint = MT63-1K 和 500 Hz 长交织可用批处理解码器读取，但尚不能通过实时接收机读取：锁定会搜索符号相位和极性，但不搜索频带中心，而且发现加入这种搜索只是以一种变体换另一种变体。
+
+## Keyboard modes: MFSK (src/app/panels/text_modem.rs)
+textmodem-mfsk-hint = { $label }，{ $baud } 波特，{ $tones } 个音调，带宽 { $bw } Hz{ $caveat }
+textmodem-mfsk-reverse-hint = 反转音调顺序。在与发送时相反的边带上接收的电台会以中心为轴镜像，在开启之前读出来只是噪声。
