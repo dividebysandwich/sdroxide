@@ -2607,8 +2607,13 @@ impl SdroxideApp {
         crate::chrome::control_row(ui, narrow, |ui| {
             let mut vol = self.state.rx[0].volume;
             ui.label(tr!("topbar-vol"));
-            if crate::chrome::slider(ui, Slider::new(&mut vol, 0.0..=1.0).show_value(false))
-                .changed()
+            if crate::chrome::slider_wheel(
+                crate::chrome::slider(ui, Slider::new(&mut vol, 0.0..=1.0).show_value(false)),
+                &mut vol,
+                0.0..=1.0,
+                0.01,
+            )
+            .changed()
             {
                 self.state.rx[0].volume = vol; // optimistic echo
                 cmds.push(Command::SetVolume { rx: RxId::Main, v: vol });
@@ -2655,16 +2660,21 @@ impl SdroxideApp {
                             ui.spacing_mut().slider_width = RX_DB_RAIL_W;
                         }
                         ui.add_enabled_ui(!hardware_agc, |ui| {
-                            crate::chrome::slider_readout(
-                                ui,
-                                value_field_w(ui, "-888.8 dB"),
-                                Slider::new(&mut db, g.min_db..=g.max_db)
-                                    .step_by(step)
-                                    // Whatever this element is actually counted
-                                    // in. Labelling a step index "dB" reported a
-                                    // number three times too small, in a unit it
-                                    // was not.
-                                    .suffix(g.suffix()),
+                            crate::chrome::slider_wheel(
+                                crate::chrome::slider_readout(
+                                    ui,
+                                    value_field_w(ui, "-888.8 dB"),
+                                    Slider::new(&mut db, g.min_db..=g.max_db)
+                                        .step_by(step)
+                                        // Whatever this element is actually counted
+                                        // in. Labelling a step index "dB" reported a
+                                        // number three times too small, in a unit it
+                                        // was not.
+                                        .suffix(g.suffix()),
+                                ),
+                                &mut db,
+                                g.min_db..=g.max_db,
+                                step,
                             )
                         })
                         .inner
@@ -2720,12 +2730,17 @@ impl SdroxideApp {
                             if !narrow {
                                 ui.spacing_mut().slider_width = RX_DB_RAIL_W;
                             }
-                            crate::chrome::slider_readout(
-                                ui,
-                                value_field_w(ui, "-888.8 dB"),
-                                Slider::new(&mut db, 0.0..=sdroxide_types::MAX_MANUAL_GAIN_DB)
-                                    .step_by(1.0)
-                                    .suffix(" dB"),
+                            crate::chrome::slider_wheel(
+                                crate::chrome::slider_readout(
+                                    ui,
+                                    value_field_w(ui, "-888.8 dB"),
+                                    Slider::new(&mut db, 0.0..=sdroxide_types::MAX_MANUAL_GAIN_DB)
+                                        .step_by(1.0)
+                                        .suffix(" dB"),
+                                ),
+                                &mut db,
+                                0.0..=sdroxide_types::MAX_MANUAL_GAIN_DB,
+                                1.0,
                             )
                         })
                         .inner
@@ -2753,16 +2768,23 @@ impl SdroxideApp {
                 // what got through and can never open what was shut out
                 // (issue #192).
                 let mut sql = self.state.rig_squelch;
-                if crate::chrome::slider_readout(
-                    ui,
-                    sql_readout_w(ui),
-                    Slider::new(&mut sql, 0.0..=1.0).show_value(true).custom_formatter(|v, _| {
-                        if v <= 0.001 {
-                            tr!("topbar-squelch-open")
-                        } else {
-                            format!("{:.0}%", v * 100.0)
-                        }
-                    }),
+                if crate::chrome::slider_wheel(
+                    crate::chrome::slider_readout(
+                        ui,
+                        sql_readout_w(ui),
+                        Slider::new(&mut sql, 0.0..=1.0).show_value(true).custom_formatter(
+                            |v, _| {
+                                if v <= 0.001 {
+                                    tr!("topbar-squelch-open")
+                                } else {
+                                    format!("{:.0}%", v * 100.0)
+                                }
+                            },
+                        ),
+                    ),
+                    &mut sql,
+                    0.0..=1.0,
+                    0.01,
                 )
                 .on_hover_text(tr!("topbar-radio-s-own-squelch-sent"))
                 .changed()
@@ -2785,21 +2807,26 @@ impl SdroxideApp {
                     }
                     _ => String::new(),
                 };
-                if crate::chrome::slider_readout(
-                    ui,
-                    sql_readout_w(ui),
-                    Slider::new(
-                        &mut sql,
-                        sdroxide_types::SQUELCH_OPEN_DB..=sdroxide_types::SQUELCH_CLOSED_DB,
-                    )
-                    .show_value(true)
-                    .custom_formatter(|v, _| {
-                        if v <= (sdroxide_types::SQUELCH_OPEN_DB + 1.0) as f64 {
-                            tr!("topbar-off")
-                        } else {
-                            format!("{v:.0}")
-                        }
-                    }),
+                if crate::chrome::slider_wheel(
+                    crate::chrome::slider_readout(
+                        ui,
+                        sql_readout_w(ui),
+                        Slider::new(
+                            &mut sql,
+                            sdroxide_types::SQUELCH_OPEN_DB..=sdroxide_types::SQUELCH_CLOSED_DB,
+                        )
+                        .show_value(true)
+                        .custom_formatter(|v, _| {
+                            if v <= (sdroxide_types::SQUELCH_OPEN_DB + 1.0) as f64 {
+                                tr!("topbar-off")
+                            } else {
+                                format!("{v:.0}")
+                            }
+                        }),
+                    ),
+                    &mut sql,
+                    sdroxide_types::SQUELCH_OPEN_DB..=sdroxide_types::SQUELCH_CLOSED_DB,
+                    1.0,
                 )
                 .on_hover_text(tr!("topbar-squelch-hint", level = level.to_string()))
                 .changed()
@@ -4579,7 +4606,13 @@ impl SdroxideApp {
         crate::chrome::control_row(ui, narrow, |ui| {
             ui.label(tr!("topbar-adapt")).on_hover_text(tr!("topbar-how-fast-filter-chases-slow"));
             let mut v = rate;
-            if crate::chrome::slider(ui, Slider::new(&mut v, 0.0..=1.0).show_value(false)).changed()
+            if crate::chrome::slider_wheel(
+                crate::chrome::slider(ui, Slider::new(&mut v, 0.0..=1.0).show_value(false)),
+                &mut v,
+                0.0..=1.0,
+                0.01,
+            )
+            .changed()
             {
                 self.div_edit(cmds, DIV_RATE_ELEMENT, f64::from(v));
             }
@@ -4687,7 +4720,15 @@ impl SdroxideApp {
             if ui
                 .scope(|ui| {
                     ui.spacing_mut().slider_width = 64.0 + extra;
-                    crate::chrome::slider(ui, Slider::new(&mut vol, 0.0..=1.0).show_value(false))
+                    crate::chrome::slider_wheel(
+                        crate::chrome::slider(
+                            ui,
+                            Slider::new(&mut vol, 0.0..=1.0).show_value(false),
+                        ),
+                        &mut vol,
+                        0.0..=1.0,
+                        0.01,
+                    )
                 })
                 .inner
                 .changed()
@@ -4824,16 +4865,22 @@ impl SdroxideApp {
         let mut drive = self.state.tx.drive;
         let hover = self.drive_hover();
         ui.label(tr!("topbar-drive")).on_hover_text(&hover);
-        if crate::chrome::slider_readout(
-            ui,
-            value_field_w(ui, "100%"),
-            Slider::new(&mut drive, 0.0..=1.0)
-                .show_value(true)
-                .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+        if crate::chrome::slider_wheel(
+            crate::chrome::slider_readout(
+                ui,
+                value_field_w(ui, "100%"),
+                Slider::new(&mut drive, 0.0..=1.0)
+                    .show_value(true)
+                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+            ),
+            &mut drive,
+            0.0..=1.0,
+            0.01,
         )
         .on_hover_text(&hover)
         .changed()
         {
+            self.state.tx.drive = drive;
             cmds.push(Command::SetTxDrive(drive));
         }
     }
@@ -4943,15 +4990,21 @@ impl SdroxideApp {
     fn tx_tune_level(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let mut tune_drive = self.state.tx.tune_drive;
         ui.label(tr!("topbar-tune-2"));
-        if crate::chrome::slider_readout(
-            ui,
-            value_field_w(ui, "100%"),
-            Slider::new(&mut tune_drive, 0.0..=1.0)
-                .show_value(true)
-                .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+        if crate::chrome::slider_wheel(
+            crate::chrome::slider_readout(
+                ui,
+                value_field_w(ui, "100%"),
+                Slider::new(&mut tune_drive, 0.0..=1.0)
+                    .show_value(true)
+                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+            ),
+            &mut tune_drive,
+            0.0..=1.0,
+            0.01,
         )
         .changed()
         {
+            self.state.tx.tune_drive = tune_drive;
             cmds.push(Command::SetTuneDrive(tune_drive));
         }
     }
@@ -4981,7 +5034,15 @@ impl SdroxideApp {
     fn tx_mic(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let mut mic = self.state.tx.mic_gain;
         self.tx_mic_caption(ui, RichText::new(tr!("topbar-mic")));
-        if crate::chrome::slider(ui, Slider::new(&mut mic, 0.0..=1.0).show_value(false)).changed() {
+        if crate::chrome::slider_wheel(
+            crate::chrome::slider(ui, Slider::new(&mut mic, 0.0..=1.0).show_value(false)),
+            &mut mic,
+            0.0..=1.0,
+            0.01,
+        )
+        .changed()
+        {
+            self.state.tx.mic_gain = mic;
             cmds.push(Command::SetMicGain(mic));
         }
     }
@@ -5023,16 +5084,22 @@ impl SdroxideApp {
         let mut db = self.state.tx.cessb_db;
         let hover = self.cessb_hover();
         ui.label(tr!("topbar-cessb")).on_hover_text(hover.clone());
-        if crate::chrome::slider_readout(
-            ui,
-            value_field_w(ui, "88 dB"),
-            Slider::new(&mut db, 0.0..=sdroxide_types::CESSB_MAX_DB)
-                .show_value(true)
-                .custom_formatter(|v, _| cessb_value_text(v as f32)),
+        if crate::chrome::slider_wheel(
+            crate::chrome::slider_readout(
+                ui,
+                value_field_w(ui, "88 dB"),
+                Slider::new(&mut db, 0.0..=sdroxide_types::CESSB_MAX_DB)
+                    .show_value(true)
+                    .custom_formatter(|v, _| cessb_value_text(v as f32)),
+            ),
+            &mut db,
+            0.0..=sdroxide_types::CESSB_MAX_DB,
+            1.0,
         )
         .on_hover_text(hover)
         .changed()
         {
+            self.state.tx.cessb_db = db;
             cmds.push(Command::SetCessb(db));
         }
     }
@@ -5054,11 +5121,16 @@ impl SdroxideApp {
             ui.label(RichText::new(tr!("topbar-cessb")).size(10.5)).on_hover_text(hover.clone());
             // The rail takes whatever height the label left it.
             ui.spacing_mut().slider_width = (ui.available_height() - 2.0).max(24.0);
-            if crate::chrome::slider_vertical(
-                ui,
-                Slider::new(&mut db, 0.0..=sdroxide_types::CESSB_MAX_DB)
-                    .vertical()
-                    .show_value(false),
+            if crate::chrome::slider_wheel(
+                crate::chrome::slider_vertical(
+                    ui,
+                    Slider::new(&mut db, 0.0..=sdroxide_types::CESSB_MAX_DB)
+                        .vertical()
+                        .show_value(false),
+                ),
+                &mut db,
+                0.0..=sdroxide_types::CESSB_MAX_DB,
+                1.0,
             )
             .on_hover_text(hover)
             .changed()
@@ -5067,6 +5139,7 @@ impl SdroxideApp {
             }
         });
         if let Some(db) = set {
+            self.state.tx.cessb_db = db;
             cmds.push(Command::SetCessb(db));
         }
     }
@@ -5081,13 +5154,19 @@ impl SdroxideApp {
             let mut mic = self.state.tx.mic_gain;
             // The rail takes whatever height the label left it.
             ui.spacing_mut().slider_width = (ui.available_height() - 2.0).max(24.0);
-            if crate::chrome::slider_vertical(
-                ui,
-                Slider::new(&mut mic, 0.0..=1.0).vertical().show_value(false),
+            if crate::chrome::slider_wheel(
+                crate::chrome::slider_vertical(
+                    ui,
+                    Slider::new(&mut mic, 0.0..=1.0).vertical().show_value(false),
+                ),
+                &mut mic,
+                0.0..=1.0,
+                0.01,
             )
             .on_hover_text(tr!("topbar-microphone-gain"))
             .changed()
             {
+                self.state.tx.mic_gain = mic;
                 cmds.push(Command::SetMicGain(mic));
             }
         });
@@ -5147,12 +5226,17 @@ impl SdroxideApp {
     fn tx_digi_level(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let mut db = self.digi_tx_level_db();
         ui.label(tr!("topbar-tx-audio"));
-        if crate::chrome::slider_readout(
-            ui,
-            value_field_w(ui, "-88 dB"),
-            Slider::new(&mut db, sdroxide_types::TX_AUDIO_LEVEL_MIN_DB..=0.0)
-                .show_value(true)
-                .custom_formatter(|v, _| format!("{v:.0} dB")),
+        if crate::chrome::slider_wheel(
+            crate::chrome::slider_readout(
+                ui,
+                value_field_w(ui, "-88 dB"),
+                Slider::new(&mut db, sdroxide_types::TX_AUDIO_LEVEL_MIN_DB..=0.0)
+                    .show_value(true)
+                    .custom_formatter(|v, _| format!("{v:.0} dB")),
+            ),
+            &mut db,
+            sdroxide_types::TX_AUDIO_LEVEL_MIN_DB..=0.0,
+            1.0,
         )
         .on_hover_text(self.digi_tx_level_hover())
         .changed()
@@ -5176,11 +5260,16 @@ impl SdroxideApp {
             ui.label(RichText::new(format!("{db:.0} dB")).size(10.5));
             // The rail takes whatever height the caption left it.
             ui.spacing_mut().slider_width = (ui.available_height() - 2.0).max(24.0);
-            if crate::chrome::slider_vertical(
-                ui,
-                Slider::new(&mut db, sdroxide_types::TX_AUDIO_LEVEL_MIN_DB..=0.0)
-                    .vertical()
-                    .show_value(false),
+            if crate::chrome::slider_wheel(
+                crate::chrome::slider_vertical(
+                    ui,
+                    Slider::new(&mut db, sdroxide_types::TX_AUDIO_LEVEL_MIN_DB..=0.0)
+                        .vertical()
+                        .show_value(false),
+                ),
+                &mut db,
+                sdroxide_types::TX_AUDIO_LEVEL_MIN_DB..=0.0,
+                1.0,
             )
             .on_hover_text(hover)
             .changed()
@@ -5864,12 +5953,17 @@ impl SdroxideApp {
         let (mut floor, mut ceil) = (self.view.db_floor, self.view.db_ceil);
         ui.horizontal(|ui| {
             ui.label(tr!("topbar-floor"));
-            let r = crate::chrome::slider_readout(
-                ui,
-                value_field_w(ui, "-888 dB"),
-                Slider::new(&mut floor, -160.0..=-40.0)
-                    .show_value(true)
-                    .custom_formatter(|v, _| format!("{v:.0} dB")),
+            let r = crate::chrome::slider_wheel(
+                crate::chrome::slider_readout(
+                    ui,
+                    value_field_w(ui, "-888 dB"),
+                    Slider::new(&mut floor, -160.0..=-40.0)
+                        .show_value(true)
+                        .custom_formatter(|v, _| format!("{v:.0} dB")),
+                ),
+                &mut floor,
+                -160.0..=-40.0,
+                1.0,
             )
             .on_hover_text(tr!("topbar-level-drawn-bottom-spectrum-darkest"));
             if r.changed() {
@@ -5878,12 +5972,17 @@ impl SdroxideApp {
         });
         ui.horizontal(|ui| {
             ui.label(tr!("topbar-ceil"));
-            let r = crate::chrome::slider_readout(
-                ui,
-                value_field_w(ui, "-888 dB"),
-                Slider::new(&mut ceil, -100.0..=20.0)
-                    .show_value(true)
-                    .custom_formatter(|v, _| format!("{v:.0} dB")),
+            let r = crate::chrome::slider_wheel(
+                crate::chrome::slider_readout(
+                    ui,
+                    value_field_w(ui, "-888 dB"),
+                    Slider::new(&mut ceil, -100.0..=20.0)
+                        .show_value(true)
+                        .custom_formatter(|v, _| format!("{v:.0} dB")),
+                ),
+                &mut ceil,
+                -100.0..=20.0,
+                1.0,
             )
             .on_hover_text(tr!("topbar-level-drawn-top-bring-down"));
             if r.changed() {

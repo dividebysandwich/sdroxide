@@ -32,10 +32,14 @@ pub(crate) const SCROLL_PER_DETENT: f32 = 30.0;
 /// shifted wheel on to begin with — either axis counts, so the gesture is not
 /// dead on the platforms that move it sideways.
 pub(crate) fn wheel_detents(ui: &eframe::egui::Ui, shift: bool, acc: &mut f32) -> f32 {
+    wheel_detents_ctx(ui.ctx(), shift, acc)
+}
+
+pub(crate) fn wheel_detents_ctx(ctx: &eframe::egui::Context, shift: bool, acc: &mut f32) -> f32 {
     use eframe::egui::{Event, MouseWheelUnit};
 
     let mut detents = 0.0f32;
-    ui.input(|i| {
+    ctx.input(|i| {
         for ev in &i.events {
             let Event::MouseWheel { unit, delta, .. } = ev else { continue };
             let d = if shift { delta.x + delta.y } else { delta.y };
