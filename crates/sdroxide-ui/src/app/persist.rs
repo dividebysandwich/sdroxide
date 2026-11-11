@@ -725,3 +725,24 @@ mod tests {
         assert!(after_shared_log(Vec::new(), Some(Vec::new())).is_empty());
     }
 }
+
+/// The ZULETZT rows of the band menu. Native only, like the band dock.
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn load_workplaces() -> Vec<sdroxide_types::BandStackEntry> {
+    sdroxide_config::load_workplaces()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn load_workplaces() -> Vec<sdroxide_types::BandStackEntry> {
+    Vec::new()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::app) fn save_workplaces(places: &[sdroxide_types::BandStackEntry]) {
+    if let Err(e) = sdroxide_config::save_workplaces(places) {
+        eprintln!("failed to save the recent working places: {e}");
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(in crate::app) fn save_workplaces(_places: &[sdroxide_types::BandStackEntry]) {}

@@ -2273,6 +2273,9 @@ topbar-user-manual-f1 = Manuale utente (F1)
 topbar-range-was-typed-settings-radio = Quell'intervallo è stato scritto in Impostazioni ▸ Radio ▸ Gamma RX, non riportato dalla radio. Allargalo, oppure svuota la casella per usare ciò che il dispositivo riferisce di sé.
 topbar-what-device-reports-about-itself = È ciò che il dispositivo riferisce di sé. Se la radio copre davvero questa banda, indica il suo intervallo reale in Impostazioni ▸ Radio ▸ Gamma RX.
 topbar-band = BANDA
+topbar-recent = RECENTI
+topbar-recent-empty =
+    Si riempie dopo 3 s su una postazione
 topbar-mode = MODO
 topbar-digital = DIGITALE
 

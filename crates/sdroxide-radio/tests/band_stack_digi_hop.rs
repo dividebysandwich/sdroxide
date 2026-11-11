@@ -69,7 +69,7 @@ fn wait_for(
 }
 
 #[test]
-fn a_band_left_by_a_dial_move_is_recorded_on_its_stack() {
+fn a_band_left_by_a_dial_move_is_recorded_on_its_stack_and_recalled_only_in_its_mode() {
     let root = std::env::temp_dir().join(format!("sdroxide-band-stack-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
@@ -94,9 +94,7 @@ fn a_band_left_by_a_dial_move_is_recorded_on_its_stack() {
     send(Command::SetVfo { vfo: Vfo::A, hz: 144_174_000.0 });
     wait_for(&h.event_rx, "2 m FT8", |s| (s.vfo_a_hz - 144_174_000.0).abs() < 1.0);
 
-    // Out of FT8 on 2 m, then the 6 m band button: 6 m comes back where it
-    // was left.
-    send(Command::SetMode { rx: RxId::Main, mode: Mode::Nfm });
+    // Still in FT8, the 6 m band button: 6 m comes back where it was left.
     send(Command::SetBand(Band::M6));
     let s = wait_for(&h.event_rx, "back on 6 m", |s| s.band == Band::M6);
     assert!(
@@ -105,6 +103,29 @@ fn a_band_left_by_a_dial_move_is_recorded_on_its_stack() {
         s.vfo_a_hz,
         s.rx[0].mode
     );
+
+    // Out of FT8 on 2 m, then the 6 m band button: a band button keeps the
+    // operator out of the digital modes, as tuning out of a band does. The
+    // FT8 entry is passed over and 6 m opens on its own default.
+    send(Command::SetBand(Band::M2));
+    wait_for(&h.event_rx, "on 2 m", |s| s.band == Band::M2);
+    send(Command::SetMode { rx: RxId::Main, mode: Mode::Nfm });
+    wait_for(&h.event_rx, "2 m NFM", |s| s.rx[0].mode == Mode::Nfm);
+    send(Command::SetBand(Band::M6));
+    let s = wait_for(&h.event_rx, "6 m out of FT8", |s| s.band == Band::M6);
+    let (default_hz, default_mode) = Band::M6.default_entry();
+    assert!(
+        (s.vfo_a_hz - default_hz).abs() < 1.0 && s.rx[0].mode == default_mode,
+        "6 m recalled {} Hz {:?}, not its default {default_hz} Hz {default_mode:?}",
+        s.vfo_a_hz,
+        s.rx[0].mode
+    );
+
+    // A second press cycles the 6 m stack and still finds no FT8 on it.
+    send(Command::SetBand(Band::M6));
+    std::thread::sleep(Duration::from_millis(300));
+    let s = wait_for(&h.event_rx, "6 m still voice", |s| s.band == Band::M6);
+    assert_ne!(s.rx[0].mode, Mode::Ft8, "the second press recalled FT8");
 
     drop(h);
     let _ = thread.map(|t| t.join());

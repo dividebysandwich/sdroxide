@@ -2294,6 +2294,9 @@ topbar-user-manual-f1 = User manual (F1)
 topbar-range-was-typed-settings-radio = That range was typed in Settings ▸ Radio ▸ RX range, not reported by the radio. Widen it, or empty the box to use whatever the device says about itself.
 topbar-what-device-reports-about-itself = That is what the device reports about itself. If the radio does cover this band, state its real range in Settings ▸ Radio ▸ RX range.
 topbar-band = BAND
+topbar-recent = RECENT
+topbar-recent-empty =
+    Fills after 3 s on a place
 topbar-mode = MODE
 topbar-digital = DIGITAL
 
@@ -4306,6 +4309,8 @@ rade-rade-v1-occupies-roughly-1060 = RADE V1 occupies roughly 1060–1880 Hz of 
 ## frame (src/app/frame.rs)
 
 frame-acknowledge = Acknowledge
+frame-curtain-handle-tip = Drag: panel up/down over panadapter
+    Double-click: all the way up / back
 frame-dismiss = Dismiss
 frame-get-sdroxide-com = Get it at sdroxide.com
 frame-reconnecting = Reconnecting…

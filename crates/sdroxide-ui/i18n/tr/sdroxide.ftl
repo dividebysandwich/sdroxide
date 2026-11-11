@@ -2269,6 +2269,9 @@ topbar-user-manual-f1 = Kullanım kılavuzu (F1)
 topbar-range-was-typed-settings-radio = Bu aralık, radyo tarafından bildirilmemiş; Ayarlar ▸ Radyo ▸ RX aralığı içinde yazıldı. Genişletin ya da aygıtın kendisi hakkında söylediği şeyi kullanmak için kutuyu boşaltın.
 topbar-what-device-reports-about-itself = Aygıtın kendisi hakkında bildirdiği budur. Radyo bu bandı gerçekten kapsıyorsa, gerçek aralığını Ayarlar ▸ Radyo ▸ RX aralığı içinde belirtin.
 topbar-band = BANT
+topbar-recent = SON
+topbar-recent-empty =
+    Bir yerde 3 sn sonra dolar
 topbar-mode = MOD
 topbar-digital = DİJİTAL
 

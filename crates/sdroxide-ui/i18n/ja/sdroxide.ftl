@@ -2248,6 +2248,9 @@ topbar-user-manual-f1 = ユーザーマニュアル（F1）
 topbar-range-was-typed-settings-radio = その範囲は、設定 ▸ 無線機 ▸ 受信範囲で入力されたもので、無線機が報告したものではありません。範囲を広げるか、欄を空にして、デバイスが自身について報告するものを使ってください。
 topbar-what-device-reports-about-itself = これはデバイスが自身について報告するものです。無線機がこのバンドをカバーしている場合は、設定 ▸ 無線機 ▸ 受信範囲に、その実際の範囲を入力してください。
 topbar-band = バンド
+topbar-recent = 最近
+topbar-recent-empty =
+    同じ場所に3秒いると記録されます
 topbar-mode = モード
 topbar-digital = デジタル
 

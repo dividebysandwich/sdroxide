@@ -353,7 +353,12 @@ popup with three rows:
 
 - **BAND:** `160M 80M 60M 40M 30M 20M 17M 15M 12M 10M 6M 4M 2M 1.25M 70CM 33CM
   23CM 13CM 9CM 6CM GEN`. Each
-  band remembers your last frequency, mode, and filter. A band your region's
+  band remembers your last frequency, mode, and filter. A digital mode is the
+  exception: a band left in FT8, WSPR or another mode with its own panel comes
+  back in that mode only while you are in it. From SSB, AM or FM a band button
+  passes those entries over and lands on its last SSB, CW, AM or FM entry, or on its
+  default, exactly as tuning out of a band keeps your mode. To work a digital
+  mode, choose it. A band your region's
   band plan does not have gets no button at all — `4M` (70 MHz) is an amateur
   allocation in IARU Region 1 only, so it is absent in Regions 2 and 3, and
   `1.25M` (220 MHz) and `33CM` (902 MHz) are Region 2's alone, so they are absent
@@ -381,6 +386,18 @@ and the Band / Mode button opens the popup again; widen the window and the
 column comes back.
 
 ![The band and mode selector popup](images/04-band-mode-popup.jpg)
+
+Above BAND sit the rows headed **RECENT**, twelve slots, dim until filled:
+your last twelve working places, each a band and a mode with the dial and filter
+you left it on — `40M FT8`, `20M USB`; the dial is in the tooltip. The rows
+are always full: twelve slots go two, three, four or six to a row as the window
+allows. Click one and the radio goes
+back there, FT8 panel and all if it was FT8, and only then. A place is entered
+once you have been on it for 3 seconds, so clicking through the bands fills
+nothing, and the place you are on lights up. A new place flashes three times
+the first time you see the rows after it came in. Each band and mode appears once: coming back to 40 m FT8 refreshes
+its chip where it stands, and the chip you click stays in its place. The rows are
+kept between sessions.
 
 See the [appendix](#16-appendix) for what each mode is.
 
@@ -3675,12 +3692,14 @@ is a list of paths rather than contacts (3.11).
 
 Every digital mode is entered the same way: open the Band/Mode popup and choose
 the mode from the **DIGITAL** row. The panadapter locks to the digital sub-band
-(the audio range just above the dial), and the mode's operating panel appears in
-the lower part of the window; a draggable divider sets how much height the
-panel gets. In a digital mode it goes all the way up, in one drag: the
-spectrum and the waterfall shrink with it down to nothing, and at the top edge
-the panel has the whole height. Drag the `— — —` handle down again to bring
-them back.
+(the audio range just above the dial), and the mode's operating panel rises over
+it like a curtain, covering the spectrum and the waterfall. The panel is always
+laid out for the whole height; the `— — —` handle on its top edge slides it down
+to show the waterfall above it, and what slides below the window's edge is
+hidden rather than squeezed. Its header row always stays in view to pull it up
+again, and a double-click on the handle sends it all the way up or back to
+where it was. Click the lit mode in the **DIGITAL** row again to leave it: the
+curtain falls and the mode you were in before comes back.
 
 While in a digital mode the **BAND** row of the Band/Mode popup doubles as a
 frequency picker. Bands where the mode has a standard calling frequency carry
@@ -12220,15 +12239,14 @@ spoken announcements below them under `[speech]`:
   for the rest of it, and for anyone who wants the tighter panels in a window
   on a large screen.
 
-  **Whatever the layout, no control is ever off the bottom of an operating
-  panel.** The panel keeps a floor under its own height — taken from the
-  waterfall above it, which is the thing that can shrink — sized to the rows
-  that layout actually draws, so a touched layout's taller chips get the extra
-  points they need. Where a panel still holds more than it can show at once
-  (the WSPR beacon's controls, the SSTV compositor), it scrolls rather than
-  running off the edge. The divider between the waterfall and the panel is
-  draggable in every mode: put the pointer on the `— — —` handle between them
-  and drag to give either one more of the window.
+  **A digital mode's operating panel is never squeezed.** It is laid out for
+  the whole height under the top bar and drawn as a curtain over the
+  panadapter: all the way up when the mode is chosen, slid down with the
+  `— — —` handle on its top edge to show the waterfall, its lower part hidden
+  below the window's edge rather than pressed into what is left. Its header
+  stays in view however far it is slid down. CW's panel, which shares the
+  window with the waterfall the old way, keeps a floor under its own height and
+  the draggable divider.
 - **Theme** — the colour scheme for the whole UI: **Default** (the navy, cyan
   and hot pink every screenshot in this manual shows), **Light** (white panels
   and near-black text, for a bright shack or a screen read in daylight),

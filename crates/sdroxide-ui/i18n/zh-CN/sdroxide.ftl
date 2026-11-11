@@ -2247,6 +2247,9 @@ topbar-user-manual-f1 = 用户手册（F1）
 topbar-range-was-typed-settings-radio = 该范围是在“设置 ▸ 电台 ▸ RX 范围”中输入的，而不是由电台报告的。请将其加宽，或清空输入框以使用设备自行报告的范围。
 topbar-what-device-reports-about-itself = 这是设备自行报告的内容。如果电台确实覆盖此频段，请在“设置 ▸ 电台 ▸ RX 范围”中填写其实际范围。
 topbar-band = 频段
+topbar-recent = 最近
+topbar-recent-empty =
+    在一处停留 3 秒后记录
 topbar-mode = 模式
 topbar-digital = 数字
 

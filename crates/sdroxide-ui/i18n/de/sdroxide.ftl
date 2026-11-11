@@ -2287,6 +2287,9 @@ topbar-user-manual-f1 = Benutzerhandbuch (F1)
 topbar-range-was-typed-settings-radio = Dieser Bereich wurde in Einstellungen ▸ Funkgerät ▸ RX-Bereich eingetragen, nicht vom Funkgerät gemeldet. Erweitern Sie ihn oder leeren Sie das Feld, um zu verwenden, was das Gerät über sich selbst sagt.
 topbar-what-device-reports-about-itself = Das ist, was das Gerät über sich selbst meldet. Wenn das Funkgerät dieses Band tatsächlich abdeckt, dessen echten Bereich unter Einstellungen ▸ Funkgerät ▸ RX-Bereich angeben.
 topbar-band = BAND
+topbar-recent = ZULETZT
+topbar-recent-empty =
+    Füllt sich nach 3 s auf einem Platz
 topbar-mode = BETRIEBSART
 topbar-digital = DIGITAL
 
@@ -4294,6 +4297,8 @@ rade-rade-v1-occupies-roughly-1060 = RADE V1 belegt etwa 1060–1880 Hz des Durc
 ## frame (src/app/frame.rs)
 
 frame-acknowledge = Bestätigen
+frame-curtain-handle-tip = Ziehen: Panel über Panorama hoch/runter
+    Doppelklick: ganz hoch / zurück
 frame-dismiss = Schließen
 frame-get-sdroxide-com = Auf sdroxide.com herunterladen
 frame-reconnecting = Verbinde erneut…

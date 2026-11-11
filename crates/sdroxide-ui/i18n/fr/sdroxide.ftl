@@ -2267,6 +2267,9 @@ topbar-user-manual-f1 = Manuel d'utilisation (F1)
 topbar-range-was-typed-settings-radio = Cette plage a été saisie dans Réglages ▸ Radio ▸ Plage RX, non annoncée par la radio. Élargissez-la, ou videz la case pour utiliser ce que le périphérique annonce de lui-même.
 topbar-what-device-reports-about-itself = C'est ce que le périphérique annonce de lui-même. Si la radio couvre bien cette bande, indiquez sa plage réelle dans Réglages ▸ Radio ▸ Plage RX.
 topbar-band = BANDE
+topbar-recent = RÉCENTS
+topbar-recent-empty =
+    Se remplit après 3 s sur un poste
 topbar-mode = MODE
 topbar-digital = NUMÉRIQUE
 

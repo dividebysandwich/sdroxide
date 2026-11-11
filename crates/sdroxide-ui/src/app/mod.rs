@@ -53,6 +53,7 @@ pub(in crate::app) mod undocked;
 pub(crate) mod util;
 pub(in crate::app) mod windows;
 pub(in crate::app) mod winlink;
+pub(in crate::app) mod workplaces;
 
 use crate::i18n::tr;
 use std::sync::{Arc, Mutex};
@@ -573,6 +574,10 @@ pub struct SdroxideApp {
     /// it, so widening the window again brings it back.
     band_docked: bool,
     band_dock_visible: bool,
+    /// The ZULETZT rows of the band menu, newest first, and the place being
+    /// worked now (see `workplaces`).
+    workplaces: Vec<sdroxide_types::BandStackEntry>,
+    workplace_track: workplaces::WorkplaceTrack,
     /// AUX SP's own view of the spectrum — its zoom, pan and layers — swapped
     /// in for `view` while its window draws, so the two spectra do not mirror
     /// each other (see `undocked::show_detached_module`).
@@ -591,6 +596,18 @@ pub struct SdroxideApp {
     /// so a tiling compositor cannot lose it. See
     /// `undocked::floating_panel_window`. Session-only.
     panel_floating: bool,
+    /// When the operating panel started rising over the panadapter, as a
+    /// curtain, on entering a digital mode; `None` once it is up.
+    curtain_rise_at: Option<f64>,
+    /// The curtain's last partial position (`digi_panel_fraction`), for a
+    /// double-click on the handle to go back to from all the way up.
+    digi_curtain_prev: f32,
+    /// The curtain falling on leaving a digital mode: when it started, from
+    /// where, and the mode to switch to once it is down.
+    curtain_fall: Option<(f64, f32, Mode)>,
+    /// The last mode drawn without a digital panel, to go back to when the lit
+    /// digital mode is clicked again. USB until one has been seen.
+    last_voice_mode: Mode,
     /// The floating panel rolled up to its title bar.
     panel_rolled: bool,
     /// Whether the **module windows** list is open — the ▣ chip's list, also
@@ -1616,6 +1633,8 @@ impl SdroxideApp {
             // room for it this frame. (SWL users group, via sdroxide-brown.)
             band_docked: band_dock.contains_key(&radio_id),
             band_dock_visible: band_dock.get(&radio_id).copied().unwrap_or(false),
+            workplaces: persist::load_workplaces(),
+            workplace_track: Default::default(),
             aux_view: ViewState::default(),
             panel_window_pane: 0,
             // Where each tool window was left last time — in its own window or
@@ -1625,6 +1644,10 @@ impl SdroxideApp {
                 .map(|(id, s)| (id, s.into()))
                 .collect(),
             panel_floating: false,
+            curtain_rise_at: None,
+            digi_curtain_prev: 0.5,
+            curtain_fall: None,
+            last_voice_mode: Mode::Usb,
             panel_rolled: false,
             show_windows: false,
             workspaces: persist::load_workspaces(),

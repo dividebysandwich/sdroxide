@@ -2271,6 +2271,9 @@ topbar-user-manual-f1 = Manual do usuário (F1)
 topbar-range-was-typed-settings-radio = Essa faixa foi digitada em Configurações ▸ Rádio ▸ Faixa de RX, não informada pelo rádio. Amplie-a, ou esvazie a caixa para usar o que o dispositivo informa sobre si mesmo.
 topbar-what-device-reports-about-itself = Isto é o que o dispositivo informa sobre si mesmo. Se o rádio cobre esta faixa, informe a faixa real dele em Configurações ▸ Rádio ▸ Faixa de RX.
 topbar-band = FAIXA
+topbar-recent = RECENTES
+topbar-recent-empty =
+    Preenche após 3 s em um local
 topbar-mode = MODO
 topbar-digital = DIGITAL
 
