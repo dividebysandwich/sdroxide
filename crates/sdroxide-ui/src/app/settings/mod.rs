@@ -3780,8 +3780,28 @@ impl SdroxideApp {
         let mut dragging: Option<u32> = ui.data(|d| d.get_temp(drag_id)).unwrap_or(None);
         let mut placed: Vec<(u32, egui::Rect)> = Vec::new();
         let mut dropped = false;
-        ui.horizontal_wrapped(|ui| {
-            for chip in &self.radio_roster {
+        // The station radio stands in a frame, headed "Station:", together with
+        // what goes beside it (mute, LINK). Its standing (the station's network
+        // services, the command line, `/ws`, no "×") is then read off the strip
+        // itself rather than off a close box that is missing. The frame travels
+        // with the chip: the strip stays one row, arranged by drag as before
+        // (#224), and moving the station radio moves no role.
+        // Why: HDZ 2026-11-04 (settings, Radio page): first "erste Zeile exklusiv
+        //      für Station", then "wenn das Stationsgerät ziehbar ist, dann kann
+        //      man doch mit zwei senkrechten Strichen oder einer Klammer für
+        //      Station die besondere Rolle machen, dann könnte es bei einer Zeile
+        //      bleiben … dann müsste die Station eingerahmt gehören".
+        // Invariant: the frame holds exactly the radio that has no "×", i.e.
+        //      this machine's station radio; a connection is never in it.
+        let station = self.radio_roster.iter().find(|c| c.station.is_empty() && c.first_of_station);
+        // One chip with what goes beside it: its markers, mute, LINK and "×";
+        // the gap after it is the caller's, so it falls outside the frame.
+        // `requests` is passed in rather than captured, because the "+" after
+        // the chips needs it too.
+        let mut one_chip =
+            |ui: &mut egui::Ui,
+             chip: &crate::app::RadioChip,
+             requests: &mut Vec<crate::app::RadioTabRequest>| {
                 let mut label = RichText::new(chip.display_name()).size(12.5);
                 if !chip.enabled {
                     label = label.weak();
@@ -3803,15 +3823,12 @@ impl SdroxideApp {
                 if resp.drag_stopped() {
                     dropped = true;
                 }
-                if resp
-                    .on_hover_text(if chip.focused {
-                        tr!("settings-radio-s-settings-are-below")
-                    } else {
-                        tr!("settings-switch-radio-dialog-follows-drag")
-                    })
-                    .clicked()
-                    && !chip.focused
-                {
+                let resp = resp.on_hover_text(if chip.focused {
+                    tr!("settings-radio-s-settings-are-below")
+                } else {
+                    tr!("settings-switch-radio-dialog-follows-drag")
+                });
+                if resp.clicked() && !chip.focused {
                     requests.push(crate::app::RadioTabRequest::Focus(chip.id));
                 }
                 if let Some(owner) = chip.attached_to {
@@ -3914,6 +3931,28 @@ impl SdroxideApp {
                         Self::close_station_radio_menu(ui, &close, chip, requests);
                     }
                 }
+            };
+        ui.horizontal_wrapped(|ui| {
+            for chip in &self.radio_roster {
+                if station.is_none_or(|s| s.id != chip.id) {
+                    one_chip(ui, chip, requests);
+                    ui.add_space(6.0);
+                    continue;
+                }
+                egui::Frame::new()
+                    .stroke(egui::Stroke::new(1.0, crate::theme::CYAN()))
+                    .inner_margin(egui::Margin::symmetric(6, 3))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(tr!("settings-station-radio"))
+                                    .size(11.0)
+                                    .color(crate::theme::CYAN()),
+                            )
+                            .on_hover_text(tr!("settings-station-radio-tip"));
+                            one_chip(ui, chip, requests);
+                        });
+                    });
                 ui.add_space(6.0);
             }
             // Absent where there is nothing to add: a client that only drives
