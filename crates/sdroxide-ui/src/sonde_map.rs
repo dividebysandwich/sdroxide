@@ -71,8 +71,8 @@ pub struct SondeMapState {
     /// What was last seen of the selected sonde, so its card outlives the list
     /// it came from (SondeHub's is asked again every minute, within a radius).
     pub kept: Kept,
-    /// Where the selected sonde is on screen and the map's rectangle, this
-    /// frame: the card pins itself beside the sonde, inside the map.
+    /// Where the selected sonde is on screen and the part of the map's
+    /// rectangle that is on show, this frame: the card pins itself beside the sonde, inside the map.
     pub anchor: Option<Pos2>,
     pub bounds: Option<Rect>,
     /// The size the card had last frame, to place it before it is drawn.
@@ -361,7 +361,9 @@ pub fn show(
         )
     };
 
-    state.bounds = Some(rect);
+    // The part of the map on show: in a short window the page scrolls, and a
+    // card pinned to the whole map floated past the window's edge.
+    state.bounds = Some(rect.intersect(ui.clip_rect()));
 
     // The sondes only SondeHub has, where they are drawn and what is written
     // beside them.

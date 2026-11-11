@@ -431,6 +431,26 @@ async fn web_text(address: &str) -> Result<String, Why> {
     Ok(text)
 }
 
+/// A layer and a flight as though SondeHub had answered, with the next ask a
+/// long way off, so a test can draw them without the network.
+#[cfg(test)]
+impl Online {
+    pub fn seed(&mut self, sondes: Vec<OnlineSonde>) {
+        self.on = true;
+        self.sondes = sondes;
+        self.last_ask = i64::MAX / 2;
+    }
+}
+
+#[cfg(test)]
+impl Flight {
+    pub fn seed(&mut self, serial: &str, points: Vec<(f64, f64)>) {
+        self.serial = Some(serial.to_string());
+        self.points = points;
+        self.last_ask = i64::MAX / 2;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

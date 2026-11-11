@@ -47,6 +47,8 @@ pub(in crate::app) struct SondeUi {
     map: SondeMapState,
     /// Sondes other stations hear, from SondeHub. Off until the operator says.
     online: crate::sonde_online::Online,
+    /// Where the table's sideways scroll showed it last frame.
+    table_view: Option<egui::Rect>,
 }
 
 impl SondeUi {
@@ -158,8 +160,11 @@ fn card_halves(rows: &[Row]) -> (&[Row], &[Row]) {
     rows.split_at(rows.len().div_ceil(2))
 }
 
-/// The widest the card is drawn, points.
+/// The width the card is first placed at, points.
 const CARD_W: f32 = 520.0;
+
+/// Below this width the card lists one label and value a line, not two.
+const CARD_PAIRS_W: f32 = 440.0;
 
 /// What was pressed in the card.
 enum CardAct {
@@ -200,7 +205,7 @@ fn draw_card(
         }
     });
     if let Some(hz) = card.freq_hz {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let ink = match listen {
                 Listen::Decoding => crate::theme::GREEN(),
                 _ => ui.visuals().strong_text_color(),
@@ -233,21 +238,35 @@ fn draw_card(
             .strong(),
         );
     }
-    let (left, right) = card_halves(&card.rows);
-    ui.columns(2, |cols| {
-        for (i, rows) in [left, right].into_iter().enumerate() {
-            egui::Grid::new(("sonde_card", i)).num_columns(2).spacing([14.0, 2.0]).show(
-                &mut cols[i],
-                |ui| {
-                    for (label, value) in rows {
-                        ui.label(RichText::new(label).size(10.5).weak());
-                        ui.label(RichText::new(value).size(10.5));
-                        ui.end_row();
+    // Two label-and-value pairs a line where the card has the room, half the
+    // height of one long list; one pair a line where it has not (a phone, a
+    // narrow map). One grid either way, so a long value widens its column
+    // rather than running over the next one.
+    let pairs = ui.available_width() >= CARD_PAIRS_W;
+    let cell = |ui: &mut egui::Ui, (label, value): &Row| {
+        ui.label(RichText::new(label).size(10.5).weak());
+        ui.label(RichText::new(value).size(10.5));
+    };
+    egui::Grid::new("sonde_card").num_columns(if pairs { 4 } else { 2 }).spacing([14.0, 2.0]).show(
+        ui,
+        |ui| {
+            if pairs {
+                let (left, right) = card_halves(&card.rows);
+                for (i, row) in left.iter().enumerate() {
+                    cell(ui, row);
+                    if let Some(r) = right.get(i) {
+                        cell(ui, r);
                     }
-                },
-            );
-        }
-    });
+                    ui.end_row();
+                }
+            } else {
+                for row in &card.rows {
+                    cell(ui, row);
+                    ui.end_row();
+                }
+            }
+        },
+    );
     act
 }
 
@@ -263,7 +282,8 @@ impl SdroxideApp {
         let tool_child = crate::app::undocked::ChildWindow::own(self);
         crate::app::undocked::tool_window(
             ctx,
-            crate::app::undocked::ToolWindow::new("SONDE", &tool_title, WINDOW_SIZE),
+            crate::app::undocked::ToolWindow::new("SONDE", &tool_title, WINDOW_SIZE)
+                .min_size([360.0, 320.0]),
             &mut tool_st,
             tool_child,
             &mut open,
@@ -293,149 +313,184 @@ impl SdroxideApp {
         // A sonde heard lately keeps a scan where it is.
         let busy = sondes.iter().any(|s| now - s.last_unix < sonde_map::SCAN_HOLD_S);
 
-        ui.horizontal_wrapped(|ui| {
-            let run = crate::chrome::chip_enabled(
-                ui,
-                wideband,
-                cfg.enabled,
-                &if cfg.enabled { tr!("sonde-decoding") } else { tr!("sonde-decoding-off") },
-            );
-            if run.clicked() {
-                cfg.enabled = !cfg.enabled;
-            }
-            if !wideband {
-                run.on_hover_text(tr!("sonde-needs-iq"));
-            }
-            if crate::chrome::chip(ui, false, tr!("sonde-tune"))
-                .on_hover_text(tr!("sonde-tune-hover"))
-                .clicked()
-            {
-                cmds.extend(tune_commands(&cfg, self.state.active_vfo, self.state.rx[0].mode));
-                cfg.enabled = true;
-            }
-            if running {
-                if let Some(l) = level.filter(|l| *l > -90.0) {
-                    ui.label(RichText::new(format!("{l:.0} dBFS")).size(11.0).weak());
-                }
-                ui.label(RichText::new(tr!("sonde-count", n = sondes.len())).size(11.0));
-                ui.label(RichText::new(tr!("sonde-frames", n = frames)).size(11.0).weak());
-            }
-        });
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(tr!("sonde-channel")).size(11.0));
-            let mut mhz = cfg.frequency_hz / 1e6;
-            let r = ui
-                .add(
-                    egui::DragValue::new(&mut mhz)
-                        .range(SONDE_BAND_HZ.0 / 1e6..=SONDE_BAND_HZ.1 / 1e6)
-                        .speed(0.01)
-                        .fixed_decimals(3)
-                        .suffix(" MHz"),
-                )
-                .on_hover_text(tr!("sonde-channel-hover"));
-            if r.changed() {
-                cfg.frequency_hz = (mhz * 1e6).round();
-            }
-            ui.checkbox(&mut cfg.scan, RichText::new(tr!("sonde-scan")).size(11.0))
-                .on_hover_text(tr!("sonde-scan-hover"));
-            // A type to look for: choosing one starts the scan, which walks
-            // the window across the band until that kind of sonde is heard.
-            let shown = filter.map_or_else(|| tr!("sonde-type-all"), str::to_string);
-            let mut picked: Option<Option<&'static str>> = None;
-            egui::ComboBox::from_id_salt("sonde_type")
-                .selected_text(RichText::new(shown).size(11.0))
-                .show_ui(ui, |ui| {
-                    if ui.selectable_label(filter.is_none(), tr!("sonde-type-all")).clicked() {
-                        picked = Some(None);
-                    }
-                    for t in TYPES {
-                        if ui.selectable_label(filter == Some(*t), *t).clicked() {
-                            picked = Some(Some(*t));
-                        }
-                    }
-                })
-                .response
-                .on_hover_text(tr!("sonde-type-hover"));
-            if let Some(choice) = picked {
-                self.sonde.map.type_filter = choice;
-                if choice.is_some() {
-                    cfg.enabled = true;
-                    cfg.scan = true;
-                    self.sonde.map.stepper.restart();
-                }
-            }
-        });
-        if !cfg.enabled {
-            ui.label(RichText::new(tr!("sonde-off-hint")).size(11.0).color(crate::theme::YELLOW()));
-        } else if !sdroxide_types::sonde_window_reaches_band(
-            self.state.center_hz,
-            self.state.sample_rate,
-        ) {
-            ui.label(
-                RichText::new(tr!("sonde-outside-window"))
-                    .size(11.0)
-                    .color(crate::theme::gray(200)),
-            );
-        }
-        // The scan walks the window over the band while nothing is heard: a
-        // window narrower than the band otherwise sits on one stretch for ever.
-        let scanning = cfg.enabled && cfg.scan && self.state.sample_rate > 0.0;
-        if self.sonde.map.stepper.due(now, scanning, busy) {
-            let hz = sonde_map::next_scan_centre(self.state.center_hz, self.state.sample_rate);
-            if (hz - self.state.center_hz).abs() >= 1.0 {
-                cmds.push(Command::SetCenter(hz));
-                cmds.push(Command::SetVfo { vfo: self.state.active_vfo, hz });
-            }
-        }
-        if cfg != self.state.sonde && !cmds.iter().any(|c| matches!(c, Command::SetSondeConfig(_)))
-        {
-            cmds.push(Command::SetSondeConfig(cfg));
-            // The lane mixes from the sample window: follow the channel.
-            if (cfg.frequency_hz - self.state.sonde.frequency_hz).abs() >= 1.0 {
-                cmds.push(Command::SetVfo { vfo: self.state.active_vfo, hz: cfg.frequency_hz });
-            }
-        }
-
-        // Sondes other stations hear: read-only, off until the operator says.
-        let home = self.sonde_home();
-        let peer = self.ctrl.peer_url();
-        self.sonde.online.tick(ui.ctx(), home, now, peer.as_deref());
-        let want = self.sonde.map.selected.clone().filter(|_| self.sonde.online.on);
-        self.sonde.map.flight.tick(ui.ctx(), want.as_deref(), now, peer.as_deref());
-        ui.horizontal_wrapped(|ui| {
-            ui.checkbox(&mut self.sonde.online.on, RichText::new(tr!("sonde-online")).size(11.0))
-                .on_hover_text(tr!("sonde-online-hover"));
-            if self.sonde.online.on {
-                let note = if home.is_none() {
-                    tr!("sonde-online-no-grid")
-                } else if self.sonde.online.failed {
-                    tr!("sonde-online-failed")
-                } else {
-                    tr!("sonde-online-count", n = self.sonde.online.sondes.len())
-                };
-                let r = ui.label(RichText::new(note).size(10.5).weak());
-                if let (true, Some(why)) = (self.sonde.online.failed, &self.sonde.online.why) {
-                    r.on_hover_text(why.text());
-                }
-            }
-        });
-
-        // The table is a few rows; the map takes the rest, never less than
-        // `MAP_MIN_H`: below that the window scrolls instead of squeezing the
-        // map (and cutting the card off at the bottom).
-        let rows = sondes.len().min(4) as f32;
-        let table_h = if sondes.is_empty() { 0.0 } else { 22.0 + rows * 18.0 };
-        let map_h = (ui.available_height() - 30.0 - table_h).max(MAP_MIN_H);
+        // One page, controls and all, that scrolls: in a short window (a
+        // 600-point screen, the touch tiers' taller rows) the controls alone
+        // filled the window and left the map and the table out of reach.
+        let page_h = ui.available_height();
+        let mut home = None;
         egui::ScrollArea::vertical()
             .id_salt("sonde_scroll")
             .auto_shrink([false, false])
             .show_themed(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    let run = crate::chrome::chip_enabled(
+                        ui,
+                        wideband,
+                        cfg.enabled,
+                        &if cfg.enabled {
+                            tr!("sonde-decoding")
+                        } else {
+                            tr!("sonde-decoding-off")
+                        },
+                    );
+                    if run.clicked() {
+                        cfg.enabled = !cfg.enabled;
+                    }
+                    if !wideband {
+                        run.on_hover_text(tr!("sonde-needs-iq"));
+                    }
+                    if crate::chrome::chip(ui, false, tr!("sonde-tune"))
+                        .on_hover_text(tr!("sonde-tune-hover"))
+                        .clicked()
+                    {
+                        cmds.extend(tune_commands(
+                            &cfg,
+                            self.state.active_vfo,
+                            self.state.rx[0].mode,
+                        ));
+                        cfg.enabled = true;
+                    }
+                    if running {
+                        if let Some(l) = level.filter(|l| *l > -90.0) {
+                            ui.label(RichText::new(format!("{l:.0} dBFS")).size(11.0).weak());
+                        }
+                        ui.label(RichText::new(tr!("sonde-count", n = sondes.len())).size(11.0));
+                        ui.label(RichText::new(tr!("sonde-frames", n = frames)).size(11.0).weak());
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(tr!("sonde-channel")).size(11.0));
+                    let mut mhz = cfg.frequency_hz / 1e6;
+                    let r = ui
+                        .add(
+                            egui::DragValue::new(&mut mhz)
+                                .range(SONDE_BAND_HZ.0 / 1e6..=SONDE_BAND_HZ.1 / 1e6)
+                                .speed(0.01)
+                                .fixed_decimals(3)
+                                .suffix(" MHz"),
+                        )
+                        .on_hover_text(tr!("sonde-channel-hover"));
+                    if r.changed() {
+                        cfg.frequency_hz = (mhz * 1e6).round();
+                    }
+                    ui.checkbox(&mut cfg.scan, RichText::new(tr!("sonde-scan")).size(11.0))
+                        .on_hover_text(tr!("sonde-scan-hover"));
+                    // A type to look for: choosing one starts the scan, which walks
+                    // the window across the band until that kind of sonde is heard.
+                    let shown = filter.map_or_else(|| tr!("sonde-type-all"), str::to_string);
+                    let mut picked: Option<Option<&'static str>> = None;
+                    egui::ComboBox::from_id_salt("sonde_type")
+                        .selected_text(RichText::new(shown).size(11.0))
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_label(filter.is_none(), tr!("sonde-type-all"))
+                                .clicked()
+                            {
+                                picked = Some(None);
+                            }
+                            for t in TYPES {
+                                if ui.selectable_label(filter == Some(*t), *t).clicked() {
+                                    picked = Some(Some(*t));
+                                }
+                            }
+                        })
+                        .response
+                        .on_hover_text(tr!("sonde-type-hover"));
+                    if let Some(choice) = picked {
+                        self.sonde.map.type_filter = choice;
+                        if choice.is_some() {
+                            cfg.enabled = true;
+                            cfg.scan = true;
+                            self.sonde.map.stepper.restart();
+                        }
+                    }
+                });
+                if !cfg.enabled {
+                    ui.label(
+                        RichText::new(tr!("sonde-off-hint"))
+                            .size(11.0)
+                            .color(crate::theme::YELLOW()),
+                    );
+                } else if !sdroxide_types::sonde_window_reaches_band(
+                    self.state.center_hz,
+                    self.state.sample_rate,
+                ) {
+                    ui.label(
+                        RichText::new(tr!("sonde-outside-window"))
+                            .size(11.0)
+                            .color(crate::theme::gray(200)),
+                    );
+                }
+                // The scan walks the window over the band while nothing is heard: a
+                // window narrower than the band otherwise sits on one stretch for ever.
+                let scanning = cfg.enabled && cfg.scan && self.state.sample_rate > 0.0;
+                if self.sonde.map.stepper.due(now, scanning, busy) {
+                    let hz =
+                        sonde_map::next_scan_centre(self.state.center_hz, self.state.sample_rate);
+                    if (hz - self.state.center_hz).abs() >= 1.0 {
+                        cmds.push(Command::SetCenter(hz));
+                        cmds.push(Command::SetVfo { vfo: self.state.active_vfo, hz });
+                    }
+                }
+                if cfg != self.state.sonde
+                    && !cmds.iter().any(|c| matches!(c, Command::SetSondeConfig(_)))
+                {
+                    cmds.push(Command::SetSondeConfig(cfg));
+                    // The lane mixes from the sample window: follow the channel.
+                    if (cfg.frequency_hz - self.state.sonde.frequency_hz).abs() >= 1.0 {
+                        cmds.push(Command::SetVfo {
+                            vfo: self.state.active_vfo,
+                            hz: cfg.frequency_hz,
+                        });
+                    }
+                }
+
+                // Sondes other stations hear: read-only, off until the operator says.
+                home = self.sonde_home();
+                let peer = self.ctrl.peer_url();
+                self.sonde.online.tick(ui.ctx(), home, now, peer.as_deref());
+                let want = self.sonde.map.selected.clone().filter(|_| self.sonde.online.on);
+                self.sonde.map.flight.tick(ui.ctx(), want.as_deref(), now, peer.as_deref());
+                ui.horizontal_wrapped(|ui| {
+                    ui.checkbox(
+                        &mut self.sonde.online.on,
+                        RichText::new(tr!("sonde-online")).size(11.0),
+                    )
+                    .on_hover_text(tr!("sonde-online-hover"));
+                    if self.sonde.online.on {
+                        let note = if home.is_none() {
+                            tr!("sonde-online-no-grid")
+                        } else if self.sonde.online.failed {
+                            tr!("sonde-online-failed")
+                        } else {
+                            tr!("sonde-online-count", n = self.sonde.online.sondes.len())
+                        };
+                        let r = ui.label(RichText::new(note).size(10.5).weak());
+                        if let (true, Some(why)) =
+                            (self.sonde.online.failed, &self.sonde.online.why)
+                        {
+                            r.on_hover_text(why.text());
+                        }
+                    }
+                });
+
+                // The table is a few rows; the map takes the rest of the page, never
+                // less than `MAP_MIN_H`: below that the page scrolls instead of
+                // squeezing the map. In a window shorter than that the map takes at
+                // most seven tenths of it, so there is always some of the page to
+                // turn the wheel over: the map takes the wheel for its zoom, and a map
+                // as tall as the window left the table under it out of reach.
+                let rows = sondes.len().min(4) as f32;
+                let table_h = if sondes.is_empty() { 0.0 } else { 22.0 + rows * 18.0 };
+                let map_h = (ui.available_height() - 30.0 - table_h)
+                    .max(MAP_MIN_H.min(page_h * 0.7))
+                    .max(sonde_map::MIN_HEIGHT);
                 self.sonde_scroll_body(ui, &sondes, home, map_h, now);
             });
         // The card is not part of the scrolling page: it is pinned beside its
         // sonde on the map, or a window of its own.
         let ctx = ui.ctx().clone();
-        self.sonde_card_view(&ctx, cmds, &sondes, home, now);
+        self.sonde_card_view(&ctx, ui.layer_id(), cmds, &sondes, home, now);
     }
 
     fn sonde_scroll_body(
@@ -464,50 +519,63 @@ impl SdroxideApp {
         }
 
         if !sondes.is_empty() {
-            egui::Grid::new("sonde_table").striped(true).num_columns(10).show(ui, |ui| {
-                for head in [
-                    tr!("sonde-col-serial"),
-                    tr!("sonde-col-alt"),
-                    tr!("sonde-col-climb"),
-                    tr!("sonde-col-speed"),
-                    tr!("sonde-channel"),
-                    tr!("sonde-col-battery"),
-                    tr!("sonde-col-temp"),
-                    tr!("sonde-col-humidity"),
-                    tr!("sonde-col-pressure"),
-                    tr!("sonde-col-heard"),
-                ] {
-                    ui.label(RichText::new(head).size(10.0).weak());
-                }
-                ui.end_row();
-                for s in sondes {
-                    let selected = self.sonde.map.selected.as_deref() == Some(s.serial.as_str());
-                    let ink = match sonde_map::phase(s, now) {
-                        Phase::Silent => crate::theme::gray(120),
-                        _ => crate::theme::gray(210),
-                    };
-                    let name = RichText::new(format!("{} {}", s.model, s.serial))
-                        .size(10.5)
-                        .strong()
-                        .color(ink);
-                    if ui.selectable_label(selected, name).clicked() {
-                        self.sonde.map.select(s.serial.clone());
-                    }
-                    let cell = |ui: &mut egui::Ui, t: String| {
-                        ui.label(RichText::new(t).size(10.5).color(ink));
-                    };
-                    cell(ui, s.alt_m.map_or("—".into(), |a| format!("{a:.0} m")));
-                    cell(ui, s.climb_ms.map_or("—".into(), |c| format!("{c:+.1} m/s")));
-                    cell(ui, s.speed_ms.map_or("—".into(), |v| format!("{:.0} km/h", v * 3.6)));
-                    cell(ui, format!("{:.3} MHz", s.freq_hz / 1e6));
-                    cell(ui, s.battery_v.map_or("—".into(), |v| format!("{v:.1} V")));
-                    cell(ui, s.temp_c.map_or("—".into(), |t| format!("{t:.1} °C")));
-                    cell(ui, s.humidity_pct.map_or("—".into(), |h| format!("{h:.0} %")));
-                    cell(ui, s.pressure_hpa.map_or("—".into(), |p| format!("{p:.0} hPa")));
-                    cell(ui, sonde_card::ago(now - s.last_unix));
-                    ui.end_row();
-                }
-            });
+            // Ten columns are wider than a phone, or a window dragged narrow:
+            // the table scrolls sideways rather than widening the window.
+            let table =
+                egui::ScrollArea::horizontal().id_salt("sonde_table_h").show_themed(ui, |ui| {
+                    egui::Grid::new("sonde_table").striped(true).num_columns(10).show(ui, |ui| {
+                        for head in [
+                            tr!("sonde-col-serial"),
+                            tr!("sonde-col-alt"),
+                            tr!("sonde-col-climb"),
+                            tr!("sonde-col-speed"),
+                            tr!("sonde-channel"),
+                            tr!("sonde-col-battery"),
+                            tr!("sonde-col-temp"),
+                            tr!("sonde-col-humidity"),
+                            tr!("sonde-col-pressure"),
+                            tr!("sonde-col-heard"),
+                        ] {
+                            ui.label(RichText::new(head).size(10.0).weak());
+                        }
+                        ui.end_row();
+                        for s in sondes {
+                            let selected =
+                                self.sonde.map.selected.as_deref() == Some(s.serial.as_str());
+                            let ink = match sonde_map::phase(s, now) {
+                                Phase::Silent => crate::theme::gray(120),
+                                _ => crate::theme::gray(210),
+                            };
+                            let name = RichText::new(format!("{} {}", s.model, s.serial))
+                                .size(10.5)
+                                .strong()
+                                .color(ink);
+                            if ui.selectable_label(selected, name).clicked() {
+                                self.sonde.map.select(s.serial.clone());
+                            }
+                            let cell = |ui: &mut egui::Ui, t: String| {
+                                ui.label(RichText::new(t).size(10.5).color(ink));
+                            };
+                            cell(ui, s.alt_m.map_or("—".into(), |a| format!("{a:.0} m")));
+                            cell(ui, s.climb_ms.map_or("—".into(), |c| format!("{c:+.1} m/s")));
+                            cell(
+                                ui,
+                                s.speed_ms.map_or("—".into(), |v| format!("{:.0} km/h", v * 3.6)),
+                            );
+                            cell(ui, format!("{:.3} MHz", s.freq_hz / 1e6));
+                            cell(ui, s.battery_v.map_or("—".into(), |v| format!("{v:.1} V")));
+                            cell(ui, s.temp_c.map_or("—".into(), |t| format!("{t:.1} °C")));
+                            cell(ui, s.humidity_pct.map_or("—".into(), |h| format!("{h:.0} %")));
+                            cell(ui, s.pressure_hpa.map_or("—".into(), |p| format!("{p:.0} hPa")));
+                            cell(ui, sonde_card::ago(now - s.last_unix));
+                            ui.end_row();
+                        }
+                    });
+                });
+            self.sonde.table_view = Some(egui::Rect::from_min_size(
+                table.inner_rect.min,
+                egui::vec2(table.inner_rect.width(), table.content_size.y),
+            ));
             self.sonde_export_row(ui, sondes, now);
         }
     }
@@ -521,6 +589,7 @@ impl SdroxideApp {
     fn sonde_card_view(
         &mut self,
         ctx: &egui::Context,
+        layer: egui::LayerId,
         cmds: &mut Vec<Command>,
         sondes: &[SondeTrack],
         home: Option<(f64, f64)>,
@@ -549,7 +618,7 @@ impl SdroxideApp {
         let act = if self.sonde.map.detached {
             self.sonde_card_window(ctx, &card, listen)
         } else {
-            self.sonde_card_pinned(ctx, &card, listen)
+            self.sonde_card_pinned(ctx, layer, &card, listen)
         };
         match act {
             CardAct::None => {}
@@ -569,25 +638,43 @@ impl SdroxideApp {
     fn sonde_card_pinned(
         &mut self,
         ctx: &egui::Context,
+        layer: egui::LayerId,
         card: &sonde_card::Card,
         listen: Listen,
     ) -> CardAct {
-        let Some(bounds) = self.sonde.map.bounds else { return CardAct::None };
+        let Some(bounds) = self.sonde.map.bounds.filter(|b| b.is_positive()) else {
+            return CardAct::None;
+        };
         let anchor = self.sonde.map.anchor.unwrap_or(bounds.center());
         let size = self.sonde.map.card_size.unwrap_or(egui::vec2(CARD_W, 230.0));
         let at = sonde_map::pin_placement(anchor, size, bounds);
-        let shown = egui::Area::new(egui::Id::new("sonde-pinned-card"))
-            .order(egui::Order::Foreground)
+        let id = egui::Id::new("sonde-pinned-card");
+        // No wider or taller than the map on show: a card with SondeHub's
+        // rows is taller than a short window's map, and scrolls instead.
+        let margin = egui::Frame::popup(&ctx.global_style()).total_margin().sum();
+        let bar = ctx.global_style().spacing.scroll.allocated_width();
+        let max = (bounds.size() - margin - egui::vec2(bar, bar)).max(egui::vec2(120.0, 40.0));
+        let shown = egui::Area::new(id)
+            .order(egui::Order::Middle)
             .fixed_pos(at)
             .constrain_to(bounds)
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style())
                     .show(ui, |ui| {
-                        ui.set_max_width(CARD_W);
-                        draw_card(ui, card, false, listen)
+                        ui.set_max_width(max.x);
+                        egui::ScrollArea::both()
+                            .id_salt("sonde-pinned-card-scroll")
+                            .max_width(max.x)
+                            .max_height(max.y)
+                            .min_scrolled_height(max.y.min(64.0))
+                            .show_themed(ui, |ui| draw_card(ui, card, false, listen))
+                            .inner
                     })
                     .inner
             });
+        // Above its own window and with it, not above every window: another
+        // window raised over the map covers the card too.
+        ctx.set_sublayer(layer, shown.response.layer_id);
         self.sonde.map.card_size = Some(shown.response.rect.size());
         shown.inner
     }
@@ -664,6 +751,38 @@ impl SdroxideApp {
     fn sonde_home(&self) -> Option<(f64, f64)> {
         let grid = self.digi_cfg_edit.my_grid.trim();
         (!grid.is_empty()).then(|| sdroxide_types::grid_to_latlon(grid)).flatten()
+    }
+}
+
+/// What the whole-app layout tests fill the window with: SondeHub's layer, the
+/// flight of the selected sonde, and its card pinned or in a window.
+#[cfg(test)]
+impl SondeUi {
+    pub(in crate::app) fn seed(
+        &mut self,
+        hub: Vec<crate::sonde_online::OnlineSonde>,
+        selected: Option<&str>,
+        flight: Vec<(f64, f64)>,
+        detached: bool,
+    ) {
+        self.online.seed(hub);
+        if let Some(sel) = selected {
+            self.map.select(sel.to_string());
+            self.map.flight.seed(sel, flight);
+        }
+        self.map.detached = detached;
+    }
+
+    /// The map's rectangle as last drawn: its labels are clipped there on
+    /// purpose.
+    pub(in crate::app) fn map_bounds(&self) -> Option<egui::Rect> {
+        self.map.bounds
+    }
+
+    /// The table's sideways scroll: its cells run past the window's side and
+    /// are clipped there on purpose, a sideways scroll away.
+    pub(in crate::app) fn table_view(&self) -> Option<egui::Rect> {
+        self.table_view
     }
 }
 
