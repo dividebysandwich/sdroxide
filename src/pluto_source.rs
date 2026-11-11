@@ -224,6 +224,12 @@ impl IqSource for PlutoSource {
         self.take(buf, false)
     }
 
+    /// A centre of its own — the AD9363's RX LO — so the engine may centre the I/Q
+    /// on a resting dial (`Engine::recentre_after_dwell`).
+    fn recentre_on_dwell(&self) -> bool {
+        true
+    }
+
     fn describe(&self) -> String {
         self.label.clone()
     }

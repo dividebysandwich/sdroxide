@@ -2275,6 +2275,20 @@ impl SdroxideApp {
                     }
                 }
 
+                // Centring the window on a resting dial, on by default on every
+                // receiver with a centre of its own; here for whoever would
+                // rather the window stayed put.
+                // Why: HDZ 2026-11-10: "ein Setting, Autodwell aktiv und
+                //      inaktiv, damit jemand, der das nicht mag, das Verhalten
+                //      abstellen kann".
+                let mut dwell = !cfg.dwell_recentre_off;
+                if crate::chrome::checkbox(ui, &mut dwell, tr!("settings-dwell-recentre"))
+                    .on_hover_text(tr!("settings-dwell-recentre-hover"))
+                    .changed()
+                {
+                    cfg.dwell_recentre_off = !dwell;
+                }
+
                 transverter_table(ui, cfg);
 
                 self.settings_panadapter(ui, cfg);

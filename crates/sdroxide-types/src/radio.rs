@@ -7487,6 +7487,14 @@ pub struct RadioConfig {
     /// into one; a band never set keeps whatever gain is in force. Appended
     /// last.
     pub same_gain_all_bands: bool,
+    /// Leave the I/Q window where it is when the dial comes to rest near its
+    /// edge, instead of centring it after a few seconds (the engine's
+    /// `recentre_after_dwell`). Stored as the opt-out so that a configuration
+    /// written before this existed — and the derived default — keep centring,
+    /// which is what a receiver with a centre of its own should do.
+    ///
+    /// Appended last: the protocol numbers fields by position.
+    pub dwell_recentre_off: bool,
 }
 
 impl RadioConfig {

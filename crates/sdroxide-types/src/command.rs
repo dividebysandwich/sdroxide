@@ -1274,4 +1274,11 @@ pub enum Command {
         width: u8,
         after_nr: bool,
     },
+    /// The panadapter shows (true) or no longer shows (false) a stretch outside
+    /// the I/Q window while it draws from the I/Q — a hole in the picture. A
+    /// client sends it when it changes. It gates centring the window on a
+    /// resting dial: that happens only while there is a hole to fill, so a
+    /// view inside the window is left where it is. An engine that is never
+    /// told (an older client) does not centre. Appended for the usual reason.
+    SetViewUncovered(bool),
 }

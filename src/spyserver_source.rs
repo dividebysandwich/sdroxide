@@ -209,6 +209,13 @@ impl IqSource for SpyServerSource {
         Ok(pairs)
     }
 
+    /// A centre of its own — the server's centre, moved by a command (a server that
+    /// refuses tuning answers once per resting place) — so the engine may centre
+    /// the I/Q on a resting dial (`Engine::recentre_after_dwell`).
+    fn recentre_on_dwell(&self) -> bool {
+        true
+    }
+
     fn describe(&self) -> String {
         self.label.clone()
     }

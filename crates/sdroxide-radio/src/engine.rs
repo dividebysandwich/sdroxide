@@ -3313,6 +3313,23 @@ struct Engine {
     /// refuses puts the dial back here rather than leaving the operator on a
     /// frequency the radio cannot receive (see [`Engine::tune_refused`]).
     good_vfo_hz: f64,
+    /// The active VFO, in Hz, as [`Engine::recentre_after_dwell`] last saw it:
+    /// a different value there means the dial has moved since.
+    dwell_vfo_hz: f64,
+    /// When the active VFO came to [`Self::dwell_vfo_hz`]: the start of the
+    /// rest that [`DWELL_RECENTRE`] is measured from.
+    dwell_since: Instant,
+    /// The rest at [`Self::dwell_vfo_hz`] has had its one recentre (or needed
+    /// none). Cleared when the dial moves.
+    // Invariant: at most one retune per resting place, taken or refused.
+    dwell_done: bool,
+    /// The operator has not switched centring on a resting dial off
+    /// ([`RadioConfig::dwell_recentre_off`]); taken at open and on every
+    /// `SetRadioConfig`.
+    dwell_recentre: bool,
+    /// The panadapter shows a hole: part of its view lies outside the I/Q
+    /// window ([`Command::SetViewUncovered`]). False until a client says so.
+    view_uncovered: bool,
     /// What each VFO was left listening in, indexed by [`Vfo::index`]: the mode
     /// and the passband that went with it.
     ///
@@ -3875,6 +3892,15 @@ fn qo100_auto_correction(
 /// runs, and the ceiling the spacing doubles up to while attempts keep failing.
 const RETRY_FIRST: Duration = Duration::from_secs(1);
 const RETRY_MAX: Duration = Duration::from_secs(15);
+/// How long the dial has to rest before [`Engine::recentre_after_dwell`] centres
+/// the I/Q on it.
+// Why: HDZ 2026-11-04: "wenn der Cursor 5 sec an einer Stelle steht". Long
+//      enough that crawling along a band with the cursor never triggers it.
+const DWELL_RECENTRE: Duration = Duration::from_secs(5);
+/// How far off the I/Q centre a resting dial has to be, as a share of the span,
+/// before it is worth a retune: a twentieth, 600 Hz of a KiwiSDR's 12 kHz.
+// Why: a dial a few hertz off centre gains nothing from a retune.
+const DWELL_OFF_CENTRE: f64 = 0.05;
 
 /// How long [`Engine::abandon_retry`] waits for the answer of an attempt it is
 /// throwing away. It is only ever called with the factory lock held, so the
@@ -4640,6 +4666,13 @@ fn engine_thread(
         retry_every: RETRY_FIRST,
         // Where the source opened, which is by definition a frequency it took.
         good_vfo_hz: source_center_hz,
+        // The dial starts where the source opened, which is its centre: nothing
+        // to recentre until it moves.
+        dwell_vfo_hz: source_center_hz,
+        dwell_since: Instant::now(),
+        dwell_done: true,
+        dwell_recentre: !radio_cfg.dwell_recentre_off,
+        view_uncovered: false,
         // Both VFOs start on the mode the receiver came up in; the remembered
         // pair is folded in below, once the engine owns them.
         vfo_memory: [initial_vfo_memory.clone(), initial_vfo_memory],
@@ -5085,6 +5118,9 @@ fn engine_thread(
         }
 
         let now = Instant::now();
+        // Once per pass, before the lanes: a recentre taken here is drawn in
+        // this pass's frames. A no-op on every front end that does not opt in.
+        engine.recentre_after_dwell();
         // Ahead of both lanes: on a front end with no I/Q the main panadapter is
         // built from the same sweep as the strip, so the sweep has to be in hand
         // before either frame is made.
@@ -10228,6 +10264,16 @@ impl Engine {
                 }
                 return;
             }
+            SetViewUncovered(on) => {
+                // A hole that has just appeared starts a rest of its own: a
+                // pan with the right button moves the view, not the dial, and
+                // the dial's rest may have had its turn long ago.
+                if on && !self.view_uncovered {
+                    (self.dwell_since, self.dwell_done) = (Instant::now(), false);
+                }
+                self.view_uncovered = on;
+                return;
+            }
             TncTermClear => {
                 if let Some(d) = self.digi.as_mut()
                     && self.state.rx[0].mode.is_tnc_modem()
@@ -10639,6 +10685,9 @@ impl Engine {
                     }
                 }
                 self.tx_drive_max = ceiling;
+                // Live, like the ceiling: a window that keeps moving under the
+                // operator is a thing to stop at once.
+                self.dwell_recentre = !cfg.dwell_recentre_off;
                 let tx_hz = self.tx_freq_told.unwrap_or_else(|| self.state.tx_freq_hz());
                 self.refresh_drive_trim(tx_hz);
                 // The receive trim is the other half of that: live rather than
@@ -18743,6 +18792,63 @@ impl Engine {
         if is_dial != self.caps.center_is_dial {
             self.caps.center_is_dial = is_dial;
             let _ = self.event_tx.send(RadioEvent::CapabilitiesUpdated(self.caps.clone()));
+        }
+    }
+
+    /// Centre the I/Q on a dial that has stood still for [`DWELL_RECENTRE`], on
+    /// a front end where retuning costs nothing ([`IqSource::recentre_on_dwell`]).
+    ///
+    /// [`Self::keep_vfo_in_span`] moves the window only once the dial is 45 % of
+    /// the span off its centre, which is right for hardware whose LO is worth
+    /// keeping still. On a KiwiSDR the window is 12 kHz and a retune is a line
+    /// to the server, so a station tuned near the edge is heard with half its
+    /// sidebands outside the window, and stays so. Once the dial has rested, the
+    /// window comes round it: once per resting place, and not while the
+    /// operator is still moving.
+    ///
+    /// In: nothing; reads the active VFO, the I/Q centre and the span.
+    /// Only while the panadapter shows a hole ([`Command::SetViewUncovered`]):
+    /// a view that lies inside the window has nothing missing, and a retune
+    /// would only move the picture under the operator.
+    // Why: HDZ 2026-11-10: "Autodwell sollte nur ausgelöst werden, wenn auf
+    //      dem Screen ein leerer Bereich wirklich da ist, sonst so lassen".
+    ///
+    /// Effect: at most one [`Self::retune_for_vfo`] per resting place.
+    /// Fails: a refused tune is reported by `retune_for_vfo` as usual and not
+    /// asked again until the dial moves.
+    // Why: HDZ 2026-11-04 (SDR-Radio): "wenn der Cursor 5 sec an einer Stelle
+    //      steht, sollte ein Redraw ausgelöst werden". Chosen over keeping the
+    //      Kiwi's zoomed band view around the dial (patch B), which helped only
+    //      with the band view zoomed in, not with the 12 kHz that is heard.
+    fn recentre_after_dwell(&mut self) {
+        // A demod-audio rig has no I/Q window to move; a radio whose centre is
+        // its dial would have its own frequency turned for it, which is the
+        // operator's to do; a source that has not opted in keeps
+        // `keep_vfo_in_span` as its only rule.
+        if !self.dwell_recentre
+            || !self.view_uncovered
+            || self.audio_mode
+            || self.source.center_is_dial()
+            || !self.source.recentre_on_dwell()
+        {
+            return;
+        }
+        let vfo = self.state.active_freq_hz();
+        // The dial moved: a new rest starts now.
+        if vfo != self.dwell_vfo_hz {
+            (self.dwell_vfo_hz, self.dwell_since, self.dwell_done) = (vfo, Instant::now(), false);
+            return;
+        }
+        // Still moving, or this rest has had its turn.
+        if self.dwell_done || self.dwell_since.elapsed() < DWELL_RECENTRE {
+            return;
+        }
+        // Once, whether or not the front end takes it: a refused tune asked
+        // again every block would be a refusal on screen sixty times a second.
+        self.dwell_done = true;
+        // `sample_rate` is the span of the I/Q window, in Hz.
+        if (vfo - self.state.center_hz).abs() > self.state.sample_rate * DWELL_OFF_CENTRE {
+            self.retune_for_vfo(vfo);
         }
     }
 

@@ -184,6 +184,9 @@ pub struct SdroxideApp {
     /// The startup version check still in flight, if there is one.
     update_fetch: Option<std::sync::mpsc::Receiver<String>>,
     sent_cfg: Option<SpectrumConfig>,
+    /// What the engine was last told about a hole in the picture
+    /// ([`Command::SetViewUncovered`]); `None` until the first frame.
+    sent_uncovered: Option<bool>,
     desired_cfg: Option<SpectrumConfig>,
     desired_at: f64,
     /// What this machine's renderer will carry, gathered once when the window
@@ -1471,6 +1474,7 @@ impl SdroxideApp {
             cert_hold: false,
             radio_notice: None,
             sent_cfg: None,
+            sent_uncovered: None,
             desired_cfg: None,
             desired_at: 0.0,
             sent_skim_view: None,
@@ -2190,6 +2194,7 @@ impl SdroxideApp {
         // one the old session was told. Forgetting what was sent is what makes
         // this frame's debounce push it again.
         self.sent_cfg = None;
+        self.sent_uncovered = None;
         self.desired_cfg = None;
         if let Err(e) = self.ctrl.reconnect() {
             // Threw before the socket was even opened, so nothing is going to

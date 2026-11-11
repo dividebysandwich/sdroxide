@@ -643,6 +643,27 @@ pub trait IqSource: Send {
         false
     }
 
+    /// Whether the engine may centre the I/Q on a dial that has come to rest
+    /// (see `Engine::recentre_after_dwell`).
+    ///
+    /// True on receivers with a centre of their own — a KiwiSDR's 12 kHz
+    /// window moved by a line to the server, an RX-888's downconverter, the
+    /// LO of an RTL-SDR, an SDRplay, an Airspy … — where one retune per
+    /// resting place is the price of hearing a station tuned near the edge
+    /// in the middle of the window. Never acted on where the centre *is* the
+    /// dial ([`Self::center_is_dial`]): that would turn a transceiver's own
+    /// frequency.
+    ///
+    /// Asked once per pass of the engine loop, so it has to be cheap.
+    /// Default: false.
+    // Why: opt-in rather than a list of drivers in the engine: the source is
+    //      the one that knows what a retune costs it.
+    // Why: HDZ 2026-11-10: "das gleiche Verhalten braucht es auch beim RX-888
+    //      … für eigentlich alle Receiver, die ein Panoramafenster haben".
+    fn recentre_on_dwell(&self) -> bool {
+        false
+    }
+
     /// Where a transceiver's I/Q lands when the radio is in CW: on the
     /// frequency its VFO displays (true), or a sidetone pitch below it (false).
     ///
@@ -1403,6 +1424,12 @@ impl IqSource for ConvertedSource {
             return format!("{} ({boxes} converters)", self.inner.describe());
         }
         format!("{} (+{:.6} MHz converter)", self.inner.describe(), self.step.rx_offset_hz / 1e6)
+    }
+
+    /// A converter moves where the hardware sits, not what a retune costs it:
+    /// the answer is the hardware's.
+    fn recentre_on_dwell(&self) -> bool {
+        self.inner.recentre_on_dwell()
     }
 
     fn wide_spectrum_db(&mut self, out: &mut Vec<f32>) -> Option<(f64, f64)> {

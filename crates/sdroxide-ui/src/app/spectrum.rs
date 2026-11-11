@@ -356,6 +356,16 @@ impl SdroxideApp {
         DetailReport { chosen: self.bins_for_detail(detail), ceiling, reason }
     }
 
+    /// Whether the panadapter shows a hole: see [`view_shows_a_hole`].
+    pub(in crate::app) fn view_uncovered(&self) -> bool {
+        !self.view.is_unset()
+            && view_shows_a_hole(
+                (self.view.view_lo_hz, self.view.view_hi_hz),
+                self.state.center_hz,
+                self.state.sample_rate,
+            )
+    }
+
     pub(in crate::app) fn desired_spectrum_cfg(&self) -> SpectrumConfig {
         let full_span = self.state.sample_rate;
         // The window the *view* lives in, which past the passband is the
@@ -1440,5 +1450,44 @@ mod focus_tests {
     fn carrier_centred_rtty_stays_on_its_carrier() {
         let dial = 145_500_000.0;
         assert_eq!(focus_hz(Mode::RttyFm, dial, sdroxide_types::RTTY_CENTER_HZ, false), dial);
+    }
+}
+
+/// Whether a view `(lo, hi)` shows a stretch outside the I/Q window
+/// `centre ± span / 2` while it is drawn from the I/Q — black, nothing there.
+/// A view wider than the window is drawn from the full-band lane instead
+/// (see [`WIDER_THAN_PASSBAND`]) and has no hole; a view inside the window has
+/// none either. A thousandth of the view's span of overhang is not a hole: it
+/// is rounding, well under a column.
+// Why: HDZ 2026-11-10 (picture, RX-888 at 10.73 MHz with the left of the view
+//      black): "Autodwell sollte nur ausgelöst werden, wenn auf dem Screen ein
+//      leerer Bereich wirklich da ist, sonst so lassen".
+pub(in crate::app) fn view_shows_a_hole(view: (f64, f64), centre_hz: f64, span_hz: f64) -> bool {
+    let (lo, hi) = view;
+    let width = hi - lo;
+    if span_hz <= 0.0 || width <= 0.0 || width > span_hz * WIDER_THAN_PASSBAND {
+        return false;
+    }
+    let tol = width / 1000.0;
+    lo < centre_hz - span_hz / 2.0 - tol || hi > centre_hz + span_hz / 2.0 + tol
+}
+
+#[cfg(test)]
+mod hole_tests {
+    use super::view_shows_a_hole;
+
+    /// Proves: the hole is what the picture has — a view running off the I/Q
+    /// window (the RX-888 case: 2.025 MHz at 11.35, view 9.98–10.78) has one,
+    /// a view inside the window has none however far the dial is off centre,
+    /// and a view wider than the window (drawn from the full-band lane) has
+    /// none.
+    #[test]
+    fn a_hole_is_a_stretch_of_view_outside_the_window() {
+        let (c, s) = (11_350_000.0, 2_025_000.0);
+        assert!(view_shows_a_hole((9_980_000.0, 10_780_000.0), c, s));
+        assert!(!view_shows_a_hole((10_400_000.0, 11_200_000.0), c, s));
+        assert!(!view_shows_a_hole((0.0, 32_400_000.0), c, s));
+        // Right on the edge, within rounding: no hole.
+        assert!(!view_shows_a_hole((c - s / 2.0 - 1.0, c - s / 2.0 + 800_000.0), c, s));
     }
 }

@@ -187,6 +187,14 @@ impl IqSource for KiwiSdrSource {
         Some(self.handle.smeter_dbm())
     }
 
+    /// A retune is a `SET mod` line to the server, so the 12 kHz may follow a
+    /// dial that has come to rest.
+    // Why: HDZ 2026-11-04: on a 12 kHz window `keep_vfo_in_span` (45 %) left an
+    //      AM station tuned 4 kHz off centre with one sideband at the edge.
+    fn recentre_on_dwell(&self) -> bool {
+        true
+    }
+
     /// The receiver's AGC and manual gain, on the pseudo-element route the
     /// SpyServer's controls use — no `Command` variant, no `DeviceCaps` change,
     /// and the names live in [`KiwiConfig`] so the wasm settings UI can build
