@@ -1024,7 +1024,7 @@ impl eframe::App for SdroxideApp {
         self.logbook_window(&ctx, &mut cmds);
         self.palette_window(&ctx, now, &mut cmds);
         self.check_window(&ctx, now, &mut cmds);
-        self.welcome_window(&ctx, &mut cmds);
+        self.welcome_window(&ctx, now, &mut cmds);
         self.mail_window(&ctx, &mut cmds);
         self.mail_log_window(&ctx);
         self.spots_window(&ctx, &mut cmds);

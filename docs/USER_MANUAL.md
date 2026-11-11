@@ -206,13 +206,27 @@ sdroxide --siggen
 
 See the [command-line reference](#12-command-line-reference) for all options.
 
-**The first start.** A station with no callsign set is met by a **WELCOME**
-window with the three things a new installation needs: your **callsign and
-grid square** (type them and press **SAVE**), your **radio** (**RADIO
-SETTINGS** opens Settings on the Radio page), and the **STATION CHECK**
-([§14](#14-troubleshooting)). **DONE** closes it for good; **LATER** closes it
-until the next start, for as long as there is still no callsign. A station that
-already has a callsign never sees it.
+**The first start.** A station with no callsign set is met by the **WELCOME**
+walkthrough: seven short pages, each with a numbered chip at the top so any of
+them can be visited in any order, and a mark on the chip (✓ ! ✕) saying how the
+things that page covers stand right now.
+
+| Page | What it is for |
+| --- | --- |
+| **Welcome** | What the program is, and its language (the same picker as Settings → UI). |
+| **Station** | Your **callsign and grid square**, with **SAVE**. Nothing transmits on the digital modes without a callsign. |
+| **Radio** | Pick what you have — an SDR on USB, a transceiver on CAT, a radio on the network, another sdroxide running as a server, or no radio yet — and the page lists the problems that kind of radio usually has (the WinUSB driver and udev rule, a device held by another program, the wrong CAT family or sound card, DATA mode, UDP blocked by a firewall…), with the button that opens where it is set up. Below that, the radio link, receiver, input level and audio lines of the station check, live, so the page says when the radio has started working. |
+| **Before you transmit** | The clock, the audio level and ALC, the drive, the band lockout and IARU region, the T/R switch for an SDR sharing an antenna, and virtual audio cables. |
+| **Online** | Callsign lookup, spot feeds, log uploads and alerts — all optional and all off until configured. |
+| **Tour** | The features worth knowing about, each with an **OPEN** button: FT8/FT4, JS8, the keyboard modes, CW, SSTV, the logbook, spots, band conditions, awards, memories, the scanner, satellites, Winlink, public SDRs, the TCI/rigctld servers, controllers, profiles, the command palette and help. The mode buttons only change what is received. |
+| **Check** | The station check's verdict, what is still left to look at (each with its fix button), and where to go next. |
+
+The window is not modal: what it opens is meant to be used beside it, and it
+stays open. **FINISH** closes it for good; the window's close button puts it
+aside until the next start, for as long as there is still no callsign. A
+station that already has a callsign is never shown it of its own accord —
+**WELCOME TOUR** on Settings → General, beside **STATION CHECK**, opens it at
+any time. Nothing in it transmits.
 
 ### 2.2 The main window
 

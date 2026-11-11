@@ -70,7 +70,7 @@ use crate::theme::ThemedScroll as _;
 /// (keyboard/mouse bindings), the network cockpit (spot feeds + uploads), the
 /// built-in TCI server, and — the other direction — the sdroxide server this
 /// screen connects *out* to.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::app) enum SettingsTab {
     General,
     Radio,
@@ -373,6 +373,8 @@ pub(in crate::app) struct SettingsIo<'a> {
     open_tx_audio: &'a mut bool,
     /// Set when the operator asks for the station check from the General tab.
     open_check: &'a mut bool,
+    /// Set when the operator asks for the welcome walkthrough again.
+    open_welcome: &'a mut bool,
     tab: &'a mut SettingsTab,
     /// Which logging service the Uploads tab's own strip is showing. Its own
     /// field rather than state inside the tab's body, because the body is drawn
@@ -1049,6 +1051,7 @@ impl SdroxideApp {
         let mut region_edit = self.region_edit;
         let mut open_tx_audio = false;
         let mut open_check = false;
+        let mut open_welcome = false;
         let mut net_edit = self.net_cfg_edit.clone();
         let mut net_cmds = self.net_cluster_cmds.clone();
         let mut rbn_cmds = self.net_rbn_cmds.clone();
@@ -1267,6 +1270,7 @@ impl SdroxideApp {
                             region_edit: &mut region_edit,
                             open_tx_audio: &mut open_tx_audio,
                             open_check: &mut open_check,
+                            open_welcome: &mut open_welcome,
                             tab: &mut tab,
                             upload_tab: &mut upload_tab,
                         },
@@ -1755,6 +1759,9 @@ impl SdroxideApp {
         if open_check {
             self.show_check = true;
         }
+        if open_welcome {
+            self.welcome.open();
+        }
     }
 
     /// The Settings body: a General tab (station identity + the sound devices)
@@ -1862,12 +1869,20 @@ impl SdroxideApp {
                 // Here because this is the page an operator opens when
                 // something about the station is not right, and because the
                 // first two lines of the check are the two boxes above.
-                if crate::chrome::chip(ui, false, tr!("check-open"))
-                    .on_hover_text(tr!("check-open", "hint"))
-                    .clicked()
-                {
-                    *io.open_check = true;
-                }
+                ui.horizontal(|ui| {
+                    if crate::chrome::chip(ui, false, tr!("check-open"))
+                        .on_hover_text(tr!("check-open", "hint"))
+                        .clicked()
+                    {
+                        *io.open_check = true;
+                    }
+                    if crate::chrome::chip(ui, false, tr!("welcome-open"))
+                        .on_hover_text(tr!("welcome-open", "hint"))
+                        .clicked()
+                    {
+                        *io.open_welcome = true;
+                    }
+                });
 
                 // Its own grid, outside the enabled-ui above: the region comes
                 // from `config.toml` by way of the station announcement, not

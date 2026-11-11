@@ -171,8 +171,11 @@ One binary, three ways to run it:
 - **Station check** — one page (Settings → General → **STATION CHECK**) that
   says what is and is not in order — callsign, radio link, receiver, input
   level, audio, clock, lookups — with a button on each line that goes to where
-  it is fixed. A first start with no callsign is met by a three-step welcome:
-  who you are, which radio, and the check.
+  it is fixed. A first start with no callsign is met by a **welcome
+  walkthrough**: callsign and grid, the radio (with the pitfalls of that kind of
+  radio, and live status), what to know before transmitting, the online
+  services, a tour of the features, and the check — reopened any time from
+  Settings → General → **WELCOME TOUR**.
 - **Persistence** — device, rates, gains, memories, band stacks, the FT8/FT4/FT2
   operator profile, network/QSL credentials, control bindings, and the logbook
   are all stored under `~/.config/sdroxide/`.

@@ -575,7 +575,7 @@ pub(in crate::app) fn speech_settings(
 
 /// The language picker: the system's language first, then every language a
 /// translation is carried for, each under its own name.
-fn language_combo(ui: &mut egui::Ui, cur: &mut sdroxide_types::UiLanguage) {
+pub(in crate::app) fn language_combo(ui: &mut egui::Ui, cur: &mut sdroxide_types::UiLanguage) {
     use sdroxide_types::UiLanguage;
     let system = tr!("settings-ui-language-system", language = crate::i18n::system_language_name());
     let langs = crate::i18n::languages();

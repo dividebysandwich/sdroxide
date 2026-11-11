@@ -52,6 +52,7 @@ pub(in crate::app) mod top_bar;
 pub(in crate::app) mod tx_audio;
 pub(in crate::app) mod undocked;
 pub(crate) mod util;
+pub(in crate::app) mod welcome;
 pub(in crate::app) mod windows;
 pub(in crate::app) mod winlink;
 pub(in crate::app) mod workplaces;
@@ -678,12 +679,8 @@ pub struct SdroxideApp {
     palette: crate::app::palette::Palette,
     /// The station check window is open. See [`checkup`].
     show_check: bool,
-    /// The welcome was put aside for this session ("later", or by one of its
-    /// own buttons opening something else).
-    welcome_later: bool,
-    /// The welcome has been on screen this session, so it stays until it is
-    /// answered even once a callsign has been typed into it.
-    welcome_shown: bool,
+    /// The welcome walkthrough. See [`welcome`].
+    welcome: crate::app::welcome::Welcome,
     /// QSOs worked since this run started, which is what the FT8 panel's
     /// "Session" readout counts. Deliberately not derived from the logbook: the
     /// log is persisted and grows for ever, so counting it would report every
@@ -1694,8 +1691,7 @@ impl SdroxideApp {
             log_view: Default::default(),
             palette: Default::default(),
             show_check: false,
-            welcome_later: false,
-            welcome_shown: false,
+            welcome: Default::default(),
             session_qsos: 0,
             show_digi_settings: false,
             digi_cfg_edit: sdroxide_types::DigiConfig::default(),

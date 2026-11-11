@@ -14,9 +14,8 @@
 //! which is also why it is honest about what it cannot see — a clock that has
 //! not been measured is reported as not measured, not as fine.
 //!
-//! The welcome is the same idea at the one moment it matters most: a first
-//! start, with no callsign, where the three things to do are enter one, choose
-//! the radio, and run the check.
+//! The welcome walkthrough ([`super::welcome`]) shows the same lines a page at
+//! a time, beside the pitfalls each one usually comes from.
 
 use crate::i18n::tr;
 use eframe::egui::{self, RichText};
@@ -58,21 +57,19 @@ pub(in crate::app) enum CheckId {
 }
 
 /// Where a line's button goes.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::app) enum Fix {
     Settings(SettingsTab),
     Unmute,
 }
 
 pub(in crate::app) struct Check {
-    /// Read by the tests only: the page shows every line and has no need to
-    /// tell them apart.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// What the welcome walkthrough picks its lines out by.
     pub(in crate::app) id: CheckId,
     pub(in crate::app) level: Level,
-    title: String,
-    detail: String,
-    fix: Option<Fix>,
+    pub(in crate::app) title: String,
+    pub(in crate::app) detail: String,
+    pub(in crate::app) fix: Option<Fix>,
 }
 
 /// Everything the checks read, gathered into plain values so the judging can
@@ -261,7 +258,7 @@ pub(in crate::app) fn run_checks(i: &CheckInput) -> Vec<Check> {
 }
 
 impl SdroxideApp {
-    fn check_input(&self, now: f64) -> CheckInput {
+    pub(in crate::app) fn check_input(&self, now: f64) -> CheckInput {
         let net = &self.net_cfg_edit;
         CheckInput {
             my_call: self.digi_cfg_edit.my_call.clone(),
@@ -282,7 +279,7 @@ impl SdroxideApp {
         }
     }
 
-    fn apply_fix(&mut self, fix: Fix, cmds: &mut Vec<Command>) {
+    pub(in crate::app) fn apply_fix(&mut self, fix: Fix, cmds: &mut Vec<Command>) {
         match fix {
             Fix::Settings(tab) => {
                 self.settings_tab = tab;
@@ -401,154 +398,6 @@ impl SdroxideApp {
         self.show_check = open;
         if let Some(f) = fix {
             self.apply_fix(f, cmds);
-        }
-    }
-
-    /// The welcome a first start gets: shown while there is no callsign and it
-    /// has not been dismissed for good.
-    ///
-    /// Waits for the engine's saved settings to arrive before deciding there
-    /// is no callsign — for the first frames of every start there is none
-    /// *here*, and an operator of ten years' standing must not be welcomed
-    /// each morning.
-    pub(in crate::app) fn welcome_window(&mut self, ctx: &egui::Context, cmds: &mut Vec<Command>) {
-        if self.ui_settings.welcomed || self.welcome_later || !self.digi_cfg_seeded {
-            return;
-        }
-        if !self.welcome_shown && !self.digi_cfg_edit.my_call.trim().is_empty() {
-            // A station that already has a callsign is not a first start, and
-            // is never asked. Once the window *is* showing it stays until it
-            // is answered, or typing the callsign into it would close it.
-            return;
-        }
-        self.welcome_shown = true;
-        let (mut done, mut later, mut save) = (false, false, false);
-        let (mut radio, mut check) = (false, false);
-        let resp = egui::Window::new(tr!("welcome-title"))
-            .id(crate::layout::salted_id(ctx, "welcome"))
-            .frame(crate::chrome::window_frame())
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ctx, |ui| {
-                crate::chrome::window_body_bg(ui);
-                ui.set_width(crate::layout::window_w(ctx, 470.0));
-                ui.label(RichText::new(tr!("welcome-intro")).color(crate::theme::TEXT()));
-                let step = |ui: &mut egui::Ui, n: u8, title: String| {
-                    ui.add_space(12.0);
-                    ui.label(
-                        RichText::new(format!("{n}  {title}"))
-                            .size(12.5)
-                            .strong()
-                            .color(crate::theme::CYAN()),
-                    );
-                    ui.add_space(4.0);
-                };
-
-                step(ui, 1, tr!("welcome-step-station"));
-                let cfg = &mut self.digi_cfg_edit;
-                ui.horizontal(|ui| {
-                    ui.label(tr!("settings-callsign"));
-                    if crate::chrome::field(
-                        ui,
-                        egui::TextEdit::singleline(&mut cfg.my_call).desired_width(110.0),
-                    )
-                    .changed()
-                    {
-                        cfg.my_call = cfg.my_call.to_uppercase();
-                    }
-                    ui.label(tr!("settings-grid-square"));
-                    crate::chrome::field(
-                        ui,
-                        egui::TextEdit::singleline(&mut cfg.my_grid)
-                            .hint_text("JN48")
-                            .desired_width(70.0),
-                    );
-                    let ready = callsign_shaped(&cfg.my_call)
-                        && (cfg.my_grid.trim().is_empty() || grid_shaped(&cfg.my_grid));
-                    ui.add_enabled_ui(ready, |ui| {
-                        if crate::chrome::chip_accent(
-                            ui,
-                            false,
-                            RichText::new(tr!("logbook-save")).strong(),
-                            crate::theme::GREEN(),
-                            crate::theme::INK_ON_CYAN(),
-                        )
-                        .clicked()
-                        {
-                            save = true;
-                        }
-                    });
-                });
-                ui.label(
-                    RichText::new(tr!("welcome-station-hint"))
-                        .size(11.0)
-                        .color(crate::theme::gray(140)),
-                );
-
-                step(ui, 2, tr!("welcome-step-radio"));
-                ui.horizontal_wrapped(|ui| {
-                    if crate::chrome::chip(ui, false, tr!("welcome-open-radio")).clicked() {
-                        radio = true;
-                    }
-                    ui.label(
-                        RichText::new(tr!("welcome-radio-hint"))
-                            .size(11.0)
-                            .color(crate::theme::gray(140)),
-                    );
-                });
-
-                step(ui, 3, tr!("welcome-step-check"));
-                ui.horizontal_wrapped(|ui| {
-                    if crate::chrome::chip(ui, false, tr!("welcome-open-check")).clicked() {
-                        check = true;
-                    }
-                    ui.label(
-                        RichText::new(tr!("welcome-check-hint"))
-                            .size(11.0)
-                            .color(crate::theme::gray(140)),
-                    );
-                });
-
-                ui.add_space(14.0);
-                ui.horizontal(|ui| {
-                    if crate::chrome::chip(ui, false, tr!("welcome-done"))
-                        .on_hover_text(tr!("welcome-done", "hint"))
-                        .clicked()
-                    {
-                        done = true;
-                    }
-                    if crate::chrome::chip(ui, false, tr!("welcome-later"))
-                        .on_hover_text(tr!("welcome-later", "hint"))
-                        .clicked()
-                    {
-                        later = true;
-                    }
-                });
-            });
-        if let Some(r) = &resp {
-            crate::chrome::paint_window_border(ctx, &r.response);
-        }
-        if save {
-            self.digi_cfg_edit.my_call = self.digi_cfg_edit.my_call.trim().to_uppercase();
-            self.digi_cfg_edit.my_grid = self.digi_cfg_edit.my_grid.trim().to_string();
-            cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
-        }
-        if radio {
-            self.settings_tab = SettingsTab::Radio;
-            self.show_settings = true;
-        }
-        if check {
-            self.show_check = true;
-        }
-        // Opening Settings or the check puts this window aside for the
-        // session rather than leaving it on top of what it just opened.
-        if later || radio || check {
-            self.welcome_later = true;
-        }
-        if done {
-            self.ui_settings.welcomed = true;
-            crate::app::persist::persist_ui_settings(&self.ui_settings);
         }
     }
 }
