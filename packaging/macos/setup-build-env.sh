@@ -36,7 +36,7 @@ xcodebuild -version
 
 export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_UPGRADE=1 \
   HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 HOMEBREW_NO_INSTALL_CLEANUP=1
-brew install cmake autoconf automake libtool
+brew install cmake autoconf automake libtool gnu-tar
 if [[ "$variant" == "soapy" ]]; then
   brew install pkg-config soapysdr
 fi
