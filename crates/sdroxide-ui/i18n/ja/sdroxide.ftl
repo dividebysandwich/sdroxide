@@ -5704,3 +5704,21 @@ textmodem-mfsk-reverse-hint = トーン順序を反転します。送信時と�
 ## Keyboard modes: DominoEX (src/app/panels/text_modem.rs)
 textmodem-domino-hint = { $name } — { $baud } ボー、18トーン、前方誤り訂正なしのインクリメンタル周波数キーイング
 textmodem-ifk-reverse-hint = トーンのステップを反転します。IFK+はデータを連続するトーン間のステップで運ぶため、反対側のサイドバンドで受信した局はすべてのステップが負になり、これをオンにするまでノイズとして受信されます。
+
+## Keyboard modes: PSK families (src/app/panels/text_modem.rs)
+textmodem-psk-family = ファミリー
+textmodem-psk-family-plain-hint = PSK31本来のファミリー：差動搬送波1本、前方誤り訂正なし
+textmodem-psk-family-bpsk63f-hint = 62.5ボーのロバスト符号でインターリーバなし — fldigiがインターリーバなしで送信する唯一の符号化モードです
+textmodem-psk-family-robust-hint = ロバスト符号と2x2xNインターリーバを使う単一搬送波
+textmodem-psk-family-multi-hint = 複数搬送波、PSK31のバリコードで符号化は**なし** — 広帯域で高速ですが、きれいな信号が必要です
+textmodem-psk-family-robust-multi-hint = 複数搬送波**と**ロバスト符号：PSKモードの中で最も広帯域で最もロバストです
+textmodem-psk-baud-fast-hint = { $baud } ボー — 約1秒後から読み取れます。このレートでは受信機のロック時間がメッセージの3分の1に相当します
+textmodem-psk-baud-hint = { $baud } ボー
+textmodem-psk-bpsk-hint = 1シンボル1ビット、差動検波
+textmodem-psk-coded = 符号化あり
+textmodem-psk-no-code = 符号化なし
+textmodem-psk-coded-hint =
+    { $baud } ボー、{ $n } { $n ->
+            [one] 搬送波
+           *[other] 搬送波
+        }、{ $code }、帯域幅 { $bw } Hz

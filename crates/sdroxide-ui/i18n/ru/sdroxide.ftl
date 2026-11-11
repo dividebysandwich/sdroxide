@@ -5751,3 +5751,23 @@ textmodem-mfsk-reverse-hint = Инвертировать порядок тоно
 ## Keyboard modes: DominoEX (src/app/panels/text_modem.rs)
 textmodem-domino-hint = { $name } — { $baud } бод, 18 тонов, инкрементная частотная манипуляция без прямой коррекции ошибок
 textmodem-ifk-reverse-hint = Инвертировать шаги тонов. IFK+ несёт данные в шаге между последовательными тонами, поэтому станция, принятая на противоположной боковой полосе, имеет все шаги отрицательными и воспринимается как шум, пока это не включено.
+
+## Keyboard modes: PSK families (src/app/panels/text_modem.rs)
+textmodem-psk-family = Семейство
+textmodem-psk-family-plain-hint = Собственное семейство PSK31: одна дифференциальная несущая, без прямой коррекции ошибок
+textmodem-psk-family-bpsk63f-hint = Надёжный код на 62,5 бод без перемежителя — единственный кодированный режим, который fldigi передаёт без него
+textmodem-psk-family-robust-hint = Одна несущая с надёжным кодом и перемежителем 2x2xN
+textmodem-psk-family-multi-hint = Несколько несущих, варикод PSK31 и **без** кода — шире и быстрее, требует чистого сигнала
+textmodem-psk-family-robust-multi-hint = Несколько несущих **и** надёжный код: самый широкий и самый надёжный из режимов PSK
+textmodem-psk-baud-fast-hint = { $baud } бод — читается примерно со второй секунды: на такой скорости время захвата приёмника составляет треть сообщения
+textmodem-psk-baud-hint = { $baud } бод
+textmodem-psk-bpsk-hint = Один бит на символ, дифференциальное детектирование
+textmodem-psk-coded = кодир.
+textmodem-psk-no-code = без кода
+textmodem-psk-coded-hint =
+    { $baud } бод, { $n } { $n ->
+            [one] несущая
+            [few] несущие
+            [many] несущих
+           *[other] несущей
+        }, { $code }, ширина { $bw } Гц

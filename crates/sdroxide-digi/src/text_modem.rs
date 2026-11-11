@@ -14,9 +14,12 @@ use sdroxide_dsp::ifk::{IfkRx, IfkTx, IfkVariant};
 use sdroxide_dsp::mfsk_rx::{MfskReceiver, MfskTx, MfskVariant};
 use sdroxide_dsp::mt63::{Mt63Receiver, Mt63Tx};
 use sdroxide_dsp::{
-    MonoResampler, OliviaRx, OliviaTx, PskRx, PskTx, RttyRx, RttyTx, ThorRx, ThorTx,
+    MonoResampler, OliviaRx, OliviaTx, Psk8Tx, PskMultiRx, PskRx, PskTx, PskrRx, PskrTx, RttyRx,
+    RttyTx, ThorRx, ThorTx,
 };
-use sdroxide_types::{DigiConfig, DigiStatus, Mode, QsoStep, TranscriptLine};
+use sdroxide_types::{
+    DigiConfig, DigiStatus, Mode, PskCoded, PskModulation, QsoStep, TranscriptLine,
+};
 
 use crate::DigiEngine;
 use crate::controller::DigiAction;
@@ -28,7 +31,7 @@ const OUT_RATE: f64 = 48_000.0;
 const RX_TEXT_CAP: usize = 8000;
 
 enum RxModem {
-    Psk(PskRx),
+    Psk(Box<PskAny>),
     Rtty(RttyRx),
     Olivia(OliviaRx),
     Thor(ThorRx),
@@ -64,6 +67,10 @@ impl RxModem {
 
 enum TxModem {
     Psk(PskTx),
+    /// fldigi's coded families — BPSK63F, the `R`, `C` and `RC` sets.
+    PskCoded(Box<PskrTx>),
+    /// Eight-phase PSK.
+    Psk8(Box<Psk8Tx>),
     Rtty(RttyTx),
     Olivia(OliviaTx),
     Thor(ThorTx),
@@ -76,6 +83,8 @@ impl TxModem {
     fn push_text(&mut self, t: &str) {
         match self {
             TxModem::Psk(m) => m.push_text(t),
+            TxModem::PskCoded(m) => m.push_text(t),
+            TxModem::Psk8(m) => m.push_text(t),
             TxModem::Rtty(m) => m.push_text(t),
             TxModem::Olivia(m) => m.push_text(t),
             TxModem::Thor(m) => m.push_text(t),
@@ -87,6 +96,12 @@ impl TxModem {
     fn next_block(&mut self, out: &mut [f32]) {
         match self {
             TxModem::Psk(m) => {
+                m.next_block(out);
+            }
+            TxModem::PskCoded(m) => {
+                m.next_block(out);
+            }
+            TxModem::Psk8(m) => {
                 m.next_block(out);
             }
             TxModem::Rtty(m) => {
@@ -111,11 +126,15 @@ impl TxModem {
     }
     /// The operator has released transmit and everything typed has gone into
     /// the modem: a modem that idles while it waits for text closes the over
-    /// now instead (MFSK's and DominoEX's `EOT` and drain).
+    /// now instead (MFSK's and DominoEX's `EOT` and drain, the coded PSK
+    /// families' run of 1s through the interleaver).
     fn finish(&mut self) {
         match self {
             TxModem::Mfsk(m) => m.finish(),
             TxModem::Domino(m) => m.finish(),
+            TxModem::Psk(m) => m.finish(),
+            TxModem::PskCoded(m) => m.finish(),
+            TxModem::Psk8(m) => m.finish(),
             _ => {}
         }
     }
@@ -128,12 +147,17 @@ impl TxModem {
             TxModem::Mt63(m) => m.tail_pending(),
             TxModem::Mfsk(m) => m.tail_pending(),
             TxModem::Domino(m) => m.tail_pending(),
+            TxModem::Psk(m) => m.tail_pending(),
+            TxModem::PskCoded(m) => m.tail_pending(),
+            TxModem::Psk8(m) => m.tail_pending(),
             _ => false,
         }
     }
     fn sent_chars(&self) -> usize {
         match self {
             TxModem::Psk(m) => m.sent_chars(),
+            TxModem::PskCoded(m) => m.sent_chars(),
+            TxModem::Psk8(m) => m.sent_chars(),
             TxModem::Rtty(m) => m.sent_chars(),
             TxModem::Olivia(m) => m.sent_chars(),
             TxModem::Thor(m) => m.sent_chars(),
@@ -145,6 +169,8 @@ impl TxModem {
     fn total_chars(&self) -> usize {
         match self {
             TxModem::Psk(m) => m.total_chars(),
+            TxModem::PskCoded(m) => m.total_chars(),
+            TxModem::Psk8(m) => m.total_chars(),
             TxModem::Rtty(m) => m.total_chars(),
             TxModem::Olivia(m) => m.total_chars(),
             TxModem::Thor(m) => m.total_chars(),
@@ -156,6 +182,8 @@ impl TxModem {
     fn clear(&mut self) {
         match self {
             TxModem::Psk(m) => m.clear(),
+            TxModem::PskCoded(m) => m.clear(),
+            TxModem::Psk8(m) => m.clear(),
             TxModem::Rtty(m) => m.clear(),
             TxModem::Olivia(m) => m.clear(),
             TxModem::Thor(m) => m.clear(),
@@ -164,6 +192,102 @@ impl TxModem {
             TxModem::Domino(m) => m.clear(),
         }
     }
+}
+
+/// PSK's receivers behind one arm: PSK31's own family (BPSK and 8PSK at six
+/// speeds), the coded single- and multi-carrier families through the code
+/// (`PskrRx`), and the `C` banks with no code (`PskMultiRx`).
+enum PskAny {
+    Plain(PskRx),
+    Coded { rx: PskrRx, mag: f32 },
+    Multi { rx: PskMultiRx, mag: f32 },
+}
+
+impl PskAny {
+    fn new(cfg: &DigiConfig, hz: f64) -> Self {
+        let coded = cfg.psk_coded;
+        if coded == PskCoded::Off {
+            let mut r = PskRx::new_baud(MODEM_RATE, hz, cfg.psk_speed.baud());
+            r.set_psk8(cfg.psk_modulation == PskModulation::Psk8);
+            PskAny::Plain(r)
+        } else if coded.fec() {
+            let rx = PskrRx::with_carriers(
+                MODEM_RATE,
+                hz,
+                coded.baud(),
+                coded.carriers(),
+                coded.depth(),
+            );
+            PskAny::Coded { rx, mag: 0.0 }
+        } else {
+            let rx = PskMultiRx::new(MODEM_RATE, hz, coded.baud(), coded.carriers());
+            PskAny::Multi { rx, mag: 0.0 }
+        }
+    }
+
+    fn process(&mut self, audio: &[f32]) -> String {
+        let peak = audio.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        match self {
+            PskAny::Plain(r) => r.process(audio),
+            PskAny::Coded { rx, mag } => {
+                *mag += 0.02 * (peak - *mag);
+                rx.process(audio)
+            }
+            PskAny::Multi { rx, mag } => {
+                *mag += 0.02 * (peak - *mag);
+                rx.process(audio)
+            }
+        }
+    }
+
+    fn set_carrier(&mut self, hz: f64) {
+        match self {
+            PskAny::Plain(r) => r.set_carrier(hz),
+            PskAny::Coded { rx, .. } => rx.set_carrier(hz),
+            PskAny::Multi { rx, .. } => rx.set_carrier(hz),
+        }
+    }
+
+    fn magnitude(&self) -> f32 {
+        match self {
+            PskAny::Plain(r) => r.magnitude(),
+            PskAny::Coded { mag, .. } | PskAny::Multi { mag, .. } => *mag,
+        }
+    }
+}
+
+/// PSK's transmitter for the configured family, speed and constellation.
+fn psk_tx(cfg: &DigiConfig, hz: f64) -> TxModem {
+    let coded = cfg.psk_coded;
+    if coded != PskCoded::Off {
+        TxModem::PskCoded(Box::new(PskrTx::with_carriers(
+            MODEM_RATE,
+            hz,
+            coded.baud(),
+            coded.carriers(),
+            coded.fec(),
+            coded.depth(),
+        )))
+    } else if cfg.psk_modulation == PskModulation::Psk8 {
+        TxModem::Psk8(Box::new(Psk8Tx::new(MODEM_RATE, hz, cfg.psk_speed.baud())))
+    } else {
+        TxModem::Psk(PskTx::new_baud(MODEM_RATE, hz, cfg.psk_speed.baud()))
+    }
+}
+
+/// Keep a PSK signal inside the passband. PSK31's carrier is narrow and goes
+/// wherever the cursor is; a multi-carrier bank is up to 2.8 kHz wide, and
+/// centred at the usual 1000 Hz its lowest carriers would sit on or below 0 Hz.
+/// So the centre is held at least half the bank (and a margin) above the dial
+/// and below the passband's top.
+fn fit_psk_centre(cfg: &DigiConfig, hz: f32) -> f32 {
+    if cfg.psk_coded == PskCoded::Off {
+        return hz;
+    }
+    let half = cfg.psk_coded.bandwidth_hz() as f32 / 2.0;
+    let lo = half + 150.0;
+    let hi = (3300.0 - half).max(lo);
+    hz.clamp(lo, hi)
 }
 
 /// The IFK variant behind the configured DominoEX speed. The two tables are
@@ -276,6 +400,7 @@ impl TextModemController {
                 1500.0f32
             }
             Mode::Rtty | Mode::RttyFm => sdroxide_types::RTTY_CENTER_HZ,
+            Mode::Psk => fit_psk_centre(&cfg, 1000.0),
             _ => 1000.0f32,
         };
         let (baud, shift) = (cfg.rtty_baud as f64, cfg.rtty_shift_hz as f64);
@@ -308,7 +433,7 @@ impl TextModemController {
                 cfg.mfsk_mode,
                 cfg.mfsk_reverse,
             ))),
-            _ => RxModem::Psk(PskRx::new(MODEM_RATE, audio_hz as f64)),
+            _ => RxModem::Psk(Box::new(PskAny::new(&cfg, audio_hz as f64))),
         };
         let tx = match mode {
             Mode::Rtty | Mode::RttyFm => {
@@ -334,7 +459,7 @@ impl TextModemController {
                 t.set_mirror(cfg.mfsk_reverse);
                 TxModem::Mfsk(Box::new(t))
             }
-            _ => TxModem::Psk(PskTx::new(MODEM_RATE, audio_hz as f64)),
+            _ => psk_tx(&cfg, audio_hz as f64),
         };
         TextModemController {
             mode,
@@ -386,6 +511,10 @@ impl TextModemController {
         }
         match &mut self.tx {
             TxModem::Psk(m) => m.set_carrier(hz, MODEM_RATE),
+            TxModem::Psk8(m) => m.set_params(hz, self.cfg.psk_speed.baud()),
+            // A coded over is rendered at its carrier: a retune rebuilds it, as
+            // a change of variant does (`set_config`).
+            TxModem::PskCoded(_) => self.tx = psk_tx(&self.cfg, hz),
             TxModem::Rtty(m) => m.set_tuning(hz, shift),
             TxModem::Olivia(m) => m.set_params(hz, o_tones, o_bw),
             TxModem::Thor(m) => m.set_params(hz, t_baud),
@@ -399,6 +528,19 @@ impl TextModemController {
                 m.set_mirror(self.cfg.mfsk_reverse);
             }
         }
+    }
+
+    /// Why this configuration does not key up, if it does not: the PSK coded
+    /// banks that receive but whose own transmission is not proven.
+    fn tx_refusal(&self) -> Option<String> {
+        let coded = self.cfg.psk_coded;
+        (self.mode == Mode::Psk && coded != PskCoded::Off && !coded.transmits()).then(|| {
+            format!(
+                "{} is receive only in this build: our own transmission of it does not \
+                 read back through the receiver yet",
+                coded.label()
+            )
+        })
     }
 
     /// True while we should keep generating TX audio: actively transmitting,
@@ -420,7 +562,7 @@ impl TextModemController {
             tx_even: false,
             transmitting: self.keyed,
             tx_watchdog: false,
-            tx_refused: None,
+            tx_refused: self.tx_refusal(),
             transcript: Vec::<TranscriptLine>::new(),
             config: self.cfg.clone(),
             jtty: None,
@@ -570,6 +712,19 @@ impl DigiEngine for TextModemController {
     }
 
     fn set_config(&mut self, cfg: DigiConfig) {
+        // PSK's speed, constellation and coded family choose the modems
+        // themselves, not a setting on them: a change rebuilds both halves and
+        // abandons the over in progress, whose audio is at the old shape.
+        let rebuild_psk = self.mode == Mode::Psk
+            && (cfg.psk_speed != self.cfg.psk_speed
+                || cfg.psk_modulation != self.cfg.psk_modulation
+                || cfg.psk_coded != self.cfg.psk_coded);
+        if rebuild_psk {
+            self.abort_tx();
+            self.audio_hz = fit_psk_centre(&cfg, self.audio_hz);
+            self.rx = RxModem::Psk(Box::new(PskAny::new(&cfg, self.audio_hz as f64)));
+            self.tx = psk_tx(&cfg, self.audio_hz as f64);
+        }
         let retune = cfg.rtty_baud != self.cfg.rtty_baud
             || cfg.rtty_shift_hz != self.cfg.rtty_shift_hz
             || cfg.rtty_reverse != self.cfg.rtty_reverse
@@ -591,6 +746,9 @@ impl DigiEngine for TextModemController {
 
     fn set_audio_hz(&mut self, hz: f32) {
         self.audio_hz = hz.clamp(200.0, 3500.0);
+        if self.mode == Mode::Psk {
+            self.audio_hz = fit_psk_centre(&self.cfg, self.audio_hz);
+        }
         self.retune_modems();
         self.status_dirty = true;
     }
@@ -622,6 +780,13 @@ impl DigiEngine for TextModemController {
     }
 
     fn set_tx_active(&mut self, on: bool) {
+        // A variant that does not transmit refuses the key and says why
+        // (`tx_refused`), rather than keying up with nothing it can send.
+        if on && self.tx_refusal().is_some() {
+            self.tx_active = false;
+            self.status_dirty = true;
+            return;
+        }
         self.tx_active = on;
         // A fresh over: what the last one sent says nothing about this one.
         self.over_had_text = false;
@@ -816,6 +981,105 @@ mod tests {
                 m.bandwidth_hz()
             );
         }
+    }
+
+    /// PSK's own family through the controller: every speed in BPSK, and 8PSK
+    /// at 125, 250 and 500 baud. (At 1000 it slips two characters in twenty —
+    /// an eight-sample symbol against the receiver's clock — and is not
+    /// asserted.)
+    #[test]
+    fn plain_qpsk_and_8psk_read_back_through_the_controller() {
+        use sdroxide_types::PskSpeed;
+        let mut cases: Vec<(PskSpeed, PskModulation)> =
+            PskSpeed::ALL.into_iter().map(|sp| (sp, PskModulation::Bpsk)).collect();
+        for sp in [PskSpeed::Bps125, PskSpeed::Bps250, PskSpeed::Bps500] {
+            cases.push((sp, PskModulation::Psk8));
+        }
+        for (sp, m) in cases {
+            let cfg = DigiConfig { psk_speed: sp, psk_modulation: m, ..DigiConfig::default() };
+            let text =
+                through_the_controller(Mode::Psk, cfg, "CQ DE TEST THE EAGLE HAS LANDED K\n");
+            assert!(
+                text.contains("EAGLE HAS LANDED K"),
+                "{} {} did not read back to its last word: {text:?}",
+                sp.label(),
+                m.label()
+            );
+        }
+    }
+
+    /// The coded families through the controller — `psk_coded` reaching both
+    /// halves, the over streaming one character at a time through the code and
+    /// the interleaver, and the close pushing the last word through. Every
+    /// offered variant, so a wrong row in the table shows here.
+    #[test]
+    fn every_offered_coded_psk_variant_reads_back_through_the_controller() {
+        let mut failed = Vec::new();
+        for coded in PskCoded::ALL.into_iter().filter(|c| *c != PskCoded::Off && c.transmits()) {
+            let cfg = DigiConfig { psk_coded: coded, ..DigiConfig::default() };
+            let text =
+                through_the_controller(Mode::Psk, cfg, "CQ DE TEST THE EAGLE HAS LANDED K\n");
+            if !text.contains("EAGLE HAS LANDED K") {
+                failed.push(format!("{}: {text:?}", coded.label()));
+            }
+        }
+        assert!(failed.is_empty(), "did not read back:\n{}", failed.join("\n"));
+    }
+
+    /// A coded over held open before anything is typed idles on `<NUL>` words,
+    /// which the receiver does not print, and the text that follows reads.
+    #[test]
+    fn a_held_coded_psk_over_idles_and_then_reads() {
+        for coded in [PskCoded::Bpsk63F, PskCoded::Psk125R, PskCoded::Psk250C6] {
+            let cfg = DigiConfig { psk_coded: coded, ..DigiConfig::default() };
+            let text = through_the_controller_after(
+                Mode::Psk,
+                cfg,
+                "CQ DE TEST THE EAGLE HAS LANDED K\n",
+                150,
+            );
+            assert!(text.contains("EAGLE HAS LANDED K"), "{}: {text:?}", coded.label());
+            assert!(!text.contains('\0'), "{} printed its idle: {text:?}", coded.label());
+        }
+    }
+
+    /// A coded bank that only receives refuses the key-up and says why, and the
+    /// ones that transmit do not.
+    #[test]
+    fn a_receive_only_psk_bank_refuses_the_key_and_says_why() {
+        let cfg = DigiConfig { psk_coded: PskCoded::Psk125Rc16, ..DigiConfig::default() };
+        let mut c = TextModemController::new(Mode::Psk, cfg, OUT_RATE);
+        c.set_tx_text("CQ".into());
+        c.set_tx_active(true);
+        c.poll(SystemTime::now(), 0.0);
+        assert!(!c.tx_burst_active(), "a receive-only bank keyed up");
+        let why = c.status().tx_refused.expect("no reason given");
+        assert!(why.contains("PSK125RC16"), "{why}");
+        let cfg = DigiConfig { psk_coded: PskCoded::Psk125Rc10, ..DigiConfig::default() };
+        let c = TextModemController::new(Mode::Psk, cfg, OUT_RATE);
+        assert!(c.status().tx_refused.is_none());
+    }
+
+    /// A wide bank is moved up off the dial: at the usual 1000 Hz its lowest
+    /// carriers would be at or below 0 Hz.
+    #[test]
+    fn a_wide_psk_bank_is_kept_inside_the_passband() {
+        let cfg = DigiConfig { psk_coded: PskCoded::Psk63Rc32, ..DigiConfig::default() };
+        let half = PskCoded::Psk63Rc32.bandwidth_hz() as f32 / 2.0;
+        let mut c = TextModemController::new(Mode::Psk, cfg.clone(), OUT_RATE);
+        assert!(c.audio_hz() - half >= 150.0, "the bank starts at {} Hz", c.audio_hz() - half);
+        c.set_audio_hz(300.0);
+        assert!(c.audio_hz() - half >= 150.0, "a click put the bank at {} Hz", c.audio_hz() - half);
+        c.set_audio_hz(3200.0);
+        assert!(
+            c.audio_hz() + half <= 3300.0,
+            "a click put the bank top at {} Hz",
+            c.audio_hz() + half
+        );
+        // Plain PSK31 still goes where the cursor is.
+        let mut p = TextModemController::new(Mode::Psk, DigiConfig::default(), OUT_RATE);
+        p.set_audio_hz(300.0);
+        assert_eq!(p.audio_hz(), 300.0);
     }
 
     #[test]

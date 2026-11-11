@@ -1314,6 +1314,16 @@ impl SdroxideApp {
                 self.digi_status.as_ref().map(|s| s.config.thor_mode.baud()).unwrap_or(15.625);
             let bw = 18.0 * baud;
             vec![audio_hz - bw / 2.0, audio_hz + bw / 2.0]
+        } else if let Some(coded) = self
+            .digi_status
+            .as_ref()
+            .map(|s| s.config.psk_coded)
+            .filter(|c| mode == Mode::Psk && *c != sdroxide_types::PskCoded::Off)
+        {
+            // A coded PSK bank: its edges, since a multi-carrier one is kilohertz
+            // wide and the centre marker alone says nothing about where it ends.
+            let bw = coded.bandwidth_hz() as f32;
+            vec![audio_hz - bw / 2.0, audio_hz + bw / 2.0]
         } else if mode == Mode::DominoEx {
             let bw = self
                 .digi_status

@@ -1688,7 +1688,11 @@ use sdroxide_types::{
 ///
 /// v202: DominoEX. `Mode::DominoEx` appended, and `DigiConfig` gains
 /// `domino_mode` and `domino_reverse` at its tail.
-pub const PROTO_VERSION: u16 = 202;
+///
+/// v203: PSK's families. `DigiConfig` gains `psk_speed`, `psk_modulation` and
+/// `psk_coded` at its tail: PSK31's six speeds, BPSK or 8PSK, and fldigi's
+/// coded single- and multi-carrier families.
+pub const PROTO_VERSION: u16 = 203;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
@@ -3148,7 +3152,9 @@ mod tests {
     /// than failing.
     #[test]
     fn roundtrip_fldigi_keyboard_modes() {
-        use sdroxide_types::{DigiConfig, DominoMode, MfskMode, Mode, Mt63Mode};
+        use sdroxide_types::{
+            DigiConfig, DominoMode, MfskMode, Mode, Mt63Mode, PskCoded, PskModulation, PskSpeed,
+        };
 
         let cfg = DigiConfig {
             mt63_mode: Mt63Mode::Mt6500S,
@@ -3156,12 +3162,15 @@ mod tests {
             mfsk_reverse: true,
             domino_mode: DominoMode::Dom88,
             domino_reverse: true,
+            psk_speed: PskSpeed::Bps250,
+            psk_modulation: PskModulation::Psk8,
+            psk_coded: PskCoded::Psk1000Rc2,
             ..DigiConfig::default()
         };
         let m = ClientMsg::Command(Command::SetDigiConfig(cfg.clone()));
         assert_eq!(decode::<ClientMsg>(&encode(&m).unwrap()).unwrap(), m);
 
-        for mode in [Mode::Mt63, Mode::Mfsk, Mode::DominoEx] {
+        for mode in [Mode::Mt63, Mode::Mfsk, Mode::DominoEx, Mode::Psk] {
             let mut status = DigiStatus::idle(cfg.clone());
             status.mode = mode;
             let m = ServerMsg::Ft8Status(status);
@@ -3174,6 +3183,9 @@ mod tests {
             assert!(s.config.mfsk_reverse);
             assert_eq!(s.config.domino_mode, DominoMode::Dom88);
             assert!(s.config.domino_reverse);
+            assert_eq!(s.config.psk_speed, PskSpeed::Bps250);
+            assert_eq!(s.config.psk_modulation, PskModulation::Psk8);
+            assert_eq!(s.config.psk_coded, PskCoded::Psk1000Rc2);
         }
     }
 

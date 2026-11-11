@@ -5748,3 +5748,21 @@ textmodem-mfsk-reverse-hint = Draai de toonvolgorde om. Een station dat is ontva
 ## Keyboard modes: DominoEX (src/app/panels/text_modem.rs)
 textmodem-domino-hint = { $name } — { $baud } baud, 18 tonen, incrementele frequentiesleuteling zonder foutcorrectie vooraf
 textmodem-ifk-reverse-hint = Draai de toonstappen om. IFK+ draagt zijn data in de stap tussen opeenvolgende tonen, dus een station dat op de andere zijband is ontvangen heeft elke stap negatief en klinkt als ruis totdat dit aan staat.
+
+## Keyboard modes: PSK families (src/app/panels/text_modem.rs)
+textmodem-psk-family = Familie
+textmodem-psk-family-plain-hint = De eigen familie van PSK31: één differentiële draaggolf, geen foutcorrectie vooraf
+textmodem-psk-family-bpsk63f-hint = De robuuste code op 62,5 baud, zonder interleaver — de enige gecodeerde modus die fldigi zonder verzendt
+textmodem-psk-family-robust-hint = Eén draaggolf met de robuuste code en een 2x2xN-interleaver
+textmodem-psk-family-multi-hint = Meerdere draaggolven, de varicode van PSK31 en **geen** code — breder en sneller, en het vraagt een schoon signaal
+textmodem-psk-family-robust-multi-hint = Meerdere draaggolven **en** de robuuste code: de breedste en de meest robuuste van de PSK-modi
+textmodem-psk-baud-fast-hint = { $baud } baud — leest vanaf ongeveer een seconde: bij deze snelheid is de lock-tijd van de ontvanger een derde van een bericht
+textmodem-psk-baud-hint = { $baud } baud
+textmodem-psk-bpsk-hint = Eén bit per symbool, differentieel gedetecteerd
+textmodem-psk-coded = gecodeerd
+textmodem-psk-no-code = geen code
+textmodem-psk-coded-hint =
+    { $baud } baud, { $n } { $n ->
+            [one] draaggolf
+           *[other] draaggolven
+        }, { $code }, { $bw } Hz breed

@@ -5739,3 +5739,21 @@ textmodem-mfsk-reverse-hint = Invierte el orden de los tonos. Una estación reci
 ## Keyboard modes: DominoEX (src/app/panels/text_modem.rs)
 textmodem-domino-hint = { $name } — { $baud } baudios, 18 tonos, manipulación incremental de frecuencia sin corrección de errores directa
 textmodem-ifk-reverse-hint = Invierte los saltos entre tonos. IFK+ lleva sus datos en el salto entre tonos sucesivos, así que una estación recibida en la banda lateral opuesta tiene todos los saltos negativos y se lee como ruido hasta que esto se activa.
+
+## Keyboard modes: PSK families (src/app/panels/text_modem.rs)
+textmodem-psk-family = Familia
+textmodem-psk-family-plain-hint = La familia propia de PSK31: una portadora diferencial, sin corrección de errores directa
+textmodem-psk-family-bpsk63f-hint = El código robusto a 62,5 baudios, sin entrelazador — el único modo codificado que fldigi envía sin uno
+textmodem-psk-family-robust-hint = Una portadora con el código robusto y un entrelazador 2x2xN
+textmodem-psk-family-multi-hint = Varias portadoras, el varicode de PSK31 y **ningún** código — más ancho y más rápido, y necesita una señal limpia
+textmodem-psk-family-robust-multi-hint = Varias portadoras **y** el código robusto: el más ancho y el más robusto de los modos PSK
+textmodem-psk-baud-fast-hint = { $baud } baudios — se lee a partir de aproximadamente un segundo: a esta velocidad el tiempo de enganche del receptor es un tercio de un mensaje
+textmodem-psk-baud-hint = { $baud } baudios
+textmodem-psk-bpsk-hint = Un bit por símbolo, detectado de forma diferencial
+textmodem-psk-coded = codificado
+textmodem-psk-no-code = sin código
+textmodem-psk-coded-hint =
+    { $baud } baudios, { $n } { $n ->
+            [one] portadora
+           *[other] portadoras
+        }, { $code }, { $bw } Hz de ancho

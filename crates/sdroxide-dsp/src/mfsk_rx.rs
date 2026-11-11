@@ -1692,7 +1692,7 @@ mod tests {
     /// `~/Downloads/sounds/our-captures/mfsk16_cb_eagle.wav` is the MFSK16
     /// capture from the bench, 255 Hz wide, centre 1730.
     #[test]
-    #[ignore = "needs fldigi's recordings in samples/fldigi, kept in sdroxide-brown, not in this tree"]
+    #[ignore = "needs a recording: SDROXIDE_MFSK_SAMPLE=/path/file.wav, or samples/fldigi from sdroxide-brown"]
     fn an_off_air_capture_decodes() {
         // The corpus sample is the default; `SDROXIDE_MFSK_SAMPLE` overrides it.
         let path = std::env::var("SDROXIDE_MFSK_SAMPLE").unwrap_or_else(|_| {

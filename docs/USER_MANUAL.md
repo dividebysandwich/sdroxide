@@ -4558,12 +4558,55 @@ panel is a live **messaging area** instead of a QSO sequencer.
 
 **Settings (PSK/RTTY setup dialog):**
 
-- **PSK** is BPSK31 — differential BPSK with the standard varicode alphabet.
+- **PSK** defaults to BPSK31 — differential BPSK with the standard varicode
+  alphabet. The chips in the panel header choose the rest (see below).
 - **RTTY** defaults to 45.45 baud, 170 Hz shift, Baudot (ITA2), on the standard
   2125/2295 Hz tone pair. **Shift** (170 / 425 / 850 Hz) and **Baud**
   (45 / 50 / 75) are selectable; a wider shift keeps the same centre and spreads
   about it.
 - Your callsign and grid (shared with the FT8/FT4/FT2 setup) fill the CQ macro.
+
+**PSK's speeds and fldigi's PSK families.** In PSK the panel header carries a
+**Family** row and then the chips of the family picked:
+
+- **PLAIN** is PSK31's own family: **Baud** 31, 63, 125, 250, 500 and 1000,
+  and **BPSK** or **8PSK** (three bits a symbol, faster and less robust).
+  Nothing in a signal says which speed it is, so set the one the station is
+  sending; a receiver at the wrong speed prints nothing. At 1000 baud the
+  receiver takes about a second to lock, so the first words of a transmission
+  can be lost.
+- **BPSK63F** is the robust code at 62.5 baud with no interleaver.
+- **R** is one carrier with fldigi's robust code and an interleaver:
+  PSK125R, PSK250R, PSK500R and PSK1000R.
+- **C** is several carriers with PSK31's alphabet and no code (PSK250C6,
+  PSK500C2, PSK800C2) — wide and fast, for a clean path.
+- **RC** is several carriers *and* the code: PSK63RC4 to PSK1000RC2, the widest
+  and most robust of the family.
+
+Hover a chip for its speed, carrier count and width; the waterfall marks the
+edges of a coded bank. A wide bank is kept inside the passband: its centre is
+moved up off the dial as far as it needs to be, and a click that would put it
+partly outside is held at the edge. The coded families idle on `<NUL>`
+characters while you hold **TX** with nothing typed, and close the over with a
+run that pushes the last word through the interleaver, so the transmitter
+stays keyed for a moment after the text has gone green. Every speed of PLAIN
+ends with a short tail of idle reversals for the same reason.
+
+Some of fldigi's PSK waveforms are not offered, or receive only:
+
+- **QPSK** is not offered: the receiver's carrier loop cannot track four
+  phases yet, so it reads neither fldigi's QPSK nor its own.
+- **PSK125C12, PSK500C4, PSK500RC4 and PSK1000C2** are not offered: the
+  multi-carrier front end cannot separate their carriers, and they read
+  nothing.
+- **PSK63RC32, PSK125RC12 and PSK125RC16** receive — fldigi's recordings of
+  them read — but our own transmission of them does not read back yet, so they
+  are marked **receive only** and refuse **TX** with the reason.
+
+These modes are ports of fldigi's PSK (`psk.cxx`) from sdroxide-brown. The
+receivers read fldigi's recordings of the coded families; 8PSK and every
+transmitter here read their own signal back but have not yet been tried
+against fldigi on the air.
 
 **Skimmers:** the PSK and RTTY skimmers (see [Skimmers](#4-skimmers)) label
 signals across each band's PSK/RTTY calling sub-bands. Clicking a label from any

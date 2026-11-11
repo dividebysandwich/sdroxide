@@ -5689,3 +5689,21 @@ textmodem-mfsk-reverse-hint = 反转音调顺序。在与发送时相反的边�
 ## Keyboard modes: DominoEX (src/app/panels/text_modem.rs)
 textmodem-domino-hint = { $name }，{ $baud } 波特，18 个音调，增量频移键控，无前向纠错
 textmodem-ifk-reverse-hint = 反转音调步进。IFK+ 的数据承载于相邻音调之间的步进，因此在相反边带上收到的电台每个步进都是负的，在开启之前读出来只是噪声。
+
+## Keyboard modes: PSK families (src/app/panels/text_modem.rs)
+textmodem-psk-family = 系列
+textmodem-psk-family-plain-hint = PSK31 自己的系列：单个差分载波，无前向纠错
+textmodem-psk-family-bpsk63f-hint = 62.5 波特的稳健编码，无交织器，是 fldigi 唯一不带交织器发送的编码模式
+textmodem-psk-family-robust-hint = 单载波，带稳健编码和 2x2xN 交织器
+textmodem-psk-family-multi-hint = 多个载波，PSK31 的变长码，**无**编码：更宽更快，需要干净的信号
+textmodem-psk-family-robust-multi-hint = 多个载波**加上**稳健编码：PSK 模式中最宽也最稳健的一种
+textmodem-psk-baud-fast-hint = { $baud } 波特，约一秒后即可读出：在此速率下，接收机的锁定时间是一条消息的三分之一
+textmodem-psk-baud-hint = { $baud } 波特
+textmodem-psk-bpsk-hint = 每符号一比特，差分检测
+textmodem-psk-coded = 编码
+textmodem-psk-no-code = 无编码
+textmodem-psk-coded-hint =
+    { $baud } 波特，{ $n } { $n ->
+            [one] 个载波
+           *[other] 个载波
+        }，{ $code }，带宽 { $bw } Hz

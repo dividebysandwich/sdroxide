@@ -6015,3 +6015,24 @@ textmodem-mfsk-reverse-hint = Invert the tone order. A station received on the o
 ## Keyboard modes: DominoEX (src/app/panels/text_modem.rs)
 textmodem-domino-hint = { $name } — { $baud } baud, 18 tones, incremental frequency keying with no forward error correction
 textmodem-ifk-reverse-hint = Invert the tone steps. IFK+ carries its data in the step between successive tones, so a station received on the opposite sideband has every step negative and reads as noise until this is on.
+
+## Keyboard modes: PSK families (src/app/panels/text_modem.rs)
+textmodem-psk-family = Family
+textmodem-psk-family-plain-hint = PSK31's own family: one differential carrier, no forward error correction
+textmodem-psk-family-bpsk63f-hint = The robust code at 62.5 baud, with no interleaver — the one coded mode fldigi sends without one
+textmodem-psk-family-robust-hint = One carrier with the robust code and a 2x2xN interleaver
+textmodem-psk-family-multi-hint = Several carriers, PSK31's varicode and **no** code — wider and faster, and it needs a clean signal
+textmodem-psk-family-robust-multi-hint = Several carriers **and** the robust code: the widest and the most robust of the PSK modes
+textmodem-psk-baud-fast-hint = { $baud } baud — reads from about a second in: at this rate the receiver's lock time is a third of a message
+textmodem-psk-baud-hint = { $baud } baud
+textmodem-psk-bpsk-hint = One bit per symbol, differentially detected
+textmodem-psk-8psk-hint = Three bits per symbol, no code: the fastest at any given speed and the least robust. Reads its own transmission back; fldigi's 8PSK recordings do not read yet, so it is unproven against other programs
+textmodem-psk-coded = coded
+textmodem-psk-no-code = no code
+textmodem-psk-coded-hint =
+    { $baud } baud, { $n } { $n ->
+            [one] carrier
+           *[other] carriers
+        }, { $code }, { $bw } Hz wide
+textmodem-psk-rx-only = receive only
+textmodem-psk-rx-only-hint = This bank receives — fldigi's recording of it reads — but our own transmission of it does not read back through the same receiver yet, so transmit is refused rather than putting an unproven signal on the air.

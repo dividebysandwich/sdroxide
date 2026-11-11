@@ -636,9 +636,15 @@ impl SdroxideApp {
     /// Mode-specific parameter buttons for the continuous keyboard modes, shown
     /// inline in the panel header next to the tune buttons (moved here from the
     /// setup dialog). Edits the UI-owned config copy and pushes it on change.
-    /// PSK has no parameters, so nothing is drawn.
     fn text_modem_params_row(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let mode = self.state.rx[0].mode;
+        if mode == Mode::Psk {
+            ui.add_space(6.0);
+            if psk_params(ui, &mut self.digi_cfg_edit) {
+                cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
+            }
+            return;
+        }
         if !matches!(
             mode,
             Mode::Rtty
@@ -649,7 +655,7 @@ impl SdroxideApp {
                 | Mode::Mfsk
                 | Mode::DominoEx
         ) {
-            return; // PSK (and anything else) has no per-mode settings
+            return; // anything else has no per-mode settings
         }
         fn cap(ui: &mut egui::Ui, text: &str) {
             ui.label(RichText::new(text).size(10.5).strong().color(crate::theme::CYAN_DIM()));
@@ -881,4 +887,98 @@ impl SdroxideApp {
             }
         });
     }
+}
+
+/// PSK's family, speed and constellation chips, drawn **into the caller's
+/// row**, which is already wrapped, rather than into a row of their own: a
+/// wrapped row nested inside a wrapped row is laid out against what is left of
+/// the outer row's line and paints its later lines over the first. PSK's is the
+/// longest set of chips in the panel. Returns true when the config changed.
+fn psk_params(ui: &mut egui::Ui, cfg: &mut sdroxide_types::DigiConfig) -> bool {
+    use sdroxide_types::{PskCoded, PskFamily, PskModulation, PskSpeed};
+    fn cap(ui: &mut egui::Ui, text: &str) {
+        ui.label(RichText::new(text).size(10.5).strong().color(crate::theme::CYAN_DIM()));
+    }
+    let mut changed = false;
+    // PSK31's family and fldigi's coded ones are different waveforms, so the
+    // family comes first and the variants of the chosen family follow.
+    cap(ui, &tr!("textmodem-psk-family"));
+    for f in PskFamily::ALL {
+        let sel = cfg.psk_coded.family() == f;
+        let hint = match f {
+            PskFamily::Plain => tr!("textmodem-psk-family-plain-hint"),
+            PskFamily::Bpsk63F => tr!("textmodem-psk-family-bpsk63f-hint"),
+            PskFamily::Robust => tr!("textmodem-psk-family-robust-hint"),
+            PskFamily::MultiCarrier => tr!("textmodem-psk-family-multi-hint"),
+            PskFamily::RobustMulti => tr!("textmodem-psk-family-robust-multi-hint"),
+        };
+        if ui.selectable_label(sel, f.label()).on_hover_text(hint).clicked() && !sel {
+            cfg.psk_coded = f.first();
+            changed = true;
+        }
+    }
+    ui.add_space(8.0);
+    if cfg.psk_coded == PskCoded::Off {
+        // Nothing in the signal says which speed it is, so the operator has
+        // to — and a decoder at the wrong one hears nothing at all.
+        cap(ui, &tr!("textmodem-baud"));
+        for sp in PskSpeed::ALL {
+            let sel = cfg.psk_speed == sp;
+            let hint = match sp {
+                PskSpeed::Bps1000 => {
+                    tr!("textmodem-psk-baud-fast-hint", baud = format!("{:.0}", sp.baud()))
+                }
+                _ => tr!("textmodem-psk-baud-hint", baud = format!("{:.1}", sp.baud())),
+            };
+            let chip = sp.label().trim_start_matches("BPSK");
+            if ui.selectable_label(sel, chip).on_hover_text(hint).clicked() && !sel {
+                cfg.psk_speed = sp;
+                changed = true;
+            }
+        }
+        ui.add_space(8.0);
+        for m in PskModulation::ALL {
+            let sel = cfg.psk_modulation == m;
+            let hint = match m {
+                PskModulation::Bpsk => tr!("textmodem-psk-bpsk-hint"),
+                PskModulation::Psk8 => tr!("textmodem-psk-8psk-hint"),
+            };
+            if ui.selectable_label(sel, m.label()).on_hover_text(hint).clicked() && !sel {
+                cfg.psk_modulation = m;
+                changed = true;
+            }
+        }
+    } else {
+        cap(ui, &tr!("textmodem-mode"));
+        for v in PskCoded::in_family(cfg.psk_coded.family()) {
+            let sel = cfg.psk_coded == v;
+            let code =
+                if v.fec() { tr!("textmodem-psk-coded") } else { tr!("textmodem-psk-no-code") };
+            let mut hint = tr!(
+                "textmodem-psk-coded-hint",
+                baud = format!("{:.1}", v.baud()),
+                n = v.carriers(),
+                code = code,
+                bw = format!("{:.0}", v.bandwidth_hz())
+            );
+            if !v.transmits() {
+                hint.push_str("\n\n");
+                hint.push_str(&tr!("textmodem-psk-rx-only-hint"));
+            }
+            if ui.selectable_label(sel, v.label()).on_hover_text(hint).clicked() && !sel {
+                cfg.psk_coded = v;
+                changed = true;
+            }
+        }
+        if !cfg.psk_coded.transmits() {
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(tr!("textmodem-psk-rx-only"))
+                    .size(10.5)
+                    .color(crate::theme::YELLOW()),
+            )
+            .on_hover_text(tr!("textmodem-psk-rx-only-hint"));
+        }
+    }
+    changed
 }

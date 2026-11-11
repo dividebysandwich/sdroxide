@@ -66,7 +66,8 @@ One binary, three ways to run it:
   the two sidebands are two different transmissions, one to each ear), DIGU/DIGL, a
   spectrum-only mode, **FT8/FT4/FT2**, **JS8** (all four speeds, with directed
   messaging, heartbeats and multi-frame free text), the keyboard modes
-  **PSK31**, **RTTY**,
+  **PSK31** (with fldigi's faster speeds, 8PSK and the coded BPSK63F/R/C/RC
+  families), **RTTY**,
   **Olivia**, **THOR**, **DominoEX**, **MT63**, **MFSK** and **FSQ** (with directed messaging + images),
   **WSPR** (transmit and receive, with WSPRnet reporting and optional band
   hopping), receive-only **PI4** (the "Next Generation Beacon" propagation

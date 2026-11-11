@@ -5747,3 +5747,21 @@ textmodem-mfsk-reverse-hint = Ton sırasını ters çevirir. Gönderildiğinin k
 ## Keyboard modes: DominoEX (src/app/panels/text_modem.rs)
 textmodem-domino-hint = { $name } — { $baud } baud, 18 ton, ileri hata düzeltmesiz artımlı frekans anahtarlama
 textmodem-ifk-reverse-hint = Ton adımlarını ters çevirir. IFK+ verisini ardışık tonlar arasındaki adımda taşır; bu yüzden karşı yan bantta alınan bir istasyonun her adımı negatiftir ve bu açılana kadar gürültü gibi okunur.
+
+## Keyboard modes: PSK families (src/app/panels/text_modem.rs)
+textmodem-psk-family = Aile
+textmodem-psk-family-plain-hint = PSK31'in kendi ailesi: tek diferansiyel taşıyıcı, ileri hata düzeltmesi yok
+textmodem-psk-family-bpsk63f-hint = 62,5 baud'da sağlam kod, serpiştirici yok — fldigi'nin serpiştirmesiz gönderdiği tek kodlu mod
+textmodem-psk-family-robust-hint = Sağlam kodlu ve 2x2xN serpiştiricili tek taşıyıcı
+textmodem-psk-family-multi-hint = Birden çok taşıyıcı, PSK31'in varicode'u ve **kodsuz** — daha geniş ve hızlı, temiz sinyal ister
+textmodem-psk-family-robust-multi-hint = Birden çok taşıyıcı **ve** sağlam kod: PSK modlarının en genişi ve en sağlamı
+textmodem-psk-baud-fast-hint = { $baud } baud — yaklaşık bir saniye sonra okur: bu hızda alıcının kilitlenme süresi bir mesajın üçte biridir
+textmodem-psk-baud-hint = { $baud } baud
+textmodem-psk-bpsk-hint = Sembol başına bir bit, diferansiyel olarak algılanır
+textmodem-psk-coded = kodlu
+textmodem-psk-no-code = kodsuz
+textmodem-psk-coded-hint =
+    { $baud } baud, { $n } { $n ->
+            [one] taşıyıcı
+           *[other] taşıyıcı
+        }, { $code }, { $bw } Hz genişlik

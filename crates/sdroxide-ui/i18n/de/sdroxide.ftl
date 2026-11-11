@@ -5832,3 +5832,21 @@ textmodem-mfsk-reverse-hint = Kehrt die Tonreihenfolge um. Eine Station, die auf
 ## Keyboard modes: DominoEX (src/app/panels/text_modem.rs)
 textmodem-domino-hint = { $name } — { $baud } Baud, 18 Töne, inkrementelle Frequenztastung ohne Vorwärtsfehlerkorrektur
 textmodem-ifk-reverse-hint = Kehrt die Tonschritte um. IFK+ trägt seine Daten im Schritt zwischen aufeinanderfolgenden Tönen, eine auf dem entgegengesetzten Seitenband empfangene Station hat daher lauter negative Schritte und wird als Rauschen gelesen, bis dies eingeschaltet ist.
+
+## Keyboard modes: PSK families (src/app/panels/text_modem.rs)
+textmodem-psk-family = Familie
+textmodem-psk-family-plain-hint = Die eigentliche PSK31-Familie: ein differenzieller Träger, keine Vorwärtsfehlerkorrektur
+textmodem-psk-family-bpsk63f-hint = Der robuste Code mit 62,5 Baud, ohne Interleaver — die einzige gecodete Betriebsart, die fldigi ohne einen sendet
+textmodem-psk-family-robust-hint = Ein Träger mit dem robusten Code und einem 2x2xN-Interleaver
+textmodem-psk-family-multi-hint = Mehrere Träger, der Varicode von PSK31 und **kein** Code — breiter und schneller, und es braucht ein sauberes Signal
+textmodem-psk-family-robust-multi-hint = Mehrere Träger **und** der robuste Code: die breiteste und robusteste der PSK-Betriebsarten
+textmodem-psk-baud-fast-hint = { $baud } Baud — wird erst nach etwa einer Sekunde gelesen: Bei dieser Rate beträgt die Einrastzeit des Empfängers ein Drittel einer Nachricht
+textmodem-psk-baud-hint = { $baud } Baud
+textmodem-psk-bpsk-hint = Ein Bit pro Symbol, differenziell detektiert
+textmodem-psk-coded = gecodet
+textmodem-psk-no-code = ohne Code
+textmodem-psk-coded-hint =
+    { $baud } Baud, { $n } { $n ->
+            [one] Träger
+           *[other] Träger
+        }, { $code }, { $bw } Hz breit
