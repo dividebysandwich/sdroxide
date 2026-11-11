@@ -368,6 +368,12 @@ impl Find<'_> {
     }
 }
 
+/// How much of the viewport the manual opens over, each way, centred.
+const HELP_OPEN_FRACTION: f32 = 0.85;
+/// The widest the manual opens: its contents column and a text column a
+/// screenshot fits in.
+const HELP_MAX_W: f32 = 1200.0;
+
 impl Help {
     /// Jump the outline (and content) to a heading slug over the next few frames.
     fn go_to(&mut self, slug: String) {
@@ -671,7 +677,22 @@ impl Help {
         // `Resize` clamps its remembered size into [min, max], and fixed_size
         // sets both to the size we pass. Every frame after this one is
         // resizable again, starting from a full-screen window.
-        let full = ctx.content_rect().shrink(8.0);
+        // Not the whole viewport: a manual over all of it looks like the
+        // program itself, and the close box it is mistaken for is the
+        // program's. Centred, with the program showing round it.
+        // Why: HDZ 2026-11-07: "das Hilfe-Fenster, das Schließfeld war aber
+        //      das Programm als Ganzes".
+        let view = ctx.content_rect();
+        // As tall as most of the viewport, but no wider than a page reads
+        // well: the contents column and a text column with room for the
+        // screenshots, rather than lines that run across a 27" screen.
+        // Why: HDZ 2026-11-07: "passe das Hilfefenster mal besser ein, noch ist
+        //      es schlecht, … zu breit".
+        let size = egui::vec2(
+            (view.width() * HELP_OPEN_FRACTION).min(HELP_MAX_W),
+            view.height() * HELP_OPEN_FRACTION,
+        );
+        let full = egui::Rect::from_center_size(view.center(), size);
         let win = if std::mem::replace(&mut self.shown, true) {
             win.resizable(true)
                 .default_width(crate::layout::window_w(ctx, 940.0))
@@ -2238,15 +2259,16 @@ Nothing to see here.
         assert_eq!(help.hit, 2, "and back off the first to the last");
     }
 
-    /// F1 opens the manual filling the viewport, however small the window was
-    /// left last time — and hands it back resizable.
+    /// F1 opens the manual over 85 % of the viewport's height and at most a
+    /// page's width, centred, however small
+    /// the window was left last time — and hands it back resizable.
     ///
     /// This is the one behaviour here built on an egui internal (`Resize`
     /// clamping its remembered size into the min/max a `fixed_size` window
     /// sets), so it is worth a test that would notice the day that changes and
     /// the manual starts coming back at whatever size it was closed at.
     #[test]
-    fn the_manual_opens_filling_the_viewport() {
+    fn the_manual_opens_over_most_of_the_viewport() {
         // A short manual: this is about the window, and decoding forty
         // screenshots to find that out would be a slow way to ask.
         let doc = Doc::parse("# Manual\n\n## 1. One\n\nText.\n\n## 2. Two\n\nMore text.\n");
@@ -2279,19 +2301,40 @@ Nothing to see here.
         pass(&mut help, 1600.0, 1000.0);
         help.open = true;
         let rect = pass(&mut help, 1600.0, 1000.0);
-        // Within a couple of points of the viewport less its margin: the
+        // Within a couple of points of 85 % of the viewport each way: the
         // window's own frame rounds to the pixel grid.
         assert!(
-            (rect.width() - 1584.0).abs() < 6.0 && (rect.height() - 984.0).abs() < 6.0,
-            "opened at {:?}, wanted the 1600x1000 viewport less its margin",
+            (rect.width() - HELP_MAX_W).abs() < 6.0 && (rect.height() - 850.0).abs() < 6.0,
+            "opened at {:?}, wanted the widest page by 85 % of the 1600x1000 viewport",
             rect.size()
         );
-        assert!(rect.min.x < 12.0 && rect.min.y < 12.0, "and in the corner, not at {:?}", rect.min);
+        // Inside the viewport with the program showing round it. (Reopened on
+        // a bigger screen it keeps the place it had; the first open of a
+        // session is centred, below.)
+        assert!(rect.min.x > 8.0 && rect.min.y > 8.0, "flush with the corner at {:?}", rect.min);
+        assert!(rect.max.x < 1592.0 && rect.max.y < 992.0, "past the edge at {:?}", rect.max);
 
         // The frames after it leave the size alone rather than re-forcing it,
         // so the operator can drag the manual smaller again.
         let again = pass(&mut help, 1600.0, 1000.0);
         assert_eq!(again.size(), rect.size(), "a settled manual keeps its size");
+        // A first open in a fresh session: centred on the viewport.
+        let doc = Doc::parse("# Manual\n\n## 1. One\n\nText.\n");
+        let mut fresh = Help { doc, open: true, ..Help::default() };
+        let ctx2 = egui::Context::default();
+        crate::theme::apply(&ctx2);
+        ctx2.begin_pass(egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1600.0, 1000.0))),
+            ..Default::default()
+        });
+        fresh.ui(&ctx2);
+        ctx2.end_pass().drop_without_applying_deltas();
+        let first = ctx2.memory(|m| m.area_rect(id)).expect("the manual is on screen");
+        assert!(
+            (first.center().x - 800.0).abs() < 6.0 && (first.center().y - 500.0).abs() < 6.0,
+            "a first open is centred, not at {:?}",
+            first.center()
+        );
     }
 
     /// Ctrl+F and F3 are claimed even while the find field owns the keyboard —
