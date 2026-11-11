@@ -2608,7 +2608,7 @@ mod tests {
         let modes = [
             Usb, Cw, Ft8, Ft4, Ft2, Psk, Rtty, RttyFm, Sstv, SstvFm, Olivia, Thor, Fsq, RfPaint, Rade, Hell,
             Rifp, Wefax, Js8, Wspr, Packet, PacketHf, Aprs, Adsb, Navtex, Vdl2, Ais, AtChat, Acars,
-            Hfdl, Pi4, Msk144, Jt65, Jt9, Fst4, Q65, Fsk441, Jtty, VaraHf,
+            Hfdl, Pi4, Msk144, Jt65, Jt9, Fst4, Q65, Fsk441, Jtty, Mercury, Data2g,
         ];
         let mut over = Vec::new();
         let layouts = [LayoutMode::Desktop, LayoutMode::Tablet];
