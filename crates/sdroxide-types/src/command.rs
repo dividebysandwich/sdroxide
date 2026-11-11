@@ -1257,4 +1257,10 @@ pub enum Command {
     },
     /// Mercury / Data2G: empty the panel's transcript. The link is untouched.
     TncTermClear,
+    /// Hum filter on a receiver's listener audio (see `RxState::hum_filter`).
+    /// Appended for the usual reason — postcard numbers variants by position.
+    SetHumFilter {
+        rx: RxId,
+        on: bool,
+    },
 }

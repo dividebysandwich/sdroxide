@@ -8,6 +8,7 @@ mod ctcss;
 mod cw;
 mod ddc;
 mod decim;
+mod hum;
 mod demod;
 mod dfnr;
 mod diversity;
@@ -101,6 +102,7 @@ pub mod navtex_test {
     pub use crate::navtex::{encode_bits, synth};
 }
 pub use acars::{AcarsEvent, AcarsRx, CENTER_HZ as ACARS_CENTER_HZ};
+pub use hum::HumFilter;
 pub use nb::NoiseBlanker;
 pub use nco::Nco;
 pub use nnr::NeuralNr;
