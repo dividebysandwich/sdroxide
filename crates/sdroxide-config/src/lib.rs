@@ -1889,6 +1889,17 @@ pub fn save_wxsat_config(cfg: &sdroxide_types::WxsatSettings) -> Result<(), Conf
     save_json("wxsat.json", cfg)
 }
 
+/// Radiosonde decoder preferences (`sonde.json`): on or off, the channel it
+/// centres on, and whether it scans the window instead. Kept apart from the
+/// live `RadioState.sonde` like the weather-satellite config.
+pub fn load_sonde_config() -> sdroxide_types::SondeSettings {
+    load_json::<sdroxide_types::SondeSettings>("sonde.json").sane()
+}
+
+pub fn save_sonde_config(cfg: &sdroxide_types::SondeSettings) -> Result<(), ConfigError> {
+    save_json("sonde.json", cfg)
+}
+
 pub fn load_vdl2_config() -> sdroxide_types::Vdl2Settings {
     load_json::<sdroxide_types::Vdl2Settings>("vdl2.json").sane()
 }

@@ -21,6 +21,7 @@ mod session;
 mod session_cookie;
 mod signin;
 mod solar;
+mod sonde_online;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -273,6 +274,11 @@ pub(crate) struct Latest {
     /// every three minutes, so a client that attached without the table would
     /// show an empty sea for minutes in front of a working decoder.
     pub ais_status: Option<Box<sdroxide_types::AisStatus>>,
+    /// The radiosonde decoder's level and the sondes heard, with their tracks.
+    /// Replayed on connect like the vessel table: a sonde sends a frame a
+    /// second, but one that has landed or gone out of range sends nothing, and
+    /// a client that attached later would never see where it went.
+    pub sonde_status: Option<Box<sdroxide_types::SondeStatus>>,
     /// What the DRM decoder has made of the broadcast currently tuned. Replayed
     /// on connect for the same reason as `rds`: a station's label and the
     /// transmission's parameters are standing conditions, and a client that
@@ -320,6 +326,9 @@ pub(crate) struct Station {
     /// one at a time by itself (it awaits each one); this is what makes two
     /// sessions do the same.
     edit: Mutex<()>,
+    /// The relay behind `/sonde-online` and `/sonde-track`: SondeHub's list,
+    /// asked once for all clients, and only when a client asks for it.
+    pub(crate) sonde: Arc<sonde_online::SondeRelay>,
 }
 
 impl Station {
@@ -653,6 +662,7 @@ pub async fn serve(params: ServerParams) -> Result<(), ServerError> {
         rename: params.rename_radio,
         power: params.radio_power,
         edit: Mutex::new(()),
+        sonde: Arc::new(sonde_online::SondeRelay::default()),
     });
 
     // The roster the station started with, through the same path a radio added
@@ -693,6 +703,11 @@ pub async fn serve(params: ServerParams) -> Result<(), ServerError> {
         .route("/ws/{id}", get(session::ws_route_for))
         .route("/radios", get(radios_route))
         .route("/solar-ws", get(solar::ws_route))
+        // SondeHub's sondes near a place and one sonde's flight, asked by the
+        // station for its clients (a browser cannot reach SondeHub itself).
+        // Nothing goes out until a client's operator switches the layer on.
+        .route("/sonde-online", get(sonde_online::route))
+        .route("/sonde-track", get(sonde_online::track_route))
         // Where a browser trades its password for a signed cookie, and gives
         // it back. Both are plain HTTP because a cookie is a response header
         // and the socket handshake's headers are spent before the sign-in
@@ -1171,6 +1186,10 @@ fn handle_event(shared: &Shared, ev: RadioEvent) {
             RadioEvent::AisStatus(st) => {
                 latest.ais_status = Some(st.clone());
                 Some(ServerMsg::AisStatus(st))
+            }
+            RadioEvent::SondeStatus(st) => {
+                latest.sonde_status = Some(st.clone());
+                Some(ServerMsg::SondeStatus(st))
             }
             // Native-only for now: every station this shipped for runs its
             // own hardware locally, so there is no `ServerMsg` variant for

@@ -1673,7 +1673,13 @@ use sdroxide_types::{
 /// rows (LRPT) new since the previous one; and `RadioState` gains
 /// `wxsat: WxsatSettings` at its tail, which changes the layout of every state
 /// frame.
-pub const PROTO_VERSION: u16 = 198;
+///
+/// v199: the radiosonde decoder. `Command` gains `SetSondeConfig(SondeSettings)`
+/// last; `ServerMsg` gains `SondeStatus(Box<SondeStatus>)` last, carrying the
+/// level and the sondes heard with their tracks; and `RadioState` gains
+/// `sonde: SondeSettings` at its tail, which changes the layout of every state
+/// frame.
+pub const PROTO_VERSION: u16 = 199;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
@@ -2176,6 +2182,13 @@ pub enum ServerMsg {
     ///
     /// Appended last, for the usual reason.
     WxsatStatus(Box<sdroxide_types::WxsatStatus>),
+
+    /// `RadioEvent::SondeStatus`: the radiosonde decoder's level and the sondes
+    /// it has heard, with their tracks. A whole snapshot each time, kept by the
+    /// station and replayed to a client that attaches late.
+    ///
+    /// Appended last, for the usual reason.
+    SondeStatus(Box<sdroxide_types::SondeStatus>),
 }
 
 /// One radio in a station's roster, as a client sees it.
@@ -2328,6 +2341,55 @@ mod tests {
                     3;
                     sdroxide_types::WXSAT_LRPT_WIDTH * sdroxide_types::WXSAT_LRPT_ROW_LINES
                 ],
+            }],
+        }));
+        assert_eq!(decode::<ServerMsg>(&encode(&st).unwrap()).unwrap(), st);
+
+        // The radiosonde decoder: its settings both ways (set away from the
+        // default, so a field that decoded into its default fails here), and a
+        // status carrying a sonde with its track.
+        let sonde = sdroxide_types::SondeSettings {
+            enabled: true,
+            frequency_hz: 404_500_000.0,
+            scan: true,
+        };
+        let cmd = Command::SetSondeConfig(sonde);
+        assert_eq!(decode::<Command>(&encode(&cmd).unwrap()).unwrap(), cmd);
+        let state = RadioState { sonde, ..Default::default() };
+        let frame = ServerMsg::State(state);
+        assert_eq!(decode::<ServerMsg>(&encode(&frame).unwrap()).unwrap(), frame);
+        assert_ne!(sonde, sdroxide_types::SondeSettings::default());
+        let st = ServerMsg::SondeStatus(Box::new(sdroxide_types::SondeStatus {
+            running: true,
+            level_dbfs: -40.0,
+            frames: 3,
+            sondes: vec![sdroxide_types::SondeTrack {
+                model: "RS41".into(),
+                serial: "N1234567".into(),
+                freq_hz: 403.0e6,
+                frame: 77,
+                lat: Some(48.8),
+                lon: Some(2.3),
+                alt_m: Some(1234.5),
+                speed_ms: Some(5.0),
+                course_deg: Some(90.0),
+                climb_ms: Some(5.2),
+                num_sv: Some(9),
+                battery_v: Some(2.7),
+                temp_c: Some(-12.5),
+                humidity_pct: Some(61.0),
+                pressure_hpa: Some(850.0),
+                last_unix: 1,
+                frames: 3,
+                track: vec![sdroxide_types::SondePoint {
+                    lat: 48.8,
+                    lon: 2.3,
+                    alt_m: 1234.5,
+                    unix: 1,
+                    temp_c: Some(-12.5),
+                    humidity_pct: None,
+                    pressure_hpa: Some(850.0),
+                }],
             }],
         }));
         assert_eq!(decode::<ServerMsg>(&encode(&st).unwrap()).unwrap(), st);

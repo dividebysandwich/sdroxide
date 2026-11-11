@@ -40,6 +40,9 @@ tower = { version = "0.5.3", default-features = false }
 tower-http = { version = "0.7.0", features = ["fs", "set-header"] }
 tracing.workspace = true
 triple_buffer = "9.0.0"
+# The SondeHub relay (`sonde_online.rs`) asks it for the sonde list and a
+# sonde's flight, on a client's request. Also a dev-dependency below.
+ureq = "3.4.0"
 
 [dev-dependencies]
 # Only to POST to /signin in the end-to-end cookie test — the one thing here

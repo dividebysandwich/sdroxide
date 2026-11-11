@@ -601,6 +601,12 @@ pub struct RadioState {
     /// sent separately. Appended last: postcard numbers fields by position.
     #[serde(default)]
     pub wxsat: crate::WxsatSettings,
+    /// The radiosonde decoder: whether it runs, which channel it listens on,
+    /// and whether it scans the window instead. Live status (level, sondes
+    /// heard) is [`crate::SondeStatus`], sent separately. Appended last:
+    /// postcard numbers fields by position.
+    #[serde(default)]
+    pub sonde: crate::SondeSettings,
 }
 
 /// Where a radio's built-in antenna tuner stands, as the radio reports it.
@@ -686,6 +692,7 @@ impl Default for RadioState {
             atu: AtuState::default(),
             playback: None,
             wxsat: crate::WxsatSettings::default(),
+            sonde: crate::SondeSettings::default(),
         }
     }
 }

@@ -138,6 +138,10 @@ or connects to a remote sdroxide server.
 - **ISM band decoder** — reads the unattended 868 MHz traffic around you and
   lists each device with its readings in real units. See
   [ISM band decoder](#5-ism-band-decoder).
+- **Radiosondes** — decodes the weather balloons on 400–406 MHz (Vaisala RS41,
+  Graw DFM, Meteomodem M10/M20, InterMet iMet-4 and iMet-54, Meisei, Lockheed
+  LMS6 and others) and draws each one's flight on a map. See
+  [Radiosondes](#58-radiosondes-400406-mhz).
 - **Zoom out past the I/Q** — on a receiver that publishes a full-band
   spectrum as well as its I/Q (a KiwiSDR, a SpyServer, an RX-888), the main
   panadapter keeps widening past the streamed passband and draws those spans
@@ -7560,6 +7564,72 @@ The `cand` column is the useful one on an undecoded burst. Candidate frames mean
 the right modulation and a frame format this build does not know; no candidates
 at all means a modulation this chain does not handle, which is what LoRa's chirps
 look like.
+
+### 5.8 Radiosondes (400–406 MHz)
+
+The **RADIOSONDES** chip in the ISM window's header opens a window of its own
+for the weather balloons launched twice a day from meteorological stations. Each
+carries a radiosonde that sends its GPS position, and often the air temperature,
+humidity and pressure, on a channel between 400 and 406 MHz. Fourteen kinds are
+decoded: Vaisala **RS41**, Graw **DFM**-06/09/17, Meteomodem **M10** and **M20**,
+InterMet **iMet-4** and **iMet-54**, Meteo-Radiy **MRZ-N1**, Lockheed Martin
+**LMS6-400** and **LMS6-1680** (Mk2a), Meteosis **MTS01**, Meisei **RS-11G** and
+**iMS-100**, Meteolabor **C34/C50**, **Weathex** WxR-301D, and the **CF-06-AH /
+HT03G**. Frames protected by Reed–Solomon (RS41, LMS6-400) are repaired where they
+can be.
+
+Like the weather-satellite decoder it is not a radio mode: it runs off its own
+downconversion of the sample window and the radio keeps its mode, so it needs a
+wideband source (a receiver that sends I/Q) and is off for a rig that only hands
+over audio. **DECODER OFF / DECODING** switches it; **TUNE** switches it on and
+brings the dial to the sonde channel (403.000 MHz at first; change it in the
+*Channel* box, 400–406.1 MHz), so the channel lies inside the sample window. A
+mode that parks the receiver on its own channel (ADS-B, AIS, VDL2, HFDL, APRS) is
+left for NFM, which is what a sonde sounds like. With the decoder on one channel,
+tuning the dial onto a sonde by hand moves the channel with it.
+
+Each sonde heard is drawn on the map with the track it has flown — a ring while
+it climbs, a triangle once it falls under its parachute, a cross when it has been
+silent for a minute (on the ground, or out of range: the cross is where it was
+last heard). A table under the map gives its serial, altitude, climb rate, speed,
+channel, battery, air temperature, humidity and pressure (when the model sends
+them) and when it was last heard. An RS41 gives temperature and humidity only
+after it has sent its calibration table, up to a minute after it is first heard;
+an iMet-4 gives all three at once. Hover a mark for the position and the
+distance from your station.
+
+Click a sonde (on the map or in the table) for its **card**, pinned beside it on
+the map: everything known of it, the distance and bearing from your station, and
+links to its page on SondeHub and radiosondy.info. **Detach** makes the card a
+window of its own; Esc or **Close** closes it. Its frequency is drawn large:
+clicking it sets the decoder on that one channel (the scan off) and tunes the
+radio there, and the line beside it says whether this radio is decoding it.
+
+*Export flight* under the table saves the selected sonde's flight (the newest if
+none is selected) as a **KML** track for Google Earth or a **CSV** table for a
+spreadsheet, with the air temperature, humidity and pressure heard at each point
+(empty when the sonde sent none).
+
+The *Scan* box looks across the whole sample window for sonde carriers instead of
+listening on one channel, and decodes up to four sondes at once, one lane per
+carrier (a lane is dropped two minutes after its carrier goes; what it heard stays
+listed). While nothing is heard the scan also walks the window across the band,
+resting ten seconds on each stretch, so a receiver narrower than the band (a
+2.4 MS/s one sees about 2.4 MHz of its 5.85 MHz) still finds the sondes. The type
+picker beside it lists and draws one kind only; choosing a type starts the scan.
+
+The *Online (SondeHub)* box, **off until you tick it**, also shows the sondes
+other stations have heard within 400 km of you (hollow blue diamonds), and for
+the selected one the flight SondeHub holds. It only reads SondeHub's public API,
+sending your locator rounded to 0.1° (about 11 km) and the radius, or the
+sonde's serial for a flight; nothing is uploaded. It needs the locator set in
+the digital-mode setup. On a remote or web client the station asks SondeHub for
+you (a browser cannot reach it itself), at most once a minute for each place and
+twelve times a minute in all, and keeps the answer in memory only. See
+[PRIVACY.md](../PRIVACY.md).
+
+The decoder's settings are kept in `sonde.json`; the SondeHub box is not saved
+and starts off each time.
 
 ---
 
@@ -16024,6 +16094,7 @@ and not the station's.
 | `vdl2.json` | JSON | VDL2 decoder ([§3.15](#315-vdl2-what-the-aircraft-are-saying)): which of the fourteen channels to listen on, the burst threshold in dB, how much log and how many stations to keep, and how long a silent station stays on the list. Restored at startup, and — like `adsb.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
 | `ais.json` | JSON | AIS decoder ([§3.16](#316-ais-ships-on-162-mhz)): which of the two channels to listen on, the slot threshold in dB, the two timeouts, how many minutes of trail to keep, how far ahead the vectors reach, and the ceiling on the vessel table. Restored at startup, and — like `adsb.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
 | `wxsat.json` | JSON | Weather-satellite decoder ([§2.16.2](#2162-weather-satellites-noaa-apt-and-meteor-lrpt)): whether it runs, which signal (APT or LRPT) and which channel. Restored at startup; a receiver that only hands over audio forces it off without disturbing what you picked. |
+| `sonde.json` | JSON | Radiosonde decoder ([§5.8](#58-radiosondes-400406-mhz)): whether it runs, the channel it listens on, and whether it scans the window instead. Restored at startup; a receiver that only hands over audio forces it off without disturbing what you picked. |
 | `ism.json` | JSON | ISM decoder: whether it runs, which device families it listens for, the burst threshold in dB, and whether the rtl_433 decoders are on, which band they watch and how wide a window they get. Restored at startup, and — like `skimmer.json` — a narrowband (audio-mode) radio forces it off without disturbing what you picked. |
 | `rtl433_flex.conf` | text | Your own ISM decoders, in rtl_433's "flex" syntax ([§5.5](#55-adding-your-own-decoders-flex-specs)). Written with a commented example the first time the ISM decoder runs, and never rewritten afterwards — like `bandplan.json`, it is yours to edit. A specification that does not pass its check is listed in the ISM window and skipped; the rest still load. **RELOAD DECODERS** in the ISM window applies an edit without a restart. |
 | `input.json` | JSON | Control inputs: keyboard bindings, panadapter mouse behaviour, mouse-button bindings, and the MIDI controller mapping. Belongs to the machine running the user interface, not the engine. |

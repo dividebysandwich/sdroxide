@@ -1302,4 +1302,10 @@ pub enum Command {
     /// `wxsat.json`, echoed back in [`crate::RadioState::wxsat`]. Appended last,
     /// for the usual reason.
     SetWxsatConfig(crate::WxsatSettings),
+
+    /// Whether the radiosonde decoder runs, which channel it centres on and
+    /// whether it scans the window for sondes instead. Kept in `sonde.json`,
+    /// echoed back in [`crate::RadioState::sonde`]. Appended last, for the
+    /// usual reason.
+    SetSondeConfig(crate::SondeSettings),
 }

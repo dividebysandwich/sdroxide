@@ -535,6 +535,7 @@ impl RemoteController {
             ServerMsg::AmpStatus(st) => self.pending.push_back(RadioEvent::AmpStatus(st)),
             ServerMsg::Recordings(l) => self.pending.push_back(RadioEvent::Recordings(l)),
             ServerMsg::WxsatStatus(s) => self.pending.push_back(RadioEvent::WxsatStatus(s)),
+            ServerMsg::SondeStatus(s) => self.pending.push_back(RadioEvent::SondeStatus(s)),
             ServerMsg::RadioConfig(c) => {
                 // Adopted only when nothing of ours is waiting to go out. This
                 // message is usually the echo of our own write, but it can

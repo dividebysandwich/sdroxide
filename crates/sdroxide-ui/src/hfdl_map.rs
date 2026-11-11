@@ -138,7 +138,11 @@ impl HfdlMapState {
 }
 
 /// The view to ease toward: every plot, plus us, framed.
-fn target_view(home: Option<(f64, f64)>, pts: &[(f64, f64)], aspect: f64) -> (f64, f64, f64) {
+pub(crate) fn target_view(
+    home: Option<(f64, f64)>,
+    pts: &[(f64, f64)],
+    aspect: f64,
+) -> (f64, f64, f64) {
     let all: Vec<(f64, f64)> = home.into_iter().chain(pts.iter().copied()).collect();
     if all.is_empty() {
         return (20.0, 0.0, 360.0);

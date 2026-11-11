@@ -347,6 +347,9 @@ pub enum RadioEvent {
     /// rows (LRPT) new since the last one. Bridged to remote and web clients as
     /// `ServerMsg::WxsatStatus`.
     WxsatStatus(Box<crate::WxsatStatus>),
+    /// The radiosonde decoder's level and the sondes it has heard, with their
+    /// tracks. Bridged to remote and web clients as `ServerMsg::SondeStatus`.
+    SondeStatus(Box<crate::SondeStatus>),
     /// Everything the VDL Mode 2 decoder has: the message log, the station
     /// table, and what every channel of the plan is doing. A whole snapshot, a
     /// couple of times a second.

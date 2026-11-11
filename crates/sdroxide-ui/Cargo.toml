@@ -86,6 +86,10 @@ remote = ["dep:ewebsock", "dep:sdroxide-proto"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rfd = "0.17.2"
+# SondeHub's sonde list and a sonde's flight (`sonde_online.rs`), asked
+# directly when no station stands in between, and of the station otherwise.
+# Already in the tree through sdroxide-config, at this version.
+ureq = "3.4"
 # TLS for the native remote client, unified with the entry above rather than
 # replacing it: a `wss://` server — one behind a reverse proxy terminating
 # HTTPS, which is how a station on port 443 is usually reached — is refused

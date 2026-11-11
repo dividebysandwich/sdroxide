@@ -45,6 +45,7 @@ sdroxide-qo100 = { path = "../sdroxide-qo100" }
 # in the engine off a dedicated downconversion of the raw IQ.
 sdroxide-hfdl = { path = "../sdroxide-hfdl" }
 sdroxide-wxsat = { path = "../sdroxide-wxsat" }
+sdroxide-sonde = { path = "../sdroxide-sonde" }
 sdroxide-net = { path = "../sdroxide-net" }
 sdroxide-winlink = { path = "../sdroxide-winlink" }
 # Only for `tlesub`: the engine persists the satellite subscriptions and, being
