@@ -860,6 +860,11 @@ impl SdroxideApp {
             // Straight to the clipboard, which is what the button that asked
             // for it promised — from here it goes into a bug report.
             A::Report(_, text) => ctx.copy_text(text),
+            // The public-SDR map's receiver check, filed under its row by the
+            // address it carries back.
+            A::PublicSdrCheck { network, address, result } => {
+                self.public_sdr_check_answered(network, &address, &result)
+            }
             // The far end does not answer device questions. Said once, remembered
             // for the session: the controls that ask grey out with a reason
             // instead of each one having to discover it for itself.
@@ -3934,6 +3939,7 @@ impl SdroxideApp {
                         requests.push(crate::app::RadioTabRequest::Add {
                             station: only.key.clone(),
                             preset: None,
+                            name: None,
                         });
                     }
                 }
@@ -3961,6 +3967,7 @@ impl SdroxideApp {
                                 requests.push(crate::app::RadioTabRequest::Add {
                                     station: t.key.clone(),
                                     preset: None,
+                                    name: None,
                                 });
                                 ui.close();
                             }

@@ -4069,21 +4069,26 @@ fsq-add = Añadir
 
 ## publicsdr (src/app/publicsdr.rs)
 
-publicsdr-tab = + PESTAÑA
-publicsdr-open-receiver-new-radio-own = Abrir este receptor como una radio nueva, en su propia pestaña
-publicsdr-point-radio-receiver-replacing-whatever = Apunta *esta* radio al receptor, sustituyendo la interfaz que tiene ahora — se vuelve a preguntar antes, porque es el trabajo de configurar una radio entera
 publicsdr-not-stated = no indicado
-publicsdr-replace = SUSTITUIR
-publicsdr-point-radio-you-are-receiver = Apunta la radio en que estás a este receptor
-publicsdr-tab-instead = + PESTAÑA EN SU LUGAR
-publicsdr-open-receiver-another-radio-leave = Abre el receptor como otra radio y deja esta en paz
-publicsdr-cancel = CANCELAR
 publicsdr-public-sdrs = SDR PÚBLICOS
 publicsdr-available = DISPONIBLES
 publicsdr-hide-receivers-are-full-ones = Oculta los receptores que están llenos, y aquellos cuyo operador no ha abierto ningún canal a aplicaciones que no sean un navegador
 publicsdr-band = EN BANDA
 publicsdr-only-receivers-cover-current-dial = Solo receptores que cubren la frecuencia actual del dial
 publicsdr-low-bw = BW BAJO
+publicsdr-map-cities = CIUDADES
+publicsdr-map-cities-tip = Ciudades en este mapa, sí o no.
+publicsdr-view-list = LISTA
+publicsdr-view-map = MAPA
+publicsdr-view-map-tip = Los mismos receptores en un mapa mundial. Haz clic en un punto para elegir todos los receptores bajo él.
+publicsdr-map-pick = Haz clic en un punto para elegir los receptores bajo él.
+publicsdr-map-ghost = { $name }: ahora no está en el directorio — visto aquí por última vez el { $seen }
+publicsdr-map-names = NOMBRES
+publicsdr-map-names-tip = Mostrar los nombres de los receptores en el mapa. Desactivado: solo se nombran los elegidos.
+publicsdr-check-online = EN LÍNEA
+publicsdr-check-silent = MUDO
+publicsdr-check-waiting = PROBANDO…
+publicsdr-check-no-answer = Sin respuesta en 20 segundos.
 publicsdr-take-spyserver-low-bandwidth-shape = Toma un SpyServer en su forma de bajo ancho de banda: una ventana I/Q estrecha que sigue al dial más la vista de banda propia del servidor, en lugar de megabits de I/Q de banda ancha. Sin efecto en un KiwiSDR, que solo tiene una forma.
 publicsdr-refresh = ⟳ ACTUALIZAR
 publicsdr-fetch-both-directories-again = Obtener de nuevo ambos directorios
@@ -4093,9 +4098,6 @@ publicsdr-fetching-receiver-lists = Obteniendo las listas de receptores…
 publicsdr-machine-radio-attached-does-not = La máquina a la que está conectada esta radio no responde a preguntas de dispositivos, así que tampoco puede obtener las listas.
 publicsdr-no-match = sin coincidencias
 publicsdr-nothing-matches-try-turning-filter = nada coincide — prueba a volver a activar un chip de filtro
-publicsdr-radio = esta radio
-publicsdr-radio-s-configuration-has-not = La configuración de esta radio aún no ha llegado de la máquina en que está, así que no hay nada que apuntar al receptor — tómalo con + PESTAÑA en su lugar.
-publicsdr-position-not-published-so-nothing = {" "}Su posición no está publicada, así que nada de lo que oiga se informará.
 
 ## hd (src/app/hd.rs)
 
@@ -4310,6 +4312,7 @@ multi-close-radio-s-split-view = Cerrar la vista dividida de esta radio
 multi-open-radio-split-view-own = Abrir esta radio en una vista dividida propia
 multi-already-open-another-split-view = Ya está abierta en otra vista dividida
 multi-show-radio-here = Mostrar esta radio aquí
+multi-show-on-map = Mostrar en el mapa
 multi-add-radio-computer-settings-radio = Añadir una radio en este ordenador (Ajustes → Radio para añadir una en una estación)
 multi-add-radio = Añadir una radio
 multi-asked-station-another-radio = Se ha pedido otra radio a la estación…
@@ -4929,14 +4932,7 @@ publicsdr-antenna =
 publicsdr-receivers-fetched-ago = { $entries } receptores · { $per_net } · obtenidos hace { $age }
 publicsdr-showing-search-narrow = mostrando { $shown } de { $n } — busca para acotar
 publicsdr-match = { $n } coincidencia
-publicsdr-replace-taking-receiver-points-same =
-    ¿Sustituir { $this } por { $entry }?
-
-    { $this2 } está en { $iface }. Tomar este receptor apunta la misma pestaña a { $address }, la renombra «{ $entry2 }» y limita el dial a { $range_label } que publica el receptor — aquí no se transmite nada.
-
-    Los ajustes de { $iface2 } se quedan donde están, y también los rangos indicados para ellos: volver a cambiar la interfaz en Ajustes → Radio devuelve la radio tal como estaba.
-publicsdr-receptions-will-reported = {" "}Las recepciones se informarán desde { $value }.
-publicsdr-pointing-radio = Apuntando esta radio a { $entry }…{ $site }
+publicsdr-map-status = { $shown } en el mapa · { $unplaced } sin posición
 publicsdr-opening-another-radio = Abriendo { $entry } como otra radio…
 
 ## qo100: messages with values (src/app/qo100.rs)
@@ -5265,7 +5261,6 @@ cat-family-rs-hfiq = RS-HFIQ
 cat-family-tr-usdx = (tr)uSDX
 cat-family-rigctld = Hamlib rigctld (red)
 cat-family-flrig = flrig (red)
-publicsdr-its-interface = su interfaz
 
 ## Values from sdroxide-types drawn on chips, menus and lists (src/i18n/labels.rs).
 agc-mode-off = Off

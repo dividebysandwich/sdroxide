@@ -41,6 +41,14 @@ pub struct LocalController {
     routing: AudioRouting,
     /// Where this radio's `radio.json` lives — radio 0 is the legacy root.
     store: sdroxide_config::Store,
+    /// Answers to the probes this controller runs on a thread rather than in
+    /// [`RadioController::probe`] itself, handed out by
+    /// [`RadioController::poll_probe`]. The sender is cloned into each thread.
+    // Why: the map's receiver check (`DeviceProbe::PublicSdrCheck`) is asked
+    //      on a click, up to six at once at three seconds each; answered in
+    //      `probe` it would freeze the window for as long.
+    bg_probe_tx: std::sync::mpsc::Sender<sdroxide_types::ProbeAnswer>,
+    bg_probe_rx: std::sync::mpsc::Receiver<sdroxide_types::ProbeAnswer>,
 }
 
 impl LocalController {
@@ -53,7 +61,10 @@ impl LocalController {
         routing: AudioRouting,
         store: sdroxide_config::Store,
     ) -> Self {
+        let (bg_probe_tx, bg_probe_rx) = std::sync::mpsc::channel();
         LocalController {
+            bg_probe_tx,
+            bg_probe_rx,
             cmd_tx: handles.cmd_tx,
             event_rx: handles.event_rx,
             spectrum: handles.spectrum_out,
@@ -232,7 +243,37 @@ impl RadioController for LocalController {
         // about this machine: the diagnostic report is this radio's session,
         // and on a station with two of a kind the other one's is worse than
         // none.
+        //
+        // The map's receiver check runs on a thread of its own and answers
+        // through `poll_probe`: it waits on the internet, several at a time.
+        // Effect: returns `None` for it, as a remote controller does, which
+        // the UI already treats as "the answer comes later".
+        // Fails: a thread that cannot be spawned answers in place instead.
+        if matches!(req, sdroxide_types::DeviceProbe::PublicSdrCheck { .. }) {
+            // What the thread needs, taken out of `self` before it starts.
+            let tx = self.bg_probe_tx.clone();
+            let id = self.store.radio_id();
+            // A copy for the thread; `req` stays here for the fallback below.
+            let req2 = req.clone();
+            let spawned = std::thread::Builder::new()
+                .name("sdroxide-sdr-check".into())
+                .spawn(move || {
+                    // A send fails only when this controller is gone, and then
+                    // nobody is waiting for the answer.
+                    let _ = tx.send(crate::devices::probe(req2, id));
+                });
+            if spawned.is_ok() {
+                return None;
+            }
+        }
         Some(crate::devices::probe(req, self.store.radio_id()))
+    }
+
+    /// Answers from the probe threads [`RadioController::probe`] started, one
+    /// per call, drained each frame by the UI. Never blocks; `None` when none
+    /// has arrived.
+    fn poll_probe(&mut self) -> Option<sdroxide_types::ProbeAnswer> {
+        self.bg_probe_rx.try_recv().ok()
     }
 
     fn radio_config(&self) -> Option<RadioConfig> {

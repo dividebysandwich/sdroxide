@@ -4066,21 +4066,26 @@ fsq-add = 追加
 
 ## PublicSDR（src/app/publicsdr.rs）
 
-publicsdr-tab = + タブ
-publicsdr-open-receiver-new-radio-own = この受信機を、独自のタブで新しい無線機として開きます
-publicsdr-point-radio-receiver-replacing-whatever = *この* 無線機を、現在どのインターフェースにあっても置き換えて、この受信機に向けます。無線機一台分の設定になるため、もう一度確認します
 publicsdr-not-stated = 記載なし
-publicsdr-replace = 置き換え
-publicsdr-point-radio-you-are-receiver = 今使っている無線機を、この受信機に向けます
-publicsdr-tab-instead = + タブで代わりに
-publicsdr-open-receiver-another-radio-leave = 受信機を別の無線機として開き、この無線機はそのままにします
-publicsdr-cancel = キャンセル
 publicsdr-public-sdrs = 公開 SDR
 publicsdr-available = 利用可能
 publicsdr-hide-receivers-are-full-ones = 満員の受信機と、運用者がブラウザ以外のアプリ向けのチャンネルを開いていない受信機を隠します
 publicsdr-band = 対象バンド
 publicsdr-only-receivers-cover-current-dial = 現在のダイヤル周波数をカバーする受信機だけを表示します
 publicsdr-low-bw = 低帯域
+publicsdr-map-cities = 都市
+publicsdr-map-cities-tip = この地図に都市を表示するかどうか。
+publicsdr-view-list = リスト
+publicsdr-view-map = 地図
+publicsdr-view-map-tip = 同じ受信機を世界地図に表示します。点をクリックすると、その下のすべての受信機を選択します。
+publicsdr-map-pick = 点をクリックすると、その下の受信機を選択します。
+publicsdr-map-ghost = { $name }：現在ディレクトリにありません — 最後にここで見たのは { $seen }
+publicsdr-map-names = 名前
+publicsdr-map-names-tip = 地図に受信機の名前を表示します。オフ：選択した受信機だけに名前を表示します。
+publicsdr-check-online = オンライン
+publicsdr-check-silent = 応答なし
+publicsdr-check-waiting = 確認中…
+publicsdr-check-no-answer = 20 秒以内に応答がありません。
 publicsdr-take-spyserver-low-bandwidth-shape = SpyServer を低帯域の形で受信します。ダイヤルに追従する狭い I/Q 窓と、サーバー自身のバンド表示を使い、広帯域の I/Q の数メガビットは使いません。KiwiSDR には影響しません。KiwiSDR の形はこの 1 つだけです。
 publicsdr-refresh = ⟳ 更新
 publicsdr-fetch-both-directories-again = 両方のディレクトリを再度取得します
@@ -4090,9 +4095,6 @@ publicsdr-fetching-receiver-lists = 受信機の一覧を取得中…
 publicsdr-machine-radio-attached-does-not = この無線機が接続されているマシンはデバイスへの問い合わせに応答しないため、一覧も取得できません。
 publicsdr-no-match = 一致なし
 publicsdr-nothing-matches-try-turning-filter = 一致するものがありません。フィルターのチップを一つ戻してみてください
-publicsdr-radio = この無線機
-publicsdr-radio-s-configuration-has-not = この無線機の構成が、接続しているマシンからまだ届いていないため、受信機に向けるものがありません。代わりに + タブで受け取ってください。
-publicsdr-position-not-published-so-nothing = {" "}その位置は公開されていないため、聞いたものは何も報告されません。
 
 ## HD（src/app/hd.rs）
 
@@ -4308,6 +4310,7 @@ multi-close-radio-s-split-view = この無線機の分割表示を閉じます
 multi-open-radio-split-view-own = この無線機を、独自の分割表示で開きます
 multi-already-open-another-split-view = 別の分割表示ですでに開いています
 multi-show-radio-here = この無線機をここに表示
+multi-show-on-map = 地図に表示
 multi-add-radio-computer-settings-radio = このコンピューターに無線機を追加します（ステーションに追加するには 設定 → 無線機）
 multi-add-radio = 無線機を追加
 multi-asked-station-another-radio = ステーションに別の無線機を依頼しました…
@@ -4904,14 +4907,7 @@ publicsdr-antenna =
 publicsdr-receivers-fetched-ago = 受信機 { $entries } 件 · { $per_net } · 取得 { $age } 前
 publicsdr-showing-search-narrow = { $n } 件中 { $shown } 件を表示中 — 検索で絞り込めます
 publicsdr-match = { $n } 件一致
-publicsdr-replace-taking-receiver-points-same =
-    { $this } を { $entry } に置き換えますか？
-
-    { $this2 } は { $iface } にあります。この受信機を選ぶと、同じタブが代わりに { $address } に向けられ、「{ $entry2 }」と名前が変わり、ダイヤルは受信機が公表している { $range_label } に保持されます。ここでは何も送信されません。
-
-    { $iface2 } の設定はそのまま残り、それに記載された範囲もそのままです。設定 → 無線機でインターフェースを戻すと、無線機は元どおりになります。
-publicsdr-receptions-will-reported = {" "}受信は { $value } から報告されます。
-publicsdr-pointing-radio = この無線機を { $entry } に向けています…{ $site }
+publicsdr-map-status = 地図上 { $shown } · 位置なし { $unplaced }
 publicsdr-opening-another-radio = { $entry } を別の無線機として開いています…
 
 ## QO-100：値を含むメッセージ（src/app/qo100.rs）
@@ -5226,7 +5222,6 @@ cat-family-rs-hfiq = RS-HFIQ
 cat-family-tr-usdx = (tr)uSDX
 cat-family-rigctld = Hamlib rigctld（ネットワーク）
 cat-family-flrig = flrig（ネットワーク）
-publicsdr-its-interface = そのインターフェース
 
 ## sdroxide-types の値。チップ、メニュー、一覧に描かれるものです（src/i18n/labels.rs）。
 agc-mode-off = オフ

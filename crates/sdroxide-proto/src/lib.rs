@@ -1648,7 +1648,13 @@ use sdroxide_types::{
 /// `ServerMsg` gains `WavelogProbe` (the station locations and any untrusted
 /// certificate), appended, so a v193 peer has no variant to decode it into. The
 /// v184 note saying the probe has no `ServerMsg` is superseded by this.
-pub const PROTO_VERSION: u16 = 194;
+///
+/// v195: the public-SDR map's receiver check.
+/// [`sdroxide_types::DeviceProbe`] gains `PublicSdrCheck { network, address }`
+/// and [`sdroxide_types::ProbeAnswer`] gains `PublicSdrCheck`, which carries
+/// the address back so several checks in flight each find their row. Both
+/// appended last; a v194 peer has no name for either.
+pub const PROTO_VERSION: u16 = 195;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

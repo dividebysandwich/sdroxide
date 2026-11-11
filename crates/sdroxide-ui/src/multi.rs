@@ -132,6 +132,9 @@ enum StripAction {
         on: bool,
     },
     Add,
+    /// A click on the name of the radio a pane shows, where that radio is a
+    /// public receiver: Public SDRs opens on the map, at that receiver.
+    ShowOnMap(u32),
 }
 
 pub struct MultiApp {
@@ -516,7 +519,28 @@ impl MultiApp {
                         self.tabs[i].app.open_radio_settings();
                     }
                 }
-                RadioTabRequest::Add { station, preset } => self.add_radio(&station, preset, ctx),
+                // Added exactly as before, then named: the radio that was not
+                // here a moment ago is the one this request made.
+                // Why: HDZ 2026-11-04: "dabei wäre … der Sendername aus dem
+                //      Katalog zu übernehmen". Naming after the fact keeps
+                //      `add_radio`/`add_tab` and the strip's own "+" as they
+                //      are, so this works with the original tab strip and with
+                //      Panel Exchange alike ("es sollte ein Fallback-Verhalten
+                //      auf die Ausgangsversion geben").
+                // Pitfall: a radio added at a station is not here yet — it
+                //          arrives when the station announces it, and is named
+                //          there — so only this machine's radios get the name.
+                RadioTabRequest::Add { station, preset, name } => {
+                    let before: Vec<u32> = self.tabs.iter().map(|t| t.id).collect();
+                    let here = station.is_empty();
+                    self.add_radio(&station, preset, ctx);
+                    if let Some(name) = name.filter(|n| here && !n.is_empty()) {
+                        let new = self.tabs.iter().map(|t| t.id).find(|id| !before.contains(id));
+                        if let Some(id) = new {
+                            self.rename_tab(id, &name);
+                        }
+                    }
+                }
                 #[cfg(not(target_arch = "wasm32"))]
                 RadioTabRequest::Connect { url, name } => self.connect_tab(&url, name, ctx),
                 RadioTabRequest::Close(id) => {
@@ -535,34 +559,43 @@ impl MultiApp {
                         t.app.reopen_source();
                     }
                 }
-                RadioTabRequest::Rename { id, name } => {
-                    if let Some(t) = self.tabs.iter_mut().find(|t| t.id == id) {
-                        t.name = name.clone();
-                        // A radio at the far end of a connection is named in
-                        // the roster where it lives, so the name goes there —
-                        // otherwise it would last exactly as long as this
-                        // connection, and nobody else on that station would
-                        // ever see it. A station that does not take roster
-                        // edits keeps the name here and nowhere else, which is
-                        // what it has always done.
-                        if t.remote {
-                            if t.app.station_roster_editable() {
-                                let station_id = t.app.station_radio_id();
-                                t.app.rename_station_radio(station_id, &name);
-                            }
-                            continue;
-                        }
-                        // In the browser there is no roster to record it in at
-                        // all: every tab there is somebody else's radio.
-                        #[cfg(not(target_arch = "wasm32"))]
-                        if let Err(e) = sdroxide_config::rename_radio(id, &name) {
-                            eprintln!("sdroxide: renaming radio {id}: {e}");
-                        }
-                    }
-                }
+                RadioTabRequest::Rename { id, name } => self.rename_tab(id, &name),
                 RadioTabRequest::RemoveFromStation(id) => self.remove_at_station(id),
                 RadioTabRequest::Reorder(ids) => self.reorder_tabs(&ids),
             }
+        }
+    }
+
+    /// Give radio `id` the name `name`, here and where the radio is kept.
+    ///
+    /// In: the tab id and the new name. Effect: the tab shows it at once; a
+    /// radio of this machine has it written to the roster on disk, a radio at
+    /// a station has it sent to that station's roster where the station takes
+    /// edits. Fails: a roster that cannot be written is reported on stderr and
+    /// the name lasts for this session.
+    // Why: one routine for the RENAME request and for a radio added from
+    //      "Public SDRs" with its directory name (`RadioTabRequest::Add`), so the second is
+    //      stored exactly like the first.
+    fn rename_tab(&mut self, id: u32, name: &str) {
+        let Some(t) = self.tabs.iter_mut().find(|t| t.id == id) else { return };
+        t.name = name.to_string();
+        // A radio at the far end of a connection is named in the roster where
+        // it lives, so the name goes there — otherwise it would last exactly as
+        // long as this connection, and nobody else on that station would ever
+        // see it. A station that does not take roster edits keeps the name
+        // here and nowhere else, which is what it has always done.
+        if t.remote {
+            if t.app.station_roster_editable() {
+                let station_id = t.app.station_radio_id();
+                t.app.rename_station_radio(station_id, name);
+            }
+            return;
+        }
+        // In the browser there is no roster to record it in at all: every tab
+        // there is somebody else's radio.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Err(e) = sdroxide_config::rename_radio(id, name) {
+            eprintln!("sdroxide: renaming radio {id}: {e}");
         }
     }
 
@@ -582,6 +615,11 @@ impl MultiApp {
                     }
                 }
                 StripAction::Power { id, on } => self.set_power(id, on),
+                StripAction::ShowOnMap(id) => {
+                    if let Some(t) = self.tabs.iter_mut().find(|t| t.id == id) {
+                        t.app.show_self_on_public_map();
+                    }
+                }
                 // The main window's strip only ever offers this machine's own
                 // roster — it is drawn on every pane and a menu there would be
                 // in the way. Adding a radio at a station is one screen away,
@@ -682,7 +720,32 @@ impl MultiApp {
                     if !tab.enabled {
                         label = label.weak();
                     }
-                    ui.label(label);
+                    // The name of the radio this pane shows is a link to the
+                    // map, where that radio is a public receiver: underlined
+                    // while the pointer is on it, as a link reads. Anywhere
+                    // else a click on the tab is what it always was.
+                    // Why: HDZ 2026-11-04: "wenn du linken kannst, kannst du den
+                    //      Link auch ohne Symbol an den Namen heften"; only on
+                    //      the tab already shown, because a click on any other
+                    //      tab shows that radio.
+                    if here && tab.app.on_public_sdr() {
+                        let name = ui.add(egui::Label::new(label).sense(egui::Sense::click()));
+                        let name = if name.hovered() {
+                            ui.painter().hline(
+                                name.rect.x_range(),
+                                name.rect.bottom() - 1.0,
+                                egui::Stroke::new(1.0, crate::theme::CYAN()),
+                            );
+                            name.on_hover_cursor(egui::CursorIcon::PointingHand)
+                        } else {
+                            name
+                        };
+                        if name.on_hover_text(tr!("multi-show-on-map")).clicked() {
+                            actions.push(StripAction::ShowOnMap(id));
+                        }
+                    } else {
+                        ui.label(label);
+                    }
                     // On the air: the one thing worth seeing from any tab.
                     if tab.app.tab_tx_on() {
                         ui.label(

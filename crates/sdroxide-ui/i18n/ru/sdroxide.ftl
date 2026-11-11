@@ -4094,21 +4094,26 @@ fsq-add = Добавить
 
 ## PublicSDR (src/app/publicsdr.rs)
 
-publicsdr-tab = + ВКЛАДКА
-publicsdr-open-receiver-new-radio-own = Открыть этот приёмник как новое радио, на собственной вкладке
-publicsdr-point-radio-receiver-replacing-whatever = Направить *это* радио на приёмник, заменив интерфейс, на котором оно сейчас, — спрашивается ещё раз, потому что это настройка целого радио
 publicsdr-not-stated = не указано
-publicsdr-replace = ЗАМЕНИТЬ
-publicsdr-point-radio-you-are-receiver = Направить радио, на котором вы сидите, на этот приёмник
-publicsdr-tab-instead = + ВКЛАДКА ВМЕСТО ЭТОГО
-publicsdr-open-receiver-another-radio-leave = Открыть приёмник как другое радио и не трогать это
-publicsdr-cancel = ОТМЕНА
 publicsdr-public-sdrs = ПУБЛИЧНЫЕ SDR
 publicsdr-available = ДОСТУПНО
 publicsdr-hide-receivers-are-full-ones = Скрыть приёмники, которые заняты, и те, чей оператор не открыл никаких каналов для приложений, кроме браузера
 publicsdr-band = В ДИАПАЗОНЕ
 publicsdr-only-receivers-cover-current-dial = Только приёмники, которые покрывают текущую частоту шкалы
 publicsdr-low-bw = НИЗКАЯ ПОЛОСА
+publicsdr-map-cities = ГОРОДА
+publicsdr-map-cities-tip = Города на этой карте: показать или скрыть.
+publicsdr-view-list = СПИСОК
+publicsdr-view-map = КАРТА
+publicsdr-view-map-tip = Те же приёмники на карте мира. Щелчок по точке выбирает все приёмники под ней.
+publicsdr-map-pick = Щёлкните по точке, чтобы выбрать приёмники под ней.
+publicsdr-map-ghost = { $name }: сейчас нет в каталоге — последний раз здесь { $seen }
+publicsdr-map-names = ИМЕНА
+publicsdr-map-names-tip = Показывать названия приёмников на карте. Выкл.: подписаны только выбранные.
+publicsdr-check-online = В СЕТИ
+publicsdr-check-silent = МОЛЧИТ
+publicsdr-check-waiting = ПРОВЕРКА…
+publicsdr-check-no-answer = Нет ответа в течение 20 секунд.
 publicsdr-take-spyserver-low-bandwidth-shape = Брать SpyServer в его форме низкой полосы: узкое окно I/Q, которое следует за шкалой, плюс собственный вид диапазона сервера, вместо мегабит широкополосного I/Q. На KiwiSDR это ничего не меняет — у него только одна форма.
 publicsdr-refresh = ⟳ ОБНОВИТЬ
 publicsdr-fetch-both-directories-again = Загрузить оба каталога заново
@@ -4118,9 +4123,6 @@ publicsdr-fetching-receiver-lists = Загрузка списков приёмн
 publicsdr-machine-radio-attached-does-not = Машина, к которой подключено это радио, не отвечает на вопросы об устройствах, поэтому она тоже не может загрузить списки.
 publicsdr-no-match = совпадений нет
 publicsdr-nothing-matches-try-turning-filter = ничто не совпадает — попробуйте снова включить один из фильтров
-publicsdr-radio = это радио
-publicsdr-radio-s-configuration-has-not = Конфигурация этого радио ещё не пришла с машины, к которой оно подключено, поэтому направлять на приёмник нечего — возьмите его через + ВКЛАДКА.
-publicsdr-position-not-published-so-nothing = {" "}Его позиция не опубликована, поэтому ничего из того, что оно слышит, не будет сообщено.
 
 ## HD (src/app/hd.rs)
 
@@ -4335,6 +4337,7 @@ multi-close-radio-s-split-view = Закрыть разделённый вид э
 multi-open-radio-split-view-own = Открыть это радио в собственном разделённом виде
 multi-already-open-another-split-view = Уже открыто в другом разделённом виде
 multi-show-radio-here = Показать это радио здесь
+multi-show-on-map = Показать на карте
 multi-add-radio-computer-settings-radio = Добавить радио на этом компьютере (чтобы добавить его на станции, используйте Настройки → Радио)
 multi-add-radio = Добавить радио
 multi-asked-station-another-radio = Запрошено у станции другое радио…
@@ -4952,14 +4955,7 @@ publicsdr-antenna =
 publicsdr-receivers-fetched-ago = приёмников: { $entries } · { $per_net } · загружено { $age } назад
 publicsdr-showing-search-narrow = показано { $shown } из { $n } — поиском сузьте список
 publicsdr-match = совпадений: { $n }
-publicsdr-replace-taking-receiver-points-same =
-    Заменить { $this } на { $entry }?
-
-    { $this2 } работает на { $iface }. Взяв этот приёмник, та же вкладка направляется на { $address }, переименовывается в «{ $entry2 }» и удерживает шкалу в пределах { $range_label}, которые публикует приёмник, — ничего здесь не передаётся.
-
-    Настройки интерфейса { $iface2 } остаются на месте, как и диапазоны, заданные для них: возврат интерфейса в Настройки → Радио возвращает радио как было.
-publicsdr-receptions-will-reported = {" "}Приёмы будут сообщаться из { $value }.
-publicsdr-pointing-radio = Направляю это радио на { $entry }…{ $site }
+publicsdr-map-status = на карте: { $shown } · без координат: { $unplaced }
 publicsdr-opening-another-radio = Открываю { $entry } как другое радио…
 
 ## qo100: сообщения со значениями (src/app/qo100.rs)
@@ -5277,7 +5273,6 @@ cat-family-rs-hfiq = RS-HFIQ
 cat-family-tr-usdx = (tr)uSDX
 cat-family-rigctld = Hamlib rigctld (сеть)
 cat-family-flrig = flrig (сеть)
-publicsdr-its-interface = его интерфейс
 
 ## Значения из sdroxide-types, нарисованные на чипах, меню и списках (src/i18n/labels.rs).
 agc-mode-off = Выкл.

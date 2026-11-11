@@ -374,8 +374,24 @@ pub(crate) fn draw_base(
     lat_span: f64,
     map: &theme::MapPalette,
 ) -> f32 {
+    draw_base_cities(p, rect, clat, clon, lon_span, lat_span, map, theme::map_cities())
+}
+
+/// [`draw_base`] for a map with a cities switch of its own: `cities` instead
+/// of the shared setting.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_base_cities(
+    p: &eframe::egui::Painter,
+    rect: eframe::egui::Rect,
+    clat: f64,
+    clon: f64,
+    lon_span: f64,
+    lat_span: f64,
+    map: &theme::MapPalette,
+    cities: bool,
+) -> f32 {
     let dot_r = draw_ground(p, rect, clat, clon, lon_span, lat_span, map);
-    if theme::map_cities() {
+    if cities {
         draw_cities(p, rect, clat, clon, lon_span, lat_span, dot_r, map);
     }
     dot_r

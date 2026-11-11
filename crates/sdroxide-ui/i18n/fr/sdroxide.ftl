@@ -4086,21 +4086,26 @@ fsq-add = Ajouter
 
 ## publicsdr (src/app/publicsdr.rs)
 
-publicsdr-tab = + ONGLET
-publicsdr-open-receiver-new-radio-own = Ouvrir ce récepteur comme une nouvelle radio, dans son propre onglet
-publicsdr-point-radio-receiver-replacing-whatever = Diriger *cette* radio vers le récepteur, en remplaçant l'interface sur laquelle elle se trouve actuellement — demandé à nouveau d'abord, car c'est une configuration complète de radio
 publicsdr-not-stated = non indiqué
-publicsdr-replace = REMPLACER
-publicsdr-point-radio-you-are-receiver = Diriger la radio sur laquelle vous êtes vers ce récepteur
-publicsdr-tab-instead = + ONGLET À LA PLACE
-publicsdr-open-receiver-another-radio-leave = Ouvrir le récepteur comme une autre radio et laisser celle-ci tranquille
-publicsdr-cancel = ANNULER
 publicsdr-public-sdrs = SDR PUBLICS
 publicsdr-available = DISPONIBLES
 publicsdr-hide-receivers-are-full-ones = Masquer les récepteurs complets, et ceux dont l'opérateur n'a ouvert aucun canal à des applications autres qu'un navigateur
 publicsdr-band = DANS LA BANDE
 publicsdr-only-receivers-cover-current-dial = Seulement les récepteurs qui couvrent la fréquence actuelle du cadran
 publicsdr-low-bw = FAIBLE DÉBIT
+publicsdr-map-cities = VILLES
+publicsdr-map-cities-tip = Villes sur cette carte, oui ou non.
+publicsdr-view-list = LISTE
+publicsdr-view-map = CARTE
+publicsdr-view-map-tip = Les mêmes récepteurs sur une carte du monde. Cliquez sur un point pour choisir tous les récepteurs dessous.
+publicsdr-map-pick = Cliquez sur un point pour choisir les récepteurs dessous.
+publicsdr-map-ghost = { $name } : absent de l'annuaire pour l'instant — vu ici pour la dernière fois le { $seen }
+publicsdr-map-names = NOMS
+publicsdr-map-names-tip = Afficher les noms des récepteurs sur la carte. Désactivé : seuls les récepteurs choisis sont nommés.
+publicsdr-check-online = EN LIGNE
+publicsdr-check-silent = MUET
+publicsdr-check-waiting = TEST…
+publicsdr-check-no-answer = Aucune réponse en 20 secondes.
 publicsdr-take-spyserver-low-bandwidth-shape = Prendre un SpyServer dans sa forme à faible débit : une fenêtre I/Q étroite qui suit le cadran, plus la vue de bande propre au serveur, au lieu de mégabits d'I/Q large bande. Sans effet sur un KiwiSDR, qui n'a que cette forme.
 publicsdr-refresh = ⟳ ACTUALISER
 publicsdr-fetch-both-directories-again = Récupérer à nouveau les deux annuaires
@@ -4110,9 +4115,6 @@ publicsdr-fetching-receiver-lists = Récupération des listes de récepteurs…
 publicsdr-machine-radio-attached-does-not = La machine à laquelle cette radio est reliée ne répond pas aux questions sur les périphériques, donc elle ne peut pas récupérer les listes non plus.
 publicsdr-no-match = aucune correspondance
 publicsdr-nothing-matches-try-turning-filter = rien ne correspond — essayez de réactiver une puce de filtre
-publicsdr-radio = cette radio
-publicsdr-radio-s-configuration-has-not = La configuration de cette radio n'est pas encore arrivée depuis la machine où elle se trouve, donc il n'y a rien à diriger vers le récepteur — prenez-le avec + ONGLET à la place.
-publicsdr-position-not-published-so-nothing = {" "}Sa position n'est pas publiée, donc rien de ce qu'elle entend ne sera transmis.
 
 ## hd (src/app/hd.rs)
 
@@ -4328,6 +4330,7 @@ multi-close-radio-s-split-view = Fermer la vue scindée de cette radio
 multi-open-radio-split-view-own = Ouvrir cette radio dans une vue scindée à part
 multi-already-open-another-split-view = Déjà ouverte dans une autre vue scindée
 multi-show-radio-here = Afficher cette radio ici
+multi-show-on-map = Afficher sur la carte
 multi-add-radio-computer-settings-radio = Ajouter une radio sur cet ordinateur (Réglages → Radio pour en ajouter une sur une station)
 multi-add-radio = Ajouter une radio
 multi-asked-station-another-radio = Demande à la station une autre radio…
@@ -4948,14 +4951,7 @@ publicsdr-antenna =
 publicsdr-receivers-fetched-ago = { $entries } récepteurs · { $per_net } · récupéré il y a { $age }
 publicsdr-showing-search-narrow = affichage de { $shown } sur { $n } — recherchez pour affiner
 publicsdr-match = { $n } correspondance
-publicsdr-replace-taking-receiver-points-same =
-    Remplacer { $this } par { $entry } ?
-
-    { $this2 } est sur { $iface }. Prendre ce récepteur fait pointer le même onglet sur { $address } à la place, le renomme « { $entry2 } », et maintient le cadran sur la { $range_label } que publie le récepteur — rien ici n'émet.
-
-    Les réglages de { $iface2 } restent en place, ainsi que les plages qui leur sont attribuées : repasser l'interface dans Réglages → Radio rétablit la radio comme elle était.
-publicsdr-receptions-will-reported = {" "}Les réceptions seront transmises depuis { $value }.
-publicsdr-pointing-radio = Diriger cette radio vers { $entry }…{ $site }
+publicsdr-map-status = { $shown } sur la carte · { $unplaced } sans position
 publicsdr-opening-another-radio = Ouverture de { $entry } comme une autre radio…
 
 ## qo100: messages with values (src/app/qo100.rs)
@@ -5281,7 +5277,6 @@ cat-family-rs-hfiq = RS-HFIQ
 cat-family-tr-usdx = (tr)uSDX
 cat-family-rigctld = Hamlib rigctld (réseau)
 cat-family-flrig = flrig (réseau)
-publicsdr-its-interface = son interface
 
 ## Values from sdroxide-types drawn on chips, menus and lists (src/i18n/labels.rs).
 agc-mode-off = Arrêt

@@ -23,7 +23,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AirspyDevice, AirspyHfDevice, EladDevice, FobosDevice, HackRfDevice, HpsdrDevice,
-    HydraSdrDevice, IcomNetConfig, LimeDevice, PlutoDevice, PublicSdrDirectory, RtlSdrDevice,
+    HydraSdrDevice, IcomNetConfig, LimeDevice, PlutoDevice, PublicSdrDirectory, PublicSdrNetwork,
+    RtlSdrDevice,
     Rx888Device, SdrPlayDevice, SmartSdrDevice, SoapyDeviceInfo,
 };
 
@@ -130,6 +131,20 @@ pub enum DeviceProbe {
     /// usual reason: appending is what leaves every surviving discriminant
     /// where a peer already expects it.
     Fobos,
+    /// Whether one receiver from the public-SDR directories answers right now:
+    /// the map's quick check of a receiver a click picked.
+    ///
+    /// `address` is the endpoint, `host:port`, and comes back in the answer, so
+    /// several checks in flight at once each find their row. Same costs as the
+    /// settings' "Test connection" for that network ([`ProbeTest::Kiwi`] reads
+    /// `/status` and takes no channel, [`ProbeTest::SpyServer`] says hello and
+    /// hangs up); an sdr-list receiver, which nothing here speaks to yet, gets
+    /// a TCP connect. Appended last, for the usual reason.
+    // Why: HDZ 2026-11-04: "wenn man jetzt einen Server anklickt, wäre ein
+    //      basic Check nach 500 ms ein Connection-Test … ein Feld für
+    //      online/silent". `Test` answers by kind only, into the one slot the
+    //      settings dialog shows, so it cannot carry six receivers at once.
+    PublicSdrCheck { network: PublicSdrNetwork, address: String },
 }
 
 /// A connection test: open, ask what is there, and hang up again.
@@ -253,4 +268,7 @@ pub enum ProbeAnswer {
     /// The Fobos SDRs that machine can see. After `Relays` for the same
     /// reason [`DeviceProbe::Fobos`] is.
     Fobos(Vec<FobosDevice>),
+    /// The answer to [`DeviceProbe::PublicSdrCheck`]: the receiver asked about,
+    /// and `Ok` with what answered or `Err` with why nothing did.
+    PublicSdrCheck { network: PublicSdrNetwork, address: String, result: Result<String, String> },
 }

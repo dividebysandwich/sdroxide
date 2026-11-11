@@ -4085,21 +4085,26 @@ fsq-add = Ekle
 
 ## publicsdr (src/app/publicsdr.rs)
 
-publicsdr-tab = + SEKME
-publicsdr-open-receiver-new-radio-own = Bu alıcıyı kendi sekmesinde yeni bir radyo olarak açın
-publicsdr-point-radio-receiver-replacing-whatever = *Bu* radyoyu, şu an hangi arabirimde olursa olsun alıcıya yöneltin — bu bir radyonun tüm kurulumu olduğu için önce yeniden sorulur
 publicsdr-not-stated = belirtilmemiş
-publicsdr-replace = DEĞİŞTİR
-publicsdr-point-radio-you-are-receiver = Bulunduğunuz radyoyu bu alıcıya yöneltin
-publicsdr-tab-instead = + SEKME YERİNE
-publicsdr-open-receiver-another-radio-leave = Alıcıyı başka bir radyo olarak açın ve bunu olduğu gibi bırakın
-publicsdr-cancel = İPTAL
 publicsdr-public-sdrs = GENEL SDR'LER
 publicsdr-available = KULLANILABİLİR
 publicsdr-hide-receivers-are-full-ones = Dolu olan alıcıları ve operatörü tarayıcı dışındaki uygulamalara hiç kanal açmamış olanları gizleyin
 publicsdr-band = BANTTA
 publicsdr-only-receivers-cover-current-dial = Yalnızca geçerli skala frekansını kapsayan alıcılar
 publicsdr-low-bw = DÜŞÜK BW
+publicsdr-map-cities = ŞEHİRLER
+publicsdr-map-cities-tip = Bu haritada şehirler, açık veya kapalı.
+publicsdr-view-list = LİSTE
+publicsdr-view-map = HARİTA
+publicsdr-view-map-tip = Aynı alıcılar bir dünya haritasında. Bir noktaya tıklamak altındaki tüm alıcıları seçer.
+publicsdr-map-pick = Altındaki alıcıları seçmek için bir noktaya tıklayın.
+publicsdr-map-ghost = { $name }: şu an dizinde yok — burada en son { $seen } tarihinde görüldü
+publicsdr-map-names = ADLAR
+publicsdr-map-names-tip = Alıcıların adlarını haritada göster. Kapalı: yalnızca seçilenlerin adı yazılır.
+publicsdr-check-online = ÇEVRİMİÇİ
+publicsdr-check-silent = SESSİZ
+publicsdr-check-waiting = DENENİYOR…
+publicsdr-check-no-answer = 20 saniye içinde yanıt yok.
 publicsdr-take-spyserver-low-bandwidth-shape = Bir SpyServer'ı düşük bant genişliği biçiminde alın: skalayı izleyen dar bir I/Q penceresi artı sunucunun kendi bant görünümü; megabit genişbant I/Q yerine. Yalnızca bir biçimi olan bir KiwiSDR'ı etkilemez.
 publicsdr-refresh = ⟳ YENİLE
 publicsdr-fetch-both-directories-again = İki dizini yeniden alın
@@ -4109,9 +4114,6 @@ publicsdr-fetching-receiver-lists = Alıcı listeleri alınıyor…
 publicsdr-machine-radio-attached-does-not = Bu radyonun bağlı olduğu makine aygıt sorularını yanıtlamıyor, bu yüzden listeleri de alamaz.
 publicsdr-no-match = eşleşme yok
 publicsdr-nothing-matches-try-turning-filter = Hiçbir şey eşleşmiyor — bir filtre çipini yeniden açmayı deneyin
-publicsdr-radio = bu radyo
-publicsdr-radio-s-configuration-has-not = Bu radyonun yapılandırması, bulunduğu makineden henüz gelmedi; bu yüzden alıcıya yöneltilecek bir şey yok — bunun yerine + SEKME ile alın.
-publicsdr-position-not-published-so-nothing = {" "}Konumu yayımlanmıyor, bu yüzden duyduğu hiçbir şey bildirilmeyecek.
 
 ## hd (src/app/hd.rs)
 
@@ -4326,6 +4328,7 @@ multi-close-radio-s-split-view = Bu radyonun bölünmüş görünümünü kapat
 multi-open-radio-split-view-own = Bu radyoyu kendi bölünmüş görünümünde açın
 multi-already-open-another-split-view = Zaten başka bir bölünmüş görünümde açık
 multi-show-radio-here = Bu radyoyu burada göster
+multi-show-on-map = Haritada göster
 multi-add-radio-computer-settings-radio = Bu bilgisayarda bir radyo ekleyin (bir istasyonda eklemek için Ayarlar → Radyo)
 multi-add-radio = Bir radyo ekle
 multi-asked-station-another-radio = İstasyondan başka bir radyo istendi…
@@ -4940,14 +4943,7 @@ publicsdr-antenna =
 publicsdr-receivers-fetched-ago = { $entries } alıcı · { $per_net } · { $age } önce alındı
 publicsdr-showing-search-narrow = { $n } içinden { $shown } gösteriliyor — daraltmak için arayın
 publicsdr-match = { $n } eşleşme
-publicsdr-replace-taking-receiver-points-same =
-    { $this } yerine { $entry } koyulsun mu?
-
-    { $this2 }, { $iface } üzerinde. Bu alıcıyı almak, aynı sekmeyi bunun yerine { $address } adresine yöneltir, onu “{ $entry2 }” olarak yeniden adlandırır ve skalayı alıcının yayımladığı { $range_label } aralığında tutar — burada hiçbir şey yayın yapmaz.
-
-    { $iface2 } ayarları olduğu yerde kalır; onlar için belirtilen aralıklar da öyle: arayüzü Ayarlar → Radyo'da geri değiştirmek, radyoyu eski haline döndürür.
-publicsdr-receptions-will-reported = {" "}Alımlar { $value } konumundan bildirilecek.
-publicsdr-pointing-radio = Bu radyo { $entry } alıcısına yöneltiliyor…{ $site }
+publicsdr-map-status = haritada { $shown } · konumsuz { $unplaced }
 publicsdr-opening-another-radio = { $entry } başka bir radyo olarak açılıyor…
 
 ## qo100: değerli iletiler (src/app/qo100.rs)
@@ -5273,7 +5269,6 @@ cat-family-rs-hfiq = RS-HFIQ
 cat-family-tr-usdx = (tr)uSDX
 cat-family-rigctld = Hamlib rigctld (ağ)
 cat-family-flrig = flrig (ağ)
-publicsdr-its-interface = arayüzü
 
 ## sdroxide-types değerleri, çiplerde, menülerde ve listelerde gösterilenler (src/i18n/labels.rs).
 agc-mode-off = Kapalı
