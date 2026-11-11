@@ -2141,6 +2141,22 @@ topbar-engine = ENGINE
 topbar-no-noise-reduction-decoders-never = Keine Rauschunterdrückung — die Decoder haben sie ohnehin nie gesehen
 topbar-strength = STÄRKE
 topbar-nr-filters = FILTER
+topbar-sk-filter-hint = SK-Nachfilter verfeinert neuronale oder andere Rauschentfernung: bestraft Restrauschen
+    (Filter resoniert, dadurch Echo) · Filter von HDZ
+topbar-sk-filter-tau-hint = Zeitkonstante tau: lang = Filterkurve, kurz (0,1 s) = auch Silbentor
+topbar-sk-filter-open = auf
+topbar-sk-filter-close = zu
+topbar-sk-filter-open-hint = Öffnen: wie schnell ein Bin aufgeht, wenn dort gesprochen wird
+topbar-sk-filter-close-hint = Schließen: wie schnell es danach zugeht; kurz = weniger Nachhall
+topbar-sk-filter-width = Breite
+topbar-sk-filter-width-hint = Glättung der Maske, ±Bins à 47 Hz; breiter = weniger Klingeln, gröber
+topbar-sk-filter-after-nr = nach NR
+topbar-sk-filter-after-nr-hint = SK hinter RNN/DFNR statt vor der AGC (Variante B)
+topbar-sk-filter-caption = SK-NACHFILTER
+topbar-sk-filter-reset-hint = SK auf Grundwerte: τ 0,1 s, auf 0,01 s, zu 1 s, Breite ±1, vor NR
+topbar-sk-filter-before-nr = vor NR
+topbar-sk-preset-hint = Klick lädt, Rechtsklick speichert die aktuellen Werte
+    { $values }
 topbar-hum-filter-hint = Hochpass 300 Hz: Netzbrumm 50/60 Hz und Oberwellen
 topbar-tone = TON
 topbar-ctcss-dcs-no-sub-audible = CTCSS / DCS — kein Unterton auf diesem Signal

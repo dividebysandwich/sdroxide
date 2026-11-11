@@ -602,7 +602,8 @@ mode. What is in the box never changes; only where the two rows are cut does.
   programme are exactly what it cancels, so it took the station away with the
   whistle (issue #434).
 - **NR** — noise reduction on the audio, with five selectable engines. The button
-  always reads just `NR` and lights when noise reduction is in circuit — that is
+  always reads just `NR` and lights when noise reduction is in circuit, or the
+  **SK** or **HUM** filter from its picker — that is
   all it tells you, and it never changes width under the buttons beside it. Click
   it for a picker with an **Engine** row and a **Strength** row, which is where
   you both read back what is running and change it, so any setting is two clicks
@@ -657,6 +658,36 @@ mode. What is in the box never changes; only where the two rows are cut does.
     under a decibel; music loses its bass, which is the price on broadcast. It
     works on mono audio and runs ahead of the AGC, so the gain follows the
     programme rather than the hum under it.
+  - **SK**, the **SK post-filter** — a row of its own, with a reset that puts τ,
+    open, close, width and place back to where they start, and four presets
+    **1 2 3 4** after it: a click loads one, a right-click stores the row as it
+    is set now, and the one that matches lights up. Preset 1 starts as
+    τ 0.2 s · open 0.056 s · close 0.1 s · ±6 · after NR, which with NR2 at
+    Med sounds best in SAM; preset 2 as τ 0.05 s · open 0.1 s · close 0.25 s
+    · ±6 · after NR, for DFNR at Low; preset 3 as τ 0.5 s · open 0.01 s ·
+    close 0.18 s · ±5 · after NR, for the spectral NR at Low in SSB; preset 4
+    as τ 0.1 s · open 0.05 s · close 0.25 s · ±5 · after NR, for RNN at Low in
+    SSB. It is called a post-filter because it sounds best behind an NR engine,
+    lifting the formants the engine found; on its own it does little. The
+    filter itself is a
+    filter curve the signal cuts for itself, from the same spectral
+    kurtosis the panadapter's SK guide shows: per FFT bin, steady Gaussian noise
+    reads about 1 and is pulled down by up to 20 dB, while what comes and goes
+    — speech — reads far higher and is passed. While it runs, a field beside
+    it sets the time constant **tau** (0.05–10 s, 0.1 s to start with): a long
+    one lets the curve settle into the shape of the channel and cut the stretch
+    of the passband that only carries noise; a short one makes it open and
+    close with the syllables as well, deepening the pauses at some cost to the
+    speech. Two more fields set how fast a bin **opens** when speech arrives
+    in it (0.01 s to start with) and how fast it **closes** afterwards (1 s):
+    with a long close time each syllable leaves a tail in the bins it used,
+    heard as a cave around the voice; a short one ends it. **Width** smooths
+    the curve over that many bins either side (±1 to start with, a bin being
+    about 47 Hz): narrow, the open peaks act as resonators the noise rings,
+    heard as a robotic voice; wider takes them out at the price of a coarser
+    curve. It delays the audio by about 21 ms and runs ahead of HUM and the
+    AGC — or, with **after NR**, behind the NR engine, where it takes what RNN
+    or DFNR left and lifts the formants they found.
 
 - **BIN** (CW and SSB) — **binaural** audio: the receive passband spread across
   the two ears, so that a signal's *pitch* becomes a *direction*. Whatever sits

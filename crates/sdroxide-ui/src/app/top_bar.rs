@@ -82,6 +82,8 @@ const SUB_W: f32 = 404.0;
 /// How much a box that grows by lengthening its slider rails or widening its
 /// offset fields (RX, TX, SUB) may add to them.
 const RAIL_STRETCH_MAX: f32 = 240.0;
+/// The NR picker's least width: the SK row on one line.
+const NR_POPUP_MIN_W: f32 = 720.0;
 /// How much the VFO/RIT box may add to its controls. Far short of
 /// [`RAIL_STRETCH_MAX`], because unlike a rail neither of its rows has
 /// anything to *do* with the width: past its label a chip is padding, and past
@@ -2914,7 +2916,9 @@ impl SdroxideApp {
                         }
                         None => tr!("topbar-noise-reduction-off-click-switch").to_string(),
                     };
-                    if crate::chrome::chip(ui, nr.is_on(), "NR").on_hover_text(hover).clicked() {
+                    let lit =
+                        nr.is_on() || self.state.rx[0].sk_filter || self.state.rx[0].hum_filter;
+                    if crate::chrome::chip(ui, lit, "NR").on_hover_text(hover).clicked() {
                         let next = nr.next();
                         self.state.rx[0].noise_reduction = next; // optimistic echo
                         cmds.push(Command::SetNoiseReduction { rx: RxId::Main, level: next });
@@ -3348,7 +3352,14 @@ impl SdroxideApp {
             Some(e) => tr!("topbar-nr-hover", strength = nr.tr(), engine = e.name()),
             None => tr!("topbar-noise-reduction-voice-off-click").to_string(),
         };
-        let btn = crate::chrome::chip(ui, nr.is_on(), "NR").on_hover_text(hover);
+        // Lit while anything in its picker works on the audio — an engine, or
+        // SK or HUM on their own — so a filter left running is never hidden
+        // behind a dark chip.
+        // Why: HDZ 2026-11-10: "NR muss leuchten, wenn SK an ist, nicht aus
+        //      lassen".
+        let rx = self.state.rx[0];
+        let lit = nr.is_on() || rx.sk_filter || rx.hum_filter;
+        let btn = crate::chrome::chip(ui, lit, "NR").on_hover_text(hover);
 
         let popup_id = egui::Popup::default_response_id(&btn);
         let now = ui.input(|i| i.time);
@@ -3361,6 +3372,10 @@ impl SdroxideApp {
                 ui.set_opacity(alpha);
                 crate::chrome::window_body_bg(ui);
                 ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+                // Wide enough that the SK row — chip, three times, width, place
+                // and reset — stays on one line.
+                // Why: HDZ 2026-11-10: "mach den Dialog ausreichend breit".
+                ui.set_min_width(NR_POPUP_MIN_W);
                 self.nr_controls(ui, cmds);
             });
         if let Some(r) = &resp {
@@ -3834,6 +3849,160 @@ impl SdroxideApp {
             {
                 self.state.rx[0].hum_filter = !rx.hum_filter; // optimistic echo
                 cmds.push(Command::SetHumFilter { rx: RxId::Main, on: !rx.hum_filter });
+            }
+        });
+
+        // SK in a row of its own, under its own caption: it has five settings
+        // and a reset, and sharing HUM's row wrapped them across two lines.
+        // Why: HDZ 2026-11-10: "mach nach HUM einen Absatz, denn das SK-Thema
+        //      eine eigene Reihe".
+        crate::chrome::menu_caption(ui, &tr!("topbar-sk-filter-caption"));
+        ui.horizontal_wrapped(|ui| {
+            let rx = self.state.rx[0];
+            // SK: the panadapter's kurtosis guide as a filter curve on the
+            // audio, with its time constant beside it while it runs.
+            // Why: HDZ 2026-11-10: "quasi ein SK-Autofilter … tau einstellbar,
+            //      0.1 ist gut".
+            let send = |cmds: &mut Vec<Command>, on: bool, r: &sdroxide_types::RxState| {
+                cmds.push(Command::SetSkFilter {
+                    rx: RxId::Main,
+                    on,
+                    tau_s: r.sk_filter_tau_s,
+                    open_s: r.sk_filter_open_s,
+                    close_s: r.sk_filter_close_s,
+                    width: r.sk_filter_width,
+                    after_nr: r.sk_filter_after_nr,
+                })
+            };
+            if crate::chrome::chip(ui, rx.sk_filter, "SK")
+                .on_hover_text(tr!("topbar-sk-filter-hint"))
+                .clicked()
+            {
+                self.state.rx[0].sk_filter = !rx.sk_filter; // optimistic echo
+                send(cmds, !rx.sk_filter, &rx);
+            }
+            if rx.sk_filter {
+                // tau, then open and close: three fields, each with its word
+                // in front, so the row reads "SK τ 0.10 s auf 0.01 s zu 1.00 s".
+                type Field = fn(&mut sdroxide_types::RxState) -> &mut f32;
+                let fields: [(String, String, (f32, f32), f32, Field); 3] = [
+                    (
+                        "τ".to_string(),
+                        tr!("topbar-sk-filter-tau-hint"),
+                        sdroxide_types::SK_FILTER_TAU_RANGE_S,
+                        0.01,
+                        |r| &mut r.sk_filter_tau_s,
+                    ),
+                    (
+                        tr!("topbar-sk-filter-open"),
+                        tr!("topbar-sk-filter-open-hint"),
+                        sdroxide_types::SK_FILTER_OPEN_RANGE_S,
+                        0.002,
+                        |r| &mut r.sk_filter_open_s,
+                    ),
+                    (
+                        tr!("topbar-sk-filter-close"),
+                        tr!("topbar-sk-filter-close-hint"),
+                        sdroxide_types::SK_FILTER_CLOSE_RANGE_S,
+                        0.01,
+                        |r| &mut r.sk_filter_close_s,
+                    ),
+                ];
+                for (label, hint, (lo, hi), speed, field) in fields {
+                    ui.label(label).on_hover_text(&hint);
+                    let mut v = *field(&mut self.state.rx[0]);
+                    let resp = ui
+                        .add(
+                            DragValue::new(&mut v)
+                                .range(lo..=hi)
+                                .speed(speed)
+                                .fixed_decimals(if hi <= 1.0 { 3 } else { 2 })
+                                .suffix(" s"),
+                        )
+                        .on_hover_text(&hint);
+                    if resp.changed() {
+                        *field(&mut self.state.rx[0]) = v; // optimistic echo
+                        let r = self.state.rx[0];
+                        send(cmds, true, &r);
+                    }
+                }
+                // How wide the mask is smoothed, in bins either side (one bin
+                // is about 47 Hz at 48 kHz), and where in the chain it runs.
+                // Why: HDZ 2026-11-10: "die Breite ist aktuell 1? mach die auch
+                //      wählbar … und mache noch Variante B (Reihung) gedreht".
+                ui.label(tr!("topbar-sk-filter-width"))
+                    .on_hover_text(tr!("topbar-sk-filter-width-hint"));
+                let mut w = rx.sk_filter_width;
+                if ui
+                    .add(
+                        DragValue::new(&mut w)
+                            .range(0..=sdroxide_types::SK_FILTER_MAX_WIDTH)
+                            .prefix("±"),
+                    )
+                    .on_hover_text(tr!("topbar-sk-filter-width-hint"))
+                    .changed()
+                {
+                    self.state.rx[0].sk_filter_width = w; // optimistic echo
+                    let r = self.state.rx[0];
+                    send(cmds, true, &r);
+                }
+                let after = rx.sk_filter_after_nr;
+                if crate::chrome::chip(ui, after, tr!("topbar-sk-filter-after-nr"))
+                    .on_hover_text(tr!("topbar-sk-filter-after-nr-hint"))
+                    .clicked()
+                {
+                    self.state.rx[0].sk_filter_after_nr = !after; // optimistic echo
+                    let r = self.state.rx[0];
+                    send(cmds, true, &r);
+                }
+                // Back to the recipe the filter started from: τ 0.1 s, open
+                // 0.01 s, close 1 s, width ±1, ahead of NR.
+                // Why: HDZ 2026-11-10: "mach einen Reset dran für Defaults".
+                let side = defaults_chip_side(ui);
+                if crate::chrome::chip_reset(ui, egui::vec2(side, side))
+                    .on_hover_text(tr!("topbar-sk-filter-reset-hint"))
+                    .clicked()
+                {
+                    let r = &mut self.state.rx[0];
+                    r.sk_filter_tau_s = sdroxide_types::SK_FILTER_DEFAULT_TAU_S;
+                    r.sk_filter_open_s = sdroxide_types::SK_FILTER_DEFAULT_OPEN_S;
+                    r.sk_filter_close_s = sdroxide_types::SK_FILTER_DEFAULT_CLOSE_S;
+                    r.sk_filter_width = sdroxide_types::SK_FILTER_DEFAULT_WIDTH;
+                    r.sk_filter_after_nr = false;
+                    let r = *r;
+                    send(cmds, true, &r);
+                }
+                // Three presets: a click loads one, a right-click stores what
+                // the row is set to now. Lit while the row matches it.
+                // Why: HDZ 2026-11-10: "mach drei Presets, das wäre einer,
+                //      weitere zwei folgen".
+                for slot in 0..crate::view::SK_PRESETS {
+                    let p = self.view.sk_preset(slot);
+                    let now = crate::view::SkPreset::of(&self.state.rx[0]);
+                    let values = format!(
+                        "τ {:.2} s · {} {:.3} s · {} {:.2} s · ±{} · {}",
+                        p.tau_s,
+                        tr!("topbar-sk-filter-open"),
+                        p.open_s,
+                        tr!("topbar-sk-filter-close"),
+                        p.close_s,
+                        p.width,
+                        if p.after_nr {
+                            tr!("topbar-sk-filter-after-nr")
+                        } else {
+                            tr!("topbar-sk-filter-before-nr")
+                        },
+                    );
+                    let resp = crate::chrome::chip(ui, now == p, format!("{}", slot + 1))
+                        .on_hover_text(tr!("topbar-sk-preset-hint", values = values));
+                    if resp.clicked() {
+                        p.apply(&mut self.state.rx[0]); // optimistic echo
+                        let r = self.state.rx[0];
+                        send(cmds, true, &r);
+                    } else if resp.secondary_clicked() {
+                        self.view.set_sk_preset(slot, now);
+                    }
+                }
             }
         });
     }

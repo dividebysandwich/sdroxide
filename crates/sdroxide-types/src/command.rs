@@ -1263,4 +1263,15 @@ pub enum Command {
         rx: RxId,
         on: bool,
     },
+    /// SK filter on a receiver's listener audio, and its time constant (see
+    /// `RxState::sk_filter`). Appended likewise.
+    SetSkFilter {
+        rx: RxId,
+        on: bool,
+        tau_s: f32,
+        open_s: f32,
+        close_s: f32,
+        width: u8,
+        after_nr: bool,
+    },
 }

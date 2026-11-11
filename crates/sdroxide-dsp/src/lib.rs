@@ -8,7 +8,6 @@ mod ctcss;
 mod cw;
 mod ddc;
 mod decim;
-mod hum;
 mod demod;
 mod dfnr;
 mod diversity;
@@ -22,6 +21,7 @@ mod fsq_image;
 pub mod g3ruh;
 mod hell;
 mod hell_font;
+mod hum;
 mod interp;
 mod iqcorrect;
 pub mod jtty;
@@ -43,6 +43,7 @@ mod resample;
 pub mod rifp;
 mod rtty;
 mod sbnr;
+mod sk;
 #[macro_use]
 mod simd;
 mod spectrum;
@@ -117,6 +118,7 @@ pub use resample::{ComplexResampler, MonoResampler, StereoResampler};
 pub use rifp::{RifpFrame, RifpRx, RifpTx, Tlv as RifpTlv};
 pub use rtty::{BaudotRx, RttyRx, RttyTx};
 pub use sbnr::SpecBleachNr;
+pub use sk::SkFilter;
 pub use spectrum::SpectrumAnalyzer;
 pub use spectrum_paint::{
     BAND_HI_HZ as RF_PAINT_BAND_HI, BAND_LO_HZ as RF_PAINT_BAND_LO, CENTER_HZ as RF_PAINT_CENTER,

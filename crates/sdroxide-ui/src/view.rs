@@ -2,6 +2,116 @@
 
 use serde::{Deserialize, Serialize};
 
+/// One of the SK filter's three presets in the NR menu: everything the SK row
+/// sets except whether the filter is on.
+// Why: HDZ 2026-11-10: "mach drei Presets, das wäre einer, weitere zwei folgen".
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SkPreset {
+    pub tau_s: f32,
+    pub open_s: f32,
+    pub close_s: f32,
+    pub width: u8,
+    pub after_nr: bool,
+}
+
+impl SkPreset {
+    /// The filter's starting values (recipe A).
+    pub const A: SkPreset = SkPreset {
+        tau_s: sdroxide_types::SK_FILTER_DEFAULT_TAU_S,
+        open_s: sdroxide_types::SK_FILTER_DEFAULT_OPEN_S,
+        close_s: sdroxide_types::SK_FILTER_DEFAULT_CLOSE_S,
+        width: sdroxide_types::SK_FILTER_DEFAULT_WIDTH,
+        after_nr: false,
+    };
+    /// HDZ's first: "mit dem NR und SAM klingt diese Variante top" — NR2 Med
+    /// ahead of it, in SAM.
+    pub const B: SkPreset =
+        SkPreset { tau_s: 0.20, open_s: 0.056, close_s: 0.10, width: 6, after_nr: true };
+    /// HDZ's second, behind DFNR Low.
+    pub const C: SkPreset =
+        SkPreset { tau_s: 0.05, open_s: 0.100, close_s: 0.25, width: 6, after_nr: true };
+    /// HDZ's third, behind the spectral NR at Low, in SSB.
+    pub const D: SkPreset =
+        SkPreset { tau_s: 0.50, open_s: 0.010, close_s: 0.18, width: 5, after_nr: true };
+    /// HDZ's fourth, for SSB behind RNN at Low.
+    pub const E: SkPreset =
+        SkPreset { tau_s: 0.10, open_s: 0.050, close_s: 0.25, width: 5, after_nr: true };
+
+    pub fn of(rx: &sdroxide_types::RxState) -> Self {
+        SkPreset {
+            tau_s: rx.sk_filter_tau_s,
+            open_s: rx.sk_filter_open_s,
+            close_s: rx.sk_filter_close_s,
+            width: rx.sk_filter_width,
+            after_nr: rx.sk_filter_after_nr,
+        }
+    }
+
+    pub fn apply(&self, rx: &mut sdroxide_types::RxState) {
+        rx.sk_filter_tau_s = self.tau_s;
+        rx.sk_filter_open_s = self.open_s;
+        rx.sk_filter_close_s = self.close_s;
+        rx.sk_filter_width = self.width;
+        rx.sk_filter_after_nr = self.after_nr;
+    }
+}
+
+/// How many presets the SK row offers.
+pub const SK_PRESETS: usize = 4;
+
+/// A list rather than an array, so a view saved with fewer slots still loads;
+/// [`ViewState::sk_preset`] fills what is missing from these.
+fn sk_presets_default() -> Vec<SkPreset> {
+    vec![SkPreset::B, SkPreset::C, SkPreset::D, SkPreset::E]
+}
+
+impl ViewState {
+    /// Preset `slot`, from the saved list or, past its end, the defaults.
+    pub fn sk_preset(&self, slot: usize) -> SkPreset {
+        self.sk_presets
+            .get(slot)
+            .copied()
+            .unwrap_or_else(|| sk_presets_default().get(slot).copied().unwrap_or(SkPreset::A))
+    }
+
+    /// Store `p` in `slot`, filling any gap before it from the defaults.
+    pub fn set_sk_preset(&mut self, slot: usize, p: SkPreset) {
+        while self.sk_presets.len() < SK_PRESETS.max(slot + 1) {
+            let n = self.sk_presets.len();
+            self.sk_presets.push(self.sk_preset(n));
+        }
+        self.sk_presets[slot] = p;
+    }
+}
+
+#[cfg(test)]
+mod sk_preset_tests {
+    use super::SkPreset;
+
+    /// Proves: a preset carries all five settings of the SK row both ways,
+    /// and slot 1 starts as HDZ's recipe.
+    #[test]
+    fn a_preset_round_trips_the_sk_row() {
+        let mut rx = sdroxide_types::RxState::with_mode(sdroxide_types::Mode::Sam);
+        SkPreset::B.apply(&mut rx);
+        assert_eq!(SkPreset::of(&rx), SkPreset::B);
+        assert!(rx.sk_filter_after_nr && rx.sk_filter_width == 6);
+        SkPreset::A.apply(&mut rx);
+        assert_eq!(SkPreset::of(&rx), SkPreset::A);
+        assert_eq!(super::sk_presets_default()[0], SkPreset::B);
+        assert_eq!(super::sk_presets_default()[1], SkPreset::C);
+        assert_eq!(super::sk_presets_default()[2], SkPreset::D);
+        assert_eq!(super::sk_presets_default()[3], SkPreset::E);
+        // A view saved with fewer slots is filled from the defaults.
+        let mut v = super::ViewState { sk_presets: vec![SkPreset::A], ..Default::default() };
+        assert_eq!(v.sk_preset(0), SkPreset::A);
+        assert_eq!(v.sk_preset(3), SkPreset::E);
+        v.set_sk_preset(3, SkPreset::B);
+        assert_eq!(v.sk_preset(3), SkPreset::B);
+        assert_eq!(v.sk_presets.len(), super::SK_PRESETS);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ViewState {
@@ -48,6 +158,12 @@ pub struct ViewState {
     pub spectrum_fraction: f32,
     /// Draw a decaying peak-hold trace over the spectrum.
     pub peak_hold: bool,
+    /// The SK filter's presets (see [`SkPreset`]): slots 1–3 start as HDZ's
+    /// recipes (behind NR2 Med in SAM, DFNR Low, the spectral NR Low in SSB),
+    /// 4 as his SSB one behind RNN Low; a right-click stores the row in any
+    /// of them, and the reset beside them goes back to the starting values.
+    #[serde(default = "sk_presets_default")]
+    pub sk_presets: Vec<SkPreset>,
     /// Draw the spectrum strip as a receding 3D surface instead of a flat
     /// line: the newest spectrum across the front, the ones before it flowing
     /// away from the viewer. See [`crate::widgets::spectrum3d`].
@@ -555,6 +671,7 @@ impl Default for ViewState {
             fft_size: 4096,
             spectrum_fraction: 0.35,
             peak_hold: false,
+            sk_presets: sk_presets_default(),
             spectrum_3d: false,
             spectrum_3d_solid: spectrum_3d_solid_default(),
             center_on_vfo: center_on_vfo_default(),
