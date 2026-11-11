@@ -664,8 +664,13 @@ impl SdroxideApp {
         let cfg = &mut self.digi_cfg_edit;
         let mut changed = false;
         ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 3.0;
+        // Drawn into the caller's row, which wraps, as PSK's chips are: a
+        // `horizontal` row of its own does not wrap, and MFSK's nine speeds ran
+        // past the panel's edge on a 1366-wide window with the band selector
+        // docked beside it.
+        let spacing = ui.spacing().item_spacing.x;
+        ui.spacing_mut().item_spacing.x = 3.0;
+        {
             match mode {
                 Mode::Rtty | Mode::RttyFm => {
                     // 450 is what the Deutscher Wetterdienst broadcasts use and
@@ -848,7 +853,8 @@ impl SdroxideApp {
                 }
                 _ => {}
             }
-        });
+        }
+        ui.spacing_mut().item_spacing.x = spacing;
         if changed {
             cmds.push(Command::SetDigiConfig(cfg.clone()));
         }

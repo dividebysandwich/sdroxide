@@ -2658,10 +2658,23 @@ mod tests {
             Usb, Cw, Ft8, Ft4, Ft2, Psk, Rtty, RttyFm, Sstv, SstvFm, Olivia, Thor, Fsq, RfPaint,
             Rade, Hell, Rifp, Wefax, Js8, Wspr, Packet, PacketHf, Aprs, Adsb, Navtex, Vdl2, Ais,
             AtChat, Acars, Hfdl, Pi4, Msk144, Jt65, Jt9, Fst4, Q65, Fsk441, Jtty, Mercury, Data2g,
+            Mt63, Mfsk, DominoEx, Contestia,
         ];
+        use sdroxide_types::{PskCoded, PskModulation};
+        // PSK's chips change with its family: the plain set with 8PSK, and the
+        // longest coded families, one of them on a receive-only bank whose
+        // warning adds to the row.
+        let mut setups: Vec<(Mode, PskCoded, PskModulation)> =
+            modes.into_iter().map(|m| (m, PskCoded::Off, PskModulation::Bpsk)).collect();
+        setups.extend([
+            (Psk, PskCoded::Off, PskModulation::Psk8),
+            (Psk, PskCoded::Psk63Rc32, PskModulation::Bpsk),
+            (Psk, PskCoded::Psk250R, PskModulation::Bpsk),
+            (Psk, PskCoded::Psk500C2, PskModulation::Bpsk),
+        ]);
         let mut over = Vec::new();
         let layouts = [LayoutMode::Desktop, LayoutMode::Tablet];
-        for (m, docked, layout) in modes
+        for ((m, coded, modulation), docked, layout) in setups
             .into_iter()
             .flat_map(|m| [(m, true), (m, false)])
             .flat_map(|(m, d)| layouts.map(|l| (m, d, l)))
@@ -2680,6 +2693,8 @@ mod tests {
                     app.ui_settings.layout = layout;
                     app.ui_settings.language = UiLanguage::from_tag(tag).unwrap();
                     app.state.rx[0].mode = m;
+                    app.digi_cfg_edit.psk_coded = coded;
+                    app.digi_cfg_edit.psk_modulation = modulation;
                     app.band_docked = docked;
                     app.band_dock_visible = docked;
                     let mut frame = eframe::Frame::_new_kittest();
@@ -2770,7 +2785,7 @@ mod tests {
                     }
                     if right > dock_left + 1.0 || cut > 1.0 || border > 0.0 || margin < 7.5 {
                         over.push(format!(
-                            "{m:?} {layout:?} {tag} {w}x{h} docked {docked}: {:+.1} pt into the column, {cut:.1} pt cut off, \
+                            "{m:?} {coded:?} {modulation:?} {layout:?} {tag} {w}x{h} docked {docked}: {:+.1} pt into the column, {cut:.1} pt cut off, \
                              a frame line {border:.1} pt past its clip, {margin:.1} pt from the window's edge",
                             right - dock_left
                         ));
