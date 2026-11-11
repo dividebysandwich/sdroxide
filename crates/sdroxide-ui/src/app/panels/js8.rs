@@ -1087,7 +1087,7 @@ impl SdroxideApp {
         // Actions — the lower of the two rows. Wrapped, because the right
         // column can be dragged narrow and a chip that does not fit must move
         // to the next line rather than be clipped off the edge.
-        ui.horizontal_wrapped(|ui| {
+        crate::chrome::wrapped_row_up(ui, "js8-actions", |ui| {
             // `chip_enabled` rather than a scope around the pair: this row
             // wraps, and a child `Ui` in a wrapping row does not.
             if rx_only_hint(crate::chrome::chip_enabled(ui, tx_ok, false, &tr!("js8-cq")), tx_ok)
@@ -1121,8 +1121,9 @@ impl SdroxideApp {
             });
             // The clears are a different kind of thing from the templates
             // beside them — those fill the box, these empty a window — so they
-            // get a rule between them (issue #473).
-            ui.separator();
+            // get a rule between them (issue #473). A chip-tall one: a full
+            // separator in this row grows the row every frame.
+            crate::chrome::row_rule(ui);
             // Always present: greys at @ALLCALL, where there is nothing to
             // forget. A chip that comes and goes is a chip nobody aims at.
             let clear_to = crate::chrome::chip_accent_enabled(

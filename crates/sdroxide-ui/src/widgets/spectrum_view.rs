@@ -1418,11 +1418,21 @@ pub fn show_ext(
     // window gets back exactly the split it was left with.
     let waterfall_only = crate::layout::tier(ui.ctx()).waterfall_only();
     let frac = if waterfall_only { 0.0 } else { view.effective_spectrum_fraction() };
-    let usable = rect.height() - scale_h();
-    let spec_h = if frac <= 0.0 { 0.0 } else { (usable * frac).max(40.0).min(usable.max(0.0)) };
+    // Every strip fits inside `rect` however low it is: a digital mode's panel
+    // can be dragged up until the panadapter has no height left, and on the way
+    // there the scale gives up its height last and the waterfall keeps a point
+    // of it while there is one (the GPU callback is handed `wf_rect`, and an
+    // empty or inverted one is not a viewport). From the height of the scale
+    // plus a point up this is the split it always was.
+    let total = rect.height().max(0.0);
+    let scale_hh = scale_h().min(total);
+    let usable = total - scale_hh;
+    let wf_keep = if frac < 1.0 { usable.min(1.0) } else { 0.0 };
+    let spec_h =
+        if frac <= 0.0 { 0.0 } else { (usable * frac).max(40.0).min(usable - wf_keep).max(0.0) };
     let spec_rect = Rect::from_min_size(rect.min, vec2(rect.width(), spec_h));
     let scale_rect =
-        Rect::from_min_size(pos2(rect.left(), spec_rect.bottom()), vec2(rect.width(), scale_h()));
+        Rect::from_min_size(pos2(rect.left(), spec_rect.bottom()), vec2(rect.width(), scale_hh));
     // What the marks that annotate the *current* spectrum are drawn across —
     // the passband wash, the filter edge grips, the tuning lines. The whole
     // strip for the flat trace, and only its front plane for the 3D surface:
@@ -3101,8 +3111,10 @@ fn faded_label(
     );
     let pad = vec2(4.0, 2.0);
     let size = galley.size() + pad * 2.0;
-    let bx = (cx - size.x * 0.5).clamp(rect.left(), rect.right() - size.x);
-    let by = y.clamp(rect.top(), rect.bottom() - size.y);
+    let bx = (cx - size.x * 0.5).min(rect.right() - size.x).max(rect.left());
+    // Not `clamp`: on a strip lower than the box the bounds cross (see
+    // `label_box`).
+    let by = y.min(rect.bottom() - size.y).max(rect.top());
     p.rect_filled(
         Rect::from_min_size(pos2(bx, by), size),
         2.0,
@@ -3184,7 +3196,10 @@ pub(crate) fn label_box(p: &egui::Painter, top_left: Pos2, text: &str, fg: Color
     let pad = vec2(4.0, 2.0);
     let size = galley.size() + pad * 2.0;
     let x = (top_left.x).min(bounds.right() - size.x).max(bounds.left());
-    let y = (top_left.y).clamp(bounds.top(), bounds.bottom() - size.y);
+    // `min` then `max`, as for x, not `clamp`: a panadapter lower than the
+    // box (the curtain on its way up passes through every height) made the
+    // bounds cross, and `f32::clamp` panics on that.
+    let y = (top_left.y).min(bounds.bottom() - size.y).max(bounds.top());
     let bg = Rect::from_min_size(pos2(x, y), size);
     p.rect_filled(bg, 2.0, Color32::from_rgba_unmultiplied(0, 0, 0, 180));
     p.galley(pos2(x + pad.x, y + pad.y), galley, fg);
@@ -4409,5 +4424,19 @@ mod tests {
     fn no_outer_window_before_the_passband_is_known() {
         let pan = WindowPan::default().with_outer(Some((1e6, 30e6)), 0.0);
         assert_eq!(pan.outer, None);
+    }
+    /// A readout box on a panadapter lower than the box itself is drawn at
+    /// the top rather than panicking: the curtain passes the strip through
+    /// every height on its way up.
+    #[test]
+    fn a_label_box_on_a_strip_lower_than_itself_does_not_panic() {
+        let ctx = egui::Context::default();
+        ctx.begin_pass(egui::RawInput::default());
+        let p = ctx.layer_painter(egui::LayerId::background());
+        for h in [0.0_f32, 3.0, 10.0, 30.0] {
+            let bounds = Rect::from_min_size(pos2(0.0, 100.0), vec2(400.0, h));
+            label_box(&p, pos2(50.0, 120.0), "S/N 4.2 dB", Color32::WHITE, bounds);
+        }
+        ctx.end_pass().drop_without_applying_deltas();
     }
 }

@@ -677,21 +677,28 @@ impl SdroxideApp {
         // 300 pt floor of its own, so together they want twice a phone's width
         // before either has drawn a picture.
         let pane = self.phone_pane(ui, self.state.rx[0].mode);
+        // The row's own spacing goes either side of each divider, and the left
+        // column's frame takes its margins and stroke out of `left_w` (see
+        // `sstv_section`): left out, the row came out 52 pt wider than the
+        // panel and ran on under the band selector docked beside it.
+        let sp = ui.spacing().item_spacing.x;
+        let frame_w = 18.0;
         let (left_w, tx_w) = match pane {
             // Whichever one is up takes the row.
             Some(0) => (avail.x, 0.0),
             Some(_) => (0.0, avail.x),
             None => {
                 let tx = (avail.x * self.view.sstv_tx_fraction)
-                    .clamp(300.0, (avail.x - handle_w - 300.0).max(300.0));
-                ((avail.x - tx - handle_w).max(300.0), tx)
+                    .clamp(300.0, (avail.x - handle_w - 2.0 * sp - 300.0).max(300.0));
+                ((avail.x - tx - handle_w - 2.0 * sp).max(300.0), tx)
             }
         };
         // LIVE takes the rest of the receive side; the RECEIVED gallery width is a
         // user-draggable fraction of it (min one thumbnail column).
-        let gallery_w = (left_w * self.view.sstv_gallery_fraction)
-            .clamp(150.0, (left_w - handle_w - 160.0).max(150.0));
-        let live_w = (left_w - gallery_w - handle_w).max(160.0);
+        let inner_w = left_w - frame_w;
+        let gallery_w = (inner_w * self.view.sstv_gallery_fraction)
+            .clamp(150.0, (inner_w - handle_w - 2.0 * sp - 160.0).max(150.0));
+        let live_w = (inner_w - gallery_w - handle_w - 2.0 * sp).max(160.0);
 
         ui.horizontal_top(|ui| {
             // A received thumbnail was clicked → enlarge it (applied after the row).
@@ -714,8 +721,8 @@ impl SdroxideApp {
                             .stroke(egui::Stroke::new(1.0, crate::theme::LINE_LIT()))
                             .inner_margin(egui::Margin { left: 8, right: 8, top: 6, bottom: 7 })
                             .show(ui, |ui| {
-                                ui.set_min_width(left_w - 16.0);
-                                ui.set_max_width(left_w - 16.0);
+                                ui.set_min_width(left_w - frame_w);
+                                ui.set_max_width(left_w - frame_w);
                                 if rifp {
                                     self.rifp_controls(ui, cmds);
                                     return;
@@ -855,10 +862,32 @@ impl SdroxideApp {
                                     ui.separator();
                                     ui.label(RichText::new(tr!("sstv-tx-slant")).size(10.0).weak())
                                         .on_hover_text(tr!("sstv-transmit-clock-trim-ppm-remove"));
-                                    ui.add_enabled_ui(self.digi_cfg_seeded, |ui| {
+                                    // Not one `add_enabled_ui` scope round the lot: a
+                                    // scope is placed whole at the cursor and never
+                                    // wraps (`fit_rail` takes its left edge for the
+                                    // line's start), and on a touched layout in German
+                                    // the slant rail and its readout ran 21 pt past the
+                                    // column. These are the last items in the row, so
+                                    // disabling the row from here on is the same, and
+                                    // each control wraps on its own.
+                                    {
+                                        if !self.digi_cfg_seeded {
+                                            ui.disable();
+                                        }
                                         ui.spacing_mut().slider_width = 130.0;
-                                        let resp = crate::chrome::slider(
+                                        // The readout beside the rail is part of
+                                        // the slider's width: `chrome::slider` fits
+                                        // the rail to the whole rest of the line,
+                                        // and the value box after it ran 13 pt past
+                                        // the column in German.
+                                        let readout_w = crate::chrome::text_width(
                                             ui,
+                                            "-5000 ppm",
+                                            egui::TextStyle::Body.resolve(ui.style()),
+                                        ) + 2.0 * ui.spacing().button_padding.x;
+                                        let resp = crate::chrome::slider_readout(
+                                            ui,
+                                            readout_w,
                                             egui::Slider::new(
                                                 &mut self.digi_cfg_edit.sstv_tx_ppm,
                                                 -5000.0..=5000.0,
@@ -932,7 +961,7 @@ impl SdroxideApp {
                                                 self.digi_cfg_edit.clone(),
                                             ));
                                         }
-                                    });
+                                    }
                                 });
                             });
                         ui.add_space(6.0);
@@ -1131,7 +1160,16 @@ impl SdroxideApp {
                             .id_salt("sstv-transmit")
                             .auto_shrink([false, false])
                             .show_themed(ui, |ui| {
-                                let inner_w = tx_w - 16.0;
+                                // The section's width less its margins and
+                                // stroke (see `sstv_section`) and the room the
+                                // scroll bar takes. From the fixed width, not
+                                // from `available_width`: the preview and the
+                                // message box are pinned to this, and a scroll
+                                // area keeps the width its content had last
+                                // frame, so a measured width only ever grows.
+                                // Without the bar the column ran 11 pt past the
+                                // panel's edge.
+                                let inner_w = tx_w - 18.0 - ui.spacing().scroll.allocated_width();
 
                                 // Five to a row, shrunk to fit a narrow column
                                 // rather than run off its edge (issue #753). The
@@ -1295,14 +1333,21 @@ impl SdroxideApp {
                                     .stroke(egui::Stroke::new(1.0, crate::theme::LINE_LIT()))
                                     .inner_margin(2.0)
                                     .show(ui, |ui| {
-                                        ui.set_min_size(egui::vec2(inner_w, preview_h));
-                                        ui.set_max_size(egui::vec2(inner_w, preview_h));
+                                        // The box is `inner_w` × `preview_h` from
+                                        // the outside: its 2 pt margin and 1 pt
+                                        // stroke on each side come out of the
+                                        // content, or the box came out 6 pt wider
+                                        // than the column and pushed it past the
+                                        // panel's edge.
+                                        let size = egui::vec2(inner_w - 6.0, preview_h - 6.0);
+                                        ui.set_min_size(size);
+                                        ui.set_max_size(size);
                                         ui.centered_and_justified(|ui| {
                                             if let Some(tex) = &self.sstv.preview_tex {
                                                 ui.add(
                                                     egui::Image::new(tex)
-                                                        .max_height(preview_h - 4.0)
-                                                        .max_width(inner_w - 4.0),
+                                                        .max_height(size.y)
+                                                        .max_width(size.x),
                                                 );
                                             } else {
                                                 let waiting = self

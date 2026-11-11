@@ -3677,7 +3677,10 @@ Every digital mode is entered the same way: open the Band/Mode popup and choose
 the mode from the **DIGITAL** row. The panadapter locks to the digital sub-band
 (the audio range just above the dial), and the mode's operating panel appears in
 the lower part of the window; a draggable divider sets how much height the
-panel gets.
+panel gets. In a digital mode it goes all the way up, in one drag: the
+spectrum and the waterfall shrink with it down to nothing, and at the top edge
+the panel has the whole height. Drag the `— — —` handle down again to bring
+them back.
 
 While in a digital mode the **BAND** row of the Band/Mode popup doubles as a
 frequency picker. Bands where the mode has a standard calling frequency carry

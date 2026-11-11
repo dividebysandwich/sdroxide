@@ -29,7 +29,8 @@ impl SdroxideApp {
         cmds: &mut Vec<Command>,
         panel_h: f32,
     ) {
-        let content_bottom = ui.cursor().top() + panel_h - 40.0;
+        let panel_top = ui.cursor().top();
+        let content_bottom = panel_top + panel_h - 40.0;
         let status = self.digi_status.clone();
         let cw = status.as_ref().and_then(|s| s.cw.clone()).unwrap_or_default();
         let pitch = status.as_ref().map(|s| s.audio_hz).unwrap_or(700.0);
@@ -175,14 +176,15 @@ impl SdroxideApp {
         // Counted here or the row would be laid out past the bottom of the
         // panel, where it does not clip: it paints over whatever is below.
         let macro_h = 4.0 + crate::chrome::chip_height(ui, None);
-        let rx_h = (content_bottom
-            - ui.cursor().top()
-            - btn_h
-            - macro_h
-            - input_h
-            - 2.0 * gap
-            - bottom_pad)
-            .max(24.0);
+        // The rows under the receive pane as they came out last frame, where
+        // that is more than the figures above: on a touched layout's taller
+        // chips (a 1366×768 window) they ran 34 pt past the panel, and the
+        // frame's bottom line went off the window.
+        let fixed = (btn_h + macro_h + input_h + 2.0 * gap).max(self.cw_rows_below) + bottom_pad;
+        let rx_h = (content_bottom - ui.cursor().top() - fixed).max(24.0);
+        // Below this the receive pane is at its 24 pt and the rows under it
+        // run past the panel; the split reads it back next frame.
+        self.cw_panel_floor = (ui.cursor().top() - panel_top) + 40.0 + fixed + 24.0;
 
         ui.allocate_ui(egui::vec2(ui.available_width(), rx_h), |ui| {
             egui::Frame::new()
@@ -192,8 +194,15 @@ impl SdroxideApp {
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.set_min_height(ui.available_height());
+                    // The pane's height less its margins (6 + 6) and its 1 pt
+                    // stroke top and bottom, and that as the least too: egui's
+                    // own floor for a scroll area is 64 pt, which on a short
+                    // panel made the pane 40 pt taller than `rx_h` and ran the
+                    // rows under it past the panel's bottom edge.
+                    let scroll_h = (rx_h - 14.0).max(10.0);
                     egui::ScrollArea::vertical()
-                        .max_height((rx_h - 12.0).max(20.0))
+                        .max_height(scroll_h)
+                        .min_scrolled_height(scroll_h)
                         .auto_shrink([false, false])
                         .stick_to_bottom(true)
                         .show_themed(ui, |ui| {
@@ -218,6 +227,7 @@ impl SdroxideApp {
                         });
                 });
         });
+        let rows_below_top = ui.cursor().top();
         ui.add_space(gap);
 
         // Transmit box. Characters already keyed are green, and they are keyed
@@ -554,6 +564,7 @@ impl SdroxideApp {
             &self.digi_cfg_edit.cw_macros,
             &mut self.text_tx,
         );
+        self.cw_rows_below = ui.cursor().top() - rows_below_top;
         ui.add_space(bottom_pad);
     }
 

@@ -389,6 +389,11 @@ fn count(n: u64) -> String {
 /// A readout in a slot of fixed width, so a number that grows a digit cannot
 /// re-flow the header.
 fn slot(ui: &mut egui::Ui, w: f32, text: &str, color: egui::Color32) {
+    // At least `w`, so the slots stand still as the counts change, but never
+    // narrower than the text: the widths were measured on English, and
+    // „0 Dekodierungen“ was cut off after „0 Dekodie“ (HDZ 2026-11-08).
+    let font = egui::FontId::monospace(10.5);
+    let w = w.max(crate::chrome::text_width(ui, text, font.clone()) + 4.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 16.0), egui::Sense::hover());
     if !ui.is_rect_visible(rect) {
         return;
@@ -397,7 +402,7 @@ fn slot(ui: &mut egui::Ui, w: f32, text: &str, color: egui::Color32) {
         egui::pos2(rect.left(), rect.center().y),
         egui::Align2::LEFT_CENTER,
         text,
-        egui::FontId::monospace(10.5),
+        font,
         color,
     );
 }

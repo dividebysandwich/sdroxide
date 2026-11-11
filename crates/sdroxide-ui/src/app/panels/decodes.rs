@@ -1510,7 +1510,7 @@ impl SdroxideApp {
         let row_h = crate::chrome::chip_height(ui, Some(15.0));
         let interact_h = ui.spacing().interact_size.y;
         ui.spacing_mut().interact_size.y = interact_h.max(row_h);
-        ui.horizontal_wrapped(|ui| {
+        crate::chrome::wrapped_row_up(ui, "ft8-qso-actions", |ui| {
             // Back to the style's own height inside the row, so nothing drawn
             // in it is sized from the row's.
             ui.spacing_mut().interact_size.y = interact_h;
@@ -1569,33 +1569,39 @@ impl SdroxideApp {
                 }
             }
             ui.add_space(4.0);
-            // Free text: 13 characters is all FT8 carries, so cap the entry
-            // there rather than letting the operator type a message that would
-            // be silently cut on the air.
-            let entry = crate::chrome::field(
-                ui,
-                egui::TextEdit::singleline(&mut self.digi_free_text)
-                    .desired_width(ui.available_width() - 52.0)
-                    .char_limit(13)
-                    .hint_text(tr!("decodes-free-text-13-chars")),
-            );
-            let send = tx_gated(ui, tx_ok, |ui| {
-                crate::chrome::chip_accent(
+            // SEND first, from the right, so it gets the width its label
+            // needs in every language and the entry takes what is left. A
+            // fixed 52 points fitted SEND and not SENDEN, and the German row
+            // pushed the whole column 5 points past the panel's frame.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let send = tx_gated(ui, tx_ok, |ui| {
+                    crate::chrome::chip_accent(
+                        ui,
+                        false,
+                        RichText::new(tr!("decodes-send")).size(11.0).strong(),
+                        crate::theme::CYAN(),
+                        crate::theme::INK_ON_CYAN(),
+                    )
+                });
+                // Free text: 13 characters is all FT8 carries, so cap the entry
+                // there rather than letting the operator type a message that would
+                // be silently cut on the air.
+                let entry = crate::chrome::field(
                     ui,
-                    false,
-                    RichText::new(tr!("decodes-send")).size(11.0).strong(),
-                    crate::theme::CYAN(),
-                    crate::theme::INK_ON_CYAN(),
-                )
+                    egui::TextEdit::singleline(&mut self.digi_free_text)
+                        .desired_width(ui.available_width())
+                        .char_limit(13)
+                        .hint_text(tr!("decodes-free-text-13-chars")),
+                );
+                // Return is the same button: a receiver must not have a keyboard
+                // path onto the air that the greyed chip beside it denies.
+                let entered =
+                    tx_ok && entry.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if (send.clicked() || entered) && !self.digi_free_text.trim().is_empty() {
+                    cmds.push(Command::DigiSendText(self.digi_free_text.clone()));
+                    self.digi_free_text.clear();
+                }
             });
-            // Return is the same button: a receiver must not have a keyboard
-            // path onto the air that the greyed chip beside it denies.
-            let entered =
-                tx_ok && entry.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            if (send.clicked() || entered) && !self.digi_free_text.trim().is_empty() {
-                cmds.push(Command::DigiSendText(self.digi_free_text.clone()));
-                self.digi_free_text.clear();
-            }
         });
     }
 }

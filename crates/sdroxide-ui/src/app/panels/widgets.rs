@@ -456,8 +456,12 @@ pub(in crate::app) fn sstv_section<R>(
             .stroke(egui::Stroke::new(1.0, crate::theme::LINE_LIT()))
             .inner_margin(egui::Margin { left: 8, right: 8, top: 5, bottom: 7 })
             .show(ui, |ui| {
-                ui.set_min_size(egui::vec2(size.x - 16.0, size.y - 12.0));
-                ui.set_max_width(size.x - 16.0);
+                // The margins (8 + 8 across, 5 + 7 down) and the 1 pt stroke on
+                // each side, which counts toward a Frame's size since egui 0.31:
+                // left out, every section came out 2 pt wider and taller than
+                // the size it was asked for.
+                ui.set_min_size(egui::vec2(size.x - 18.0, size.y - 14.0));
+                ui.set_max_width(size.x - 18.0);
                 ui.label(RichText::new(title).size(9.5).strong().color(crate::theme::CYAN_DIM()));
                 ui.add_space(3.0);
                 add(ui)
