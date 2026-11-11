@@ -5366,6 +5366,7 @@ elad-tx-input-mic = Микрофон
 elad-tx-input-auto = Авто
 elad-tx-input-leave = Оставить как задано на радио
 tr-usdx-audio-one-cable = Один кабель (звук в потоке CAT)
+tr-usdx-audio-one-cable-mute = Один кабель (звук в потоке CAT), отключение динамика
 tr-usdx-audio-sound-card = USB-звуковая карта (разъём 3,5 мм)
 spy-server-format-uint8 = 8 бит (самая низкая полоса)
 spy-server-format-int16 = 16 бит

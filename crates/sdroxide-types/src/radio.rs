@@ -951,6 +951,8 @@ pub enum TrUsdxAudio {
     /// mode are not followed.
     #[default]
     OneCable,
+    /// The same as OneCable, but mutes the radio's speaker when in use
+    OneCableMute,
     /// Audio from an external USB sound card wired to the radio's 3.5 mm
     /// speaker/mic jack. Control still goes over the serial port, and the rig
     /// is polled and behaves as any other CAT rig.
@@ -958,11 +960,13 @@ pub enum TrUsdxAudio {
 }
 
 impl TrUsdxAudio {
-    pub const ALL: [TrUsdxAudio; 2] = [TrUsdxAudio::OneCable, TrUsdxAudio::SoundCard];
+    pub const ALL: [TrUsdxAudio; 3] =
+        [TrUsdxAudio::OneCable, TrUsdxAudio::OneCableMute, TrUsdxAudio::SoundCard];
 
     pub fn label(self) -> &'static str {
         match self {
             TrUsdxAudio::OneCable => "One cable (audio in the CAT stream)",
+            TrUsdxAudio::OneCableMute => "One cable (audio in the CAT stream), mute speaker",
             TrUsdxAudio::SoundCard => "USB sound card (3.5 mm jack)",
         }
     }
@@ -970,7 +974,12 @@ impl TrUsdxAudio {
     /// Whether this mode carries the audio in the CAT link, which the serial
     /// thread and the source both branch on.
     pub fn streams_audio(self) -> bool {
-        self == TrUsdxAudio::OneCable
+        matches!(self, TrUsdxAudio::OneCable | TrUsdxAudio::OneCableMute)
+    }
+
+    /// Whether this mode should mute the radio speaker when using the CAT link.
+    pub fn mutes_speaker(self) -> bool {
+        matches!(self, TrUsdxAudio::OneCableMute)
     }
 }
 

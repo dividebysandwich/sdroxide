@@ -5354,6 +5354,7 @@ elad-tx-input-mic = Micrófono
 elad-tx-input-auto = Auto
 elad-tx-input-leave = Dejar como esté en la radio
 tr-usdx-audio-one-cable = Un cable (audio en el flujo CAT)
+tr-usdx-audio-one-cable-mute = Un cable (audio en el flujo CAT), silenciar altavoz
 tr-usdx-audio-sound-card = Tarjeta de sonido USB (jack de 3,5 mm)
 spy-server-format-uint8 = 8 bits (menor ancho de banda)
 spy-server-format-int16 = 16 bits
@@ -5698,7 +5699,7 @@ settings-ui-module-panadapter = Panadapter
 settings-ui-undock-all-hint = Pone cada módulo en su propia ventana; la ventana principal queda con el espectro y los decodificadores. Un módulo sin nada que mostrar, como el panel de operación en un modo de voz, no abre ventana.
 settings-ui-undock-hint =
     Desacoplado, este módulo pasa a su propia ventana y la ventana principal devuelve el espacio a lo que queda: ponga la cascada en un segundo monitor, o los controles en un tercero. Cerrar su ventana lo vuelve a acoplar.
-    
+
     En Wayland se recupera el tamaño, pero el compositor decide dónde va una ventana: hágala flotante y fíjela a un monitor con una regla de ventana que coincida con el app-id «{ $app_id }».
 settings-ui-undocked = Desacoplada — su propia ventana
 settings-ui-window-label = Ventana { $module }
