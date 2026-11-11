@@ -5881,6 +5881,8 @@ sat-wxsat = WEATHER SATELLITES
 
 wxsat-decode = Decode
 
+wxsat-decode-hint = Run the decoder on the chosen channel. It works from the sample window and leaves the radio's mode alone, so the channel has to be inside the window.
+
 wxsat-channel = Satellite
 
 wxsat-tune = Tune here
@@ -5889,7 +5891,11 @@ wxsat-tune-hint = Switch the decoder on and bring the dial to this channel, so t
 
 wxsat-clear = Clear
 
+wxsat-clear-hint = Start a blank picture. What has been received so far is gone unless it was saved.
+
 wxsat-save = Save PNG
+
+wxsat-save-hint = Save the picture as it is drawn (turned over if Flip is on) as a grey PNG; an LRPT picture saves the channel shown.
 
 wxsat-flip = Flip
 

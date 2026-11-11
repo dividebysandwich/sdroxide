@@ -227,7 +227,8 @@ impl super::SdroxideApp {
         let cfg = self.state.wxsat;
         let mut edit = cfg;
         ui.horizontal_wrapped(|ui| {
-            crate::chrome::checkbox(ui, &mut edit.enabled, tr!("wxsat-decode"));
+            crate::chrome::checkbox(ui, &mut edit.enabled, tr!("wxsat-decode"))
+                .on_hover_text(tr!("wxsat-decode-hint"));
             ui.label(tr!("wxsat-signal"));
             ui.selectable_value(&mut edit.kind, WxsatKind::Apt, tr!("wxsat-kind-apt"));
             ui.selectable_value(&mut edit.kind, WxsatKind::Lrpt, tr!("wxsat-kind-lrpt"));
@@ -235,15 +236,25 @@ impl super::SdroxideApp {
                 // Another signal, another channel: the first satellite of its list.
                 edit.frequency_hz = satellites(edit.kind)[0].1;
             }
+            let selected = channel_name(edit.frequency_hz, edit.kind);
+            break_before(
+                ui,
+                &[
+                    (tr!("wxsat-channel"), egui::TextStyle::Body),
+                    (selected.clone(), egui::TextStyle::Button),
+                ],
+                1,
+            );
             ui.label(tr!("wxsat-channel"));
-            egui::ComboBox::from_id_salt("wxsat-channel")
-                .selected_text(channel_name(edit.frequency_hz, edit.kind))
-                .show_ui(ui, |ui| {
+            egui::ComboBox::from_id_salt("wxsat-channel").selected_text(selected).show_ui(
+                ui,
+                |ui| {
                     for (name, hz) in satellites(edit.kind) {
                         let label = format!("{name}  {:.4} MHz", hz / 1e6);
                         ui.selectable_value(&mut edit.frequency_hz, *hz, label);
                     }
-                });
+                },
+            );
             if crate::chrome::chip(ui, false, tr!("wxsat-tune"))
                 .on_hover_text(tr!("wxsat-tune-hint"))
                 .clicked()
@@ -313,7 +324,7 @@ impl super::SdroxideApp {
             if !have.contains(&self.wxsat.apid) {
                 self.wxsat.apid = have.first().copied().unwrap_or(0);
             }
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 for apid in have {
                     let before = self.wxsat.apid;
                     ui.selectable_value(
@@ -330,8 +341,11 @@ impl super::SdroxideApp {
 
         // The picture's own controls.
         let lrpt = cfg.kind == WxsatKind::Lrpt;
-        ui.horizontal(|ui| {
-            if crate::chrome::chip(ui, false, tr!("wxsat-clear")).clicked() {
+        ui.horizontal_wrapped(|ui| {
+            if crate::chrome::chip(ui, false, tr!("wxsat-clear"))
+                .on_hover_text(tr!("wxsat-clear-hint"))
+                .clicked()
+            {
                 self.wxsat.picture.clear();
                 self.wxsat.tex_key = usize::MAX;
             }
@@ -342,7 +356,10 @@ impl super::SdroxideApp {
                 self.wxsat.tex_key = usize::MAX;
             }
             let have = !self.wxsat.picture.is_empty();
-            if ui.add_enabled(have, egui::Button::new(tr!("wxsat-save"))).clicked() {
+            if crate::chrome::chip_enabled(ui, have, false, &tr!("wxsat-save"))
+                .on_hover_text(tr!("wxsat-save-hint"))
+                .clicked()
+            {
                 let shot = if lrpt {
                     self.wxsat.picture.channel_gray(self.wxsat.apid).map(|(size, g)| {
                         (size, if self.wxsat.flip { g.into_iter().rev().collect() } else { g })
@@ -396,11 +413,44 @@ impl super::SdroxideApp {
         }
         if let Some(tex) = &self.wxsat.tex {
             let size = tex.size_vec2();
-            let scale = ui.available_width() / size.x;
-            egui::ScrollArea::vertical().stick_to_bottom(!self.wxsat.flip).show_themed(ui, |ui| {
-                ui.image(egui::load::SizedTexture::new(tex.id(), size * scale));
-            });
+            // Scaled to the width inside the scroll area, not the window's: the
+            // window's width plus the scroll bar is wider than the window, and
+            // a window grows to fit what it holds — a point or two more every
+            // frame, until it ran off the screen's edge.
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .stick_to_bottom(!self.wxsat.flip)
+                .show_themed(ui, |ui| {
+                    let scale = ui.available_width() / size.x;
+                    ui.image(egui::load::SizedTexture::new(tex.id(), size * scale));
+                });
         }
+    }
+}
+
+/// Start a new line of a wrapped row unless `texts` — labels, and `buttons`
+/// of them drawn as a button (a combo box) — fit on what is left of this one.
+///
+/// A wrapped row wraps what it allocates directly, but a combo box lays itself
+/// out in a row of its own inside it, which takes the rest of the line and
+/// never moves down: on a phone the satellite picker ran 120 points past the
+/// window's edge and widened the window off the screen.
+pub(in crate::app) fn break_before(
+    ui: &mut egui::Ui,
+    texts: &[(String, egui::TextStyle)],
+    buttons: usize,
+) {
+    let sp = ui.spacing();
+    let mut need = buttons as f32 * (2.0 * sp.button_padding.x + sp.icon_width + sp.icon_spacing)
+        + texts.len() as f32 * sp.item_spacing.x;
+    for (t, style) in texts {
+        need += egui::WidgetText::from(t.as_str())
+            .into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, style.clone())
+            .size()
+            .x;
+    }
+    if ui.available_size_before_wrap().x < need && ui.cursor().left() > ui.max_rect().left() + 1.0 {
+        ui.end_row();
     }
 }
 
