@@ -728,17 +728,6 @@ impl SdroxideApp {
         self.public_sdr_map_state.answered(network, address, result, crate::time::now_unix_f64());
     }
 
-    /// Add a picked receiver as a radio of its own, named after its entry.
-    ///
-    /// In: the directory entry. Effect: a [`RadioTabRequest::Add`] with the
-    /// receiver's whole configuration and its catalogue name, acted on by the
-    /// shell after the frame; a notice says it is on its way. The radio the
-    /// operator is on is left exactly as it was.
-    /// Fails: none here; a factory that cannot make the radio reports through
-    /// the shell's own notice.
-    // Why: HDZ 2026-11-04: "dabei wäre statt Kiwisdr … der Sendername aus dem
-    //      Katalog zu übernehmen". Without a name the radio was called after
-    //      its interface, so every public receiver read "Kiwisdr".
     /// Whether this radio listens to a public receiver (KiwiSDR or SpyServer),
     /// so that its name on the tab can open the map on it.
     // Pitfall: asked of the controller, not read from `radio_cfg`: that is the
@@ -746,8 +735,23 @@ impl SdroxideApp {
     //          opened, so a radio added earlier had no link (HDZ 2026-11-04:
     //          "geht noch nicht, und die bestehenden müssten retro gelinkt
     //          werden").
-    pub(crate) fn on_public_sdr(&self) -> bool {
-        self.ctrl.radio_config().as_ref().and_then(crate::publicsdr_map::radio_target).is_some()
+    //
+    // Asked every frame for the shown tab, and a local controller answers
+    // `radio_config()` by reading `radio.json` from disk, so the answer is
+    // kept for a second.
+    pub(crate) fn on_public_sdr(&self, now: f64) -> bool {
+        let (at, on) = self.on_public_sdr_cache.get();
+        if at.is_finite() && (0.0..1.0).contains(&(now - at)) {
+            return on;
+        }
+        let on = self
+            .ctrl
+            .radio_config()
+            .as_ref()
+            .and_then(crate::publicsdr_map::radio_target)
+            .is_some();
+        self.on_public_sdr_cache.set((now, on));
+        on
     }
 
     /// Open Public SDRs on the map, at the receiver this radio listens to.
@@ -766,6 +770,17 @@ impl SdroxideApp {
         self.show_public_sdrs = true;
     }
 
+    /// Add a picked receiver as a radio of its own, named after its entry.
+    ///
+    /// In: the directory entry. Effect: a [`RadioTabRequest::Add`] with the
+    /// receiver's whole configuration and its catalogue name, acted on by the
+    /// shell after the frame; a notice says it is on its way. The radio the
+    /// operator is on is left exactly as it was.
+    /// Fails: none here; a factory that cannot make the radio reports through
+    /// the shell's own notice.
+    // Why: HDZ 2026-11-04: "dabei wäre statt Kiwisdr … der Sendername aus dem
+    //      Katalog zu übernehmen". Without a name the radio was called after
+    //      its interface, so every public receiver read "Kiwisdr".
     fn take_public_sdr(&mut self, entry: &PublicSdrEntry) {
         // A brand-new radio has none of this radio's settings, and should not
         // inherit them: it is a different receiver.

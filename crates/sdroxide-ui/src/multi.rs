@@ -728,7 +728,7 @@ impl MultiApp {
                     //      Link auch ohne Symbol an den Namen heften"; only on
                     //      the tab already shown, because a click on any other
                     //      tab shows that radio.
-                    if here && tab.app.on_public_sdr() {
+                    if here && tab.app.on_public_sdr(ui.input(|i| i.time)) {
                         let name = ui.add(egui::Label::new(label).sense(egui::Sense::click()));
                         let name = if name.hovered() {
                             ui.painter().hline(

@@ -403,6 +403,8 @@ pub struct SdroxideApp {
     public_sdr_map: bool,
     /// The map's view and the receivers a click on it picked.
     public_sdr_map_state: crate::publicsdr_map::PublicSdrMapState,
+    /// When `on_public_sdr` last asked the controller, and its answer.
+    on_public_sdr_cache: std::cell::Cell<(f64, bool)>,
     /// FlexRadios found by the last SmartSDR "Discover" listen.
     smartsdr_devices: Vec<sdroxide_types::SmartSdrDevice>,
     /// Result of the last SmartSDR "Test connection".
@@ -1577,6 +1579,7 @@ impl SdroxideApp {
             public_sdr_low_bw: false,
             public_sdr_map: false,
             public_sdr_map_state: Default::default(),
+            on_public_sdr_cache: std::cell::Cell::new((f64::NEG_INFINITY, false)),
             smartsdr_devices: Vec::new(),
             smartsdr_test_result: None,
             pluto_devices: Vec::new(),
