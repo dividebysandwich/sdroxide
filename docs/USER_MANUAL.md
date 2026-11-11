@@ -1064,11 +1064,10 @@ them all at once.
     another FFT size starts the mean afresh, a pan carries it along, and
     switching it off resets it. With S/N on, the readout under the pointer
     shows a second box with the S/N at that frequency.
-  - **3D** — draw the spectrum as a receding surface instead of a flat line,
-    with the newest spectrum across the front. See
-    [The 3D spectrum](#the-3d-spectrum) below.
-  - **surface** — how that surface is drawn: **LINES** or **SOLID**. Greyed
-    until 3D is switched on.
+  - **3D**, at the head of its own row — draw the spectrum as a receding
+    surface instead of a flat line, with the newest spectrum across the front;
+    beside it, how that surface is drawn: **LINES** or **SOLID** (greyed until
+    3D is switched on). See [The 3D spectrum](#the-3d-spectrum) below.
   - **flow** — how fast it flows away from you, and so how much time the
     surface holds. Greyed until 3D is switched on.
   - **reaction** — how quickly the line follows the band: **Slow**, **Medium**
@@ -1347,7 +1346,7 @@ this says it in shape.
 
 ![The 3D spectrum: the solid surface above, the line rendering below](images/spectrum-3d.png)
 
-The **surface** row picks between the two renderings:
+**LINES** and **SOLID**, beside **3D**, pick between the two renderings:
 
 - **SOLID** fills the surface and colours it by the same palette the waterfall
   uses, so the level is in the colour as well as in the height and the two

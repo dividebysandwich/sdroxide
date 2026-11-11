@@ -2504,7 +2504,6 @@ topbar-sql = sql
 topbar-stations = stations
 topbar-caption-reaction = reaction
 topbar-caption-scroll = scroll
-topbar-caption-surface = surface
 topbar-caption-flow = flow
 topbar-caption-detail = detail
 topbar-floor = floor

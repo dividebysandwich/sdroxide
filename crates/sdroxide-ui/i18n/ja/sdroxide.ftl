@@ -2442,7 +2442,6 @@ topbar-sql = SQL
 topbar-stations = 局
 topbar-caption-reaction = 反応
 topbar-caption-scroll = スクロール
-topbar-caption-surface = 面
 topbar-caption-flow = 流れ
 topbar-caption-detail = 詳細
 topbar-floor = 床

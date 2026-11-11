@@ -2463,7 +2463,6 @@ topbar-sql = sql
 topbar-stations = estações
 topbar-caption-reaction = reação
 topbar-caption-scroll = rolagem
-topbar-caption-surface = superfície
 topbar-caption-flow = fluxo
 topbar-caption-detail = detalhe
 topbar-floor = piso

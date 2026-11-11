@@ -2497,7 +2497,6 @@ topbar-sql = Sperre
 topbar-stations = Stationen
 topbar-caption-reaction = Reaktion
 topbar-caption-scroll = Scroll
-topbar-caption-surface = Fläche
 topbar-caption-flow = Fluss
 topbar-caption-detail = Detail
 topbar-floor = Boden

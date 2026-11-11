@@ -5697,12 +5697,6 @@ impl SdroxideApp {
                     {
                         self.view.snr_guide = !self.view.snr_guide;
                     }
-                    if crate::chrome::chip(ui, self.view.spectrum_3d, "3D")
-                        .on_hover_text(tr!("topbar-draw-spectrum-receding-surface-instead"))
-                        .clicked()
-                    {
-                        self.view.spectrum_3d = !self.view.spectrum_3d;
-                    }
                 });
                 // How tall the S/N line draws: the S/N at its full height, on a
                 // rail under the chip that switches it, live while it runs.
@@ -5756,12 +5750,12 @@ impl SdroxideApp {
                 &Speed::WATERFALL,
                 &tr!("topbar-how-fast-waterfall-scrolls-lines"),
             );
-            // One row: LABELS BY S/N, WITH PEAKS, IGNORE FLANKS side by side; the
-            // S/N MIN rail on the next.
+            // One row: LABELS BY S/N, WITH PEAKS, IGNORE FLANKS side by side
+            // (wrapping on a narrow screen); the S/N MIN rail on the next.
             // Why: HDZ 2026-11-11: "räume den Dialog auf, nebeneinander (Labels
             //      nach S/N) (mit Peaks) (ignoriere Flanken), dann nächste Reihe
             //      mit dem S/N-Schieberegler".
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 // Labels by S/N: a spot keeps its label only where the S/N guide
                 // sees a signal. Greyed while the guide is off.
                 if crate::chrome::chip_enabled(
@@ -5850,7 +5844,8 @@ impl SdroxideApp {
 
     /// The two rows of [`Self::panadapter_controls`] that belong to the 3D
     /// display: how the surface is drawn, and how fast it flows away from the
-    /// viewer. Both are live only once the 3D chip above them is lit.
+    /// viewer. Both are live only once the 3D chip at the head of the first is
+    /// lit.
     ///
     /// Greyed rather than hidden while the flat line is showing, the way the
     /// detail row greys a width this machine cannot hold: rows that come and go
@@ -5859,13 +5854,22 @@ impl SdroxideApp {
     fn spectrum_3d_rows(&mut self, ui: &mut egui::Ui, cfg: &mut sdroxide_types::UiSettings) {
         let on = self.view.spectrum_3d;
         let grey = tr!("topbar-switch-3d-set");
+        // 3D heads its own row, LINES and SOLID beside it: the chip that
+        // switches the surface on and the two ways it is drawn belong together.
+        // Why: HDZ 2026-11-11: "der 3D-Knopf hängt da falsch rum, mach das zum
+        //      Thema (3D), und daneben Linien, Voll in einer Reihe, das gehört
+        //      zusammen, das Wort Fläche entfällt".
         ui.horizontal_wrapped(|ui| {
-            ui.label(
-                RichText::new(tr!("topbar-caption-surface"))
-                    .size(10.0)
-                    .color(crate::theme::CYAN_DIM()),
-            )
-            .on_hover_text(tr!("topbar-how-3d-spectrum-drawn-only"));
+            if crate::chrome::chip(ui, on, "3D")
+                .on_hover_text(format!(
+                    "{}\n{}",
+                    tr!("topbar-draw-spectrum-receding-surface-instead"),
+                    tr!("topbar-how-3d-spectrum-drawn-only")
+                ))
+                .clicked()
+            {
+                self.view.spectrum_3d = !self.view.spectrum_3d;
+            }
             for (solid, label, hint) in [
                 (false, tr!("topbar-lines"), tr!("topbar-one-trace-per-remembered-spectrum")),
                 (true, tr!("topbar-solid"), tr!("topbar-filled-surface-coloured-waterfall-s")),
@@ -7503,14 +7507,8 @@ fn panadapter_group_w(ui: &egui::Ui) -> f32 {
         .map(|d| crate::chrome::chip_width(ui, &detail_chip_label(*d), None) + gap)
         .sum();
     let widest = [
-        chips(&[
-            &tr!("topbar-show-spectrum"),
-            &tr!("topbar-peak-hold"),
-            &tr!("topbar-snr-guide"),
-            "3D",
-        ]),
-        caption(&tr!("topbar-caption-surface"))
-            + chips(&[&tr!("topbar-lines"), &tr!("topbar-solid")]),
+        chips(&[&tr!("topbar-show-spectrum"), &tr!("topbar-peak-hold"), &tr!("topbar-snr-guide")]),
+        chips(&["3D", &tr!("topbar-lines"), &tr!("topbar-solid")]),
         caption(&tr!("topbar-caption-flow")) + speeds(&Speed::SURFACE),
         caption(&tr!("topbar-caption-reaction")) + speeds(&Speed::ALL),
         caption(&tr!("topbar-caption-scroll")) + speeds(&Speed::WATERFALL),
