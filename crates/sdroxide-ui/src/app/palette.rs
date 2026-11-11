@@ -153,6 +153,11 @@ impl SdroxideApp {
             (Win::Satellite, tr!("sat-satellite")),
             (Win::Windows, tr!("palette-win-windows")),
         ] {
+            // The window list is a native-only window; in a browser the flag
+            // has no reader, so the row would do nothing.
+            if cfg!(target_arch = "wasm32") && matches!(w, Win::Windows) {
+                continue;
+            }
             v.push(Entry { group: windows.clone(), label, go: Go::Window(w) });
         }
         let settings = tr!("palette-group-settings");
@@ -260,13 +265,15 @@ impl SdroxideApp {
                 },
             );
         }
-        let ranked = if parse_freq(&self.palette.query).is_some() {
+        let mut ranked = if parse_freq(&self.palette.query).is_some() {
             // Nothing else is ranked against a number: `14.074` is a
             // subsequence of no label worth showing under it.
             vec![0]
         } else {
             rank(&entries, &self.palette.query)
         };
+        // Only the first 60 are drawn; the arrows must not select past them.
+        ranked.truncate(60);
         self.palette.selected = self.palette.selected.min(ranked.len().saturating_sub(1));
 
         // Keys first, taken from the events so the text box does not also move
@@ -325,7 +332,7 @@ impl SdroxideApp {
                     ui.set_width(ui.available_width());
                     // Capped: past the first screens of it a list this long is
                     // not being read, it is being typed at.
-                    for (row, &i) in ranked.iter().take(60).enumerate() {
+                    for (row, &i) in ranked.iter().enumerate() {
                         let e = &entries[i];
                         let sel = row == self.palette.selected;
                         let (rect, r) = ui.allocate_exact_size(
