@@ -315,7 +315,7 @@ pub fn salted_id(ctx: &egui::Context, name: &str) -> egui::Id {
 /// edges loses 48 points of a window it could have had, which is a good deal
 /// less than a desktop with a taskbar loses when the bottom of the window is
 /// underneath it.
-const DESKTOP_CHROME_H: f32 = 48.0;
+pub const DESKTOP_CHROME_H: f32 = 48.0;
 
 /// The inner size to shrink a window to so that the whole of it — title bar,
 /// borders and all — fits on the screen it is on, or `None` when it already
