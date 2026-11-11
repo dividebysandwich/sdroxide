@@ -76,6 +76,16 @@ fn main() {
         // Upstream still declares `cmake_minimum_required(VERSION 2.6...3.10)`,
         // which CMake 4 refuses outright.
         .define("CMAKE_POLICY_VERSION_MINIMUM", "3.5")
+        // Upstream bakes `git describe` into `version_string()`, which the shim
+        // hands to the UI, and looks for the repository by walking up from the
+        // source directory until it finds a `.git` — the submodule's own, or,
+        // for the Windows copy under target/, sdroxide's, whose branch name it
+        // then reports. Either way the same commit names a different version
+        // from a full clone, a shallow CI checkout or a source tarball, and no
+        // two of those binaries can match. A git directory with no HEAD in it
+        // turns the lookup off, and the version then comes from CHANGELOG.md,
+        // which is part of the source.
+        .define("FORCED_GIT_DIR", cmake_out.join("no-git"))
         // The decoders run on every IQ block; an unoptimised build of them is
         // not worth having even under `cargo build`.
         .profile("Release")
