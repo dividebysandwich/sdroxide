@@ -34,7 +34,8 @@
 //! firmware's own `UA` extension:
 //!
 //! * `UA1;` turns streaming on with the speaker, `UA2;` with the speaker off,
-//!   `UA0;` off. The reply is `UA1;` immediately followed by `US`.
+//!   `UA0;` off. The reply is `UA1;` immediately followed by `US`. sdroxide
+//!   pauses with `;RX;` instead (#724), which has no reply.
 //! * `US` is **not** terminated. Receive audio runs until a CAT command
 //!   arrives, at which point the firmware writes a `;`, the reply, and then
 //!   `US` again to resume. The host therefore sees
@@ -365,6 +366,16 @@ impl Protocol for TrUsdx {
         self.stream_on
     }
 
+    /// `;RX;` stops the stream and, unlike `UA0;`, gets no reply that says so;
+    /// a key-down stops it too. Mark it stopped as the frame goes out, so a
+    /// control frame during an over is not bracketed with a `;RX;` that would
+    /// unkey the radio mid-transmission. The next `US` header marks it running.
+    fn wrote(&mut self, frame: &[u8]) {
+        if frame.starts_with(b";RX;") || frame.starts_with(b";TX") {
+            self.stream_on = false;
+        }
+    }
+
     /// The receive audio pulled out of the stream since the last call.
     fn take_stream_audio(&mut self, out: &mut Vec<u8>) {
         out.append(&mut self.audio);
@@ -649,5 +660,18 @@ mod tests {
         let mut audio = Vec::new();
         p.take_stream_audio(&mut audio);
         assert_eq!(audio, vec![0x80, 0x81]);
+    }
+
+    #[test]
+    fn a_key_down_or_pause_marks_the_stream_stopped() {
+        let mut p = TrUsdx::default();
+        for frame in [&b";RX;"[..], b";TX;", b";TX0;", b";RX;UA1;"] {
+            p.stream_on = true;
+            p.wrote(frame);
+            assert!(!p.stream_active(), "{}", String::from_utf8_lossy(frame));
+        }
+        p.stream_on = true;
+        p.wrote(b"FA00014074000;");
+        assert!(p.stream_active());
     }
 }
