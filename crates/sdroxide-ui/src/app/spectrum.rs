@@ -1022,6 +1022,9 @@ impl SdroxideApp {
             self.fit.started_at = None;
             return;
         };
+        // A fit asked for is FIT from scratch: the operator's shift starts
+        // over at zero, and the levels land on the measurement itself.
+        self.view.fit_shift_db = (0.0, 0.0);
         (self.view.db_floor, self.view.db_ceil) = want;
         // Where the automatic side would have got to, so it has no correction
         // of its own to make on top of the one just clicked for.
@@ -1084,8 +1087,11 @@ impl SdroxideApp {
         }
         let Some(want) = self.wanted_levels() else { return };
         self.fit.stepped_at = now;
-        let target = average_in(self.fit.avg, want);
-        self.fit.avg = Some(target);
+        let measured = average_in(self.fit.avg, want);
+        self.fit.avg = Some(measured);
+        // The operator's shift rides on top of the measurement, so a level
+        // set by hand while FIT is on is where FIT aims from then on.
+        let target = self.view.fit_shifted(measured);
         let have = (self.view.db_floor, self.view.db_ceil);
         if !self.fit.gliding {
             if !fit_due(&self.fit, now) || !(self.fit.pending || levels_drifted(target, have)) {

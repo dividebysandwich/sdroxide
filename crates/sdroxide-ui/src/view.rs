@@ -153,6 +153,17 @@ pub struct ViewState {
     /// them switches it off, which is also what the FIT chip now shows.
     #[serde(default = "auto_fit_default")]
     pub auto_fit: bool,
+    /// How far the operator has moved the floor and the ceiling away from
+    /// where FIT itself puts them, in dB. While FIT is on, the FLOOR and CEIL
+    /// rails move this rather than switching FIT off: FIT keeps following the
+    /// band, and the picture keeps the operator's taste on top of it ("a little
+    /// darker than FIT"). Kept across band changes and restarts; switching FIT
+    /// on starts it over at zero.
+    /// Why: HDZ 2026-11-12: "wenn FIT aktiv ist, soll er auf die Schieberegler
+    ///      Boden und Decke direkt einwirken … verknödeln, dass die auto
+    ///      adjusten"; the shift "kann darüber hinaus gelten".
+    #[serde(default)]
+    pub fit_shift_db: (f32, f32),
     pub fft_size: u32,
     /// Fraction of the panadapter height used by the spectrum line (rest = waterfall).
     pub spectrum_fraction: f32,
@@ -752,6 +763,7 @@ impl Default for ViewState {
             db_floor: -120.0,
             db_ceil: -20.0,
             auto_fit: auto_fit_default(),
+            fit_shift_db: (0.0, 0.0),
             fft_size: 4096,
             spectrum_fraction: 0.35,
             peak_hold: false,
@@ -804,13 +816,32 @@ impl Default for ViewState {
 }
 
 impl ViewState {
-    /// Set the floor and ceiling by hand. That is a request to keep them, so
-    /// FIT goes off: left on, it glided them straight back the next time they
-    /// drifted 3 dB from its own target (#642).
+    /// Set the floor and ceiling by hand.
+    ///
+    /// With FIT off they simply stay where they are put. With FIT on, the move
+    /// goes into [`ViewState::fit_shift_db`] as well, by exactly as much as
+    /// the level moved, so FIT's next step aims where the operator put it and
+    /// keeps that distance from its own measurement on every band after. FIT
+    /// used to go off here instead — left on as it was, it glided the level
+    /// straight back the next time it drifted 3 dB from its own target (#642).
     pub fn set_levels_by_hand(&mut self, floor: f32, ceil: f32) {
-        self.db_floor = floor.clamp(-160.0, ceil - 5.0);
-        self.db_ceil = ceil.clamp(self.db_floor + 5.0, 40.0);
-        self.auto_fit = false;
+        let had = (self.db_floor, self.db_ceil);
+        (self.db_floor, self.db_ceil) = clamp_levels(floor, ceil);
+        if self.auto_fit {
+            let shift = |s: f32, now: f32, was: f32| {
+                (s + now - was).clamp(-FIT_SHIFT_MAX_DB, FIT_SHIFT_MAX_DB)
+            };
+            self.fit_shift_db = (
+                shift(self.fit_shift_db.0, self.db_floor, had.0),
+                shift(self.fit_shift_db.1, self.db_ceil, had.1),
+            );
+        }
+    }
+
+    /// Where the levels go when FIT measures `fit`: the measurement moved by
+    /// the operator's [`ViewState::fit_shift_db`], within the rails' limits.
+    pub fn fit_shifted(&self, fit: (f32, f32)) -> (f32, f32) {
+        clamp_levels(fit.0 + self.fit_shift_db.0, fit.1 + self.fit_shift_db.1)
     }
 
     /// Whether the spectrum line is drawn.
@@ -934,6 +965,17 @@ fn wide_waterfall_default() -> bool {
 /// surface, which is what the 3D chip should show the first time it is clicked.
 fn spectrum_3d_solid_default() -> bool {
     true
+}
+
+/// The furthest [`ViewState::fit_shift_db`] moves either level from FIT's own:
+/// the floor rail's whole travel, so a shift is never what stops a rail.
+pub const FIT_SHIFT_MAX_DB: f32 = 120.0;
+
+/// A floor and ceiling kept inside the rails and at least 5 dB apart — the
+/// floor gives way first, the ceiling then makes room above it.
+fn clamp_levels(floor: f32, ceil: f32) -> (f32, f32) {
+    let floor = floor.clamp(-160.0, ceil - 5.0);
+    (floor, ceil.clamp(floor + 5.0, 40.0))
 }
 
 /// Default for [`ViewState::auto_fit`] — on, so the waterfall reads on the
@@ -1074,16 +1116,47 @@ fn wefax_gallery_default() -> f32 {
 mod tests {
     use super::*;
 
-    /// Issue #642: a floor moved by hand sprang back, because FIT stayed on.
+    /// With FIT off, a level set by hand is simply kept.
     #[test]
-    fn moving_the_floor_by_hand_switches_fit_off() {
-        let mut v = ViewState::default();
-        assert!(v.auto_fit, "FIT is on by default");
+    fn a_level_set_by_hand_with_fit_off_stays_put() {
+        let mut v = ViewState { auto_fit: false, ..ViewState::default() };
         let ceil = v.db_ceil;
         v.set_levels_by_hand(-140.0, ceil);
         assert!(!v.auto_fit);
-        assert_eq!(v.db_floor, -140.0);
-        assert_eq!(v.db_ceil, ceil);
+        assert_eq!((v.db_floor, v.db_ceil), (-140.0, ceil));
+        assert_eq!(v.fit_shift_db, (0.0, 0.0), "no shift is kept with FIT off");
+    }
+
+    /// With FIT on, the rail keeps FIT on and moves its target instead: the
+    /// level lands where it was put, and the next band's fit is shifted by the
+    /// same amount (HDZ 2026-11-12). Issue #642 stays fixed — FIT aims where
+    /// the hand left it, so nothing springs back.
+    #[test]
+    fn a_level_set_by_hand_with_fit_on_shifts_fit() {
+        let mut v = ViewState::default();
+        assert!(v.auto_fit, "FIT is on by default");
+        (v.db_floor, v.db_ceil) = (-110.0, -60.0);
+        v.set_levels_by_hand(-104.0, -60.0);
+        assert!(v.auto_fit, "FIT stays on");
+        assert_eq!((v.db_floor, v.db_ceil), (-104.0, -60.0));
+        assert_eq!(v.fit_shift_db, (6.0, 0.0), "only the rail that moved shifts");
+        // FIT's own measurement of the next band, moved by the shift.
+        assert_eq!(v.fit_shifted((-125.0, -80.0)), (-119.0, -80.0));
+        // Where the hand left this band, FIT's aim is the hand's level.
+        assert_eq!(v.fit_shifted((-110.0, -60.0)), (v.db_floor, v.db_ceil));
+        // Two moves add up.
+        v.set_levels_by_hand(-104.0, -66.0);
+        assert_eq!(v.fit_shift_db, (6.0, -6.0));
+    }
+
+    /// A shift never lets FIT's aim leave the rails or close the 5 dB gap.
+    #[test]
+    fn a_shifted_fit_stays_inside_the_rails() {
+        let v = ViewState { fit_shift_db: (30.0, -30.0), ..ViewState::default() };
+        let (f, c) = v.fit_shifted((-60.0, -40.0));
+        assert!(c - f >= 5.0 && f >= -160.0 && c <= 40.0, "{f} {c}");
+        let v = ViewState { fit_shift_db: (-120.0, 0.0), ..ViewState::default() };
+        assert_eq!(v.fit_shifted((-100.0, -40.0)).0, -160.0);
     }
 
     /// The operating panel's propagation settings must not live in
