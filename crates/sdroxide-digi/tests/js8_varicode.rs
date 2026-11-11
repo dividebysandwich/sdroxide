@@ -177,3 +177,50 @@ fn data_frames_unpack_back_to_their_text() {
         assert_eq!(got, want, "{text:?}");
     }
 }
+
+/// What we make of JS8Call's own transmissions to custom groups and compound
+/// callsigns. Two bugs hid here:
+/// * Every compound frame was read as a heartbeat, so a message to @MAGNET
+///   arrived as "HB from @MAGNET".
+/// * The reserved-group table stopped at @NTS, so a directed frame to @EMCOMM
+///   did not unpack at all and was dropped.
+#[test]
+fn messages_js8call_frames_reassemble_with_the_right_sender_and_addressee() {
+    use js8_varicode_vectors::MESSAGES;
+    use sdroxide_digi::js8::assembler::Js8Assembler;
+    use sdroxide_digi::js8::decode::Js8Decode;
+    use sdroxide_digi::js8::message::Js8Payload;
+    use sdroxide_types::Js8Speed;
+
+    for (from, _grid, text, frames) in MESSAGES {
+        let mut a = Js8Assembler::new("N0JDS");
+        a.set_my_groups(vec!["@MAGNET".into()]);
+        let mut got = None;
+        for (i, f) in frames.split(' ').enumerate() {
+            let (chars, flags) = f.split_once('/').expect("chars/flags");
+            let payload = Js8Payload::from_chars(chars, flags.parse().expect("flags"))
+                .unwrap_or_else(|| panic!("{text}: {chars} is not a frame"));
+            let d = Js8Decode {
+                payload,
+                audio_hz: 1500.0,
+                dt_sec: 0.0,
+                snr_db: -8.0,
+                sync_score: 3.0,
+                hard_errors: 0,
+                speed: Js8Speed::Normal,
+            };
+            got = a.push(&d, 1000 + 15 * i as i64);
+        }
+        let msg = got.unwrap_or_else(|| panic!("{text}: never completed"));
+        let (to, rest) = text.split_once(' ').expect("addressed");
+        assert_eq!(msg.from, *from, "{text}: sender");
+        assert_eq!(msg.to, to, "{text}: addressee");
+        assert!(msg.complete, "{text}");
+        // The command (if any) and the text together say what was typed.
+        let said = format!("{} {}", msg.cmd.as_deref().unwrap_or(""), msg.text);
+        let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert_eq!(norm(&said), norm(rest), "{text}: content");
+        let for_me = to == "N0JDS" || to == "@MAGNET";
+        assert_eq!(msg.to_me, for_me, "{text}: to_me");
+    }
+}

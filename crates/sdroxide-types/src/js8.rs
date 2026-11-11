@@ -262,11 +262,259 @@ pub struct Js8Status {
     /// tell their own beacon from a stranger's.
     #[serde(default)]
     pub hb_hz: Option<f32>,
+    /// Group auto-responses that have fired and still have sends to go.
+    #[serde(default)]
+    pub auto_pending: Vec<Js8AutoPending>,
+}
+
+/// Where an auto-response goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Js8AutoReplyTo {
+    /// Directed back to the station that wrote to the group: `KN4CRD …`.
+    #[default]
+    Sender,
+    /// To the whole group the message came in on: `@EMCOMM …`.
+    Group,
+    /// Exactly as written. The reply names its own addressee, or none.
+    AsWritten,
+}
+
+impl Js8AutoReplyTo {
+    pub const ALL: [Js8AutoReplyTo; 3] =
+        [Js8AutoReplyTo::Sender, Js8AutoReplyTo::Group, Js8AutoReplyTo::AsWritten];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Js8AutoReplyTo::Sender => "Sender",
+            Js8AutoReplyTo::Group => "Group",
+            Js8AutoReplyTo::AsWritten => "As written",
+        }
+    }
+}
+
+/// Most auto-response rules a station may hold.
+pub const JS8_AUTO_RULES_MAX: usize = 16;
+/// Most times one rule may send its reply for one trigger.
+pub const JS8_AUTO_REPEAT_MAX: u8 = 10;
+
+/// A canned reply to a message sent to a group.
+///
+/// For example: when anyone writes to @EMCOMM with "QRV?" in the text,
+/// answer "@SENDER QRV @MYGRID" three times, two minutes apart.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Js8AutoRule {
+    pub enabled: bool,
+    /// What the operator calls the rule. Shown in the panel while it runs.
+    pub name: String,
+    /// The group whose traffic triggers it, `@` included: `@EMCOMM`.
+    pub group: String,
+    /// A phrase the message must contain, compared ignoring case and spacing.
+    /// Empty means any message to the group.
+    pub contains: String,
+    /// The reply. `@SENDER`, `@GROUP`, `@MYCALL` and `@MYGRID` are replaced
+    /// when it is sent.
+    pub reply: String,
+    pub reply_to: Js8AutoReplyTo,
+    /// How many times the reply goes out, 1 to [`JS8_AUTO_REPEAT_MAX`].
+    pub repeat: u8,
+    /// Minutes between repeats.
+    pub gap_min: u16,
+    /// Minutes before the same station can trigger this rule again.
+    pub cooldown_min: u16,
+}
+
+impl Default for Js8AutoRule {
+    fn default() -> Self {
+        Js8AutoRule {
+            enabled: true,
+            name: String::new(),
+            group: String::new(),
+            contains: String::new(),
+            reply: String::new(),
+            reply_to: Js8AutoReplyTo::Sender,
+            repeat: 1,
+            gap_min: 2,
+            cooldown_min: 30,
+        }
+    }
+}
+
+impl Js8AutoRule {
+    /// The rule with every number pulled into its allowed range. A rule
+    /// hand-edited in `digi.json` might otherwise ask to repeat 200 times.
+    pub fn clamped(&self) -> Js8AutoRule {
+        Js8AutoRule {
+            repeat: self.repeat.clamp(1, JS8_AUTO_REPEAT_MAX),
+            gap_min: self.gap_min.clamp(1, 60),
+            cooldown_min: self.cooldown_min.clamp(1, 240),
+            ..self.clone()
+        }
+    }
+
+    /// A short label for the panel: the name, or the group when unnamed.
+    pub fn label(&self) -> &str {
+        if self.name.trim().is_empty() { self.group.trim() } else { self.name.trim() }
+    }
+
+    /// The text this rule sends when `sender` writes to its group, addressee
+    /// included, or `None` when there is nothing to send.
+    ///
+    /// The placeholders are replaced first: `@SENDER`, `@GROUP`, `@MYCALL`,
+    /// and `@MYGRID` (four characters). The reply is then addressed as
+    /// [`reply_to`](Self::reply_to) says, unless the operator already wrote
+    /// that addressee at its start.
+    pub fn render_for(&self, sender: &str, my_call: &str, my_grid: &str) -> Option<String> {
+        let sender = sender.trim().to_ascii_uppercase();
+        let group = js8_group_normalize(&self.group);
+        let grid: String = my_grid.trim().chars().take(4).collect::<String>().to_ascii_uppercase();
+        let mut body = self.reply.to_ascii_uppercase();
+        // Longest name first, so `@MYGRID` is never read as `@MY…`.
+        for (key, value) in [
+            ("@SENDER", sender.as_str()),
+            ("@MYGRID", grid.as_str()),
+            ("@MYCALL", &my_call.trim().to_ascii_uppercase()),
+            ("@GROUP", group.as_str()),
+        ] {
+            body = body.replace(key, value);
+        }
+        let body = js8_normalize_text(&body);
+        if body.is_empty() {
+            return None;
+        }
+        let to = match self.reply_to {
+            Js8AutoReplyTo::Sender => sender,
+            Js8AutoReplyTo::Group => group,
+            Js8AutoReplyTo::AsWritten => return Some(body),
+        };
+        if to.is_empty() {
+            return None;
+        }
+        if body.split_whitespace().next() == Some(to.as_str()) {
+            return Some(body);
+        }
+        Some(format!("{to} {body}"))
+    }
+
+    /// True when the rule's own reply would trigger the rule again.
+    ///
+    /// This happens when the reply goes back to the group and still contains
+    /// the phrase. One station alone is safe: it never answers itself. Two
+    /// stations running the same rule would answer each other until their
+    /// cooldowns ran out.
+    pub fn self_retriggers(&self) -> bool {
+        let reply = js8_normalize_text(&self.reply);
+        let to_group = match self.reply_to {
+            Js8AutoReplyTo::Group => true,
+            Js8AutoReplyTo::Sender => false,
+            Js8AutoReplyTo::AsWritten => reply
+                .split_whitespace()
+                .next()
+                .is_some_and(|t| t == "@GROUP" || t == js8_group_normalize(&self.group)),
+        };
+        let want = js8_normalize_text(&self.contains);
+        to_group && (want.is_empty() || reply.contains(&want))
+    }
+}
+
+/// Text as auto-response matching compares it: upper case, with runs of
+/// whitespace collapsed to single spaces.
+pub fn js8_normalize_text(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ").to_ascii_uppercase()
+}
+
+/// A group name in its canonical form: trimmed, upper case, with its `@`.
+pub fn js8_group_normalize(group: &str) -> String {
+    let g = group.trim().to_ascii_uppercase();
+    if g.is_empty() || g.starts_with('@') { g } else { format!("@{g}") }
+}
+
+/// Whether `group` reads as a JS8 group name: `@`, then up to nine letters
+/// and digits, with `/` allowed between them (`@EMCOMM`, `@DX/NA`).
+///
+/// This is a format check for the settings dialog, not the encoder's last
+/// word. A name that passes but cannot be packed is still sent, as plain text.
+pub fn js8_group_valid(group: &str) -> bool {
+    let Some(name) = group.strip_prefix('@') else { return false };
+    let chars = name.chars().filter(|&c| c != '/').count();
+    (1..=9).contains(&chars)
+        && name.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '/')
+        && !name.starts_with('/')
+}
+
+/// An auto-response waiting to go out, as the panel shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Js8AutoPending {
+    /// The rule's label.
+    pub rule: String,
+    /// The station whose message triggered it.
+    pub trigger: String,
+    /// The reply, as it will be sent.
+    pub text: String,
+    /// Sends done so far, and how many there will be in all.
+    pub sent: u8,
+    pub total: u8,
+    /// Seconds until the next send.
+    pub next_in_s: u32,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn group_names_are_checked_for_shape_only() {
+        for g in ["@EMCOMM", "@DX/NA", "@MAGNET", "@A", "@REGION/1"] {
+            assert!(js8_group_valid(g), "{g}");
+        }
+        for g in ["EMCOMM", "@", "@emcomm", "@TOOLONGNAME", "@/X", "@EM COMM"] {
+            assert!(!js8_group_valid(g), "{g}");
+        }
+        assert_eq!(js8_group_normalize(" emcomm "), "@EMCOMM");
+        assert_eq!(js8_group_normalize("@Ares"), "@ARES");
+        assert_eq!(js8_group_normalize("  "), "");
+    }
+
+    #[test]
+    fn a_reply_that_would_trigger_itself_is_flagged() {
+        let base = Js8AutoRule {
+            group: "@EMCOMM".into(),
+            contains: "QRV?".into(),
+            reply: "QRV @MYGRID".into(),
+            ..Default::default()
+        };
+        let loopy = Js8AutoRule {
+            reply_to: Js8AutoReplyTo::Group,
+            reply: "QRV? ANYONE".into(),
+            ..base.clone()
+        };
+        assert!(loopy.self_retriggers());
+        let any = Js8AutoRule {
+            reply_to: Js8AutoReplyTo::Group,
+            contains: String::new(),
+            ..base.clone()
+        };
+        assert!(any.self_retriggers(), "an empty phrase matches every reply");
+        let written = Js8AutoRule {
+            reply_to: Js8AutoReplyTo::AsWritten,
+            reply: "@GROUP QRV? ANYONE".into(),
+            ..base.clone()
+        };
+        assert!(written.self_retriggers());
+        // Back to the sender, it reaches no group, so it cannot trigger
+        // anything.
+        let sender = Js8AutoRule { reply: "QRV? ANYONE".into(), ..base.clone() };
+        assert!(!sender.self_retriggers());
+        let group = Js8AutoRule { reply_to: Js8AutoReplyTo::Group, ..base };
+        assert!(!group.self_retriggers());
+    }
+
+    #[test]
+    fn a_hand_edited_rule_cannot_ask_for_more_than_the_limits() {
+        let wild = Js8AutoRule { repeat: 200, gap_min: 0, cooldown_min: 0, ..Default::default() };
+        let r = wild.clamped();
+        assert_eq!((r.repeat, r.gap_min, r.cooldown_min), (JS8_AUTO_REPEAT_MAX, 1, 1));
+    }
 
     /// Issue #389: the buttons run from the slowest, narrowest waveform to the
     /// fastest, widest one, and every speed appears exactly once. The wire

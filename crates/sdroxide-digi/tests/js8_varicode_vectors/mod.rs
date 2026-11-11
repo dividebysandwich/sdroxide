@@ -31,6 +31,11 @@ pub const CALLSIGNS: &[(&str, u32)] = &[
     ("@DX/EU", 262177566),
     ("@REGION/1", 262177571),
     ("@GROUP/0", 262177574),
+    ("@NTS", 262177587),
+    ("@APRSIS", 262177593),
+    ("@EMCOMM", 262177596),
+    ("@AMRRON", 262177599),
+    ("@QRO", 262177614),
 ];
 
 /// `(grid, packed 15-bit value)`.
@@ -74,6 +79,19 @@ pub const HEARTBEATS: &[(&str, &str, &str)] = &[
     ("VK3ABC", "@HB HEARTBEAT QF22", "3vM8S1qrO650"),
     ("N0JDS", "@HB HEARTBEAT FN42", "2s0AYI0iOiD0"),
     ("G0ABC", "@HB HEARTBEAT IO91", "1-byv4ieOVwe"),
+];
+
+/// `(mycall, mygrid, text, frames as "chars/flags" joined by spaces)`.
+pub const MESSAGES: &[(&str, &str, &str, &str)] = &[
+    ("KN4CRD", "EM73", "@EMCOMM HELLO WORLD", "SN5-lVGGPvy0/1 tYuMzoX+++++/2"),
+    ("KN4CRD", "EM73", "@AMRRON SNR?", "SN5-lVGGP-00/3"),
+    ("KN4CRD", "EM73", "@EMCOMM QRV?", "SN5-lVGGPvy0/1 wr4iV+++++++/2"),
+    ("KN4CRD", "EM73", "@EMCOMM SNR -10", "SN5-lVGGPvaL/3"),
+    ("KN4CRD", "EM73", "@MAGNET STATUS AT HOME", "AY-pe-ukukfO/1 KnAJIbbiW+K8/0 o3taF+++++++/2"),
+    ("KN4CRD", "EM73", "W1AW/4 GRID?", "AY-pe-ukukfO/1 JzLmyzdFO+Jm/2"),
+    ("KN4CRD/QRP", "EM73", "N0JDS SNR?", "AY-pe+CJMkfO/1 Is0AYI0iO+JG/2"),
+    ("KN4CRD/QRP", "EM73", "@EMCOMM HELLO", "AY-pe+CJMkfO/1 KlZxdXure+N8/0 tYuK++++++++/2"),
+    ("KN4CRD", "EM73", "@DX/NA HELLO", "SN5-lVGGOvy0/1 tYuK++++++++/2"),
 ];
 
 /// `(character, code bits as a string of '0'/'1')`.

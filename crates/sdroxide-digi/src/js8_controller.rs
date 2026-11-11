@@ -10,14 +10,19 @@
 //!
 //! **No QSO machine.** FT8's `QsoMachine` sequences a contest exchange through
 //! Tx1–Tx6. JS8 carries a conversation: what to send next is whatever the
-//! operator typed, and the only automatic traffic is a reply to a direct
-//! question.
+//! operator typed. The automatic traffic is limited to:
+//! * replies to direct questions ([`crate::js8::directed`]);
+//! * heartbeats;
+//! * group auto-responses the operator wrote and switched on
+//!   ([`crate::js8::autorule`]).
 //!
 //! **A frame queue instead.** A message longer than one frame occupies
-//! consecutive slots, so transmit is a `VecDeque<Js8Payload>` drained one frame
-//! per slot. Auto-replies join the back of that queue rather than jumping it,
-//! which is what stops the station keying twice in a slot or interrupting the
-//! operator mid-message.
+//! consecutive slots, so transmit is a queue drained one frame per slot. Every
+//! message joins the back of it rather than jumping it, which stops the station
+//! keying twice in a slot. Each frame records which message it belongs to and
+//! who queued it. That lets an operator's SEND replace their own unsent
+//! traffic without dropping an automatic answer or cutting off a message
+//! already on the air.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -27,19 +32,23 @@ use std::time::SystemTime;
 
 use sdroxide_dsp::MonoResampler;
 use sdroxide_types::{
-    DigiConfig, DigiStatus, HB_BAND_HI_HZ, HB_BAND_LO_HZ, HB_SLOT_HZ, Js8Heard, Js8Msg, Js8Speed,
-    Js8Status, Mode, QsoStep,
+    DigiConfig, DigiStatus, HB_BAND_HI_HZ, HB_BAND_LO_HZ, HB_SLOT_HZ, JS8_AUTO_RULES_MAX,
+    Js8AutoPending, Js8Heard, Js8Msg, Js8Speed, Js8Status, Mode, QsoStep,
 };
 
 use crate::DigiEngine;
 use crate::clock::ClockMonitor;
 use crate::controller::{BurstPlayer, DigiAction};
 use crate::js8::assembler::Js8Assembler;
+use crate::js8::autorule;
 use crate::js8::decode::{Js8Decode, Js8Depth, decode_slot_for};
-use crate::js8::directed::{Js8Intent, Js8Reply, ReplyPolicy, StationInfo, auto_reply, intent};
+use crate::js8::directed::{
+    Js8Intent, Js8Reply, LastTx, ReplyPolicy, StationInfo, auto_reply, intent, repeat_reply,
+};
 use crate::js8::frame::{self, Compound, DIRECTED_CMDS, Directed, Js8Flags};
 use crate::js8::message::Js8Payload;
 use crate::js8::modem::{self, DECODE_RATE};
+use crate::js8::varicode;
 use crate::params::DigiParams;
 use crate::scheduler::SlotScheduler;
 
@@ -78,6 +87,38 @@ const ACTIVITY_WINDOW_S: i64 = 30;
 /// growing the list without bound.
 const ACTIVITY_CAP_DECODES: usize = 500;
 
+/// Most group auto-responses sent in any hour, across all rules and
+/// stations.
+///
+/// The last line of defence: per-station cooldowns and repeat limits already
+/// bound each rule. This bounds the whole station if a busy net, or two
+/// stations' rules answering each other, gets past them. Sends due beyond it
+/// wait rather than vanish, and the panel shows them waiting.
+const AUTO_RULE_MAX_PER_HOUR: usize = 20;
+
+/// (rule, station) pairs remembered for the auto-response cooldown.
+const AUTO_COOLDOWN_CAP: usize = 200;
+
+/// A group auto-response that fired and still has sends to make.
+#[derive(Debug, Clone)]
+struct AutoSend {
+    /// Index into `js8_auto_rules`, for the cooldown and de-duplication.
+    rule: usize,
+    label: String,
+    /// The station whose message triggered it.
+    trigger: String,
+    /// The reply, addressee included, exactly as it will be sent.
+    text: String,
+    sent: u8,
+    total: u8,
+    gap_s: i64,
+    next_unix: i64,
+    /// The message id of the last send, while its frames are still queued.
+    /// The next repeat waits until it has gone, so repeats cannot pile up
+    /// behind a long queue and then go out back to back.
+    queued: Option<u32>,
+}
+
 /// Where a queued frame goes out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TxBand {
@@ -91,21 +132,33 @@ enum TxBand {
     Beacon,
 }
 
+/// Who put a frame in the queue, which decides what an operator's SEND may
+/// replace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TxOrigin {
+    /// Typed, or a panel button. A new SEND replaces whatever the operator
+    /// queued before it and has not gone out yet.
+    Operator,
+    /// An answer to a query, a heartbeat acknowledgement, or a scheduled
+    /// beacon. It survives a SEND. Before, typing a message silently dropped
+    /// the answer to a question someone had just asked.
+    Auto,
+    /// A group auto-response. It belongs to the operator's own traffic, so a
+    /// SEND replaces it like anything else they queued.
+    Rule,
+}
+
 /// A frame waiting for its slot, and where it is going.
 #[derive(Debug, Clone, Copy)]
 struct TxFrame {
     payload: Js8Payload,
     band: TxBand,
-}
-
-impl TxFrame {
-    fn working(payload: Js8Payload) -> Self {
-        TxFrame { payload, band: TxBand::Working }
-    }
-
-    fn beacon(payload: Js8Payload) -> Self {
-        TxFrame { payload, band: TxBand::Beacon }
-    }
+    origin: TxOrigin,
+    /// Which message the frame belongs to. The frames of one message must
+    /// stay together: the receiver joins them by frequency and FIRST/LAST
+    /// flags, so another message squeezed in between would be spliced into
+    /// the middle of it.
+    msg: u32,
 }
 
 /// Work handed to the decode thread.
@@ -239,6 +292,11 @@ pub struct Js8Controller {
     /// Frames still to go out, one per slot.
     tx_frames: VecDeque<TxFrame>,
     tx_total: u8,
+    /// Id for the next queued message. See [`TxFrame::msg`].
+    next_msg: u32,
+    /// The message whose first frame has gone out, if any. Its remaining
+    /// frames may not be replaced.
+    on_air_msg: Option<u32>,
     tx_fired_slot: i64,
     burst: Option<BurstPlayer>,
     keyed: bool,
@@ -252,6 +310,20 @@ pub struct Js8Controller {
     /// Seconds until the next heartbeat, as the panel shows it. Kept rather
     /// than computed in `status()`, which has no clock.
     hb_countdown_s: Option<u32>,
+    /// Group auto-responses that fired and have sends to go.
+    auto_pending: Vec<AutoSend>,
+    /// When each (rule, station) last triggered a response, for the cooldown.
+    auto_cooldown: HashMap<(usize, String), i64>,
+    /// When each auto-response send of the last hour went out, for
+    /// [`AUTO_RULE_MAX_PER_HOUR`].
+    auto_sent_at: VecDeque<i64>,
+    /// The clock as of the last poll, for the countdowns in `status()` (which
+    /// has no clock of its own).
+    now_unix: i64,
+    /// The second the auto-response countdown was last published.
+    auto_status_s: i64,
+    /// What we last sent, to whom, and when. This is what ` AGN?` repeats.
+    last_tx: Option<LastTx>,
     /// When each station's heartbeat was last acknowledged, for the cooldown.
     hb_acked: HashMap<String, i64>,
     /// Where the last beacon went out, for the panel.
@@ -318,6 +390,8 @@ impl Js8Controller {
             tx_inflight: None,
             tx_frames: VecDeque::new(),
             tx_total: 0,
+            next_msg: 0,
+            on_air_msg: None,
             tx_fired_slot: i64::MIN,
             burst: None,
             keyed: false,
@@ -325,6 +399,12 @@ impl Js8Controller {
             hb_count: 0,
             hb_countdown_s: None,
             hb_acked: HashMap::new(),
+            auto_pending: Vec::new(),
+            auto_cooldown: HashMap::new(),
+            auto_sent_at: VecDeque::new(),
+            now_unix: 0,
+            auto_status_s: 0,
+            last_tx: None,
             hb_hz: None,
             activity: Vec::new(),
             clock: ClockMonitor::default(),
@@ -350,14 +430,49 @@ impl Js8Controller {
             call: self.my_call(),
             grid: self.cfg.my_grid.to_uppercase(),
             status: self.cfg.js8_status.clone(),
+            info: self.cfg.js8_info.clone(),
             hearing: self.heard.iter().take(4).map(|h| h.call.clone()).collect(),
         }
     }
 
-    /// Queue the frames for a message, replacing anything already waiting.
-    fn queue_frames(&mut self, frames: Vec<Js8Payload>) {
-        self.tx_frames = frames.into_iter().map(TxFrame::working).collect();
-        self.tx_total = self.tx_frames.len().min(255) as u8;
+    /// Queue one message's frames behind whatever is already waiting.
+    ///
+    /// An operator's message first removes any of the operator's own traffic
+    /// that has not gone out: typing a new message means "send this
+    /// instead". It never removes these:
+    /// * answers and beacons the station queued by itself ([`TxOrigin::Auto`]);
+    /// * the rest of a message already on the air. Cutting that off would
+    ///   leave the receiver holding half a sentence.
+    fn enqueue(&mut self, origin: TxOrigin, band: TxBand, frames: Vec<Js8Payload>) {
+        if frames.is_empty() {
+            return;
+        }
+        let idle = self.tx_frames.is_empty() && !self.keyed;
+        if origin == TxOrigin::Operator {
+            // The operator is at the keyboard and has something to say. A
+            // canned reply still waiting to repeat is no longer what the
+            // station should be doing.
+            if !self.auto_pending.is_empty() {
+                self.auto_pending.clear();
+            }
+            let live = self.on_air_msg;
+            let before = self.tx_frames.len();
+            self.tx_frames.retain(|f| f.origin == TxOrigin::Auto || Some(f.msg) == live);
+            let gone = (before - self.tx_frames.len()).min(255) as u8;
+            self.tx_total = self.tx_total.saturating_sub(gone);
+        }
+        let msg = self.next_msg;
+        self.next_msg = self.next_msg.wrapping_add(1);
+        let n = frames.len().min(255) as u8;
+        self.tx_frames.extend(frames.into_iter().map(|payload| TxFrame {
+            payload,
+            band,
+            origin,
+            msg,
+        }));
+        // The panel's "frame n of m" counts the whole run of traffic, from
+        // when the queue last emptied.
+        self.tx_total = if idle { n } else { self.tx_total.saturating_add(n) };
         self.status_dirty = true;
     }
 
@@ -392,6 +507,11 @@ impl Js8Controller {
             messages.drain(..messages.len() - MSG_CAP);
         }
         messages
+    }
+
+    /// Queue an operator's message on the working frequency.
+    fn queue_frames(&mut self, frames: Vec<Js8Payload>) {
+        self.enqueue(TxOrigin::Operator, TxBand::Working, frames);
     }
 
     /// The heartbeat someone asked for by typing it.
@@ -514,9 +634,8 @@ impl Js8Controller {
     fn frames_for_text(&self, text: &str) -> Vec<Js8Payload> {
         let up = text.trim().to_ascii_uppercase();
         if let Some((directed, used)) = self.directed_head(&up)
-            && let Some(head) = directed.pack()
+            && let Some(mut out) = self.head_frames(&directed)
         {
-            let mut out = vec![head];
             // The space between the command and its text belongs to neither:
             // upstream strips it (`buildMessageFrames` lstrips the remainder of
             // every buffered command, and every entry in the table contains a
@@ -528,12 +647,31 @@ impl Js8Controller {
         Self::flag_sequence(self.data_frames(&up))
     }
 
+    /// The frame or frames that open a directed message.
+    ///
+    /// Usually this is one directed frame. When either end is a callsign the
+    /// directed frame's 28 bits cannot hold, it is two compound frames:
+    /// * a custom group like `@EMCOMM`;
+    /// * a compound call like `W1AW/4`, or ours being `KN4CRD/QRP`.
+    ///
+    /// The first frame names us and our grid. The second names the addressee
+    /// and carries the command (`buildMessageFrames`, `varicode.cpp:2120`,
+    /// cases 1-3). Without this, a message to a custom group went out as bare
+    /// text with no sender and no addressee.
+    fn head_frames(&self, d: &Directed) -> Option<Vec<Js8Payload>> {
+        if !varicode::needs_compound(&d.from) && !varicode::needs_compound(&d.to) {
+            return d.pack().map(|f| vec![f]);
+        }
+        let grid = self.cfg.my_grid.to_ascii_uppercase();
+        let grid = (grid.len() >= 4).then_some(grid.as_str());
+        let ident = Compound::ident(&d.from, grid).pack()?;
+        let to = Compound::directed(&d.to, d.cmd, d.num).pack()?;
+        Some(vec![ident, to])
+    }
+
     /// The frames an auto-reply becomes.
     fn frames_for_reply(&self, reply: Js8Reply) -> Vec<Js8Payload> {
-        let Some(head) = reply.directed.pack() else {
-            return Vec::new();
-        };
-        let mut out = vec![head];
+        let Some(mut out) = self.head_frames(&reply.directed) else { return Vec::new() };
         if let Some(body) = reply.body.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
             out.extend(self.data_frames(&body.to_ascii_uppercase()));
         }
@@ -581,6 +719,131 @@ impl Js8Controller {
 
     // ── Heartbeats ──────────────────────────────────────────────────────────
 
+    /// Fire the first group auto-response `msg` triggers, if any.
+    ///
+    /// Only the first matching rule counts. One message gets at most one
+    /// canned reply, however many rules the operator wrote that could apply.
+    /// A (rule, station) pair already running, or still inside its cooldown,
+    /// does nothing.
+    fn trigger_auto_rule(&mut self, msg: &Js8Msg, unix_now: i64) {
+        if !self.cfg.js8_auto_rules_on {
+            return;
+        }
+        let call = self.my_call();
+        if call.is_empty() {
+            return;
+        }
+        let Some((i, rule)) = self
+            .cfg
+            .js8_auto_rules
+            .iter()
+            .take(JS8_AUTO_RULES_MAX)
+            .enumerate()
+            .find(|(_, r)| autorule::matches(r, msg, &call))
+        else {
+            return;
+        };
+        let rule = rule.clamped();
+        let who = msg.from.trim().to_ascii_uppercase();
+        let key = (i, who.clone());
+        let cooldown = i64::from(rule.cooldown_min) * 60;
+        if self.auto_cooldown.get(&key).is_some_and(|&t| unix_now - t < cooldown) {
+            return;
+        }
+        if self.auto_pending.iter().any(|p| p.rule == i && p.trigger == who) {
+            return;
+        }
+        let me = autorule::Me { call, grid: self.cfg.my_grid.clone() };
+        let Some(text) = autorule::render(&rule, msg, &me) else { return };
+
+        if self.auto_cooldown.len() >= AUTO_COOLDOWN_CAP {
+            self.auto_cooldown.retain(|_, &mut t| unix_now - t < 240 * 60);
+        }
+        self.auto_cooldown.insert(key, unix_now);
+        self.auto_pending.push(AutoSend {
+            rule: i,
+            label: rule.label().to_string(),
+            trigger: who,
+            text,
+            sent: 0,
+            total: rule.repeat,
+            gap_s: i64::from(rule.gap_min) * 60,
+            // The first send is due at once: the asker is listening now.
+            next_unix: unix_now,
+            queued: None,
+        });
+        self.status_dirty = true;
+    }
+
+    /// Queue every group auto-response that is due.
+    ///
+    /// A due send waits in three cases:
+    /// * someone's message is still coming in, so we do not key over them;
+    /// * its own previous send is still in the queue;
+    /// * the hourly cap is reached.
+    ///
+    /// Waiting moves it later. It does not skip it.
+    fn tick_auto_rules(&mut self, unix_now: i64) {
+        while self.auto_sent_at.front().is_some_and(|&t| unix_now - t >= 3600) {
+            self.auto_sent_at.pop_front();
+        }
+        if self.auto_pending.is_empty() {
+            return;
+        }
+        // Two slots of quiet, as for choosing a beacon slot. A message whose
+        // last frame was missed must not hold the reply back for minutes.
+        let busy = self.assembler.active_within(unix_now, 2 * self.params.slot_s as i64);
+        for i in 0..self.auto_pending.len() {
+            let p = &self.auto_pending[i];
+            if unix_now < p.next_unix || busy {
+                continue;
+            }
+            if p.queued.is_some_and(|m| self.tx_frames.iter().any(|f| f.msg == m)) {
+                continue;
+            }
+            if self.auto_sent_at.len() >= AUTO_RULE_MAX_PER_HOUR {
+                continue;
+            }
+            let text = p.text.clone();
+            let frames = self.frames_for_text(&text);
+            if frames.is_empty() {
+                // Nothing that can be framed. Drop the entry rather than
+                // count sends that never happened.
+                self.auto_pending[i].sent = self.auto_pending[i].total;
+                continue;
+            }
+            let id = self.next_msg;
+            self.enqueue(TxOrigin::Rule, TxBand::Working, frames);
+            self.note_sent(&text, unix_now);
+            self.auto_sent_at.push_back(unix_now);
+            let p = &mut self.auto_pending[i];
+            p.queued = Some(id);
+            p.sent = p.sent.saturating_add(1);
+            p.next_unix = unix_now + p.gap_s;
+            self.status_dirty = true;
+        }
+        self.auto_pending.retain(|p| p.sent < p.total);
+        // The panel shows a countdown, so publish once a second while
+        // anything is waiting. Once a second, not once a poll, which is the
+        // same rule the heartbeat countdown follows.
+        if !self.auto_pending.is_empty() && self.auto_status_s != unix_now {
+            self.auto_status_s = unix_now;
+            self.status_dirty = true;
+        }
+    }
+
+    /// Remember a message for ` AGN?`.
+    fn note_sent(&mut self, text: &str, unix_now: i64) {
+        let up = text.trim().to_ascii_uppercase();
+        let to = up
+            .split_whitespace()
+            .next()
+            .filter(|t| addressable(t) && !t.eq_ignore_ascii_case(&self.my_call()))
+            .unwrap_or_default()
+            .to_string();
+        self.last_tx = Some(LastTx { to, text: up, unix: unix_now });
+    }
+
     /// Beacon on the interval the operator set, if they set one.
     ///
     /// The first one is a whole interval away rather than immediate: switching
@@ -608,8 +871,7 @@ impl Js8Controller {
             let hb =
                 Compound::heartbeat(&self.my_call(), (!grid.is_empty()).then_some(grid.as_str()));
             if let Some(p) = hb.pack() {
-                self.tx_frames.push_back(TxFrame::beacon(Self::single(p)));
-                self.tx_total = self.tx_total.saturating_add(1);
+                self.enqueue(TxOrigin::Auto, TxBand::Beacon, vec![Self::single(p)]);
             }
         }
         // The panel shows this ticking down, so a change of one second is a
@@ -741,7 +1003,18 @@ impl Js8Controller {
         self.hb_acked.insert(call.to_string(), unix_now);
     }
 
-    fn note_heard(&mut self, call: &str, grid: Option<String>, snr: i16, hz: f32, utc: i64) {
+    /// Record a station heard. `speed` is the speed the message came in on,
+    /// which with multi-speed decoding is not necessarily the one we transmit
+    /// at. Recording ours put Turbo stations in the list as Normal.
+    fn note_heard(
+        &mut self,
+        call: &str,
+        grid: Option<String>,
+        snr: i16,
+        hz: f32,
+        utc: i64,
+        speed: Js8Speed,
+    ) {
         if call.is_empty() {
             return;
         }
@@ -749,6 +1022,7 @@ impl Js8Controller {
             h.snr_db = snr;
             h.audio_hz = hz;
             h.last_utc = utc;
+            h.speed = speed;
             if grid.is_some() {
                 h.grid = grid;
             }
@@ -759,7 +1033,7 @@ impl Js8Controller {
                 snr_db: snr,
                 audio_hz: hz,
                 last_utc: utc,
-                speed: self.speed,
+                speed,
             });
         }
         // Most recently heard first, which is the order the panel wants and
@@ -920,6 +1194,7 @@ impl DigiEngine for Js8Controller {
         self.dial_hz = dial_hz;
         let mut actions = Vec::new();
         let unix_now = SlotScheduler::unix_now(now) as i64;
+        self.now_unix = unix_now;
 
         // 1. Drain the decode worker.
         while let Ok((slot_utc, decodes)) = self.res_rx.try_recv() {
@@ -947,6 +1222,7 @@ impl DigiEngine for Js8Controller {
                         msg.snr_db,
                         msg.audio_hz,
                         msg.last_slot_utc,
+                        msg.speed,
                     );
                     // ...and to the reporting networks, which is the same fact
                     // said outwards (issue #357).
@@ -964,18 +1240,27 @@ impl DigiEngine for Js8Controller {
                         // the sub-band, where the station it answers is
                         // listening.
                         let beacon = intent(&msg) == Js8Intent::Heartbeat;
-                        for f in self.frames_for_reply(reply) {
-                            self.tx_frames.push_back(if beacon {
-                                TxFrame::beacon(f)
-                            } else {
-                                TxFrame::working(f)
-                            });
-                            self.tx_total = self.tx_total.saturating_add(1);
-                        }
+                        let band = if beacon { TxBand::Beacon } else { TxBand::Working };
+                        let frames = self.frames_for_reply(reply);
+                        self.enqueue(TxOrigin::Auto, band, frames);
                         if beacon {
                             self.note_hb_ack(&msg.from, unix_now);
                         }
                     }
+                    // ` AGN?` repeats a whole message, not a directed answer,
+                    // so it goes through the text path rather than
+                    // `auto_reply`.
+                    if let Some(text) = repeat_reply(
+                        &msg,
+                        &self.station(),
+                        self.cfg.js8_auto_reply,
+                        self.last_tx.as_ref(),
+                        unix_now,
+                    ) {
+                        let frames = self.frames_for_text(&text);
+                        self.enqueue(TxOrigin::Auto, TxBand::Working, frames);
+                    }
+                    self.trigger_auto_rule(&msg, unix_now);
                     self.remember_message(msg);
                 }
                 // The activity list shows the raw frame; the conversation
@@ -1031,8 +1316,10 @@ impl DigiEngine for Js8Controller {
         }
         let idx = self.scheduler.slot_index(now);
 
-        // 3. Periodic heartbeat, if the operator asked for one.
+        // 3. Periodic heartbeat, if the operator asked for one, and any group
+        //    auto-response that is due.
         self.tick_heartbeat(unix_now);
+        self.tick_auto_rules(unix_now);
 
         // 4. Transmit one frame per slot, inside the window where it still fits.
         if self.burst.is_none() && idx != self.tx_fired_slot && !self.tx_frames.is_empty() {
@@ -1040,6 +1327,7 @@ impl DigiEngine for Js8Controller {
             let latest = self.params.slot_s - self.params.burst_s + self.params.tx_offset_s;
             if into >= self.params.tx_offset_s && into <= latest {
                 if let Some(frame) = self.tx_frames.pop_front() {
+                    self.on_air_msg = Some(frame.msg);
                     // A beacon moves to the sub-band unless the operator asked
                     // for it to stay put; everything else goes out where they
                     // are working.
@@ -1120,6 +1408,11 @@ impl DigiEngine for Js8Controller {
         }
         self.burst = None;
         self.keyed = false;
+        // Once its last frame has gone, the message is no longer "on the air"
+        // and an operator's SEND may replace whatever follows it.
+        if !self.tx_frames.front().is_some_and(|f| Some(f.msg) == self.on_air_msg) {
+            self.on_air_msg = None;
+        }
         if self.tx_frames.is_empty() {
             self.tx_total = 0;
         }
@@ -1142,6 +1435,9 @@ impl DigiEngine for Js8Controller {
         self.keyed = false;
         self.tx_frames.clear();
         self.tx_total = 0;
+        self.on_air_msg = None;
+        // ABORT means stop transmitting, not "pause until the next repeat".
+        self.auto_pending.clear();
         self.status_dirty = true;
     }
 
@@ -1162,6 +1458,14 @@ impl DigiEngine for Js8Controller {
         self.assembler.set_my_call(&Self::call_of(&cfg));
         self.assembler.set_timeout(i64::from(cfg.js8_assembly_timeout_s));
         self.assembler.set_my_groups(cfg.js8_groups.clone());
+        // Changed rules, or rules switched off, take everything they had
+        // scheduled with them. A repeat of a rule the operator just deleted or
+        // rewrote is not what they asked for. Cooldown indices also point at
+        // rules that may have moved.
+        if cfg.js8_auto_rules != self.cfg.js8_auto_rules || !cfg.js8_auto_rules_on {
+            self.auto_pending.clear();
+            self.auto_cooldown.clear();
+        }
         self.cfg = cfg;
         self.status_dirty = true;
     }
@@ -1202,12 +1506,11 @@ impl DigiEngine for Js8Controller {
             return;
         }
         if let Some(p) = self.heartbeat_for(&text) {
-            self.tx_frames = VecDeque::from([TxFrame::beacon(p)]);
-            self.tx_total = 1;
-            self.status_dirty = true;
+            self.enqueue(TxOrigin::Operator, TxBand::Beacon, vec![p]);
             return;
         }
         self.queue_frames(self.frames_for_text(&text));
+        self.note_sent(&text, self.now_unix);
     }
 
     fn stop_qso(&mut self) {
@@ -1255,6 +1558,18 @@ impl DigiEngine for Js8Controller {
                 tx_frames_total: self.tx_total,
                 next_hb_in_s: self.hb_countdown_s,
                 hb_hz: self.hb_hz,
+                auto_pending: self
+                    .auto_pending
+                    .iter()
+                    .map(|p| Js8AutoPending {
+                        rule: p.label.clone(),
+                        trigger: p.trigger.clone(),
+                        text: p.text.clone(),
+                        sent: p.sent,
+                        total: p.total,
+                        next_in_s: (p.next_unix - self.now_unix).max(0) as u32,
+                    })
+                    .collect(),
             }),
             atchat: None,
             fox_queue: Vec::new(),
@@ -1460,7 +1775,8 @@ mod tests {
             ReplyPolicy { auto_reply: true, hb_ack: true },
         )
         .expect("reply");
-        c.tx_frames.extend(c.frames_for_reply(reply).into_iter().map(TxFrame::beacon));
+        let frames = c.frames_for_reply(reply);
+        c.enqueue(TxOrigin::Auto, TxBand::Beacon, frames);
         transmit_frame(&mut c, 1_700_000_010);
         let history = conversation(&c);
         assert_eq!(history.len(), 1);
@@ -1747,6 +2063,30 @@ mod tests {
         }
     }
 
+    /// Messages whose sender or addressee does not fit a directed frame go out
+    /// exactly as JS8Call sends them:
+    /// * a custom group such as @MAGNET;
+    /// * a slashed call such as W1AW/4;
+    /// * our own call as KN4CRD/QRP.
+    ///
+    /// Until this was fixed, a message to a custom group went out as bare text
+    /// with nobody named on it.
+    #[test]
+    fn compound_messages_are_framed_as_js8call_frames_them() {
+        for &(mycall, grid, text, want) in crate::js8_vectors::MESSAGES {
+            let c = Js8Controller::new(
+                DigiConfig { my_call: mycall.into(), my_grid: grid.into(), ..cfg() },
+                48_000.0,
+            );
+            let got: Vec<String> = c
+                .frames_for_text(text)
+                .iter()
+                .map(|p| format!("{}/{}", p.to_chars(), p.frame_type))
+                .collect();
+            assert_eq!(got.join(" "), want, "{mycall}: {text:?}");
+        }
+    }
+
     /// Relay, the message store and the query family carry a checksum upstream
     /// appends after the text. This station does not act on any of them, so it
     /// does not originate one either — a buffered command with no checksum is
@@ -1845,7 +2185,7 @@ mod tests {
         // a bare command with the answer left behind.
         let mut c = Js8Controller::new(cfg(), 48_000.0);
         c.cfg.js8_status = "PORTABLE".into();
-        c.note_heard("VK3ABC", None, -3, 1400.0, 1000);
+        c.note_heard("VK3ABC", None, -3, 1400.0, 1000, Js8Speed::Normal);
         for (cmd, want_cmd, want_text) in [
             ("GRID?", " GRID", Some("FN42")),
             ("STATUS?", " STATUS", Some("PORTABLE")),
@@ -2349,5 +2689,373 @@ mod tests {
         let mut out = [1.0f32; 64];
         assert!(c.fill_tx_block(&mut out), "nothing queued means done");
         assert!(out.iter().all(|&s| s == 0.0), "and silence, not stale audio");
+    }
+
+    // ---- The message-level transmit queue -------------------------------
+
+    #[test]
+    fn typing_a_message_keeps_an_answer_already_queued() {
+        // Before, SEND replaced the whole queue, so a reply to someone's
+        // SNR? vanished the moment the operator typed anything.
+        let mut c = Js8Controller::new(cfg(), 48_000.0);
+        let answer = c.frames_for_text("KN4CRD SNR -7");
+        c.enqueue(TxOrigin::Auto, TxBand::Working, answer);
+        c.send_text("VK3ABC GOOD EVENING".into());
+        assert_eq!(c.tx_frames[0].origin, TxOrigin::Auto, "the answer still goes first");
+        assert!(c.tx_frames.iter().any(|f| f.origin == TxOrigin::Operator));
+    }
+
+    #[test]
+    fn a_second_send_replaces_the_first_until_it_starts() {
+        let mut c = Js8Controller::new(cfg(), 48_000.0);
+        c.send_text("KN4CRD FIRST THOUGHT".into());
+        c.send_text("KN4CRD SECOND THOUGHT".into());
+        assert_eq!(reassemble_frames(&c), "SECOND THOUGHT");
+    }
+
+    #[test]
+    fn a_message_on_the_air_is_not_cut_in_half() {
+        let mut c = Js8Controller::new(cfg(), 48_000.0);
+        c.send_text(
+            "KN4CRD A LONG MESSAGE THAT NEEDS SEVERAL FRAMES TO GET ALL THE WAY OUT".into(),
+        );
+        let total = c.tx_frames.len();
+        assert!(total > 2);
+        // Its first frame goes out…
+        let first = c.tx_frames.pop_front().expect("queued");
+        c.on_air_msg = Some(first.msg);
+        c.keyed = true;
+        // …and the operator types again.
+        c.send_text("VK3ABC HELLO".into());
+        let rest: Vec<u32> = c.tx_frames.iter().map(|f| f.msg).collect();
+        assert_eq!(rest.iter().filter(|&&m| m == first.msg).count(), total - 1, "frames lost");
+        let split = rest.iter().position(|&m| m != first.msg).expect("the new message is queued");
+        assert!(rest[split..].iter().all(|&m| m != first.msg), "spliced into the middle");
+    }
+
+    /// The text a receiver makes of everything queued.
+    fn reassemble_frames(c: &Js8Controller) -> String {
+        let frames: Vec<Js8Payload> = c.tx_frames.iter().map(|f| f.payload).collect();
+        reassemble(&frames).trim().to_string()
+    }
+
+    // ---- Group auto-responses -------------------------------------------
+
+    fn rules_cfg(rule: sdroxide_types::Js8AutoRule) -> DigiConfig {
+        DigiConfig { js8_auto_rules_on: true, js8_auto_rules: vec![rule], ..cfg() }
+    }
+
+    fn qrv_rule() -> sdroxide_types::Js8AutoRule {
+        sdroxide_types::Js8AutoRule {
+            name: "check-in".into(),
+            group: "@EMCOMM".into(),
+            contains: "QRV?".into(),
+            reply: "QRV @MYGRID".into(),
+            repeat: 3,
+            gap_min: 2,
+            cooldown_min: 30,
+            ..Default::default()
+        }
+    }
+
+    fn group_msg(from: &str, group: &str, text: &str) -> Js8Msg {
+        Js8Msg {
+            from: from.into(),
+            to: group.into(),
+            text: text.into(),
+            cmd: None,
+            snr_db: -9,
+            audio_hz: 1200.0,
+            first_slot_utc: 1000,
+            last_slot_utc: 1015,
+            frames: 2,
+            complete: true,
+            to_me: false,
+            speed: Js8Speed::Normal,
+        }
+    }
+
+    /// Pretend the queue went out.
+    fn transmit_all(c: &mut Js8Controller) {
+        c.tx_frames.clear();
+        c.on_air_msg = None;
+    }
+
+    #[test]
+    fn a_rule_answers_a_group_message_directed_to_the_sender() {
+        let mut c = Js8Controller::new(rules_cfg(qrv_rule()), 48_000.0);
+        let t0 = 1_700_000_000;
+        c.trigger_auto_rule(&group_msg("KN4CRD", "@EMCOMM", "ANY STATIONS QRV?"), t0);
+        c.tick_auto_rules(t0);
+        assert!(!c.tx_frames.is_empty(), "nothing queued");
+        assert!(c.tx_frames.iter().all(|f| f.origin == TxOrigin::Rule));
+        let d = Directed::unpack(&c.tx_frames[0].payload).expect("a directed frame");
+        assert_eq!(d.to, "KN4CRD");
+        assert_eq!(d.from, "N0JDS");
+        let text = reassemble_frames(&c);
+        assert_eq!(text, "QRV FN42");
+        // The panel sees it running.
+        let st = c.status().js8.expect("js8 status");
+        assert_eq!(st.auto_pending.len(), 1);
+        assert_eq!((st.auto_pending[0].sent, st.auto_pending[0].total), (1, 3));
+        assert_eq!(st.auto_pending[0].trigger, "KN4CRD");
+    }
+
+    #[test]
+    fn a_rule_repeats_on_its_gap_and_then_stops() {
+        let mut c = Js8Controller::new(rules_cfg(qrv_rule()), 48_000.0);
+        let t0 = 1_700_000_000;
+        c.trigger_auto_rule(&group_msg("KN4CRD", "@EMCOMM", "QRV?"), t0);
+        let mut sends = Vec::new();
+        for t in (t0..t0 + 15 * 60).step_by(15) {
+            c.tick_auto_rules(t);
+            if !c.tx_frames.is_empty() {
+                sends.push(t - t0);
+                transmit_all(&mut c);
+            }
+        }
+        assert_eq!(sends, vec![0, 120, 240], "three sends, two minutes apart");
+        assert!(c.auto_pending.is_empty(), "finished");
+    }
+
+    #[test]
+    fn a_repeat_waits_for_its_previous_send_to_go() {
+        let mut c = Js8Controller::new(rules_cfg(qrv_rule()), 48_000.0);
+        let t0 = 1_700_000_000;
+        c.trigger_auto_rule(&group_msg("KN4CRD", "@EMCOMM", "QRV?"), t0);
+        c.tick_auto_rules(t0);
+        let queued = c.tx_frames.len();
+        // Still not transmitted when the next repeat is due.
+        c.tick_auto_rules(t0 + 120);
+        assert_eq!(c.tx_frames.len(), queued, "repeats piled up behind each other");
+        transmit_all(&mut c);
+        c.tick_auto_rules(t0 + 121);
+        assert!(!c.tx_frames.is_empty(), "the repeat went missing");
+    }
+
+    #[test]
+    fn the_same_station_cannot_retrigger_a_rule_inside_its_cooldown() {
+        let one = sdroxide_types::Js8AutoRule { repeat: 1, ..qrv_rule() };
+        let mut c = Js8Controller::new(rules_cfg(one), 48_000.0);
+        let t0 = 1_700_000_000;
+        let m = group_msg("KN4CRD", "@EMCOMM", "QRV?");
+        c.trigger_auto_rule(&m, t0);
+        c.tick_auto_rules(t0);
+        transmit_all(&mut c);
+        c.trigger_auto_rule(&m, t0 + 29 * 60);
+        assert!(c.auto_pending.is_empty(), "answered twice inside the cooldown");
+        // Another station is not gagged by it.
+        c.trigger_auto_rule(&group_msg("VK3ABC", "@EMCOMM", "QRV?"), t0 + 60);
+        assert_eq!(c.auto_pending.len(), 1);
+        c.auto_pending.clear();
+        // And after the cooldown, the first station is answered again.
+        c.trigger_auto_rule(&m, t0 + 30 * 60);
+        assert_eq!(c.auto_pending.len(), 1);
+    }
+
+    #[test]
+    fn abort_or_a_typed_message_cancels_the_repeats() {
+        let t0 = 1_700_000_000;
+        let mut c = Js8Controller::new(rules_cfg(qrv_rule()), 48_000.0);
+        c.trigger_auto_rule(&group_msg("KN4CRD", "@EMCOMM", "QRV?"), t0);
+        c.tick_auto_rules(t0);
+        c.abort_tx();
+        assert!(c.auto_pending.is_empty() && c.tx_frames.is_empty(), "abort left a repeat");
+
+        let mut c = Js8Controller::new(rules_cfg(qrv_rule()), 48_000.0);
+        c.trigger_auto_rule(&group_msg("KN4CRD", "@EMCOMM", "QRV?"), t0);
+        c.tick_auto_rules(t0);
+        c.send_text("KN4CRD THANKS, I HAVE YOU".into());
+        assert!(c.auto_pending.is_empty(), "the canned reply kept repeating");
+        assert!(
+            c.tx_frames.iter().all(|f| f.origin == TxOrigin::Operator),
+            "the unsent canned reply should have been replaced"
+        );
+    }
+
+    #[test]
+    fn rules_stay_silent_when_switched_off_or_when_it_is_us() {
+        let t0 = 1_700_000_000;
+        let off = DigiConfig { js8_auto_rules_on: false, ..rules_cfg(qrv_rule()) };
+        let mut c = Js8Controller::new(off, 48_000.0);
+        c.trigger_auto_rule(&group_msg("KN4CRD", "@EMCOMM", "QRV?"), t0);
+        assert!(c.auto_pending.is_empty(), "the master switch is off");
+
+        let mut c = Js8Controller::new(rules_cfg(qrv_rule()), 48_000.0);
+        c.trigger_auto_rule(&group_msg("N0JDS", "@EMCOMM", "QRV?"), t0);
+        assert!(c.auto_pending.is_empty(), "answered ourselves");
+        c.trigger_auto_rule(&group_msg("KN4CRD", "@ARES", "QRV?"), t0);
+        assert!(c.auto_pending.is_empty(), "answered another group");
+    }
+
+    #[test]
+    fn changing_the_rules_drops_what_they_had_scheduled() {
+        let t0 = 1_700_000_000;
+        let mut c = Js8Controller::new(rules_cfg(qrv_rule()), 48_000.0);
+        c.trigger_auto_rule(&group_msg("KN4CRD", "@EMCOMM", "QRV?"), t0);
+        assert_eq!(c.auto_pending.len(), 1);
+        let edited = sdroxide_types::Js8AutoRule { reply: "QRT".into(), ..qrv_rule() };
+        c.set_config(rules_cfg(edited));
+        assert!(c.auto_pending.is_empty());
+        // An unrelated setting does not.
+        c.trigger_auto_rule(&group_msg("KN4CRD", "@EMCOMM", "QRV?"), t0);
+        let mut same = c.cfg.clone();
+        same.js8_status = "AT HOME".into();
+        c.set_config(same);
+        assert_eq!(c.auto_pending.len(), 1);
+    }
+
+    #[test]
+    fn the_hourly_cap_holds_however_many_stations_ask() {
+        let one = sdroxide_types::Js8AutoRule { repeat: 1, ..qrv_rule() };
+        let mut c = Js8Controller::new(rules_cfg(one), 48_000.0);
+        let t0 = 1_700_000_000;
+        let mut sent = 0;
+        for i in 0..30 {
+            c.trigger_auto_rule(&group_msg(&format!("K{i}ABC"), "@EMCOMM", "QRV?"), t0 + i);
+            c.tick_auto_rules(t0 + i);
+            if !c.tx_frames.is_empty() {
+                sent += 1;
+                transmit_all(&mut c);
+            }
+        }
+        assert_eq!(sent, AUTO_RULE_MAX_PER_HOUR);
+        assert_eq!(c.auto_pending.len(), 30 - AUTO_RULE_MAX_PER_HOUR, "the rest wait");
+        // An hour later they go.
+        c.tick_auto_rules(t0 + 3600 + 30);
+        assert!(!c.tx_frames.is_empty());
+    }
+
+    #[test]
+    fn a_reply_to_a_custom_group_names_both_ends() {
+        // @MAGNET is not a reserved group, so the reply needs the compound
+        // frame pair. A reply to the group must still say who it is from
+        // and who it is for.
+        let rule = sdroxide_types::Js8AutoRule {
+            group: "@MAGNET".into(),
+            reply_to: sdroxide_types::Js8AutoReplyTo::Group,
+            contains: "ROLL CALL".into(),
+            reply: "@MYCALL HERE".into(),
+            repeat: 1,
+            ..qrv_rule()
+        };
+        let mut c = Js8Controller::new(rules_cfg(rule), 48_000.0);
+        let t0 = 1_700_000_000;
+        c.trigger_auto_rule(&group_msg("KN4CRD", "@MAGNET", "ROLL CALL"), t0);
+        c.tick_auto_rules(t0);
+        let frames: Vec<Js8Payload> = c.tx_frames.iter().map(|f| f.payload).collect();
+        let mut a = Js8Assembler::new("KN4CRD");
+        let mut got = None;
+        for (i, f) in frames.iter().enumerate() {
+            let d = Js8Decode {
+                payload: *f,
+                audio_hz: 1500.0,
+                dt_sec: 0.0,
+                snr_db: 0.0,
+                sync_score: 3.0,
+                hard_errors: 0,
+                speed: Js8Speed::Normal,
+            };
+            got = a.push(&d, t0 + 15 * i as i64);
+        }
+        let msg = got.expect("the reply completes");
+        assert_eq!((msg.from.as_str(), msg.to.as_str()), ("N0JDS", "@MAGNET"));
+        assert_eq!(msg.text.trim(), "N0JDS HERE");
+    }
+
+    #[test]
+    fn what_we_last_said_is_remembered_for_agn() {
+        let mut c = Js8Controller::new(cfg(), 48_000.0);
+        c.now_unix = 5000;
+        c.send_text("kn4crd qth is boston".into());
+        let last = c.last_tx.clone().expect("remembered");
+        assert_eq!((last.to.as_str(), last.unix), ("KN4CRD", 5000));
+        assert_eq!(last.text, "KN4CRD QTH IS BOSTON");
+        c.send_text("HELLO ALL".into());
+        assert_eq!(c.last_tx.as_ref().map(|l| l.to.as_str()), Some(""), "undirected text");
+    }
+
+    /// The whole path, over the air: KN4CRD's transmitter makes the audio for
+    /// "@EMCOMM ANY STATIONS QRV?", and our receiver must do the rest:
+    /// * decode it slot by slot;
+    /// * reassemble the frames into one message;
+    /// * match the rule;
+    /// * key the radio with the reply in the next slot.
+    ///
+    /// No step is called by hand.
+    #[test]
+    fn a_group_message_heard_on_the_air_is_answered_on_the_air() {
+        use crate::DigiEngine;
+        let mut rx = Js8Controller::new(rules_cfg(qrv_rule()), 48_000.0);
+        let them = Js8Controller::new(DigiConfig { my_call: "KN4CRD".into(), ..cfg() }, 48_000.0);
+        let frames = them.frames_for_text("@EMCOMM ANY STATIONS QRV?");
+        assert!(frames.len() >= 2, "a group message is more than one frame");
+
+        // Slot-aligned, so slot k starts at t0 + 15k.
+        let t0 = 1_700_000_010.0;
+        let slot = 15.0;
+        let rate = 48_000.0;
+        let chunk = 4_800; // 0.1 s
+        rx.poll(at(t0 - 0.05), 14_078_000.0); // arms the first boundary
+
+        let mut keyed = false;
+        let mut text_seen = None;
+        for k in 0..frames.len() + 1 {
+            // This slot's audio: half a second of silence, the burst, then
+            // silence to the end of the slot. The slot after the last frame
+            // carries nothing, and is where the reply should go out.
+            let mut audio = vec![0.0f32; (slot * rate) as usize];
+            if let Some(f) = frames.get(k) {
+                let burst = them.synth_burst_48k(*f, 1200.0).expect("synth").samples;
+                let start = (0.5 * rate) as usize;
+                for (i, s) in burst.iter().enumerate() {
+                    if let Some(a) = audio.get_mut(start + i) {
+                        *a = *s * 0.3;
+                    }
+                }
+            }
+            for (j, block) in audio.chunks(chunk).enumerate() {
+                rx.on_rx_audio(block);
+                let now = t0 + slot * k as f64 + (j * chunk) as f64 / rate;
+                for a in rx.poll(at(now), 14_078_000.0) {
+                    if matches!(a, DigiAction::KeyTx) {
+                        keyed = true;
+                    }
+                }
+                // Decoding runs on its own thread in real time, while this
+                // clock is simulated. Hold the clock still just after the
+                // boundary until the worker has finished the slot, so a slow
+                // machine cannot push the reply past this slot's TX window.
+                if j == 0 && k > 0 {
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                    while rx.jobs_queued.load(Ordering::Relaxed) > 0
+                        && std::time::Instant::now() < deadline
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    // The worker counts the job down just before it sends
+                    // the result.
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
+            if text_seen.is_none() {
+                text_seen = rx
+                    .messages
+                    .iter()
+                    .find(|m| m.to == "@EMCOMM")
+                    .map(|m| (m.from.clone(), m.text.clone()));
+            }
+        }
+        let (from, text) = text_seen.expect("the group message was never reassembled");
+        assert_eq!(from, "KN4CRD");
+        assert!(text.contains("QRV?"), "got {text:?}");
+        assert!(keyed, "the reply never keyed the radio");
+        // What went out is the canned reply, directed back to KN4CRD.
+        let sent = rx.burst.is_some() || !rx.tx_frames.is_empty() || rx.keyed;
+        assert!(sent, "nothing on the air or queued");
+        let pending = rx.status().js8.expect("status").auto_pending;
+        assert_eq!(pending.len(), 1, "two repeats still to go");
+        assert_eq!(pending[0].text, "KN4CRD QRV FN42");
+        assert_eq!(pending[0].sent, 1);
     }
 }

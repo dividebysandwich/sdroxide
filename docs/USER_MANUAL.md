@@ -5130,6 +5130,27 @@ which is what the tests check it against. Relay and message-store commands are
 the exception: this station does not act on them, so it does not originate them
 either, and they go out as ordinary text.
 
+**Groups.** A message can be addressed to a group instead of a station:
+`@EMCOMM ANY STATIONS QRV?`. JS8 has two kinds of group:
+- **Built-in groups** (`@ALLCALL`, `@EMCOMM`, `@ARES`, `@AMRRON`, `@SOTA`,
+  `@POTA`…) have a fixed code and travel in one directed frame.
+- **Custom groups** (`@MAGNET`, or anything else up to nine characters) and
+  slashed callsigns (`W1AW/4`, or your own call as `KN4CRD/QRP`) do not fit
+  that frame. They go out as two compound frames, one naming you and one
+  naming the addressee, exactly as JS8Call sends them.
+
+List the groups you belong to in ⚙ SETUP → *Groups*, separated by spaces or
+commas. Messages to those groups then count as addressed to you: they are
+marked ★, and questions in them are answered like questions to you.
+
+**Sending while something is queued.** A new SEND replaces anything *you*
+queued that has not started going out, so you can change your mind. Two
+things are never replaced:
+- An answer the station queued by itself, such as a reply to someone's `SNR?`,
+  or a beacon.
+- A message already part-way out. It finishes first, because a receiver
+  holding half a sentence has nothing to join the rest to.
+
 **On the map.** Heard stations appear on the 3D globe (**3D** in the DISPLAY
 row) exactly as FT8 decodes do, and the station the composer is aimed at gets
 the contact arc from your QTH. Most JS8 traffic carries no locator — only
@@ -5139,12 +5160,20 @@ time, and their grid is shown greyed to mark it as looked up rather than heard.
 Because JS8 beacons every ten or fifteen minutes rather than every slot, a
 station stays lit far longer here than in FT8.
 
-**Answering automatically.** In ⚙ SETUP, *Auto-reply* answers SNR?, GRID?,
-STATUS? and HEARING? queries addressed to you or to @ALLCALL — with the answer,
-not just the acknowledgement: a report rides in the frame itself, and a grid or
-a status line follows it as text. This is what makes a JS8 station worth leaving
-switched on, and it is on by default. It never answers another station's
-traffic, and never answers itself.
+**Answering automatically.** In ⚙ SETUP, *Auto-reply* answers queries
+addressed to you, to @ALLCALL or to one of your groups. It sends the answer
+itself, not just an acknowledgement: a report rides in the frame, and a grid or
+a line of text follows it. It answers:
+- `SNR?`, `GRID?` and `HEARING?`.
+- `STATUS?`, with *Status message*.
+- `INFO?`, with *Station info*: your rig, antenna and power, for example.
+- `AGN?` ("say again"), which repeats your last message. Only if that message
+  went to the station asking, or to the group they ask through, and only within
+  ten minutes.
+
+A question whose answer you have left empty gets no reply. This is what makes a
+JS8 station worth leaving switched on, and it is on by default. It never
+answers another station's traffic, and never answers itself.
 
 *Heartbeat reply* answers a heard heartbeat with a signal report, so the station
 beaconing learns who copied them and how well. It is **off** by default, and
@@ -5188,6 +5217,54 @@ The panel header says where the last one went — `HB 750 Hz` beside the
 countdown — so you can tell your own beacon from a stranger's. If you would
 rather keep everything you transmit in one place, ⚙ SETUP → *Beacon frequency*
 → **Working freq** switches it off.
+
+#### Auto-response: canned replies to group messages
+
+An auto-response rule sends a reply you wrote in advance when a message to a
+group contains a phrase you chose. An example is a net where stations call
+`@EMCOMM QRV?` and everyone available answers. Rules are in ⚙ SETUP, under
+*Auto-response*. Each rule has:
+
+| Field | Meaning |
+|---|---|
+| **When** | The group whose messages it answers, such as `@EMCOMM`. You need not be a member. |
+| **hears** | Text the message must contain, ignoring case and spacing. Empty means any message to that group. |
+| **Reply** | What to send. `@SENDER`, `@GROUP`, `@MYCALL` and `@MYGRID` are filled in when it goes out. |
+| **To** | **Sender** sends the reply directed back to the station that wrote. **Group** sends it to the whole group. **As written** sends it exactly as typed. |
+| **Send N ×, every M min** | How many times the reply goes out, 1–10, and the gap between sends. |
+| **Same station again after** | The cooldown: how long before the same station can trigger the rule again. |
+
+Under each rule, *Sends:* shows the reply as it would go out to an example
+station.
+
+Worked example: When `@EMCOMM` hears `QRV?`, reply `QRV @MYGRID` to the
+Sender, 3 times every 2 minutes. KN4CRD sends `@EMCOMM ANY STATIONS QRV?`. You
+send `KN4CRD QRV FN42` at once, again two minutes later, and once more two
+minutes after that.
+
+Rules are **off** until you switch them on: tick the *Auto-response* checkbox
+in SETUP, or click **AUTO-RESP** in the panel header, which lights while rules
+are answering. While a reply is waiting, a line under the header shows it:
+`AUTO check-in → KN4CRD  KN4CRD QRV FN42  1/3 · next 1:52`.
+
+Several safeguards apply:
+- **One reply per message.** The first matching rule answers; move a rule up
+  with ↑ to give it priority.
+- **Never yourself.** Your own call is never answered, in any form: /P, /QRP or
+  a prefix.
+- **Cooldown.** It is counted per rule and per station. The same station
+  repeating its call inside it does not restart the replies.
+- **Waiting for a clear band.** A send waits while someone's message is still
+  arriving, and while its own previous send is still queued.
+- **Hourly limit.** At most 20 auto-responses an hour in all. Replies beyond
+  that wait rather than being dropped.
+- **Cancelling.** **ABORT** or anything you send yourself cancels the repeats
+  still waiting. So does changing the rules or switching auto-response off.
+
+A rule whose reply goes back to the group and contains its own trigger phrase
+gets a red warning. One station is safe, because it never answers itself. Two
+stations running that same rule would answer each other until their cooldowns
+ran out.
 
 Relayed messages and stored-message requests are decoded and shown, but this
 station will not act on them — forwarding traffic on someone else's behalf is a

@@ -34,7 +34,8 @@ cat > "$WORK/gen.cpp" <<'CPP'
 static const char *CALLS[] = {
     "KN4CRD", "N0JDS", "VK3ABC", "G0ABC", "JA1XYZ", "W1AW", "M0ABC", "9A1A",
     "3DA0XX", "3XY1AB", "OH2BH", "ZL4AA", "PY2ABC", "LU1DZ", "K7A", "VE3XYZ",
-    "@ALLCALL", "@JS8NET", "@DX/EU", "@REGION/1", "@GROUP/0", nullptr,
+    "@ALLCALL", "@JS8NET", "@DX/EU", "@REGION/1", "@GROUP/0", "@NTS", "@APRSIS",
+    "@EMCOMM", "@AMRRON", "@QRO", nullptr,
 };
 
 static const char *GRIDS[] = {
@@ -112,6 +113,37 @@ int main(int argc, char **argv) {
         if (f.isEmpty()) continue;
         printf("    (\"%s\", \"%s\", \"%s\"),\n", HEARTBEATS[i][0], HEARTBEATS[i][1],
                qPrintable(f));
+    }
+    printf("];\n\n");
+
+    // Whole messages as `buildMessageFrames` lays them out. Chosen for the
+    // compound cases (`varicode.cpp:2100`, cases 1-3): a custom group or a
+    // slashed callsign as the addressee, and a compound callsign as the
+    // sender. Each needs a compound frame pair where an ordinary message has
+    // one directed frame. A reserved group (@DX/NA) is the control case,
+    // because it still fits a plain directed frame.
+    static const char *MESSAGES[][3] = {
+        {"KN4CRD", "EM73", "@EMCOMM HELLO WORLD"},
+        {"KN4CRD", "EM73", "@AMRRON SNR?"},
+        {"KN4CRD", "EM73", "@EMCOMM QRV?"},
+        {"KN4CRD", "EM73", "@EMCOMM SNR -10"},
+        {"KN4CRD", "EM73", "@MAGNET STATUS AT HOME"},
+        {"KN4CRD", "EM73", "W1AW/4 GRID?"},
+        {"KN4CRD/QRP", "EM73", "N0JDS SNR?"},
+        {"KN4CRD/QRP", "EM73", "@EMCOMM HELLO"},
+        {"KN4CRD", "EM73", "@DX/NA HELLO"},
+        {nullptr, nullptr, nullptr},
+    };
+    printf("/// `(mycall, mygrid, text, frames as \"chars/flags\" joined by spaces)`.\n");
+    printf("pub const MESSAGES: &[(&str, &str, &str, &str)] = &[\n");
+    for (int i = 0; MESSAGES[i][0]; ++i) {
+        auto frames = Varicode::buildMessageFrames(MESSAGES[i][0], MESSAGES[i][1], "",
+                                                   MESSAGES[i][2], false, false,
+                                                   Varicode::JS8CallNormal, nullptr);
+        QStringList out;
+        for (auto const &f : frames) out << QString("%1/%2").arg(f.first).arg(f.second);
+        printf("    (\"%s\", \"%s\", \"%s\", \"%s\"),\n", MESSAGES[i][0], MESSAGES[i][1],
+               MESSAGES[i][2], qPrintable(out.join(' ')));
     }
     printf("];\n\n");
 

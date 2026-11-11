@@ -17,11 +17,11 @@ use sdroxide_types::{
 use sdroxide_types::{
     AgcMode, AirspyGain, AisKind, AlertEvent, AudioRouting, ButtonMode, ContestMode, ConverterTx,
     CwEngine, DecodeSort, DiversityMode, DxpedMode, FailSafe, FtpSecurity, HpsdrFilterBoard,
-    HpsdrIoRxInput, HydraSdrGain, IcomRxSource, IcomScopeSpan, IsmFamily, IsmProtocol, Js8Speed,
-    LimeAuxRole, LookupProvider, MailFolder, MemorySort, MouseButton, NrLevel, NrStrength,
-    OrbitRings, QsoStep, RdsStandard, Region, RelativeMode, RelayLink, RelayRole, RfeChannel,
-    RfeLink, RfeModeControl, RifpEncoding, ScanKind, ScanResume, SenseLine, Shift, Speed,
-    TlsVerify, ToneMode, TxVoiceStage, UploadNaming, WheelAction,
+    HpsdrIoRxInput, HydraSdrGain, IcomRxSource, IcomScopeSpan, IsmFamily, IsmProtocol,
+    Js8AutoReplyTo, Js8Speed, LimeAuxRole, LookupProvider, MailFolder, MemorySort, MouseButton,
+    NrLevel, NrStrength, OrbitRings, QsoStep, RdsStandard, Region, RelativeMode, RelayLink,
+    RelayRole, RfeChannel, RfeLink, RfeModeControl, RifpEncoding, ScanKind, ScanResume, SenseLine,
+    Shift, Speed, TlsVerify, ToneMode, TxVoiceStage, UploadNaming, WheelAction,
 };
 
 use super::tr;
@@ -670,6 +670,16 @@ impl Tr for IsmProtocol {
             IsmProtocol::Homematic => tr!("ism-protocol-homematic"),
             IsmProtocol::Rtl433 => tr!("ism-protocol-rtl433"),
             IsmProtocol::Unidentified => tr!("ism-protocol-unidentified"),
+        }
+    }
+}
+
+impl Tr for Js8AutoReplyTo {
+    fn tr(self) -> String {
+        match self {
+            Js8AutoReplyTo::Sender => tr!("js8-auto-reply-to-sender"),
+            Js8AutoReplyTo::Group => tr!("js8-auto-reply-to-group"),
+            Js8AutoReplyTo::AsWritten => tr!("js8-auto-reply-to-as-written"),
         }
     }
 }
