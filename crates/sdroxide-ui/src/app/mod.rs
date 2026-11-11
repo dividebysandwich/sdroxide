@@ -54,6 +54,8 @@ pub(in crate::app) mod top_bar;
 pub(in crate::app) mod tx_audio;
 pub(in crate::app) mod undocked;
 pub(crate) mod util;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod window_fit_tests;
 pub(in crate::app) mod windows;
 pub(in crate::app) mod winlink;
 pub(in crate::app) mod workplaces;
