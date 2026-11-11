@@ -164,6 +164,33 @@ pub struct ViewState {
     /// of them, and the reset beside them goes back to the starting values.
     #[serde(default = "sk_presets_default")]
     pub sk_presets: Vec<SkPreset>,
+    /// Draw the S/N guide over the spectrum: everything seen since it was
+    /// switched on, accumulated into one mean per frequency and drawn as its
+    /// height over the noise floor ([`crate::mean_spectrum`]).
+    // Why: HDZ 2026-11-07: "ein S/N-bereinigtes akkumulatives Signal … als
+    //      Guide im gleichen Grün".
+    #[serde(default)]
+    pub snr_guide: bool,
+    /// While the S/N guide runs, label a spot only where the guide sees a
+    /// signal at its frequency.
+    // Why: HDZ 2026-11-07: "wenn da nichts ist, sollte auch kein Label hin …
+    //      use S/N for label visibility".
+    #[serde(default)]
+    pub snr_label_filter: bool,
+    /// The S/N, dB over the noise floor, a spot needs under
+    /// [`Self::snr_label_filter`] for its label; set on the S/N rail.
+    #[serde(default = "snr_label_min_default")]
+    pub snr_label_min_db: f32,
+    /// The S/N, dB, at which the S/N guide reaches its full height (a quarter
+    /// of the strip); set on the S/N TOP rail.
+    // Why: HDZ 2026-11-08: "einen Schieberegler, der die Toppinggrenze des
+    //      S/N-Spektrums eingrenzt in der Höhe, Default wie derzeit 12 dB,
+    //      max 30 dB".
+    #[serde(default = "snr_guide_top_default")]
+    pub snr_guide_top_db: f32,
+    /// The SPOTS window lists only the spots the S/N guide sees a signal at.
+    #[serde(default)]
+    pub spots_snr_only: bool,
     /// Draw the spectrum strip as a receding 3D surface instead of a flat
     /// line: the newest spectrum across the front, the ones before it flowing
     /// away from the viewer. See [`crate::widgets::spectrum3d`].
@@ -695,6 +722,11 @@ impl Default for ViewState {
             spectrum_fraction: 0.35,
             peak_hold: false,
             sk_presets: sk_presets_default(),
+            snr_guide: false,
+            snr_label_filter: false,
+            snr_label_min_db: snr_label_min_default(),
+            snr_guide_top_db: snr_guide_top_default(),
+            spots_snr_only: false,
             spectrum_3d: false,
             spectrum_3d_solid: spectrum_3d_solid_default(),
             center_on_vfo: center_on_vfo_default(),
@@ -892,6 +924,25 @@ fn spot_kinds_default() -> [bool; SPOT_KINDS] {
     [true; SPOT_KINDS]
 }
 
+/// The S/N rail's starting point, dB: what a weak steady carrier stands at once
+/// the guide has averaged it (Shannon VOLMET on 5505 kHz, 2 dB).
+pub const SNR_LABEL_MIN_DEFAULT: f32 = 2.0;
+/// The S/N rail's range, dB.
+pub const SNR_LABEL_MIN_RANGE: std::ops::RangeInclusive<f32> = 0.0..=6.0;
+
+fn snr_label_min_default() -> f32 {
+    SNR_LABEL_MIN_DEFAULT
+}
+
+/// The S/N guide's full-height S/N to start with, dB: what it was fixed at.
+pub const SNR_GUIDE_TOP_DEFAULT: f32 = 12.0;
+/// The S/N TOP rail's range, dB.
+pub const SNR_GUIDE_TOP_RANGE: std::ops::RangeInclusive<f32> = 12.0..=30.0;
+
+fn snr_guide_top_default() -> f32 {
+    SNR_GUIDE_TOP_DEFAULT
+}
+
 /// Default for [`ViewState::prop_map_mode`] — every band at once, which reads
 /// without being configured first.
 fn prop_map_mode_default() -> u8 {
@@ -1016,6 +1067,8 @@ mod tests {
         // the chip rather than the wireframe a bare `default` would give.
         assert!(!v.spectrum_3d, "upgrading switched the 3D surface on by itself");
         assert!(v.spectrum_3d_solid, "the 3D surface would have come up as a wireframe");
+        // The S/N line's height: an upgrade keeps the 12 dB it was fixed at.
+        assert_eq!(v.snr_guide_top_db, SNR_GUIDE_TOP_DEFAULT, "upgrading changed the S/N scale");
     }
 
     /// The other direction of the same trap: a blob written by a build that

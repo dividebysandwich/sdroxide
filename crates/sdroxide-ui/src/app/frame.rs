@@ -1017,6 +1017,7 @@ impl eframe::App for SdroxideApp {
         self.text_macro_window(&ctx, &mut cmds);
         self.ais_setup_window(&ctx, &mut cmds);
         self.vdl2_setup_window(&ctx, &mut cmds);
+        self.snr_guide_publish(&ctx);
         self.rds_window(&ctx);
         self.drm_window(&ctx, &mut cmds);
         self.hd_window(&ctx, &mut cmds);
@@ -1680,6 +1681,8 @@ impl SdroxideApp {
                     }
                 }
                 RadioEvent::Spectrum(mut f) => {
+                    // The S/N guide takes every frame, also one superseded below.
+                    self.snr_guide_note_frame(&f);
                     // This runs once per repaint and only the frame it leaves
                     // here is drawn, so anything it replaces mid-pass is a
                     // picture nobody sees. Its *rows* are another matter: the

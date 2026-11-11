@@ -238,6 +238,62 @@ fn slack_viewport(center_hz: f64, full_span: f64, (view_lo, view_hi): (f64, f64)
     (lo, lo + slack)
 }
 
+/// How far either side of a spot's frequency the S/N filter looks: a
+/// broadcast carrier's sidebands and a dial a little off the listed frequency.
+const SNR_LABEL_REACH_HZ: f64 = 2_000.0;
+/// The S/N a spot needs for its label is the S/N rail's
+/// ([`crate::view::ViewState::snr_label_min_db`]); a shown label goes only
+/// under that less this margin, and between the two it stays as it was. Half
+/// the threshold under 3 dB, so a threshold of 0 dB has no margin below zero.
+// Why: HDZ 2026-11-07: "S/N mit 6 ist viel zu streng, Shannon hat hier 2 …
+//      du kannst unter SPEC einen Schieberegler machen für S/N, Default 2,
+//      Range 0..6".
+fn snr_label_off_db(on: f32) -> f32 {
+    on - (on / 2.0).clamp(0.0, 1.5)
+}
+/// How often the labels are decided anew, seconds.
+const SNR_LABEL_RECHECK_S: f32 = 2.0;
+/// How long a label takes to fade in or out, seconds.
+const SNR_LABEL_FADE_S: f32 = 1.0;
+/// Frames a cell's mean needs before the filter judges it: at the guide's
+/// frame rate a few seconds of band.
+const SNR_LABEL_MIN_FRAMES: u32 = 60;
+
+/// The highest S/N `g` has within [`SNR_LABEL_REACH_HZ`] of `hz`, or `None`
+/// where it cannot say yet: no cell there, or the cells there have fewer than
+/// [`SNR_LABEL_MIN_FRAMES`] frames in their mean. A cell not reached counts as
+/// no signal once its neighbours are judged.
+fn guide_max(g: &crate::mean_spectrum::Guide, hz: f64) -> Option<f32> {
+    if g.cell_hz <= 0.0 || g.snr_db.is_empty() {
+        return None;
+    }
+    let first = ((hz - SNR_LABEL_REACH_HZ - g.lo_hz) / g.cell_hz).floor().max(0.0) as usize;
+    let last = (((hz + SNR_LABEL_REACH_HZ - g.lo_hz) / g.cell_hz).ceil().max(0.0) as usize)
+        .min(g.snr_db.len() - 1);
+    if first > last {
+        return None;
+    }
+    let frames = g.count.get(first..=last)?.iter().copied().max().unwrap_or(0);
+    if frames < SNR_LABEL_MIN_FRAMES {
+        return None;
+    }
+    Some(
+        g.snr_db[first..=last]
+            .iter()
+            .filter(|v| v.is_finite())
+            .fold(f32::NEG_INFINITY, |a, &v| a.max(v)),
+    )
+}
+
+/// LABELS BY S/N: per spot id, whether its label is wanted and its present
+/// opacity; when the last decision and the last frame were.
+#[derive(Default)]
+pub(in crate::app) struct SnrLabels {
+    shown: std::collections::HashMap<u64, (bool, f32)>,
+    checked: Option<std::time::Instant>,
+    last: Option<std::time::Instant>,
+}
+
 impl SdroxideApp {
     /// The full-band window this front end publishes beside its I/Q, `(centre,
     /// span)` — what the main panadapter may be zoomed out into.
@@ -703,12 +759,94 @@ impl SdroxideApp {
             .collect()
     }
 
+    /// Whether a spot at `hz` gets its label under the S/N filter: always
+    /// while the filter or the guide is off; otherwise only where the guide
+    /// has a cell within [`SNR_LABEL_REACH_HZ`] of it at least the S/N rail's
+    /// threshold over the noise floor. A cell the guide has not reached counts
+    /// as nothing there.
+    /// The label's opacity under LABELS BY S/N, 0 to 1; 1 while the filter or
+    /// the guide is off. Decided every [`SNR_LABEL_RECHECK_S`] rather than every
+    /// frame, with hysteresis (on at the rail's threshold, off under
+    /// [`snr_label_off_db`] of it), and faded over [`SNR_LABEL_FADE_S`], so labels
+    /// come and go like the world in a game drawn as it is reached instead of
+    /// flickering at the threshold. Where the guide has fewer than
+    /// [`SNR_LABEL_MIN_FRAMES`] frames the label stays: too early to judge.
+    // Why: HDZ 2026-11-07: "das kann dynamisch ab und an nachfragen, der Toggle
+    //      sollte warten, bis S/N genug Spektren akkumuliert hat, um nicht
+    //      durchzudrehen … wie bei einem MMO, wo die Welt dynamisch gezeichnet
+    //      würde".
+    /// Whether the S/N guide sees a signal at `s`: at least the S/N rail's
+    /// threshold within [`SNR_LABEL_REACH_HZ`] of its frequency. `false` where
+    /// the guide cannot tell (off, outside the panadapter, too few frames): the
+    /// S/N chip in SPOTS keeps what is shown to be there, not what might be.
+    pub(in crate::app) fn snr_matches(&self, s: &sdroxide_types::Spot) -> bool {
+        let Some(g) = self.snr_last.as_deref().filter(|_| self.view.snr_guide) else {
+            return false;
+        };
+        guide_max(g, s.freq_hz).is_some_and(|v| v >= self.view.snr_label_min_db)
+    }
+
+    fn snr_label_alpha(&self, id: u64, hz: f64, recheck: bool, step: f32) -> f32 {
+        let Some(g) =
+            self.snr_last.as_deref().filter(|_| self.view.snr_guide && self.view.snr_label_filter)
+        else {
+            return 1.0;
+        };
+        let on = self.view.snr_label_min_db;
+        let off = snr_label_off_db(on);
+        let mut st = self.snr_labels.borrow_mut();
+        let entry = st.shown.entry(id).or_insert((true, 0.0));
+        if recheck {
+            entry.0 = match guide_max(g, hz) {
+                None => true,
+                Some(v) if v >= on => true,
+                Some(v) if v < off => false,
+                Some(_) => entry.0,
+            };
+        }
+        let target = if entry.0 { 1.0 } else { 0.0 };
+        let d = step / SNR_LABEL_FADE_S;
+        entry.1 =
+            if entry.1 < target { (entry.1 + d).min(target) } else { (entry.1 - d).max(target) };
+        entry.1
+    }
+
+    /// Once a frame before the labels are decided: the time since the last
+    /// frame, for the fades, and whether a new decision is due. Clears the
+    /// decisions while the S/N guide is off, so switching it on starts fresh.
+    fn snr_label_tick(&self) -> (bool, f32) {
+        let mut st = self.snr_labels.borrow_mut();
+        // Kept while the guide runs, so a label's fade and decision carry
+        // over a moment with the filter off.
+        if !self.view.snr_guide {
+            *st = SnrLabels::default();
+            return (false, 0.0);
+        }
+        let now = std::time::Instant::now();
+        let step = st.last.map_or(0.0, |t| now.duration_since(t).as_secs_f32().min(0.5));
+        st.last = Some(now);
+        let due =
+            st.checked.is_none_or(|t| now.duration_since(t).as_secs_f32() >= SNR_LABEL_RECHECK_S);
+        if due {
+            st.checked = Some(now);
+            // Spots gone from the feeds take their decisions with them.
+            let ids: std::collections::HashSet<u64> = self.all_spots().map(|s| s.id).collect();
+            st.shown.retain(|id, _| ids.contains(id));
+        }
+        (due, step)
+    }
+
     pub(in crate::app) fn net_overlay(&self, now_utc: i64) -> (Vec<Spot>, Vec<f32>) {
+        let (recheck, step) = self.snr_label_tick();
         let max_age = self.net_cfg_edit.spot_max_age_secs.max(60) as i64;
         let mut spots = Vec::new();
         let mut alpha = Vec::new();
         for s in self.all_spots() {
             if !self.spot_visible(s) {
+                continue;
+            }
+            let snr_alpha = self.snr_label_alpha(s.id, s.freq_hz, recheck, step);
+            if snr_alpha < 0.15 {
                 continue;
             }
             // A scheduled broadcast station has no age: the fade and the
@@ -726,6 +864,9 @@ impl SdroxideApp {
                     1.0
                 }
             };
+            // Faded by the S/N filter; under the 0.15 every label keeps, it
+            // is not drawn at all (the cut above).
+            let a = a * snr_alpha;
             spots.push(s.clone());
             alpha.push(a.clamp(0.15, 1.0));
         }
@@ -1064,6 +1205,25 @@ fn focus_hz(mode: Mode, dial_hz: f64, audio_hz: f32, cw_qrg: bool) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    /// The S/N filter's reading of the guide: a carrier 6 dB up 1 kHz off the
+    /// spot is found, plain noise reads 0 dB, and a guide with too few frames
+    /// gives no verdict yet.
+    #[test]
+    fn the_guide_is_read_only_once_it_has_frames() {
+        let mut snr = vec![0.0f32; 1000];
+        snr[510] = 6.0;
+        let g = |frames: u32| crate::mean_spectrum::Guide {
+            lo_hz: 9_600_000.0,
+            cell_hz: 100.0,
+            snr_db: snr.clone(),
+            count: vec![frames; 1000],
+            frames,
+        };
+        assert_eq!(super::guide_max(&g(100), 9_650_000.0), Some(6.0));
+        assert_eq!(super::guide_max(&g(100), 9_620_000.0), Some(0.0));
+        assert_eq!(super::guide_max(&g(10), 9_650_000.0), None, "too early to judge");
+    }
+
     use super::WIDER_THAN_PASSBAND;
     use super::{
         AutoFit, FIT_ARRIVED_DB, FIT_MIN_GAP_S, FIT_SETTLE_S, FIT_STEP_S, average_in,
