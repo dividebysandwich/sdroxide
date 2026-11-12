@@ -31,6 +31,7 @@ fn main() {
     let target = std::env::var("TARGET").unwrap();
     let msvc = target.contains("msvc");
     let windows = target.contains("windows");
+    let windows_gnu = windows && target.contains("gnu");
 
     // Built from a copy in place, on every platform:
     // - the windows-gnu build runs through MSYS make, which cannot take a
@@ -73,6 +74,10 @@ fn main() {
         || build.join("data2g_zlib.lib").exists();
     if fetched_zlib {
         println!("cargo:rustc-link-lib=static=data2g_zlib");
+    } else if windows_gnu {
+        // MSYS2's zlib, linked in: a dylib here is zlib1.dll, which a plain
+        // Windows box does not have (#842).
+        println!("cargo:rustc-link-lib=static:-bundle=z");
     } else {
         println!("cargo:rustc-link-lib=dylib=z");
     }
@@ -92,9 +97,18 @@ fn main() {
         shim.flag("-std=c++20").flag("-fno-fast-math").flag("-ffp-contract=off");
     }
     // The shim (the last archive on the line) links the C++ runtime for the
-    // core too.
-    shim.cpp_link_stdlib(cpp_stdlib(&target));
+    // core too. On MinGW it is linked in statically, as in sdroxide-drm, or
+    // the .exe needs libstdc++-6.dll and libwinpthread-1.dll (#842).
+    if windows_gnu {
+        shim.cpp_link_stdlib(None::<&str>);
+    } else {
+        shim.cpp_link_stdlib(cpp_stdlib(&target));
+    }
     shim.compile("sdroxide_data2g_shim");
+    if windows_gnu {
+        println!("cargo:rustc-link-lib=static:-bundle=stdc++");
+        println!("cargo:rustc-link-lib=static:-bundle=winpthread");
+    }
 
     if !windows {
         println!("cargo:rustc-link-lib=dylib=pthread");

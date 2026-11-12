@@ -247,7 +247,12 @@ fn main() {
     b.compile("mercury_host");
 
     println!("cargo:rustc-link-lib=dylib=m");
-    println!("cargo:rustc-link-lib=dylib=pthread");
+    if target.contains("windows") && target.contains("gnu") {
+        // MinGW's pthread is libwinpthread-1.dll; link it in instead (#842).
+        println!("cargo:rustc-link-lib=static:-bundle=winpthread");
+    } else {
+        println!("cargo:rustc-link-lib=dylib=pthread");
+    }
     if target.contains("linux") {
         // POSIX shared memory (shm_open) lives in librt on older glibc.
         println!("cargo:rustc-link-lib=dylib=rt");
