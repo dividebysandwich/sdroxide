@@ -3267,6 +3267,8 @@ impl Rx888Config {
     /// `sdroxide-rx888` so the wasm-safe settings UI can address them without
     /// depending on the native backend crate.
     pub const VGA_ELEMENT: &'static str = "VGA";
+    /// The AD8370's gain range: 0 either (the driver's pick), 1 low, 2 high.
+    pub const VGA_RANGE_ELEMENT: &'static str = "VGARANGE";
     pub const ATT_ELEMENT: &'static str = "ATT";
     pub const DITHER_ELEMENT: &'static str = "DITHER";
     pub const BIAS_TEE_ELEMENT: &'static str = "BIASTEE";
