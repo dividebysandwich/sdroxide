@@ -174,6 +174,11 @@ pub struct ViewState {
     pub fit_shift_welch_db: (f32, f32),
     #[serde(default)]
     pub fit_shift_reassign_db: (f32, f32),
+    /// Set by a hand move of FLOOR or CEIL while FIT is on, taken by the next
+    /// FIT tick: it stops a glide in flight and re-anchors the shift on FIT's
+    /// own measurement, so the level stays where the hand left it.
+    #[serde(skip)]
+    pub fit_hand_moved: bool,
     /// The SMOOTH chip: the waterfall as mean power (Welch) in the engine and
     /// lightly averaged over neighbouring rows and columns here, instead of
     /// the peak. See [`sdroxide_types::SpectrumConfig::smooth`].
@@ -807,6 +812,7 @@ impl Default for ViewState {
             fit_shift_db: (0.0, 0.0),
             fit_shift_welch_db: (0.0, 0.0),
             fit_shift_reassign_db: (0.0, 0.0),
+            fit_hand_moved: false,
             waterfall_average: false,
             welch_tc: welch_tc_default(),
             waterfall_reassign: false,
@@ -883,6 +889,7 @@ impl ViewState {
                 (s + now - was).clamp(-FIT_SHIFT_MAX_DB, FIT_SHIFT_MAX_DB)
             };
             *s = (shift(s.0, now.0, had.0), shift(s.1, now.1, had.1));
+            self.fit_hand_moved = true;
         }
     }
 

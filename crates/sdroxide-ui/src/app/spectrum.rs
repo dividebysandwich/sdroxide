@@ -1118,7 +1118,21 @@ impl SdroxideApp {
         if !self.view.auto_fit {
             self.fit.pending = false;
             self.fit.gliding = false;
+            self.view.fit_hand_moved = false;
             return;
+        }
+        // A hand move wins over a glide in flight: stop it, and take the
+        // shift as the distance from FIT's own measurement to where the hand
+        // left the level, so the next refit lands there and not past it.
+        if std::mem::take(&mut self.view.fit_hand_moved) {
+            self.fit.gliding = false;
+            self.fit.pending = false;
+            if let Some(avg) = self.fit.avg {
+                let m = crate::view::FIT_SHIFT_MAX_DB;
+                let have = (self.view.db_floor, self.view.db_ceil);
+                *self.view.fit_shift_mut() =
+                    ((have.0 - avg.0).clamp(-m, m), (have.1 - avg.1).clamp(-m, m));
+            }
         }
         // Measuring costs a sort of every visible bin, and a step that landed
         // sooner than the config debounce would never reach the engine — so
