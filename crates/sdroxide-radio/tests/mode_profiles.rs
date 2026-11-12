@@ -475,3 +475,49 @@ fn the_overrides_survive_a_restart() {
     assert_eq!(s.rx[0].agc, AgcMode::Slow, "the mode's own defaults are still under it");
     stop(h);
 }
+
+/// Proves: the NR menu's filters, HUM and the SK post-filter with its time
+/// constant, width and place, are remembered per mode and come back after a
+/// restart, like the NR engine beside them. Before, both fell back to off.
+// Why: HDZ 2026-11-12: "die gesamte Konfig fehlt" — the SK filter was off
+//      again after every start.
+#[test]
+fn the_nr_filters_survive_a_restart() {
+    let _guard = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    isolate("modeprofiles-nr-filters");
+    {
+        let h = start(Mode::Usb);
+        send(&h, Command::SetHumFilter { rx: RxId::Main, on: true });
+        send(
+            &h,
+            Command::SetSkFilter {
+                rx: RxId::Main,
+                on: true,
+                tau_s: 2.0,
+                open_s: f32::NAN,
+                close_s: f32::NAN,
+                width: 3,
+                after_nr: false,
+            },
+        );
+        let _ = wait_for(&h, "USB's HUM and SK on", |s| {
+            s.rx[0].hum_filter && s.rx[0].sk_filter && s.rx[0].sk_filter_width == 3
+        });
+        stop(h);
+    }
+
+    let h = start(Mode::Usb);
+    let s = wait_for(&h, "USB's remembered HUM and SK", |s| {
+        s.rx[0].mode == Mode::Usb && s.rx[0].hum_filter && s.rx[0].sk_filter
+    });
+    assert!((s.rx[0].sk_filter_tau_s - 2.0).abs() < 1e-6, "the time constant comes back");
+    assert_eq!(s.rx[0].sk_filter_width, 3, "the width comes back");
+    assert!(!s.rx[0].sk_filter_after_nr, "the place before NR comes back");
+    stop(h);
+
+    // And another mode keeps its own: LSB never had them switched on.
+    let h = start(Mode::Lsb);
+    let s = wait_for(&h, "LSB on its defaults", |s| s.rx[0].mode == Mode::Lsb);
+    assert!(!s.rx[0].hum_filter && !s.rx[0].sk_filter, "per mode, not global");
+    stop(h);
+}

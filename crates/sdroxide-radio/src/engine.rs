@@ -9121,7 +9121,10 @@ impl Engine {
                     p.fm_decrackle_dip = Some(dip);
                 });
             }
-            SetHumFilter { rx, on } => self.state.rx[rx.index()].hum_filter = on,
+            SetHumFilter { rx, on } => {
+                self.state.rx[rx.index()].hum_filter = on;
+                self.remember_mode_setting(rx, |p| p.hum_filter = Some(on));
+            }
             SetSkFilter { rx, on, tau_s, open_s, close_s, width, after_nr } => {
                 let r = &mut self.state.rx[rx.index()];
                 r.sk_filter = on;
@@ -9140,6 +9143,20 @@ impl Engine {
                         sdroxide_types::SK_FILTER_TAU_RANGE_S.1,
                     );
                 }
+                // Remembered per mode with the values as clamped, like the
+                // NR engine and FM-DECRACKLE: a restart, or a mode left and
+                // come back to, finds the SK filter as it was set.
+                let (tau, open, close) =
+                    (r.sk_filter_tau_s, r.sk_filter_open_s, r.sk_filter_close_s);
+                let (width, after_nr) = (r.sk_filter_width, r.sk_filter_after_nr);
+                self.remember_mode_setting(rx, |p| {
+                    p.sk_filter = Some(on);
+                    p.sk_filter_tau_s = Some(tau);
+                    p.sk_filter_open_s = Some(open);
+                    p.sk_filter_close_s = Some(close);
+                    p.sk_filter_width = Some(width);
+                    p.sk_filter_after_nr = Some(after_nr);
+                });
             }
             SetWfmStereo { rx, on } => {
                 self.state.rx[rx.index()].wfm_stereo = on;

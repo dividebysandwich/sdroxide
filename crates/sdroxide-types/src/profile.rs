@@ -64,6 +64,23 @@ pub struct ModeProfile {
     pub fm_decrackle_dip: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub binaural: Option<bool>,
+    // The NR menu's filters, appended after the rest: HUM and the SK
+    // post-filter with its settings, remembered per mode like the NR engine
+    // and FM-DECRACKLE beside them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hum_filter: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sk_filter: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sk_filter_tau_s: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sk_filter_open_s: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sk_filter_close_s: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sk_filter_width: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sk_filter_after_nr: Option<bool>,
 }
 
 /// Float equality by representation, for [`ModeProfile::trim_against`].
@@ -89,6 +106,13 @@ impl ModeProfile {
             && self.fm_deemph.is_none()
             && self.fm_decrackle_dip.is_none()
             && self.binaural.is_none()
+            && self.hum_filter.is_none()
+            && self.sk_filter.is_none()
+            && self.sk_filter_tau_s.is_none()
+            && self.sk_filter_open_s.is_none()
+            && self.sk_filter_close_s.is_none()
+            && self.sk_filter_width.is_none()
+            && self.sk_filter_after_nr.is_none()
     }
 
     /// This profile with `base` filling in every field it does not speak to.
@@ -105,6 +129,13 @@ impl ModeProfile {
             fm_deemph: self.fm_deemph.or(base.fm_deemph),
             fm_decrackle_dip: self.fm_decrackle_dip.or(base.fm_decrackle_dip),
             binaural: self.binaural.or(base.binaural),
+            hum_filter: self.hum_filter.or(base.hum_filter),
+            sk_filter: self.sk_filter.or(base.sk_filter),
+            sk_filter_tau_s: self.sk_filter_tau_s.or(base.sk_filter_tau_s),
+            sk_filter_open_s: self.sk_filter_open_s.or(base.sk_filter_open_s),
+            sk_filter_close_s: self.sk_filter_close_s.or(base.sk_filter_close_s),
+            sk_filter_width: self.sk_filter_width.or(base.sk_filter_width),
+            sk_filter_after_nr: self.sk_filter_after_nr.or(base.sk_filter_after_nr),
         }
     }
 
@@ -147,6 +178,27 @@ impl ModeProfile {
         if self.binaural == default.binaural {
             self.binaural = None;
         }
+        if self.hum_filter == default.hum_filter {
+            self.hum_filter = None;
+        }
+        if self.sk_filter == default.sk_filter {
+            self.sk_filter = None;
+        }
+        if self.sk_filter_tau_s.zip(default.sk_filter_tau_s).is_some_and(|(a, b)| same(a, b)) {
+            self.sk_filter_tau_s = None;
+        }
+        if self.sk_filter_open_s.zip(default.sk_filter_open_s).is_some_and(|(a, b)| same(a, b)) {
+            self.sk_filter_open_s = None;
+        }
+        if self.sk_filter_close_s.zip(default.sk_filter_close_s).is_some_and(|(a, b)| same(a, b)) {
+            self.sk_filter_close_s = None;
+        }
+        if self.sk_filter_width == default.sk_filter_width {
+            self.sk_filter_width = None;
+        }
+        if self.sk_filter_after_nr == default.sk_filter_after_nr {
+            self.sk_filter_after_nr = None;
+        }
     }
 
     /// Whether the live settings of `rx` all match this profile.
@@ -165,6 +217,13 @@ impl ModeProfile {
             && self.fm_deemph.is_none_or(|v| v == rx.fm_deemph)
             && self.fm_decrackle_dip.is_none_or(|v| v == rx.fm_decrackle_dip)
             && self.binaural.is_none_or(|v| v == rx.binaural)
+            && self.hum_filter.is_none_or(|v| v == rx.hum_filter)
+            && self.sk_filter.is_none_or(|v| v == rx.sk_filter)
+            && self.sk_filter_tau_s.is_none_or(|v| same(v, rx.sk_filter_tau_s))
+            && self.sk_filter_open_s.is_none_or(|v| same(v, rx.sk_filter_open_s))
+            && self.sk_filter_close_s.is_none_or(|v| same(v, rx.sk_filter_close_s))
+            && self.sk_filter_width.is_none_or(|v| v == rx.sk_filter_width)
+            && self.sk_filter_after_nr.is_none_or(|v| v == rx.sk_filter_after_nr)
     }
 
     /// Write every field this profile has an opinion about into `rx`.
@@ -205,6 +264,27 @@ impl ModeProfile {
         }
         if let Some(v) = self.binaural {
             rx.binaural = v;
+        }
+        if let Some(v) = self.hum_filter {
+            rx.hum_filter = v;
+        }
+        if let Some(v) = self.sk_filter {
+            rx.sk_filter = v;
+        }
+        if let Some(v) = self.sk_filter_tau_s {
+            rx.sk_filter_tau_s = v;
+        }
+        if let Some(v) = self.sk_filter_open_s {
+            rx.sk_filter_open_s = v;
+        }
+        if let Some(v) = self.sk_filter_close_s {
+            rx.sk_filter_close_s = v;
+        }
+        if let Some(v) = self.sk_filter_width {
+            rx.sk_filter_width = v;
+        }
+        if let Some(v) = self.sk_filter_after_nr {
+            rx.sk_filter_after_nr = v;
         }
     }
 }
