@@ -27,22 +27,8 @@ impl SdroxideApp {
 
     /// Hand the guide to the spectrum widget for this frame; nothing while it
     /// is off. Called once a frame.
-    ///
-    /// Also left in plain types — low edge Hz, cell Hz, S/N dB per cell,
-    /// frames — under `"snr-guide-cells"`, for other windows ("What is
-    /// this?", ⌘I) to read without depending on this module.
-    // Why: HDZ 2026-11-07: "wenn ich jetzt am Cursor ⌘I drücke, ist der Wert
-    //      S/N zu holen".
     pub(in crate::app) fn snr_guide_publish(&self, ctx: &egui::Context) {
         let g = self.snr_last.clone().filter(|_| self.view.snr_guide);
-        let cells = egui::Id::new("snr-guide-cells");
-        ctx.data_mut(|d| match &g {
-            Some(g) => {
-                let plain = (g.lo_hz, g.cell_hz, g.snr_db.clone(), g.frames);
-                d.insert_temp(cells, std::sync::Arc::new(plain));
-            }
-            None => d.remove::<std::sync::Arc<(f64, f64, Vec<f32>, u32)>>(cells),
-        });
         ctx.data_mut(|d| match g {
             Some(g) => {
                 d.insert_temp(crate::mean_spectrum::guide_id(), g);

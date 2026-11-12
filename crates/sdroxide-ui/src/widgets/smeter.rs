@@ -267,6 +267,13 @@ pub fn show(
 /// S9+60 in 10 dB steps.
 pub const STOPS: u8 = 16;
 
+/// A stored S range made safe: `lo < hi ≤ STOPS - 1`, whatever a hand-edited
+/// config holds.
+pub fn s_range_clamped(lo: u8, hi: u8) -> (u8, u8) {
+    let hi = hi.clamp(1, STOPS - 1);
+    (lo.min(hi - 1), hi)
+}
+
 /// The level of stop `i` in dBm: S-units of 6 dB up to S9, then 10 dB a stop.
 pub fn stop_dbm(i: u8) -> f32 {
     let i = i.min(STOPS - 1);
@@ -358,12 +365,8 @@ pub struct TraceOpts {
 
 impl TraceOpts {
     pub fn of(ui: &sdroxide_types::UiSettings) -> Self {
-        TraceOpts {
-            hz: ui.smeter_trace_hz(),
-            newest_left: ui.smeter_trace_newest_left,
-            lo: ui.smeter_trace_lo,
-            hi: ui.smeter_trace_hi,
-        }
+        let (lo, hi) = s_range_clamped(ui.smeter_trace_lo, ui.smeter_trace_hi);
+        TraceOpts { hz: ui.smeter_trace_hz(), newest_left: ui.smeter_trace_newest_left, lo, hi }
     }
 
     /// The range as fractions of the full S scale, bottom below top.

@@ -1837,12 +1837,9 @@ impl SdroxideApp {
     /// right-click menu edits them.
     fn smeter_trace(&self) -> TraceSet {
         let u = &self.ui_settings;
-        TraceSet {
-            speed: u.smeter_trace_speed,
-            newest_left: u.smeter_trace_newest_left,
-            lo: u.smeter_trace_lo,
-            hi: u.smeter_trace_hi,
-        }
+        let (lo, hi) =
+            crate::widgets::smeter::s_range_clamped(u.smeter_trace_lo, u.smeter_trace_hi);
+        TraceSet { speed: u.smeter_trace_speed, newest_left: u.smeter_trace_newest_left, lo, hi }
     }
 
     /// Store the trace face's settings if they changed, in `[ui]` like the

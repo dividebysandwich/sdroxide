@@ -270,7 +270,7 @@ fn guide_max(g: &crate::mean_spectrum::Guide, hz: f64) -> Option<f32> {
 /// The strongest cell of `g` between `lo_hz` and `hi_hz`: its S/N and the
 /// frequency of its middle. `None` as for [`guide_max`].
 fn guide_peak(g: &crate::mean_spectrum::Guide, lo_hz: f64, hi_hz: f64) -> Option<(f32, f64)> {
-    if g.cell_hz <= 0.0 || g.snr_db.is_empty() {
+    if g.cell_hz <= 0.0 || g.snr_db.is_empty() || hi_hz < g.lo_hz {
         return None;
     }
     let first = ((lo_hz - g.lo_hz) / g.cell_hz).floor().max(0.0) as usize;
@@ -345,10 +345,12 @@ const PEAK_RING_HZ: (f64, f64) = (600.0, 2_000.0);
 fn has_a_peak(g: &crate::mean_spectrum::Guide, hz: f64) -> Option<bool> {
     let top = guide_max(g, hz)?;
     let (near, far) = PEAK_RING_HZ;
-    let mut ring: Vec<f32> = g
-        .snr_db
+    let lo = (((hz - far - g.lo_hz) / g.cell_hz).floor().max(0.0) as usize).min(g.snr_db.len());
+    let hi = (((hz + far - g.lo_hz) / g.cell_hz).ceil().max(0.0) as usize).min(g.snr_db.len());
+    let mut ring: Vec<f32> = g.snr_db[lo..hi.max(lo)]
         .iter()
         .enumerate()
+        .map(|(i, v)| (i + lo, v))
         .filter(|(i, v)| {
             let d = (g.lo_hz + (*i as f64 + 0.5) * g.cell_hz - hz).abs();
             v.is_finite() && (near..=far).contains(&d)
@@ -912,12 +914,8 @@ impl SdroxideApp {
         let fresh = !st.shown.contains_key(&id);
         let entry = st.shown.entry(id).or_insert((false, 0.0));
         if recheck {
-            let checks = LabelChecks {
-                flanks: self.view.snr_label_flanks,
-                peak: peak && carrier,
-                on,
-                off,
-            };
+            let checks =
+                LabelChecks { flanks: self.view.snr_label_flanks, peak: peak && carrier, on, off };
             entry.0 = label_wanted(g, hz, checks, (!fresh).then_some(entry.0));
         }
         let target = if entry.0 { 1.0 } else { 0.0 };

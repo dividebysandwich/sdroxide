@@ -79,13 +79,11 @@ fn resample(
             let first = ((a - src_lo) / src_cell - 0.5).ceil().max(0.0) as usize;
             let last = (((b - src_lo) / src_cell - 0.5).ceil().max(0.0) as usize).min(len);
             if first < last {
-                let seen: Vec<f64> =
-                    src[first..last].iter().copied().filter(|v| v.is_finite()).collect();
-                if seen.is_empty() {
-                    f64::NAN
-                } else {
-                    seen.iter().sum::<f64>() / seen.len() as f64
-                }
+                let (sum, k) = src[first..last]
+                    .iter()
+                    .filter(|v| v.is_finite())
+                    .fold((0.0, 0usize), |(s, k), &v| (s + v, k + 1));
+                if k == 0 { f64::NAN } else { sum / k as f64 }
             } else {
                 let i = ((a + b) / 2.0 - src_lo) / src_cell;
                 if i >= 0.0 && i < len as f64 { src[i as usize] } else { f64::NAN }
