@@ -2532,7 +2532,11 @@ impl SdroxideApp {
     fn rx_rows(&self, ui: &egui::Ui) -> RxRows {
         let rails: Vec<String> =
             self.bar_gains().iter().map(|g| gain_label(&g.name, self.bar_gains().len())).collect();
-        let front: Vec<&[&str]> = self.front_chips().iter().map(|c| c.labels).collect();
+        let mut front: Vec<&[&str]> = self.front_chips().iter().map(|c| c.labels).collect();
+        // The ELAD SPAN chip rides the same row, priced at its widest label.
+        if self.elad_bw_applies() {
+            front.push(&["SPAN 6144k"]);
+        }
         rx_rows(
             ui,
             &rails,
@@ -2724,6 +2728,51 @@ impl SdroxideApp {
         }
     }
 
+    /// Whether the radio is an ELAD, whose stream rate — the width of the
+    /// whole panadapter — has a chip of its own beside DEC.
+    fn elad_bw_applies(&self) -> bool {
+        self.caps.as_ref().is_some_and(|c| c.driver == "elad")
+    }
+
+    /// The ELAD's bandwidth: which of its six stream rates sdroxide reads it at.
+    ///
+    /// The same setting as Settings → Radio → Sample rate, put where it can be
+    /// reached without opening Settings, because on an FDM-DUO it has to
+    /// follow whatever mode the radio was last left in (by ELAD's own software,
+    /// for one). Cycling, like DEC beside it and for the same reason: a combo
+    /// inside the RX menu closes the menu. Click goes one rate wider,
+    /// right-click one narrower; either saves the setting and reopens the
+    /// radio, which is what Apply in Settings does for it.
+    fn elad_bw_chip(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        use sdroxide_types::ELAD_SAMPLE_RATES;
+        if !self.elad_bw_applies() {
+            return;
+        }
+        if self.radio_cfg.is_none() {
+            self.radio_cfg = self.ctrl.radio_config();
+        }
+        let Some(now) = self.radio_cfg.as_ref().map(|r| r.elad.sample_rate_hz) else { return };
+        let label = format!("SPAN {}k", now / 1000);
+        let hint = tr!("topbar-elad-bw-hint", khz = (now / 1000).to_string());
+        let resp = crate::chrome::chip(ui, false, label).on_hover_text(hint);
+        let at = ELAD_SAMPLE_RATES.iter().position(|&r| r == now);
+        let n = ELAD_SAMPLE_RATES.len();
+        let next = if resp.clicked() {
+            Some(ELAD_SAMPLE_RATES[at.map_or(0, |i| (i + 1) % n)])
+        } else if resp.secondary_clicked() {
+            Some(ELAD_SAMPLE_RATES[at.map_or(0, |i| (i + n - 1) % n)])
+        } else {
+            None
+        };
+        if let Some(rate) = next
+            && rate != now
+            && let Some(cfg) = self.radio_cfg.as_mut()
+        {
+            cfg.elad.sample_rate_hz = rate;
+            cmds.push(Command::SetRadioConfig { cfg: Box::new(cfg.clone()), reopen: true });
+        }
+    }
+
     /// The receiver and filter/noise controls — the body of the RX box, and of
     /// the RX menu. See [`crate::chrome::control_row`] for `narrow`.
     ///
@@ -2843,6 +2892,7 @@ impl SdroxideApp {
                 self.front_chip(ui, cmds, c);
             }
             self.decim_chip(ui, cmds);
+            self.elad_bw_chip(ui, cmds);
             // A cycling chip rather than a combo: a combo inside a menu
             // opens a second popup layer, and clicking it counts as
             // "outside" and closes the menu it was opened from. Four

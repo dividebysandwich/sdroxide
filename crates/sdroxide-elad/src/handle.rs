@@ -135,6 +135,23 @@ pub(crate) struct RxStats {
     rate_checked: bool,
 }
 
+/// Bytes per second an ELAD puts on the wire at `rate_hz`.
+fn wire_bps_of(rate_hz: u32) -> f64 {
+    rate_hz as f64 * crate::protocol::sample_bytes(rate_hz) as f64
+}
+
+/// Every rate whose wire throughput is within [`RATE_TOLERANCE`] of
+/// `wire_bps`, lowest first. Usually one; 3072 and 6144 kHz always come
+/// together, because the 16-bit samples at the top rate make its byte rate the
+/// same as the one below it.
+pub(crate) fn rates_for_wire_bps(wire_bps: f64) -> Vec<u32> {
+    sdroxide_types::ELAD_SAMPLE_RATES
+        .iter()
+        .copied()
+        .filter(|&r| (wire_bps / wire_bps_of(r) - 1.0).abs() <= RATE_TOLERANCE)
+        .collect()
+}
+
 impl RxStats {
     pub(crate) fn new(nominal_hz: f64, model: Model) -> RxStats {
         RxStats {
@@ -230,9 +247,10 @@ impl RxStats {
     ///
     /// What a disagreement means depends on the model. On a sampler the rate is
     /// which FPGA image [`crate::fpga`] loaded, so the two can only differ if
-    /// the load did not happen or did not take. On an FDM-DUO nothing sdroxide
-    /// can send programs the decimation at all, so the configured rate is a
-    /// guess at the state the radio was left in.
+    /// the load did not happen or did not take. An FDM-DUO streams 192 kHz on
+    /// its own image and every wider rate on one [`crate::remote`] uploads, so
+    /// a DUO read at 192 kHz but arriving wider was left on a wide image by
+    /// another program, and one read wider did not take its image.
     ///
     /// Returns a sentence for the operator when the two disagree.
     pub(crate) fn check_rate(&mut self, trace: &Trace) -> Option<String> {
@@ -245,44 +263,68 @@ impl RxStats {
         if self.nominal_hz <= 0.0 {
             return None;
         }
-        let err = (measured / self.nominal_hz - 1.0).abs();
-        if err <= RATE_TOLERANCE {
+        // The count is of samples *as decoded*, and the decode depends on the
+        // rate being read as: below 6144 kHz a sample is eight bytes on the
+        // wire, at 6144 kHz it is four. So the count is first turned back into
+        // what was actually measured — bytes per second — and only then
+        // compared with what each real rate would put on the wire. Comparing
+        // sample counts directly sent a DUO left at 6144 kHz and read as
+        // 192 kHz to "3072 kHz", which then read its 16-bit words as 32-bit
+        // ones and agreed with itself.
+        let nominal = self.nominal_hz.round() as u32;
+        let wire_bps = measured * crate::protocol::sample_bytes(nominal) as f64;
+        let fits = rates_for_wire_bps(wire_bps);
+        if fits.contains(&nominal) {
             return None;
         }
-        // Name the rate on the list it is nearest to, because that is the one
-        // the operator has to pick — not the raw measurement, which never lands
-        // exactly on any of them.
-        let nearest = sdroxide_types::ELAD_SAMPLE_RATES
+        // What the stream is in. Usually one rate; 3072 and 6144 kHz put the
+        // same number of bytes on the wire, so then both are named. Nothing
+        // within tolerance names the closest by byte rate, still the best guess.
+        let fits = if fits.is_empty() {
+            sdroxide_types::ELAD_SAMPLE_RATES
+                .iter()
+                .copied()
+                .min_by(|a, b| {
+                    let d = |r: u32| (wire_bps_of(r) - wire_bps).abs();
+                    d(*a).partial_cmp(&d(*b)).unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .into_iter()
+                .collect()
+        } else {
+            fits
+        };
+        let mode = fits
             .iter()
-            .copied()
-            .min_by(|a, b| {
-                let d = |r: u32| (r as f64 - measured).abs();
-                d(*a).partial_cmp(&d(*b)).unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .unwrap_or(sdroxide_types::ELAD_DEFAULT_RATE_HZ);
+            .map(|r| format!("{:.0} kHz", *r as f64 / 1000.0))
+            .collect::<Vec<_>>()
+            .join(" or ");
         let remedy = if self.model.needs_fpga_load() {
             format!(
                 "the rate is decided by which FPGA image is loaded, so either ELAD's \
                  `{}` loader did not run or it loaded a different one — set the sample \
-                 rate in Settings → Radio to {:.0} kHz to match what is in the device, \
+                 rate in Settings → Radio to {mode} to match what is in the device, \
                  or check the loader.",
                 crate::fpga::LOADER,
-                nearest as f64 / 1000.0,
             )
+        } else if nominal == crate::remote::STANDALONE_RATE_HZ {
+            // A DUO read at its stand-alone rate but streaming wider: another
+            // program (FDM-SW2, SDR Console) left it on a wide image. The stream
+            // thread asks for a reopen that restores stand-alone.
+            "the FDM-DUO was left on a wide image by another program (FDM-SW2 or SDR \
+             Console)."
+                .to_string()
         } else {
             format!(
-                "nothing sdroxide can send changes this radio's decimation, so set the \
-                 sample rate in Settings → Radio to {:.0} kHz to match (or use ELAD's own \
-                 software once to put the device in the mode you want).",
-                nearest as f64 / 1000.0,
+                "the FDM-DUO's {:.0} kHz image did not take. Power-cycle the DUO, then \
+                 reopen it.",
+                self.nominal_hz / 1000.0,
             )
         };
         Some(format!(
-            "the stream is arriving at about {:.0} kHz but is being read as {:.0} kHz — \
-             the device is most likely in its {:.0} kHz mode. {remedy}",
-            measured / 1000.0,
+            "the stream is arriving at {:.1} MB/s but is being read as {:.0} kHz — \
+             the device is in its {mode} mode. {remedy}",
+            wire_bps / 1e6,
             self.nominal_hz / 1000.0,
-            nearest as f64 / 1000.0,
         ))
     }
 
@@ -387,6 +429,14 @@ pub(crate) struct Shared {
     /// and four control transfers a second on the streaming interface would
     /// buy nothing but a chance to stall it.
     pub read_dial: AtomicBool,
+    /// Set when a DUO read at 192 kHz turned out to be streaming at another
+    /// rate — left on a wide image by another program — and a restore to
+    /// stand-alone has been asked for: the source should reopen, and the
+    /// reopen does it (see `crate::remote::ask_restore`).
+    pub reopen_wanted: AtomicBool,
+    /// Set when the handle is dropped rather than released: the radio is being
+    /// closed for good, not reopened. See `Device::shutdown`.
+    pub leaving: AtomicBool,
 }
 
 impl Shared {
@@ -397,6 +447,8 @@ impl Shared {
             rx_paused: AtomicBool::new(false),
             duo_tuned_hz: AtomicU64::new(0),
             read_dial: AtomicBool::new(false),
+            reopen_wanted: AtomicBool::new(false),
+            leaving: AtomicBool::new(false),
         }
     }
 }
@@ -459,6 +511,13 @@ impl EladHandle {
         let since_open = self.opened_at.elapsed();
         let last = Duration::from_millis(self.shared.last_rx_ms.load(Ordering::Relaxed));
         since_open.saturating_sub(last)
+    }
+
+    /// Whether the stream was found in another mode than it is read as and a
+    /// reopen has been asked for to put the radio right. See
+    /// `crate::remote::ask_restore`.
+    pub fn wants_reopen(&self) -> bool {
+        self.shared.reopen_wanted.load(Ordering::Relaxed)
     }
 
     /// A warning the stream thread raised after the open returned, taken once.
@@ -596,7 +655,11 @@ impl EladHandle {
 }
 
 impl Drop for EladHandle {
+    /// Dropped without [`Self::release`] first is a close for good — the
+    /// engine releases a source before it reopens one — so a DUO on a wide
+    /// image is put back in stand-alone on the way out.
     fn drop(&mut self) {
+        self.shared.leaving.store(true, Ordering::Relaxed);
         self.release();
     }
 }
@@ -753,6 +816,45 @@ mod tests {
         duo.total_samples = 384_000 * 4;
         let msg = duo.check_rate(&Trace::new()).expect("a doubled rate has to be reported");
         assert!(!msg.contains(crate::fpga::LOADER), "{msg}");
+    }
+
+    /// The radio left at 6144 kHz and read as 192 kHz: its 16-bit samples are
+    /// decoded as 32-bit ones, so the decoded count runs at half the real rate.
+    /// That count alone points at 3072 kHz, which reads the same bytes the same
+    /// wrong way and would then agree with itself. Measured in bytes, the
+    /// stream is either of the top two, and both have to be named.
+    #[test]
+    fn a_duo_left_at_the_top_rate_is_not_sent_to_the_one_below_it() {
+        let mut s = RxStats::new(192_000.0, Model::Duo);
+        s.first_iq = Some(Instant::now() - Duration::from_secs(4));
+        // 6144 kHz × 4 bytes, decoded at 8 bytes a sample.
+        s.total_samples = 3_072_000 * 4;
+        let msg = s.check_rate(&Trace::new()).expect("a wrong rate has to be reported");
+        assert!(msg.contains("3072 kHz or 6144 kHz"), "{msg}");
+        assert!(msg.contains("left on a wide image"), "{msg}");
+    }
+
+    /// The other direction: a 192 kHz stream read as 6144 kHz decodes four
+    /// bytes a sample instead of eight and so counts twice as many.
+    #[test]
+    fn a_stream_read_as_the_top_rate_is_measured_in_bytes() {
+        let mut s = RxStats::new(6_144_000.0, Model::Duo);
+        s.first_iq = Some(Instant::now() - Duration::from_secs(4));
+        s.total_samples = 384_000 * 4;
+        let msg = s.check_rate(&Trace::new()).expect("a wrong rate has to be reported");
+        assert!(msg.contains("its 192 kHz mode"), "{msg}");
+        assert!(msg.contains("did not take"), "{msg}");
+    }
+
+    /// 3072 and 6144 kHz put the same bytes on the wire, so reading one as
+    /// the other cannot be caught by throughput and must not be reported as
+    /// a mismatch either.
+    #[test]
+    fn the_top_two_rates_cannot_be_told_apart_by_throughput() {
+        assert_eq!(rates_for_wire_bps(24_576_000.0), vec![3_072_000, 6_144_000]);
+        for r in [192_000u32, 384_000, 768_000, 1_536_000] {
+            assert_eq!(rates_for_wire_bps(r as f64 * 8.0), vec![r]);
+        }
     }
 
     #[test]

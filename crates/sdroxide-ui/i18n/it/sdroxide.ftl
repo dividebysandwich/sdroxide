@@ -1749,15 +1749,6 @@ settings-radio-corrects-reference-oscillator-applied-when = Corregge l'oscillato
 settings-radio-receive-only-below-adc-s = Solo ricezione. Sotto il limite di Nyquist dell'ADC l'antenna viene campionata direttamente e la risintonia è istantanea, perché non c'è un convertitore hardware di discesa — tutto il flusso dell'ADC viene convertito in banda base dall'host. Sopra di esso il ricevitore passa automaticamente al suo sintonizzatore R828D e alla SMA VHF, quindi entrambe le antenne devono essere collegate. Il VHF richiede un clock ADC di 32,4 Msps o più perché la IF del sintonizzatore possa stare dentro, e a clock sotto 48 Msps resta un vuoto tra le due gamme che nulla può raggiungere. Ogni impostazione qui ha effetto subito — non c'è un pulsante Applica da premere.
 settings-radio-device = Dispositivo
 settings-radio-no-devices-press-rescan = nessun dispositivo — premi Riesamina
-settings-radio-six-rates-are-six-different =
-    Le sei frequenze sono sei immagini FPGA diverse, non un registro — ed è per questo che nulla nel protocollo di ELAD seleziona tra di esse, e perché ciò che questa impostazione significa dipende dal modello.
-
-    FDM-S1 / FDM-S2: un comando. Il loro FPGA viene caricato dal computer a ogni accensione, e sdroxide esegue il caricatore elad-firmware di ELAD per inserirvi l'immagine di questa frequenza. Senza quel caricatore installato un campionatore non invia alcun campione, e sdroxide lo dice sullo schermo.
-
-    FDM-DUO: non un comando. La radio avvia il proprio FPGA e arriva alla frequenza in cui si è accesa o in cui l'ha lasciata FDM-SW2 l'ultima volta (192 kHz su una nuova), e questa impostazione dice soltanto come viene LETTO il flusso. Se sbagliata, il panadapter ha semplicemente la larghezza sbagliata, con ogni frequenza al suo interno scalata di conseguenza.
-
-    La frequenza reale del flusso viene misurata un paio di secondi dopo l'avvio, e un'incoerenza viene segnalata sullo schermo. Ha effetto con Applica.
-settings-radio-fdm-s-fpga-image-loaded = FDM-S: l'immagine FPGA caricata — FDM-DUO: come viene letto il flusso
 settings-radio-receiver-s-input-pad-one = L'attenuatore d'ingresso del ricevitore — un passo, in più o in meno. Lo stesso comando del cursore Guadagno della finestra principale.
 settings-radio-pre-selection-filters = Filtri di preselezione
 settings-radio-low-pass-bank-front-adc = Il banco di passa-basso davanti all'ADC. Escluderlo dà la vista più ampia e il comportamento peggiore vicino a segnali forti fuori banda — un trasmettitore di radiodiffusione a qualche miglio di distanza metterà immagini su tutta la banda. Lascialo attivo a meno che tu non stia deliberatamente ascoltando fuori dalla gamma filtrata.

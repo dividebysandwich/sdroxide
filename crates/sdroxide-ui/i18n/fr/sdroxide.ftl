@@ -1743,15 +1743,6 @@ settings-radio-corrects-reference-oscillator-applied-when = Corrige l'oscillateu
 settings-radio-receive-only-below-adc-s = Réception seule. Sous la limite de Nyquist du CAN, l'antenne est échantillonnée directement et l'accord est instantané, car il n'y a pas de convertisseur matériel — tout le flux du CAN est converti en bande de base par l'hôte. Au-dessus, le récepteur bascule automatiquement sur son accord R828D et la prise SMA VHF, donc les deux antennes doivent être branchées. La VHF exige une horloge de CAN d'au moins 32,4 Msps pour que la FI de l'accord tienne, et à des horloges inférieures à 48 Msps il existe un trou entre les deux plages que rien ne peut atteindre. Chaque réglage ici s'applique tout de suite — il n'y a pas de bouton Appliquer à presser.
 settings-radio-device = Périphérique
 settings-radio-no-devices-press-rescan = aucun périphérique — appuyez sur Rechercher
-settings-radio-six-rates-are-six-different =
-    Les six taux sont six images FPGA différentes, non un registre — c'est pourquoi rien dans le protocole d'ELAD ne choisit entre elles, et pourquoi ce que signifie ce réglage dépend du modèle.
-
-    FDM-S1 / FDM-S2 : une commande. Leur FPGA est chargé par l'ordinateur à chaque mise sous tension, et sdroxide lance le chargeur elad-firmware d'ELAD pour y mettre l'image de ce taux. Sans ce chargeur installé, un échantillonneur n'envoie aucun échantillon, et sdroxide le signale à l'écran.
-
-    FDM-DUO : pas une commande. La radio démarre son propre FPGA et arrive au taux dans lequel elle s'est allumée ou que FDM-SW2 lui a laissé en dernier (192 kHz sur une radio neuve), et ceci indique seulement comment le flux est LU. Une erreur et le panoramique est simplement de la mauvaise largeur, chaque fréquence à l'intérieur étant mise à l'échelle en conséquence.
-
-    Le taux réel du flux est mesuré quelques secondes après son démarrage, et un écart est signalé à l'écran. Prend effet à Appliquer.
-settings-radio-fdm-s-fpga-image-loaded = FDM-S : l'image FPGA chargée — FDM-DUO : comment le flux est lu
 settings-radio-receiver-s-input-pad-one = L'atténuateur d'entrée du récepteur — un pas, en plus ou en moins. C'est la même commande que le curseur Gain de la fenêtre principale.
 settings-radio-pre-selection-filters = Filtres de présélection
 settings-radio-low-pass-bank-front-adc = Le banc de filtres passe-bas devant le CAN. Le contourner donne la vue la plus large et le pire comportement près des forts signaux hors bande — un émetteur de radiodiffusion à quelques kilomètres placera des images sur toute la bande. Laissez-le activé sauf si vous écoutez volontairement en dehors de la plage filtrée.

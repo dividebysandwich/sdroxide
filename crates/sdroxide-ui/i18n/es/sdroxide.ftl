@@ -1738,15 +1738,6 @@ settings-radio-corrects-reference-oscillator-applied-when = Corrige el oscilador
 settings-radio-receive-only-below-adc-s = Solo recepción. Por debajo del límite de Nyquist del ADC la antena se muestrea directamente y la resintonía es instantánea, porque no hay conversor descendente por hardware — todo el flujo del ADC se convierte a banda base en el host. Por encima, el receptor cambia a su sintonizador R828D y al SMA de VHF automáticamente, así que ambas antenas tienen que estar conectadas. VHF necesita un reloj del ADC de 32,4 Msps o más para que quepa la FI del sintonizador, y con relojes por debajo de 48 Msps hay un hueco entre los dos rangos al que nada puede llegar. Todos los ajustes de aquí se aplican al momento — no hay botón Aplicar que pulsar.
 settings-radio-device = Dispositivo
 settings-radio-no-devices-press-rescan = sin dispositivos — pulsa Volver a buscar
-settings-radio-six-rates-are-six-different =
-    Las seis frecuencias son seis imágenes de FPGA distintas, no un registro — por eso nada en el protocolo de ELAD elige entre ellas, y por eso lo que significa este ajuste depende del modelo.
-
-    FDM-S1 / FDM-S2: un comando. Su FPGA la carga el ordenador en cada encendido, y sdroxide ejecuta el cargador elad-firmware de ELAD para poner la imagen de esta frecuencia. Sin ese cargador instalado un muestreador no envía ninguna muestra, y sdroxide lo dice en pantalla.
-
-    FDM-DUO: no es un comando. La radio arranca su propia FPGA y llega a la frecuencia en que se encendió o en la que la dejó FDM-SW2 por última vez (192 kHz en una nueva), y esto solo dice cómo se LEE el flujo. Si te equivocas, el panadaptador simplemente tiene el ancho equivocado, con cada frecuencia dentro de él escalada en consecuencia.
-
-    La frecuencia real del flujo se mide un par de segundos después de que empiece, y una discrepancia se informa en pantalla. Surte efecto con Aplicar.
-settings-radio-fdm-s-fpga-image-loaded = FDM-S: la imagen de FPGA cargada — FDM-DUO: cómo se lee el flujo
 settings-radio-receiver-s-input-pad-one = El atenuador de entrada del receptor — un paso, dentro o fuera. El mismo control que el deslizador de Ganancia de la ventana principal.
 settings-radio-pre-selection-filters = Filtros de preselección
 settings-radio-low-pass-bank-front-adc = El banco de filtros paso bajo delante del ADC. Puentearlo da la vista más ancha y el peor comportamiento cerca de señales fuertes fuera de banda — un transmisor de radiodifusión a unos kilómetros pondrá imágenes por toda la banda. Déjalo activado salvo que escuches deliberadamente fuera del rango filtrado.

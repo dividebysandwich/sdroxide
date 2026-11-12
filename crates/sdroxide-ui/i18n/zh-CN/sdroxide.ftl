@@ -1723,15 +1723,6 @@ settings-radio-corrects-reference-oscillator-applied-when = 校正参考振荡�
 settings-radio-receive-only-below-adc-s = 仅接收。在 ADC 的奈奎斯特极限以下，天线被直接采样，重新调谐是即时的，因为没有硬件下变频器——完整的 ADC 数据流由主机转换为基带。在其以上，接收机会自动切换到其 R828D 调谐器和 VHF SMA，因此两根天线都需要接好。VHF 需要 32.4 Msps 或更高的 ADC 时钟，才能使调谐器的中频放得下；在低于 48 Msps 的时钟下，两个范围之间存在无法覆盖的间隙。此处的每项设置都会立即生效——没有需要按下的“应用”按钮。
 settings-radio-device = 设备
 settings-radio-no-devices-press-rescan = 没有设备——请按“重新扫描”
-settings-radio-six-rates-are-six-different =
-    这六种速率是六种不同的 FPGA 镜像，而不是一个寄存器——这就是为什么 ELAD 的协议中没有任何东西可以在它们之间进行选择，也是为什么此设置的含义取决于型号。
-
-    FDM-S1 / FDM-S2：是一条命令。它们的 FPGA 在每次上电时都由计算机加载，sdroxide 会运行 ELAD 自己的 elad-firmware 加载器，将此速率的镜像载入。若未安装该加载器，采样器根本不发送任何采样，sdroxide 会在屏幕上说明这一点。
-
-    FDM-DUO：不是命令。电台自行加载其 FPGA，并以其上电时或 FDM-SW2 上次留下的任何速率启动（新机为 192 kHz）；此处的设置仅说明如何*读取*数据流。若设错，全景图的宽度就会不对，其中每个频率都会被相应地缩放。
-
-    数据流的实际速率在开始后几秒钟测得，不匹配会在屏幕上报告。在“应用”后生效。
-settings-radio-fdm-s-fpga-image-loaded = FDM-S：加载的 FPGA 镜像——FDM-DUO：数据流的读取方式
 settings-radio-receiver-s-input-pad-one = 接收机的输入衰减器——一步，加入或取消。与主窗口的增益滑块为同一控件。
 settings-radio-pre-selection-filters = 预选滤波器
 settings-radio-low-pass-bank-front-adc = ADC 之前的低通滤波器组。将其旁路可获得最宽的视野，但在强带外信号附近表现最差——几英里外的广播发射机会在频段上产生镜像。除非你有意收听滤波范围之外的内容，否则请保持开启。
