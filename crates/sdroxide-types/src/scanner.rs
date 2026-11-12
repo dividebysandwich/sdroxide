@@ -21,15 +21,22 @@ pub enum ScanKind {
     Memories,
     /// A frequency range on a fixed channel grid, in one mode.
     Range,
+    /// A frequency range swept without stopping, its slices stitched into one
+    /// full-range spectrum for the full-band strip (WIDE): a panorama for a
+    /// front end that only sees a couple of megahertz at a time.
+    // Why: HDZ 2026-11-12: "in einer Stufe den RTL-Leuten ein Panorama
+    //      anbieten und dieses dann als Sweep-Scanner weiter ausbauen".
+    Panorama,
 }
 
 impl ScanKind {
-    pub const ALL: [ScanKind; 2] = [ScanKind::Memories, ScanKind::Range];
+    pub const ALL: [ScanKind; 3] = [ScanKind::Memories, ScanKind::Range, ScanKind::Panorama];
 
     pub fn label(self) -> &'static str {
         match self {
             ScanKind::Memories => "MEM",
             ScanKind::Range => "RANGE",
+            ScanKind::Panorama => "PANO",
         }
     }
 }
@@ -246,7 +253,9 @@ impl ScannerConfig {
     /// Whether the settings describe a scan that could ever stop anywhere.
     pub fn range_is_usable(&self) -> bool {
         let (lo, hi) = self.range();
-        lo.is_finite() && hi.is_finite() && lo > 0.0 && hi - lo >= self.step_hz.max(1.0)
+        // From 0 Hz up: an HF range is typed as "0 to 30", and a front end that
+        // cannot reach the bottom of it says so when the slice is tuned.
+        lo.is_finite() && hi.is_finite() && lo >= 0.0 && hi - lo >= self.step_hz.max(1.0)
     }
 }
 

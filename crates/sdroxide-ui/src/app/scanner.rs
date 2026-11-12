@@ -48,6 +48,7 @@ impl SdroxideApp {
                     .on_hover_text(match kind {
                         ScanKind::Memories => tr!("scanner-work-through-stored-memory-channels"),
                         ScanKind::Range => tr!("scanner-work-through-slice-band-channel"),
+                        ScanKind::Panorama => tr!("scanner-sweep-range-into-panorama"),
                     })
                     .clicked()
                 {
@@ -74,10 +75,15 @@ impl SdroxideApp {
         match cfg.kind {
             ScanKind::Range => self.scanner_range(ui, cfg),
             ScanKind::Memories => self.scanner_memories(ui, cfg),
+            ScanKind::Panorama => self.scanner_panorama(ui, cfg),
         }
 
         ui.separator();
-        self.scanner_thresholds(ui, cfg);
+        if cfg.kind == ScanKind::Panorama {
+            self.scanner_panorama_settle(ui, cfg);
+        } else {
+            self.scanner_thresholds(ui, cfg);
+        }
         ui.separator();
         self.scanner_status(ui, cmds);
     }
@@ -139,6 +145,40 @@ impl SdroxideApp {
     /// stop somewhere is indistinguishable from a scanner that cannot hear it,
     /// and the operator who pressed SKIP three passes ago is exactly the person
     /// who will wonder why the repeater never comes up.
+    /// A panorama: only the range. It stops nowhere, so the grid, the mode and
+    /// the thresholds a range scan judges channels by do not apply.
+    fn scanner_panorama(&self, ui: &mut egui::Ui, cfg: &mut ScannerConfig) {
+        egui::Grid::new("scan-pano").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+            ui.label(tr!("scanner-from"));
+            ui.horizontal(|ui| {
+                mhz_edit(ui, &mut cfg.range_lo_hz);
+                ui.label("to");
+                mhz_edit(ui, &mut cfg.range_hi_hz);
+                ui.label(RichText::new("MHz").weak());
+            });
+            ui.end_row();
+        });
+        if !cfg.range_is_usable() {
+            ui.label(
+                RichText::new(tr!("scanner-range-empty-high-edge-has"))
+                    .color(crate::theme::ALERT()),
+            );
+        }
+        ui.label(RichText::new(tr!("scanner-panorama-hint")).weak());
+    }
+
+    /// How long each panorama slice waits for the front end before it is read.
+    fn scanner_panorama_settle(&self, ui: &mut egui::Ui, cfg: &mut ScannerConfig) {
+        egui::Grid::new("scan-pano-settle").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+            ui.label(tr!("scanner-settles"));
+            ui.add(
+                egui::DragValue::new(&mut cfg.dwell_ms).speed(5.0).range(40..=2000).suffix(" ms"),
+            )
+            .on_hover_text(tr!("scanner-settles-hint"));
+            ui.end_row();
+        });
+    }
+
     fn scanner_range_skips(&self, ui: &mut egui::Ui, cfg: &mut ScannerConfig) {
         if cfg.skip_freq_hz.is_empty() {
             ui.label(RichText::new(tr!("scanner-skip-while-holding-pass-over")).size(10.0).weak());

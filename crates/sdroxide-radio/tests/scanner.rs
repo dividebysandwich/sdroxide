@@ -333,6 +333,56 @@ fn a_range_scan_stops_on_a_carrier() {
     );
 }
 
+/// A panorama sweeps a range wider than the front end sees, never stops — not
+/// even on a carrier — and hands the full-band strip one row across the whole
+/// range, with the carrier where it is.
+#[test]
+fn a_panorama_sweeps_without_stopping_and_fills_the_strip() {
+    const SIGNAL: f64 = 147_300_000.0;
+    let (lo, hi) = (144_000_000.0, 150_000_000.0);
+    let mut rig = Rig::new(Some(SIGNAL));
+    rig.send(Command::SetScannerConfig(ScannerConfig {
+        kind: ScanKind::Panorama,
+        range_lo_hz: lo,
+        range_hi_hz: hi,
+        ..range_cfg()
+    }));
+    rig.send(Command::SetScanning(true));
+
+    let mut row = None;
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < deadline && row.is_none() {
+        rig.pump(0.05, false);
+        if rig.h.wide_spectrum_out.update() {
+            row = Some(rig.h.wide_spectrum_out.output_buffer().clone());
+        }
+    }
+    let w = rig.pump(0.2, false);
+    assert!(w.running, "a panorama runs until it is stopped");
+    assert_eq!(w.held_at, None, "a panorama never stops, carrier or not");
+    let row = row.expect("a full sweep should have reached the strip");
+    assert!(
+        (row.center_hz - (lo + hi) / 2.0).abs() < 1.0,
+        "centred on the range: {}",
+        row.center_hz
+    );
+    assert!((row.span_hz - (hi - lo)).abs() < 1.0, "as wide as the range: {}", row.span_hz);
+    // The bench has no anti-alias filter, so the carrier also folds into the
+    // other slices; what matters is that it is bright where it really is.
+    let n = row.bins.len();
+    let at = ((SIGNAL - (row.center_hz - row.span_hz / 2.0)) / row.span_hz * n as f64) as usize;
+    let near = row.bins[at.saturating_sub(2)..(at + 3).min(n)].iter().copied().max().unwrap();
+    let top = row.bins.iter().copied().max().unwrap();
+    let mut sorted = row.bins.clone();
+    sorted.sort_unstable();
+    let median = sorted[n / 2];
+    assert!(near + 10 >= top, "the carrier reads {near}, the brightest bin {top}");
+    assert!(
+        near > median.saturating_add(40),
+        "the carrier {near} stands out of the floor {median}"
+    );
+}
+
 /// A dead band is scanned round and round without ever stopping, and without
 /// the dial wandering outside the range it was given.
 #[test]

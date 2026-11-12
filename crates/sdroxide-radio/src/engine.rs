@@ -1430,6 +1430,14 @@ impl RxChain {
 /// scan on a wideband front end asks the FFT for everything busy in a whole
 /// span at once, and a range scan on a CAT rig walks the channel grid. After
 /// that they all visit candidates the same way.
+/// A panorama scan's picture so far: the range it covers and one spectrum
+/// across it, in dB, NaN where no slice has landed yet.
+struct Pano {
+    lo: f64,
+    hi: f64,
+    bins: Vec<f32>,
+}
+
 struct Scan {
     phase: ScanPhase,
     /// Still to visit before the queue has to be refilled.
@@ -3235,6 +3243,12 @@ struct Engine {
     scan_cfg: sdroxide_types::ScannerConfig,
     /// The running scan, or `None` when it is stopped.
     scan: Option<Scan>,
+    /// The panorama a [`ScanKind::Panorama`] scan is stitching, while it runs.
+    pano: Option<Pano>,
+    /// Whether the full-band lane in hand was stitched by a panorama scan
+    /// rather than published by the front end — such a lane is for the strip
+    /// only, never for drawing the main panadapter from.
+    wide_from_pano: bool,
     /// Scratch for the sweep's spectrum read, kept so a scan allocates nothing
     /// per slice.
     scan_db: Vec<f32>,
@@ -4723,6 +4737,8 @@ fn engine_thread(
         iq_wav: None,
         scan_cfg,
         scan: None,
+        pano: None,
+        wide_from_pano: false,
         scan_db: Vec::new(),
         audio_level: 0.0,
         wsjtx: None,
@@ -8085,10 +8101,16 @@ impl Engine {
     /// `wide_spectrum_db` implementation returns before it touches `out`, so a
     /// poll that finds nothing keeps the sweep already held.
     fn poll_wide(&mut self) {
+        // A panorama scan owns the lane while it runs: the front end's own,
+        // where it has one, would overwrite each sweep's row.
+        if self.pano.is_some() {
+            return;
+        }
         let mut bins = std::mem::take(&mut self.wide_bins);
         let sweep = self.source.wide_spectrum_db(&mut bins).filter(|_| !bins.is_empty());
         self.wide_bins = bins;
         if let Some(window) = sweep {
+            self.wide_from_pano = false;
             self.wide_window = Some(window);
             self.wide_at = Instant::now();
             self.wide_fresh = true;
@@ -8422,7 +8444,7 @@ impl Engine {
     /// front end has published nothing wide lately, so a lane that stops
     /// arriving hands the picture back rather than freezing it.
     fn wide_main_window(&self) -> Option<(f64, f64)> {
-        if self.audio_mode || self.wide_at.elapsed() >= SCOPE_MAIN_STALE {
+        if self.audio_mode || self.wide_from_pano || self.wide_at.elapsed() >= SCOPE_MAIN_STALE {
             return None;
         }
         let (wide_center, wide_span) = self.wide_window?;
@@ -15242,7 +15264,7 @@ impl Engine {
                 }
                 any
             }
-            ScanKind::Range => {
+            ScanKind::Range | ScanKind::Panorama => {
                 let ok = self.scan_cfg.range_is_usable();
                 if !ok {
                     self.notice("the scan range is empty — check the low and high frequencies");
@@ -15279,6 +15301,7 @@ impl Engine {
             return;
         }
         self.state.scan = sdroxide_types::ScanState::default();
+        self.pano = None;
         // A sweep drives the hardware centre itself, dial and all, so a scan
         // that stopped on a CW signal leaves a self-keying transceiver's VFO on
         // our zero-beat rather than on the station. Put it back before the
@@ -15384,6 +15407,9 @@ impl Engine {
         if self.scan_cfg.kind == ScanKind::Memories {
             return self.scan_read_mem_slice(now);
         }
+        if self.scan_cfg.kind == ScanKind::Panorama {
+            return self.scan_read_pano_slice(now);
+        }
         let (lo, hi) = self.scan_cfg.range();
         let (flo, fhi) = self.scan_cfg.mode.default_filter();
         let found = crate::scanner::busy_channels(
@@ -15404,6 +15430,37 @@ impl Engine {
             found.into_iter().filter(|&f| !cfg.skips_freq(f)).map(ScanTarget::Freq).collect();
         if let Some(sc) = self.scan.as_mut() {
             sc.queue.extend(keep);
+        }
+        self.scan_advance(now);
+    }
+
+    /// The front end has settled on a panorama slice: write what it sees into
+    /// the panorama, and hand the full-band strip a row once the last slice of
+    /// a sweep is in. Never stops anywhere — on to the next slice.
+    fn scan_read_pano_slice(&mut self, now: Instant) {
+        let (lo, hi) = self.scan_cfg.range();
+        let span = self.state.sample_rate;
+        let center = self.state.center_hz;
+        let fresh = self.pano.as_ref().is_none_or(|p| p.lo != lo || p.hi != hi);
+        if fresh {
+            let n = crate::scanner::panorama_bins(lo, hi, span, self.scan_db.len());
+            self.pano = Some(Pano { lo, hi, bins: vec![f32::NAN; n] });
+        }
+        let last = self.scan.as_ref().is_some_and(|sc| sc.slice + 1 >= sc.slices.len());
+        if let Some(p) = self.pano.as_mut() {
+            crate::scanner::stitch_slice(&mut p.bins, lo, hi, &self.scan_db, center, span);
+            if last {
+                let mut row = p.bins.clone();
+                crate::scanner::fill_panorama_gaps(&mut row);
+                if row.iter().all(|v| v.is_finite()) {
+                    self.wide_bins = row;
+                    self.wide_window = Some(((lo + hi) / 2.0, hi - lo));
+                    self.wide_at = now;
+                    self.wide_fresh = true;
+                    self.wide_from_pano = true;
+                    self.wide_sweeps = self.wide_sweeps.wrapping_add(1);
+                }
+            }
         }
         self.scan_advance(now);
     }
@@ -15485,6 +15542,13 @@ impl Engine {
             }
             ScanKind::Range if self.scan_can_sweep() => self.scan_next_slice(now),
             ScanKind::Range => self.scan_next_stepped(),
+            ScanKind::Panorama if self.scan_can_sweep() => self.scan_next_slice(now),
+            ScanKind::Panorama => {
+                self.stop_scan(Some(
+                    "a panorama needs a front end that sees a span — this one sends audio",
+                ));
+                Refill::Stopped
+            }
         }
     }
 
@@ -15773,6 +15837,8 @@ impl Engine {
                     self.save_scanner_config();
                 }
             }
+            // A panorama never stops, so there is nothing to skip.
+            (true, ScanKind::Panorama) => {}
         }
         self.scan_advance(Instant::now());
     }

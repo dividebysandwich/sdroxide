@@ -1247,7 +1247,8 @@ them all at once.
   amateur, broadcast, CB and AM — without labels. The button appears
   only on receivers that produce a full-band view — a direct-sampling front end
   such as the RX-888, a KiwiSDR, a SpyServer; on an RTL-SDR, HPSDR or TCI radio
-  the panadapter span is all the hardware delivers — and the setting is
+  the panadapter span is all the hardware delivers, until a **PANO** scan
+  ([Scanning](#213-scanning)) sweeps a range for it — and the setting is
   remembered between sessions.
 
   With the **S/N** or **SK** line on, the strip carries them too, across the
@@ -2165,6 +2166,18 @@ is transmitting. Two kinds:
   something you do not want to hear is what that is for.
 - **RANGE** — a slice of a band on a channel grid. Give it a **From** and a
   **to** in MHz, a **Step** (5 / 6.25 / 8.33 / 10 / 12.5 / 25 kHz) and a mode.
+- **PANO** — a panorama: a range swept without stopping. Give it a **From** and
+  a **to** in MHz; nothing else applies, because it stops nowhere. The radio
+  tunes slice after slice across the range, as a range scan does, and stitches
+  what each slice sees — the middle of it, clear of the roll-off at the edges and
+  of the front end's own spike at DC — into one spectrum across the whole range.
+  Each finished sweep is one row of the **full-band strip** (**WIDE**), so a
+  receiver that only sees a couple of megahertz at a time, an RTL-SDR for one,
+  gets the same band-wide waterfall a direct-sampling receiver has. **Settles
+  for** is how long each slice waits after retuning before it is read: longer
+  is a steadier picture and a slower sweep. A range from 0 to 30 MHz on an
+  RTL-SDR needs direct sampling (its settings, *Auto* does it); a slice the
+  front end cannot reach is drawn from its neighbours.
 
 **A range scan is fast**, and not in the way a handheld scanner is. A scanner
 has one receiver and has to visit each channel in turn, which is why sweeping
