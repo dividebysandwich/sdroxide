@@ -3253,6 +3253,8 @@ struct Engine {
     /// rather than published by the front end — such a lane is for the strip
     /// only, never for drawing the main panadapter from.
     wide_from_pano: bool,
+    /// Seconds between the last two panorama rows — what paces their scale.
+    pano_row_s: f32,
     /// Scratch for the sweep's spectrum read, kept so a scan allocates nothing
     /// per slice.
     scan_db: Vec<f32>,
@@ -4743,6 +4745,7 @@ fn engine_thread(
         scan: None,
         pano: None,
         wide_from_pano: false,
+        pano_row_s: 0.1,
         scan_db: Vec::new(),
         audio_level: 0.0,
         wsjtx: None,
@@ -8392,13 +8395,17 @@ impl Engine {
         }
         self.wide_fresh = false;
         let (center_hz, span_hz) = self.wide_window?;
-        // A panorama row is a whole sweep, seconds apart, and is scaled on its
-        // own: carried over, the levels fall a few percent per row — tuned for
-        // a lane at ten rows a second — so a scale left high by an earlier
-        // range or a stronger front end would keep the panorama black for
-        // minutes.
-        let prev = if self.wide_from_pano { None } else { self.wide_levels };
-        let (floor, ceil) = auto_levels(&self.wide_bins, prev);
+        // A panorama row comes a whole sweep after the last: seconds apart for
+        // a wide range, a few tenths for one that fits in a single slice. The
+        // smoothing is paced by that time, not by the row, so the scale
+        // follows at the lane's speed in seconds — otherwise, at a few
+        // percent per row, a scale left high by an earlier range kept the
+        // panorama black for minutes.
+        let (floor, ceil) = if self.wide_from_pano {
+            auto_levels_paced(&self.wide_bins, self.wide_levels, self.pano_row_s / 0.1)
+        } else {
+            auto_levels(&self.wide_bins, self.wide_levels)
+        };
         self.wide_levels = Some((floor, ceil));
         self.wide_seq = self.wide_seq.wrapping_add(1);
         Some(pool_window_to_frame(
@@ -15493,6 +15500,9 @@ impl Engine {
         let center = self.state.center_hz;
         let fresh = self.pano.as_ref().is_none_or(|p| p.lo != lo || p.hi != hi);
         if fresh {
+            // A new panorama owes nothing to the scale of whatever the strip
+            // showed before it.
+            self.wide_levels = None;
             let n = crate::scanner::panorama_bins(lo, hi, span, self.scan_db.len());
             self.pano = Some(Pano { lo, hi, bins: vec![f32::NAN; n], sweep_at: now });
         }
@@ -15545,6 +15555,7 @@ impl Engine {
                 self.state.scan.sweeps = self.state.scan.sweeps.saturating_add(1);
                 self.state.scan.sweep_ms = took.as_millis().min(u32::MAX as u128) as u32;
                 if row.iter().all(|v| v.is_finite()) {
+                    self.pano_row_s = took.as_secs_f32();
                     self.wide_bins = row;
                     self.wide_window = Some(((lo + hi) / 2.0, hi - lo));
                     self.wide_at = now;
@@ -21869,6 +21880,16 @@ mod wide_frame_tests {
 /// Both ends are then smoothed towards their new values: jumping straight there
 /// makes the display flicker every time a signal keys up.
 fn auto_levels(db: &[f32], prev: Option<(f32, f32)>) -> (f32, f32) {
+    auto_levels_paced(db, prev, 1.0)
+}
+
+/// [`auto_levels`] for rows that come `rows` lane-rows apart (a lane-row is a
+/// tenth of a second, the full-band lane's pace): the smoothing compounds
+/// over that many rows, so the scale follows the band at the same speed in
+/// seconds whatever the row rate. A panorama sweep seconds long then adapts
+/// almost fully in one row; one that fits in a single slice, rows a few
+/// tenths apart, is smoothed much as the lane is.
+fn auto_levels_paced(db: &[f32], prev: Option<(f32, f32)>, rows: f32) -> (f32, f32) {
     const FALLBACK: (f32, f32) = (-120.0, -20.0);
     /// Widest window worth showing; beyond this the interesting part of the
     /// band gets too few levels to distinguish.
@@ -21906,8 +21927,10 @@ fn auto_levels(db: &[f32], prev: Option<(f32, f32)>) -> (f32, f32) {
         Some((pf, pc)) => {
             // Rise quickly so a band opening is not clipped, fall slowly so the
             // scale does not pump between frames.
+            let rows = rows.max(1.0);
             let smooth = |old: f32, new: f32| {
-                let a = if new > old { 0.35 } else { 0.08 };
+                let a: f32 = if new > old { 0.35 } else { 0.08 };
+                let a = 1.0 - (1.0 - a).powf(rows);
                 old + (new - old) * a
             };
             (smooth(pf, floor), smooth(pc, ceil))
@@ -21995,6 +22018,20 @@ mod auto_level_tests {
         let prev = (-115.0, -25.0);
         assert_eq!(auto_levels(&[], Some(prev)), prev);
         assert_eq!(auto_levels(&[f32::NAN, f32::NAN], Some(prev)), prev);
+    }
+
+    #[test]
+    fn paced_levels_follow_in_seconds_not_rows() {
+        // A scale stuck 40 dB high: one panorama row five seconds after the
+        // last comes nearly all the way down; one a tenth later only a step.
+        let db: Vec<f32> = (0..1024).map(|i| if i == 500 { -60.0 } else { -110.0 }).collect();
+        let fresh = auto_levels(&db, None);
+        let stuck = (fresh.0 + 40.0, fresh.1 + 40.0);
+        let slow = auto_levels_paced(&db, Some(stuck), 50.0);
+        let fast = auto_levels_paced(&db, Some(stuck), 1.0);
+        assert!((slow.1 - fresh.1).abs() < 1.0, "a sweep's worth of time: {slow:?} vs {fresh:?}");
+        assert!(fast.1 - fresh.1 > 30.0, "a tenth of a second: {fast:?}");
+        assert_eq!(auto_levels(&db, Some(stuck)), fast, "unpaced is one lane-row");
     }
 }
 
