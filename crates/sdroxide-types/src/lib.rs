@@ -295,7 +295,7 @@ pub use sonde::{
 };
 pub use spectrum::{
     DEFAULT_DISPLAY_BINS, DEFAULT_ROWS_PER_SEC, MAX_DISPLAY_BINS, MAX_ROWS_PER_SEC, SpectrumConfig,
-    SpectrumFrame,
+    SpectrumFrame, reassign_floor_db_default,
 };
 pub use speech::{
     CallsignStyle, CategoryFlags, DecodeSpeech, FreqStyle, SpeechSettings, TextSpeech, TuneSpeech,

@@ -1005,6 +1005,10 @@ mod tests {
             db_floor: -120.0,
             db_ceil: -20.0,
             viewport: Some((14_584_000.0, 14_968_000.0)),
+            smooth: false,
+            reassign: false,
+            reassign_floor_db: 6.0,
+            reassign_dim_db: 0.0,
         }))
     }
 

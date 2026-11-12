@@ -327,6 +327,11 @@ pub struct SdroxideApp {
     /// second tab holding the setting from before the change does not switch
     /// the whole window back.
     applied_language: sdroxide_types::UiLanguage,
+    /// The waterfall interpolation this tab last agreed with the other tabs
+    /// on (`theme::waterfall_smooth`). A copy that differs from it was changed
+    /// here, by the UI tab or the FFT popup; a shared value that differs was
+    /// changed in another tab.
+    applied_smooth: bool,
     /// Spoken announcements: the state machine that decides what to say, and
     /// the synthesizer that says it. Always present — switched off, it holds a
     /// null sink and costs a comparison per event.
@@ -1469,6 +1474,7 @@ impl SdroxideApp {
         crate::theme::set_spot_colors(&ui_settings.spot_colors);
         crate::theme::set_bandplan_colors(&ui_settings.bandplan_colors);
         crate::theme::set_map_cities(ui_settings.map_cities);
+        crate::theme::set_waterfall_smooth(ui_settings.waterfall_smooth);
         crate::theme::set_ui_zoom(ui_settings.ui_zoom);
         crate::i18n::set_language(ui_settings.language);
         crate::theme::apply(egui_ctx);
@@ -1567,6 +1573,7 @@ impl SdroxideApp {
             applied_look: (ui_settings.theme, ui_settings.button_style, ui_settings.window_style),
             applied_ui_font: ui_settings.menu_font_size,
             applied_language: ui_settings.language,
+            applied_smooth: ui_settings.waterfall_smooth,
             speech: speech::SpeechRuntime::new(load_speech_settings(storage)),
             speech_voices: Vec::new(),
             alerts: alerts::AlertRuntime::station(load_alerts_settings(storage)),

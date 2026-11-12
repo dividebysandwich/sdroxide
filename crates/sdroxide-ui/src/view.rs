@@ -164,6 +164,34 @@ pub struct ViewState {
     ///      adjusten"; the shift "kann darüber hinaus gelten".
     #[serde(default)]
     pub fit_shift_db: (f32, f32),
+    /// [`Self::fit_shift_db`] for WELCH and for REASSIGN: each way of drawing
+    /// the waterfall is a FIT program of its own, with its own shift, so a
+    /// taste set under one does not carry over into another
+    /// (`fit_shift_db` is PEAK's).
+    // Why: HDZ 2026-11-12: "müssen die unterschiedliche fit targets bekommen,
+    //      quasi als eigene Programme".
+    #[serde(default)]
+    pub fit_shift_welch_db: (f32, f32),
+    #[serde(default)]
+    pub fit_shift_reassign_db: (f32, f32),
+    /// The SMOOTH chip: the waterfall as mean power (Welch) in the engine and
+    /// lightly averaged over neighbouring rows and columns here, instead of
+    /// the peak. See [`sdroxide_types::SpectrumConfig::smooth`].
+    #[serde(default)]
+    pub waterfall_average: bool,
+    /// WELCH's time constant in seconds, for the waterfall's rows and the
+    /// trace alike: the rail under the chip, 0–2.5 s, zero being off.
+    #[serde(default = "welch_tc_default")]
+    pub welch_tc: f32,
+    /// The REASSIGN chip, the alternative to WELCH: waterfall rows as the
+    /// reassigned spectrogram — see
+    /// [`sdroxide_types::SpectrumConfig::reassign`]. Never on with
+    /// [`Self::waterfall_average`].
+    #[serde(default)]
+    pub waterfall_reassign: bool,
+    /// REASSIGN's background, dB darker: the cells left in place.
+    #[serde(default = "reassign_dim_default")]
+    pub reassign_dim_db: f32,
     pub fft_size: u32,
     /// Fraction of the panadapter height used by the spectrum line (rest = waterfall).
     pub spectrum_fraction: f32,
@@ -764,6 +792,12 @@ impl Default for ViewState {
             db_ceil: -20.0,
             auto_fit: auto_fit_default(),
             fit_shift_db: (0.0, 0.0),
+            fit_shift_welch_db: (0.0, 0.0),
+            fit_shift_reassign_db: (0.0, 0.0),
+            waterfall_average: false,
+            welch_tc: welch_tc_default(),
+            waterfall_reassign: false,
+            reassign_dim_db: reassign_dim_default(),
             fft_size: 4096,
             spectrum_fraction: 0.35,
             peak_hold: false,
@@ -828,20 +862,48 @@ impl ViewState {
         let had = (self.db_floor, self.db_ceil);
         (self.db_floor, self.db_ceil) = clamp_levels(floor, ceil);
         if self.auto_fit {
+            let (now, s) = ((self.db_floor, self.db_ceil), self.fit_shift_mut());
             let shift = |s: f32, now: f32, was: f32| {
                 (s + now - was).clamp(-FIT_SHIFT_MAX_DB, FIT_SHIFT_MAX_DB)
             };
-            self.fit_shift_db = (
-                shift(self.fit_shift_db.0, self.db_floor, had.0),
-                shift(self.fit_shift_db.1, self.db_ceil, had.1),
-            );
+            *s = (shift(s.0, now.0, had.0), shift(s.1, now.1, had.1));
+        }
+    }
+
+    /// Which way the waterfall is drawn — and so which FIT program is in force.
+    pub fn look(&self) -> WaterfallLook {
+        if self.waterfall_reassign {
+            WaterfallLook::Reassign
+        } else if self.waterfall_average {
+            WaterfallLook::Welch
+        } else {
+            WaterfallLook::Peak
+        }
+    }
+
+    /// The shift of the FIT program in force (see [`Self::fit_shift_db`]).
+    pub fn fit_shift(&self) -> (f32, f32) {
+        match self.look() {
+            WaterfallLook::Peak => self.fit_shift_db,
+            WaterfallLook::Welch => self.fit_shift_welch_db,
+            WaterfallLook::Reassign => self.fit_shift_reassign_db,
+        }
+    }
+
+    /// The shift of the FIT program in force, to change.
+    pub fn fit_shift_mut(&mut self) -> &mut (f32, f32) {
+        match self.look() {
+            WaterfallLook::Peak => &mut self.fit_shift_db,
+            WaterfallLook::Welch => &mut self.fit_shift_welch_db,
+            WaterfallLook::Reassign => &mut self.fit_shift_reassign_db,
         }
     }
 
     /// Where the levels go when FIT measures `fit`: the measurement moved by
-    /// the operator's [`ViewState::fit_shift_db`], within the rails' limits.
+    /// the operator's shift for the look in force, within the rails' limits.
     pub fn fit_shifted(&self, fit: (f32, f32)) -> (f32, f32) {
-        clamp_levels(fit.0 + self.fit_shift_db.0, fit.1 + self.fit_shift_db.1)
+        let s = self.fit_shift();
+        clamp_levels(fit.0 + s.0, fit.1 + s.1)
     }
 
     /// Whether the spectrum line is drawn.
@@ -967,6 +1029,15 @@ fn spectrum_3d_solid_default() -> bool {
     true
 }
 
+/// The three ways the waterfall is drawn (the FFT popup's PEAK, WELCH and
+/// REASSIGN), each a FIT program of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WaterfallLook {
+    Peak,
+    Welch,
+    Reassign,
+}
+
 /// The furthest [`ViewState::fit_shift_db`] moves either level from FIT's own:
 /// the floor rail's whole travel, so a shift is never what stops a rail.
 pub const FIT_SHIFT_MAX_DB: f32 = 120.0;
@@ -976,6 +1047,37 @@ pub const FIT_SHIFT_MAX_DB: f32 = 120.0;
 fn clamp_levels(floor: f32, ceil: f32) -> (f32, f32) {
     let floor = floor.clamp(-160.0, ceil - 5.0);
     (floor, ceil.clamp(floor + 5.0, 40.0))
+}
+
+/// WELCH's time constant to start from, in seconds — REASSIGN's too: both
+/// start from 0.1 s whenever they are switched on.
+// Why: HDZ 2026-11-06: "bei Firedragons sehen 1 s gut aus, manchmal sind 0,4
+//      besser"; 2026-11-12: "lass uns erst mal die defaults anbieten. welch
+//      und reassign tau 0.1 sek, dim 10 db".
+pub const WELCH_TC_DEFAULT: f32 = 0.1;
+
+/// The longest time constant the WELCH/REASSIGN rail offers, in seconds; a
+/// longer one stored before is used as this.
+// Why: HDZ 2026-11-07: "tau bei Welch und Reassign max Value auf 1,0, weiter
+//      ist zu glatt".
+pub const WELCH_TC_MAX: f32 = 1.0;
+
+fn welch_tc_default() -> f32 {
+    WELCH_TC_DEFAULT
+}
+
+/// REASSIGN's background to start from: 10 dB down, the lines on a darker
+/// ground as in a reassigned spectrogram.
+// Why: HDZ 2026-11-07: "REASSIGN default tau 0,1 s, dim 10 dB".
+pub const REASSIGN_DIM_DEFAULT: f32 = 10.0;
+
+/// REASSIGN's time constant to start from, seconds: short, so the lines stay
+/// crisp; WELCH starts from [`WELCH_TC_DEFAULT`] on the same rail.
+// Why: HDZ 2026-11-07: "REASSIGN default tau 0,1 s, dim 10 dB".
+pub const REASSIGN_TC_DEFAULT: f32 = 0.1;
+
+fn reassign_dim_default() -> f32 {
+    REASSIGN_DIM_DEFAULT
 }
 
 /// Default for [`ViewState::auto_fit`] — on, so the waterfall reads on the
@@ -1149,6 +1251,28 @@ mod tests {
         assert_eq!(v.fit_shift_db, (6.0, -6.0));
     }
 
+    /// Each look keeps its own shift: a rail moved under WELCH leaves PEAK's
+    /// and REASSIGN's as they were, and switching back finds PEAK's again.
+    #[test]
+    fn each_look_keeps_its_own_fit_shift() {
+        let mut v = ViewState::default();
+        (v.db_floor, v.db_ceil) = (-110.0, -60.0);
+        v.set_levels_by_hand(-106.0, -60.0);
+        assert_eq!(v.fit_shift(), (4.0, 0.0), "PEAK");
+        v.waterfall_average = true;
+        assert_eq!(v.look(), WaterfallLook::Welch);
+        assert_eq!(v.fit_shift(), (0.0, 0.0), "WELCH starts from its own");
+        v.set_levels_by_hand(-108.0, -60.0);
+        assert_eq!(v.fit_shift(), (-2.0, 0.0));
+        v.waterfall_reassign = true;
+        assert_eq!(v.look(), WaterfallLook::Reassign, "REASSIGN wins over WELCH");
+        assert_eq!(v.fit_shift(), (0.0, 0.0));
+        v.waterfall_average = false;
+        v.waterfall_reassign = false;
+        assert_eq!(v.fit_shift(), (4.0, 0.0), "PEAK's shift is still there");
+        assert_eq!(v.fit_shift_welch_db, (-2.0, 0.0));
+    }
+
     /// A shift never lets FIT's aim leave the rails or close the 5 dB gap.
     #[test]
     fn a_shifted_fit_stays_inside_the_rails() {
@@ -1227,6 +1351,17 @@ mod tests {
                       spectrum_fraction:0.17981522,peak_hold:false,smeter_style:Trace)";
         let v: ViewState = ron::from_str(stored).expect("a view with the old face must parse");
         assert_eq!(v.fft_size, 32_768, "the rest of the view survived the field moving out");
+    }
+
+    /// A view saved while REASSIGN's line width and gate were rails carries
+    /// `reassign_line` and `reassign_floor_db`; it loads with the rest of the
+    /// view intact.
+    #[test]
+    fn a_view_that_still_carries_the_reassign_line_width_loads() {
+        let stored = "(view_lo_hz:7226000.0,view_hi_hz:7274000.0,fft_size:4096,\
+                      waterfall_reassign:true,reassign_floor_db:13.0,reassign_line:3)";
+        let v: ViewState = ron::from_str(stored).expect("a view with the old rail must parse");
+        assert!(v.waterfall_reassign && v.fft_size == 4096, "the rest survived");
     }
 
     /// The same trap as the spot filters above, one layer down: a propagation

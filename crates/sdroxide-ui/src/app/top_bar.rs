@@ -6074,6 +6074,126 @@ impl SdroxideApp {
                 &Speed::WATERFALL,
                 &tr!("topbar-how-fast-waterfall-scrolls-lines"),
             );
+            // One label column for every rail of the group — τ, dim, FLOOR,
+            // CEIL and S/N MIN — as wide as its widest label, so the rails
+            // start and end together.
+            // Why: HDZ 2026-11-07: "mach bitte bei allen FFT-Einstellungen die
+            //      Regler gleich lang"; 2026-11-12: "tau, dim, boden, decke alle
+            //      gleich lang, und unten s/n min auch gleiche Länge des
+            //      Reglers, immer schön symmetrisch".
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            let rail_label_w = [
+                tr!("topbar-floor"),
+                tr!("topbar-ceil"),
+                "τ".to_string(),
+                "dim".to_string(),
+                tr!("topbar-caption-snr-min"),
+            ]
+            .iter()
+            .map(|t| crate::chrome::text_width(ui, t.trim(), font.clone()))
+            .fold(0.0, f32::max);
+            // How the waterfall is drawn, three ways named after their
+            // methods.
+            // PEAK: the original, the strongest bin per column; lit while
+            // neither of the other two is on.
+            // WELCH: mean power instead of peak, averaged over time and
+            // neighbouring bins — calmer noise, the same signals; a CW dot
+            // shorter than a row or a carrier narrower than a column comes out
+            // lower than with the peak.
+            // REASSIGN: the reassigned spectrogram (Auger & Flandrin 1995), a
+            // carrier or a tone drawn as a line on its own frequency instead
+            // of the window's lobe. One or the other with WELCH: WELCH's
+            // neighbour averaging would smear the lines REASSIGN draws.
+            // Why: HDZ 2026-11-06: "dann nenne die Engine einfach Welch";
+            //      2026-11-07: "baue in den normalen Wasserfall das
+            //      HTS-Spektrum als Alternative ein neben Welch"; "Peak als Name
+            //      ist gut, Interpolieren ist just a toggle".
+            // Why: HDZ 2026-11-12: "baue gleich welch und reassign ein" — into
+            //      the FFT popup that #844 made the waterfall's own.
+            ui.horizontal_wrapped(|ui| {
+                let peak = !self.view.waterfall_average && !self.view.waterfall_reassign;
+                if crate::chrome::chip(ui, peak, "PEAK")
+                    .on_hover_text(tr!("topbar-waterfall-peak"))
+                    .clicked()
+                {
+                    self.view.waterfall_average = false;
+                    self.view.waterfall_reassign = false;
+                }
+                if crate::chrome::chip(ui, self.view.waterfall_average, "WELCH")
+                    .on_hover_text(tr!("topbar-waterfall-mean-not-peak"))
+                    .clicked()
+                {
+                    self.view.waterfall_average = !self.view.waterfall_average;
+                    // Switched on, WELCH starts from its default, as REASSIGN
+                    // does from its own: τ 0.1 s.
+                    // Why: HDZ 2026-11-12: "lass uns erst mal die defaults
+                    //      anbieten. welch und reassign tau 0.1 sek, dim 10 db".
+                    if self.view.waterfall_average {
+                        self.view.welch_tc = crate::view::WELCH_TC_DEFAULT;
+                        self.view.waterfall_reassign = false;
+                    }
+                }
+                if crate::chrome::chip(ui, self.view.waterfall_reassign, "REASSIGN")
+                    .on_hover_text(tr!("topbar-waterfall-reassign"))
+                    .clicked()
+                {
+                    self.view.waterfall_reassign = !self.view.waterfall_reassign;
+                    // Switched on, REASSIGN starts from its own settings: the
+                    // rail is shared with WELCH, whose longer time would blur
+                    // the lines.
+                    if self.view.waterfall_reassign {
+                        self.view.waterfall_average = false;
+                        self.view.welch_tc = crate::view::REASSIGN_TC_DEFAULT;
+                        self.view.reassign_dim_db = crate::view::REASSIGN_DIM_DEFAULT;
+                    }
+                }
+            });
+            // How long WELCH averages, for the waterfall and the trace alike;
+            // zero is WELCH off, anything above it on, so the chip and the rail
+            // never disagree. Under REASSIGN the rail is its time average
+            // alone: zero takes each row as it comes and leaves REASSIGN on.
+            // Why: HDZ 2026-11-06: "die Zeitkonstante als Regler in die FFT
+            //      legen und in 0,1-s-Schritten"; 2026-11-07: "tau bei Welch
+            //      und Reassign max Value auf 1,0, weiter ist zu glatt".
+            let reassign = self.view.waterfall_reassign;
+            let tc = if self.view.waterfall_average || reassign { self.view.welch_tc } else { 0.0 };
+            let mut tc = tc.min(crate::view::WELCH_TC_MAX);
+            if wf_rail(
+                ui,
+                rail_label_w,
+                "τ",
+                (&mut tc, 0.0..=crate::view::WELCH_TC_MAX, 0.1),
+                |v| if v <= 0.0 { "off".to_string() } else { format!("{v:.1} s") },
+                tr!("topbar-welch-time-constant"),
+                |_| {},
+            )
+            .changed()
+            {
+                if reassign {
+                    self.view.welch_tc = tc;
+                } else {
+                    self.view.waterfall_average = tc > 0.0;
+                    if tc > 0.0 {
+                        self.view.welch_tc = tc;
+                    }
+                }
+            }
+            // REASSIGN's setting of its own, shown while it is on: how much
+            // the cells left in place are darkened. Line width and gate (10 dB
+            // over the median) are fixed.
+            // Why: HDZ 2026-11-07: "dim wirkt subtil, also würde ich einen
+            //      Wertebereich zwischen 0 und 20 dB sehen".
+            if reassign {
+                wf_rail(
+                    ui,
+                    rail_label_w,
+                    "dim",
+                    (&mut self.view.reassign_dim_db, 0.0..=20.0, 1.0),
+                    |v| format!("{v:.0} dB"),
+                    tr!("topbar-reassign-dim"),
+                    |_| {},
+                );
+            }
             // Rails, not spinners. These are the two controls an operator moving
             // between band segments touches constantly, and a number box has to be
             // dragged by the digit or typed into — so the picture arrived at the
@@ -6086,47 +6206,34 @@ impl SdroxideApp {
             // The rails always show the level in force; the shift FIT carries
             // stands beside them.
             let (mut floor, mut ceil) = (self.view.db_floor, self.view.db_ceil);
-            let (fit_on, shift) = (self.view.auto_fit, self.view.fit_shift_db);
-            ui.horizontal(|ui| {
-                ui.label(tr!("topbar-floor"));
-                let r = crate::chrome::slider_wheel(
-                    crate::chrome::slider_readout(
-                        ui,
-                        value_field_w(ui, "-888 dB"),
-                        Slider::new(&mut floor, -160.0..=-40.0)
-                            .show_value(true)
-                            .custom_formatter(|v, _| format!("{v:.0} dB")),
-                    ),
-                    &mut floor,
-                    -160.0..=-40.0,
-                    1.0,
-                )
-                .on_hover_text(tr!("topbar-level-drawn-bottom-spectrum-darkest"));
-                if r.changed() {
-                    self.view.set_levels_by_hand(floor, self.view.db_ceil);
-                }
-                fit_shift_readout(ui, fit_on, shift.0);
-            });
-            ui.horizontal(|ui| {
-                ui.label(tr!("topbar-ceil"));
-                let r = crate::chrome::slider_wheel(
-                    crate::chrome::slider_readout(
-                        ui,
-                        value_field_w(ui, "-888 dB"),
-                        Slider::new(&mut ceil, -100.0..=20.0)
-                            .show_value(true)
-                            .custom_formatter(|v, _| format!("{v:.0} dB")),
-                    ),
-                    &mut ceil,
-                    -100.0..=20.0,
-                    1.0,
-                )
-                .on_hover_text(tr!("topbar-level-drawn-top-bring-down"));
-                if r.changed() {
-                    self.view.set_levels_by_hand(self.view.db_floor, ceil);
-                }
-                fit_shift_readout(ui, fit_on, shift.1);
-            });
+            let (fit_on, shift) = (self.view.auto_fit, self.view.fit_shift());
+            let db = |v: f64| format!("{v:.0} dB");
+            if wf_rail(
+                ui,
+                rail_label_w,
+                tr!("topbar-floor").trim(),
+                (&mut floor, -160.0..=-40.0, 1.0),
+                db,
+                tr!("topbar-level-drawn-bottom-spectrum-darkest"),
+                |ui| fit_shift_readout(ui, fit_on, shift.0),
+            )
+            .changed()
+            {
+                self.view.set_levels_by_hand(floor, self.view.db_ceil);
+            }
+            if wf_rail(
+                ui,
+                rail_label_w,
+                tr!("topbar-ceil").trim(),
+                (&mut ceil, -100.0..=20.0, 1.0),
+                db,
+                tr!("topbar-level-drawn-top-bring-down"),
+                |ui| fit_shift_readout(ui, fit_on, shift.1),
+            )
+            .changed()
+            {
+                self.view.set_levels_by_hand(self.view.db_floor, ceil);
+            }
             // One row: LABELS BY S/N, WITH PEAKS, IGNORE FLANKS side by side
             // (wrapping on a narrow screen); the S/N MIN rail on the next.
             // Why: HDZ 2026-11-11: "räume den Dialog auf, nebeneinander (Labels
@@ -6200,20 +6307,16 @@ impl SdroxideApp {
             //      für S/N, dann habe ich das in der Hand, mit Default 2 und
             //      Range von 0..6"; then "der Regler mit S/N Minimum gehört nach
             //      unten, wo die Labels mit S/N geholt werden".
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(tr!("topbar-caption-snr-min"))
-                        .size(10.0)
-                        .color(crate::theme::CYAN_DIM()),
-                );
-                ui.add_enabled(
-                    self.view.spot_labels,
-                    Slider::new(&mut self.view.snr_label_min_db, crate::view::SNR_LABEL_MIN_RANGE)
-                        .step_by(0.5)
-                        .show_value(true)
-                        .custom_formatter(|v, _| format!("{v:.1} dB")),
+            ui.add_enabled_ui(self.view.spot_labels, |ui| {
+                wf_rail(
+                    ui,
+                    rail_label_w,
+                    tr!("topbar-caption-snr-min").trim(),
+                    (&mut self.view.snr_label_min_db, crate::view::SNR_LABEL_MIN_RANGE, 0.5),
+                    |v| format!("{v:.1} dB"),
+                    tr!("topbar-snr-min-tip"),
+                    |_| {},
                 )
-                .on_hover_text(tr!("topbar-snr-min-tip"))
                 .on_disabled_hover_text(tr!("topbar-snr-min-tip"));
             });
             if crate::chrome::chip_enabled(
@@ -6251,6 +6354,26 @@ impl SdroxideApp {
                     {
                         self.view.fft_size = n;
                     }
+                }
+                // The UI tab's "Interpolate", beside the FFT sizes: how the
+                // columns and rows reach the screen's pixels when their count
+                // is not the screen's — the same question the FFT size and the
+                // columns ask. The same setting, not a copy: the frame hands a
+                // change to the UI tab and to the other radio tabs.
+                // Why: HDZ 2026-11-07: "den Schalter doppeln und synchen";
+                //      2026-11-12: "interpolieren unten bei Auflösung, FFT-Größe
+                //      daneben ist Platz, weil interpolieren ist doch ein
+                //      Auflösungsthema".
+                ui.separator();
+                if crate::chrome::chip(
+                    ui,
+                    cfg.waterfall_smooth,
+                    tr!("settings-ui-smoothing-interpolate").to_uppercase(),
+                )
+                .on_hover_text(tr!("settings-ui-smoothing-interpolate", "hint"))
+                .clicked()
+                {
+                    cfg.waterfall_smooth = !cfg.waterfall_smooth;
                 }
             });
             self.detail_row(ui, &mut cfg);
@@ -8087,6 +8210,51 @@ fn set_div_setting(cfg: &mut sdroxide_types::RadioConfig, element: &str, db: f64
         _ => return false,
     }
     true
+}
+
+/// How much longer the waterfall group's rails are than the style's own:
+/// half again, so a level or a time is set without fiddling.
+// Why: HDZ 2026-11-12: "die Regler müssen alle 50 % länger werden, damit sie
+//      nicht so fummelig sind, Platz ist genug".
+const WF_RAIL_STRETCH: f32 = 1.5;
+
+/// One rail of the FFT popup's waterfall group: its label in a column
+/// `label_w` wide, so every rail of the group starts and ends where the others
+/// do; the rail with its readout, the wheel stepping it by `step`; and `after`
+/// beside the readout.
+fn wf_rail(
+    ui: &mut egui::Ui,
+    label_w: f32,
+    label: &str,
+    (value, range, step): (&mut f32, std::ops::RangeInclusive<f32>, f64),
+    fmt: impl Fn(f64) -> String,
+    hover: String,
+    after: impl FnOnce(&mut egui::Ui),
+) -> egui::Response {
+    ui.horizontal(|ui| {
+        let h = ui.spacing().interact_size.y;
+        ui.allocate_ui_with_layout(
+            egui::vec2(label_w, h),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_min_width(label_w);
+                ui.label(label);
+            },
+        );
+        ui.spacing_mut().slider_width *= WF_RAIL_STRETCH;
+        let r = crate::chrome::slider_readout(
+            ui,
+            value_field_w(ui, "-888 dB"),
+            Slider::new(&mut *value, range.clone())
+                .step_by(step)
+                .show_value(true)
+                .custom_formatter(|v, _| fmt(v)),
+        );
+        let r = crate::chrome::slider_wheel(r, value, range, step).on_hover_text(hover);
+        after(ui);
+        r
+    })
+    .inner
 }
 
 /// Beside a FLOOR or CEIL rail: how far FIT's level is shifted on that rail,

@@ -119,6 +119,10 @@ fn cfg_full(span_hz: Option<f64>, bins: u32, rows_per_sec: u16) -> Command {
         db_floor: -140.0,
         db_ceil: 0.0,
         viewport: span_hz.map(|s| (TONE_MID_HZ - s / 2.0, TONE_MID_HZ + s / 2.0)),
+        smooth: false,
+        reassign: false,
+        reassign_floor_db: 6.0,
+        reassign_dim_db: 0.0,
         fps: 30,
         avg_tc: 0.0,
     })
@@ -139,6 +143,10 @@ fn cfg_window(center_hz: f64, span_hz: f64) -> Command {
         db_floor: -140.0,
         db_ceil: 0.0,
         viewport: Some((center_hz - span_hz / 2.0, center_hz + span_hz / 2.0)),
+        smooth: false,
+        reassign: false,
+        reassign_floor_db: 6.0,
+        reassign_dim_db: 0.0,
         fps: 30,
         avg_tc: 0.0,
     })

@@ -87,6 +87,10 @@ fn cfg(center: f64, span: f64, fft: u32) -> Command {
         db_floor: -140.0,
         db_ceil: 0.0,
         viewport: Some((center - span / 2.0, center + span / 2.0)),
+        smooth: false,
+        reassign: false,
+        reassign_floor_db: 6.0,
+        reassign_dim_db: 0.0,
         fps: 60,
         avg_tc: 0.0,
     })

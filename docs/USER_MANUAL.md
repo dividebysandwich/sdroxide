@@ -1213,8 +1213,15 @@ them all at once.
   one refit is started every five seconds. Switching FIT **on** fits at once,
   which is also how to ask for a one-off fit: click it off and on again.
   Switching it off leaves the levels wherever you set them. Moving the floor or
-  ceiling by hand (the FFT popup, or a mapped knob) switches FIT off for you, so
-  the level you set stays where you put it.
+  ceiling by hand (the FFT popup, or a mapped knob) while FIT is lit keeps FIT
+  on and **shifts** its level instead: the level lands where you put it, and
+  every refit after — on this band and on the next — lands that many dB above
+  or below what FIT alone would pick. A small **FIT +6 dB** beside the slider
+  says by how much. The shift is kept across band changes and restarts, one
+  for each way the waterfall is drawn (**PEAK**, **WELCH**, **REASSIGN**, see
+  the FFT module below); switching FIT on again starts the shift in force over
+  at zero, and switching the look refits. With FIT off, the sliders simply set
+  the levels.
 - **CTR** — keep the tuned frequency in the **middle** of the panadapter. Lit,
   the window slides under the dial every time you tune **and every time you
   zoom**, so the marker stays put and the band scrolls past it. It is **off**
@@ -1248,14 +1255,44 @@ them all at once.
   it has stopped on a signal. See [Scanning](#213-scanning).
 
 **FFT module** — the waterfall's popup: the **Waterfall** box described under
-SPEC above (SHOW WATERFALL and **FLIP** in one row, the scroll speed, the labels,
-**floor** / **ceil**), then the **Resolution** box (FFT size, columns):
+SPEC above (SHOW WATERFALL and **FLIP** in one row, the scroll speed, how the
+waterfall is drawn, **floor** / **ceil**, the labels), then the **Resolution**
+box (FFT size, **INTERPOLATE**, columns). Every slider of the Waterfall box —
+**τ**, **dim**, **floor**, **ceil** and **S/N MIN** — has the same length, so
+they line up:
 
+- **PEAK** · **WELCH** · **REASSIGN** — how the waterfall is drawn, one of
+  three, each named after its method:
+  - **PEAK** is the original: each column the strongest bin it covers. A CW dot
+    shorter than a row or a carrier narrower than a column keeps its full
+    height; the noise is speckled, because the maximum of noisy transforms is
+    noisier still.
+  - **WELCH** draws the mean power instead (Welch's method: averaged
+    periodograms), over neighbouring bins and over time — a smooth, calm
+    waterfall with the same signals in it. Very short or very narrow signals
+    come out a little lower than under PEAK.
+  - **REASSIGN** draws the *reassigned spectrogram* (Auger & Flandrin): each
+    cell's power is moved to the frequency it is actually centred on, so a
+    carrier or a tone is a sharp line one bin wide instead of the window's
+    broad lobe — a super-resolution picture of what is on the band.
+- **τ** — how long WELCH and REASSIGN average over time, 0–1.0 s; both start
+  at 0.1 s when switched on. Under WELCH, 0 is WELCH off. The spectrum line
+  calms with the waterfall.
+- **dim** — REASSIGN only, 0–20 dB, 10 dB to start: how much darker the cells
+  that were not moved to a line are drawn. It is the background removal — the
+  noise goes dark and the lines stand out of it.
 - **floor** / **ceil** — the waterfall's dB range, one slider each. Bring the
   floor up until the noise just darkens and the ceiling down until the strongest
   signal you care about reaches full colour; **FIT** above does both at once
   from what is on screen, which is the quicker answer when a band change has
-  moved the whole picture.
+  moved the whole picture. With FIT lit, a slider shifts FIT's level rather
+  than switching FIT off — one shift for each of PEAK, WELCH and REASSIGN (see
+  **FIT** above). Under REASSIGN, FIT puts the floor *dim* lower, where the
+  dimmed ground is, and keeps the ceiling at the lines.
+- **INTERPOLATE** — beside the FFT sizes: the waterfall smoothing of
+  **Settings → UI** (below), the same setting. It decides how columns and rows
+  reach the screen's pixels where their count is not the screen's, which is a
+  resolution question like the FFT size beside it.
 - **FFT** size — `2048`, `4096`, `8192`, `16384`, `32768`, `65536` or `131072`.
   This is the FFT over the *whole* of what the radio streams, and the panadapter
   grows it with the zoom until it runs out.
@@ -12831,7 +12868,8 @@ spoken announcements below them under `[speech]`:
   told apart from a genuinely wider one, and the smoothing is why a waterfall
   can look lower-resolution than the transform behind it really is. A bigger FFT
   (the **FFT** chip, [2.8](#28-the-display-and-fft-controls)) is the other half
-  of that, and the two are worth setting together.
+  of that, and the two are worth setting together — which is why the same
+  switch is also in the FFT popup, as **INTERPOLATE** beside the FFT sizes.
 - **Clock** — on by default. A wall clock at the panadapter's top-right shows
   UTC and your local time (`13:08:42 UTC · 14:08 local`; just UTC when you are
   on UTC). It steps aside while the pointer is near it.

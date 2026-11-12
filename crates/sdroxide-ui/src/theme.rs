@@ -1792,6 +1792,27 @@ pub fn map_cities() -> bool {
     MAP_CITIES.load(Ordering::Relaxed)
 }
 
+/// Whether the waterfall is drawn interpolated — see
+/// [`sdroxide_types::UiSettings::waterfall_smooth`].
+///
+/// Shared between the radio tabs, because the setting has two switches now
+/// (the UI tab and the FFT popup) and every tab holds its own copy of the
+/// settings: the tab that changed it stores it here, the others take it from
+/// here on their next frame, so a later save from a tab cannot write the old
+/// value back.
+static WATERFALL_SMOOTH: AtomicBool = AtomicBool::new(true);
+
+/// Store the waterfall's interpolation for every radio tab.
+pub fn set_waterfall_smooth(on: bool) {
+    WATERFALL_SMOOTH.store(on, Ordering::Relaxed);
+}
+
+/// The waterfall's interpolation as last set in any radio tab.
+#[inline]
+pub fn waterfall_smooth() -> bool {
+    WATERFALL_SMOOTH.load(Ordering::Relaxed)
+}
+
 /// Put the current [`ui_scale`] into `ctx` as its zoom factor.
 ///
 /// Called at startup and whenever the setting changes, never unconditionally

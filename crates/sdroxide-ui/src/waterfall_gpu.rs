@@ -285,6 +285,9 @@ struct WaterfallResources {
     /// frame would be written again on every redraw and the waterfall would run
     /// at the frame rate times however fast the compositor felt like going.
     last_rows_seq: Option<u32>,
+    /// The running average of the rows in linear power, one per texture
+    /// column, while the SMOOTH chip is on; empty otherwise.
+    avg_row: Vec<f32>,
     /// Staging for the rows appended each frame, copied into the history from
     /// inside the encoder rather than written straight to the texture.
     ///
@@ -664,6 +667,7 @@ impl WaterfallResources {
             hist_view,
             active: 0,
             last_rows_seq: None,
+            avg_row: Vec::new(),
             remap_uniforms,
             remap_bg,
             shift_bg,
@@ -674,6 +678,68 @@ impl WaterfallResources {
             last_center: 0.0,
             last_span: 0.0,
         }
+    }
+}
+
+// WELCH averages the waterfall's rows over a time, set by the operator
+// (`ViewState::welch_tc`), not over a number of rows: at a KiwiSDR's 12 kHz
+// there is about one transform per row, so the engine's mean within a row has
+// nothing to average, and what calms the picture is averaging across rows.
+// Why: HDZ 2026-11-06: "am Wasserfall ändert es nicht so viel, fast
+//      unsichtbar"; "die Zeitkonstante als Regler in die FFT legen und in
+//      0,1-s-Schritten noch viel größer machbar lassen, bis die Körnigkeit weg
+//      ist".
+
+/// WELCH's column kernel: each column with its four neighbours, (1 2 3 2 1)/9.
+pub const WELCH_KERNEL: [f32; 5] = [1.0 / 9.0, 2.0 / 9.0, 3.0 / 9.0, 2.0 / 9.0, 1.0 / 9.0];
+
+/// REASSIGN's column kernel: the row as the engine drew it, each line as
+/// wide as computed. Fixed; it was a width rail first.
+// Why: HDZ 2026-11-07: "line kann schon mal fix auf 1, und Regler weg".
+pub const REASSIGN_KERNEL: [f32; 1] = [1.0];
+
+/// Average one waterfall row in place (WELCH, REASSIGN): each column with its
+/// neighbours under `kernel` (odd length, centred), then with `avg`, the
+/// running average of the rows before it, `new` of the new row — all in linear
+/// power; averaging the bytes, which are dB, would pull every column towards
+/// its quieter neighbours.
+// Why: HDZ 2026-11-06: "diesen grieseligen Kram finde ich schauerlich".
+fn average_row(
+    row: &mut [u8],
+    avg: &mut Vec<f32>,
+    frame: &SpectrumFrame,
+    new: f32,
+    kernel: &[f32],
+) {
+    // dB per byte step; the floor cancels between the conversion and back.
+    let k = (frame.db_ceil - frame.db_floor) / 255.0 / 10.0;
+    if k <= 0.0 || row.is_empty() {
+        return;
+    }
+    let lin = |b: u8| 10f32.powf(b as f32 * k);
+    let n = row.len();
+    let r = (kernel.len() / 2) as isize;
+    let p: Vec<f32> = (0..n)
+        .map(|i| {
+            kernel
+                .iter()
+                .enumerate()
+                .map(|(j, w)| {
+                    let at = (i as isize + j as isize - r).clamp(0, n as isize - 1) as usize;
+                    w * lin(row[at])
+                })
+                .sum()
+        })
+        .collect();
+    if avg.len() != n {
+        *avg = p;
+    } else {
+        for (a, v) in avg.iter_mut().zip(&p) {
+            *a += new.clamp(0.0, 1.0) * (v - *a);
+        }
+    }
+    for (b, a) in row.iter_mut().zip(avg.iter()) {
+        *b = (a.log10() / k).round().clamp(0.0, 255.0) as u8;
     }
 }
 
@@ -695,6 +761,16 @@ pub struct WaterfallCallback {
     pub flip: bool,
     /// Interpolate between bins and rows rather than drawing each as a block.
     pub smooth: bool,
+    /// Average each row lightly with its neighbouring columns and with the
+    /// rows before it, in linear power, before it is written (the SMOOTH
+    /// chip). The engine's mean (Welch) calms the noise inside a row; this
+    /// takes the remaining grain out between rows.
+    pub average: bool,
+    /// The share of a new row in that average — see `ViewState::welch_tc`.
+    pub avg_new: f32,
+    /// The column kernel of that average: [`WELCH_KERNEL`] or
+    /// [`REASSIGN_KERNEL`].
+    pub kernel: Vec<f32>,
     /// Which radio's history to scroll — see [`WaterfallRegistry`].
     pub wf_id: u64,
     /// Columns the history should hold: the width the client has settled on
@@ -912,6 +988,18 @@ impl CallbackTrait for WaterfallCallback {
                         &frame.rows[i * cols..(i + 1) * cols]
                     };
                     widen(src, &mut block[i * w..(i + 1) * w]);
+                    if self.average {
+                        average_row(
+                            &mut block[i * w..(i + 1) * w],
+                            &mut r.avg_row,
+                            &frame,
+                            self.avg_new,
+                            &self.kernel,
+                        );
+                    }
+                }
+                if !self.average {
+                    r.avg_row.clear();
                 }
                 queue.write_buffer(&r.row_buf, 0, &block);
                 // Recorded on the encoder, so it runs after the remap pass
@@ -1179,6 +1267,7 @@ mod display_class_tests {
 #[cfg(test)]
 mod row_append_tests {
     use super::{MAX_FALLBACK_ROWS, rows_to_append};
+    use super::{REASSIGN_KERNEL, WELCH_KERNEL, average_row};
 
     /// The regression: a lane that clocks rows owns the scroll completely, so a
     /// frame carrying none means "nothing new yet", not "scroll it yourself".
@@ -1211,5 +1300,59 @@ mod row_append_tests {
         assert_eq!(rows_to_append(false, 9, 3), 3);
         // And a hitch cannot dump a backlog into the texture at once.
         assert_eq!(rows_to_append(false, 0, 5_000), MAX_FALLBACK_ROWS);
+    }
+
+    fn flat_frame() -> sdroxide_types::SpectrumFrame {
+        sdroxide_types::SpectrumFrame {
+            seq: 0,
+            center_hz: 0.0,
+            span_hz: 1.0,
+            db_floor: -120.0,
+            db_ceil: -20.0,
+            bins: Vec::new(),
+            rows: Vec::new(),
+            rows_clocked: false,
+        }
+    }
+
+    /// SMOOTH's row average leaves an even row as it is and takes most of the
+    /// grain out of a speckled one, row after row.
+    #[test]
+    fn the_row_average_calms_speckle_and_keeps_an_even_row() {
+        let f = flat_frame();
+        let mut avg = Vec::new();
+        let mut even = vec![100u8; 64];
+        average_row(&mut even, &mut avg, &f, 0.5, &WELCH_KERNEL);
+        assert!(even.iter().all(|b| (*b as i32 - 100).abs() <= 1), "{even:?}");
+        let mut avg = Vec::new();
+        let spread = |r: &[u8]| {
+            let m = r.iter().map(|b| *b as f32).sum::<f32>() / r.len() as f32;
+            (r.iter().map(|b| (*b as f32 - m).powi(2)).sum::<f32>() / r.len() as f32).sqrt()
+        };
+        let speckle =
+            |t: usize| -> Vec<u8> { (0..64).map(|i| 90 + ((i * 7 + t * 13) % 23) as u8).collect() };
+        let raw = speckle(0);
+        let mut last = Vec::new();
+        for t in 0..6 {
+            let mut row = speckle(t);
+            average_row(&mut row, &mut avg, &f, 0.5, &WELCH_KERNEL);
+            last = row;
+        }
+        assert!(spread(&last) < spread(&raw) * 0.6, "{} vs {}", spread(&last), spread(&raw));
+    }
+
+    /// REASSIGN's kernel leaves a one-column line one column wide and the
+    /// floor at its level.
+    #[test]
+    fn the_reassign_kernel_keeps_a_line_as_computed() {
+        let f = flat_frame();
+        let mut row = vec![50u8; 64];
+        row[32] = 200;
+        let mut avg = Vec::new();
+        average_row(&mut row, &mut avg, &f, 1.0, &REASSIGN_KERNEL);
+        let top = row[32] as i32;
+        let wide = row.iter().filter(|&&b| top - b as i32 <= 8).count();
+        assert_eq!(wide, 1, "{row:?}");
+        assert!((row[5] as i32 - 50).abs() <= 1, "floor moved: {}", row[5]);
     }
 }

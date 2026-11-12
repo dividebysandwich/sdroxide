@@ -506,6 +506,14 @@ pub struct WfTuning {
     /// Whether the waterfall is interpolated between bins and rows — see
     /// [`sdroxide_types::UiSettings::waterfall_smooth`].
     pub smooth: bool,
+    /// The SMOOTH chip: rows averaged lightly over their neighbours in
+    /// time and frequency before they are drawn — see
+    /// [`crate::view::ViewState::waterfall_average`].
+    pub average: bool,
+    /// WELCH's time constant, seconds — see [`crate::view::ViewState::welch_tc`].
+    pub welch_tc: f32,
+    /// The REASSIGN chip — see [`crate::view::ViewState::waterfall_reassign`].
+    pub reassign: bool,
     /// Rows a second the 3D spectrum flows away from the viewer, from the SPEC
     /// popup's **flow** row. Zero while the stream is stalled, which is what
     /// holds the surface still — the same rule that stops the waterfall
@@ -580,7 +588,7 @@ pub struct SpectrumSmooth {
 }
 
 impl SpectrumSmooth {
-    fn update(&mut self, f: &SpectrumFrame, alpha: f32) {
+    fn update(&mut self, f: &SpectrumFrame, alpha: f32, welch: bool) {
         if (self.alpha - alpha).abs() > 1e-6 {
             self.alpha = alpha;
             self.generation = self.generation.wrapping_add(1);
@@ -595,18 +603,58 @@ impl SpectrumSmooth {
         // A window that has only moved keeps its average; see [`slide_bins`].
         let mapping_changed = rescaled || (moved && !slide_bins(&mut self.bins, self.center, f));
         self.center = f.center_hz;
+        // WELCH: each bin averaged with its neighbours (¼ ½ ¼) in linear
+        // power before it is folded in — the trace's counterpart of the
+        // waterfall's mean columns.
+        let input: Vec<f32> = if welch {
+            daniell(&f.bins, f.db_ceil - f.db_floor)
+        } else {
+            f.bins.iter().map(|&b| b as f32).collect()
+        };
         if mapping_changed || alpha >= 0.999 {
             self.span = f.span_hz;
-            self.bins = f.bins.iter().map(|&b| b as f32).collect();
+            self.bins = input;
             if mapping_changed {
                 self.generation = self.generation.wrapping_add(1);
             }
             return;
         }
-        for (s, &b) in self.bins.iter_mut().zip(&f.bins) {
-            *s += alpha * (b as f32 - *s);
+        for (s, &b) in self.bins.iter_mut().zip(&input) {
+            *s += alpha * (b - *s);
         }
     }
+}
+
+/// How much of each new row goes into WELCH's running average so that it
+/// averages over `tc` seconds at `rows_per_sec`.
+fn welch_row_weight(rows_per_sec: f32, tc: f32) -> f32 {
+    let rps = rows_per_sec.max(1.0);
+    1.0 - (-1.0 / (rps * tc.max(0.01))).exp()
+}
+
+/// A spectrum's bytes with each averaged with its two neighbours (¼ ½ ¼) in
+/// linear power, as byte-scale floats again. `range_db` is the span the 255
+/// steps cover. Averaging neighbouring bins of one periodogram is Daniell's
+/// smoothing; it takes the speckle off the trace the way averaging transforms
+/// over time (Welch) does.
+// Why: HDZ 2026-11-06: "kannst du auch in der Spektrumsdarstellung eine Art
+//      gewichtetes interpoliertes Dämpfungsverhalten reinbekommen, damit das
+//      nicht so grieselig aussieht".
+fn daniell(bins: &[u8], range_db: f32) -> Vec<f32> {
+    let k = range_db / 255.0 / 10.0;
+    let n = bins.len();
+    if n == 0 || k <= 0.0 {
+        return bins.iter().map(|&b| b as f32).collect();
+    }
+    let lin = |b: u8| 10f32.powf(b as f32 * k);
+    (0..n)
+        .map(|i| {
+            let p = 0.25 * lin(bins[i.saturating_sub(1)])
+                + 0.5 * lin(bins[i])
+                + 0.25 * lin(bins[(i + 1).min(n - 1)]);
+            (p.log10() / k).clamp(0.0, 255.0)
+        })
+        .collect()
 }
 
 // --- skimmer spot boxes ---------------------------------------------------
@@ -2421,7 +2469,7 @@ pub fn show_ext(
         // before either display is drawn: the 3D surface remembers these same
         // bins, so the reaction setting steadies it exactly as it steadies the
         // flat trace.
-        smooth.update(f, wf.spectrum_alpha);
+        smooth.update(f, wf.spectrum_alpha, wf.average);
         if view.spectrum_3d {
             // Time has the depth axis instead of being thrown away. The flat
             // grid and the peak hold are both statements about a single line
@@ -2522,6 +2570,21 @@ pub fn show_ext(
             rows_to_write: wf.rows_to_write,
             flip: view.waterfall_flip,
             smooth: wf.smooth,
+            average: wf.average || wf.reassign,
+            // A fifth of a second whatever the scroll rate: the time Welch
+            // averages over, not a number of rows. REASSIGN with the rail at
+            // zero takes each row as it comes.
+            avg_new: if wf.reassign && wf.welch_tc <= 0.0 {
+                1.0
+            } else {
+                welch_row_weight(wf.rows_per_sec, wf.welch_tc)
+            },
+            // WELCH's neighbours, or REASSIGN's lines as computed.
+            kernel: if wf.reassign {
+                crate::waterfall_gpu::REASSIGN_KERNEL.to_vec()
+            } else {
+                crate::waterfall_gpu::WELCH_KERNEL.to_vec()
+            },
             wf_id: wf.wf_id,
             tex_w: wf.tex_w,
         },
@@ -3712,6 +3775,20 @@ mod axis_tests {
 
 #[cfg(test)]
 mod tests {
+
+    /// WELCH's trace smoothing leaves an even spectrum as it is and takes
+    /// most of the zigzag out of a speckled one.
+    #[test]
+    fn daniell_calms_a_speckled_trace_and_keeps_an_even_one() {
+        let even = daniell(&[120u8; 32], 100.0);
+        assert!(even.iter().all(|v| (v - 120.0).abs() < 0.5), "{even:?}");
+        let zig: Vec<u8> = (0..32).map(|i| if i % 2 == 0 { 100 } else { 130 }).collect();
+        let out = daniell(&zig, 100.0);
+        let spread = |v: &[f32]| {
+            v.iter().copied().fold(f32::MIN, f32::max) - v.iter().copied().fold(f32::MAX, f32::min)
+        };
+        assert!(spread(&out[2..30]) < 15.0, "{out:?}");
+    }
     use super::*;
 
     /// A frame of `bins` bins over 800 Hz centred on `center`: one bin per
@@ -3769,7 +3846,7 @@ mod tests {
         for seq in 0..40u32 {
             let mut f = frame_at(1000.0, vec![100; 8]);
             f.seq = seq;
-            smooth.update(&f, 0.2);
+            smooth.update(&f, 0.2, false);
         }
         // Now move the window one bin per frame while bin 4 of each frame is
         // wildly off. Smoothed, its excursion has to stay small.
@@ -3779,7 +3856,7 @@ mod tests {
             bins[4] = 250;
             let mut f = frame_at(1000.0 + 100.0 * i as f64, bins);
             f.seq = seq;
-            smooth.update(&f, 0.2);
+            smooth.update(&f, 0.2, false);
             worst = worst.max(smooth.bins[4]);
         }
         assert!(worst < 160.0, "the average was restarted mid-drag: bin reached {worst}");
