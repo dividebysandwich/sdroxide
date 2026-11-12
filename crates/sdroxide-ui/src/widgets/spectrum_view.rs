@@ -585,6 +585,10 @@ pub struct SpectrumSmooth {
     last_seq: Option<u32>,
     generation: u32,
     alpha: f32,
+    /// WELCH's table and the buffer a new frame is read into, kept between
+    /// frames so a frame allocates nothing.
+    daniell: Daniell,
+    input: Vec<f32>,
 }
 
 impl SpectrumSmooth {
@@ -606,14 +610,17 @@ impl SpectrumSmooth {
         // WELCH: each bin averaged with its neighbours (¼ ½ ¼) in linear
         // power before it is folded in — the trace's counterpart of the
         // waterfall's mean columns.
-        let input: Vec<f32> = if welch {
-            daniell(&f.bins, f.db_ceil - f.db_floor)
+        let mut input = std::mem::take(&mut self.input);
+        if welch {
+            self.daniell.run(&f.bins, f.db_ceil - f.db_floor, &mut input);
         } else {
-            f.bins.iter().map(|&b| b as f32).collect()
-        };
+            input.clear();
+            input.extend(f.bins.iter().map(|&b| b as f32));
+        }
         if mapping_changed || alpha >= 0.999 {
             self.span = f.span_hz;
-            self.bins = input;
+            // The old average becomes next frame's input buffer.
+            self.input = std::mem::replace(&mut self.bins, input);
             if mapping_changed {
                 self.generation = self.generation.wrapping_add(1);
             }
@@ -622,6 +629,7 @@ impl SpectrumSmooth {
         for (s, &b) in self.bins.iter_mut().zip(&input) {
             *s += alpha * (b - *s);
         }
+        self.input = input;
     }
 }
 
@@ -640,21 +648,43 @@ fn welch_row_weight(rows_per_sec: f32, tc: f32) -> f32 {
 // Why: HDZ 2026-11-06: "kannst du auch in der Spektrumsdarstellung eine Art
 //      gewichtetes interpoliertes Dämpfungsverhalten reinbekommen, damit das
 //      nicht so grieselig aussieht".
+#[cfg(test)]
 fn daniell(bins: &[u8], range_db: f32) -> Vec<f32> {
-    let k = range_db / 255.0 / 10.0;
-    let n = bins.len();
-    if n == 0 || k <= 0.0 {
-        return bins.iter().map(|&b| b as f32).collect();
-    }
-    let lin = |b: u8| 10f32.powf(b as f32 * k);
-    (0..n)
-        .map(|i| {
+    let mut out = Vec::new();
+    Daniell::default().run(bins, range_db, &mut out);
+    out
+}
+
+/// [`daniell`] with its byte → power table kept across frames: built once
+/// per dB range rather than three `powf` per bin on every frame.
+#[derive(Default)]
+struct Daniell {
+    range_db: f32,
+    lin: Vec<f32>,
+}
+
+impl Daniell {
+    /// Smooth `bins` into `out`, reusing its allocation.
+    fn run(&mut self, bins: &[u8], range_db: f32, out: &mut Vec<f32>) {
+        out.clear();
+        let k = range_db / 255.0 / 10.0;
+        let n = bins.len();
+        if n == 0 || !(k > 0.0) {
+            out.extend(bins.iter().map(|&b| b as f32));
+            return;
+        }
+        if self.lin.is_empty() || self.range_db != range_db {
+            self.range_db = range_db;
+            self.lin = (0..256).map(|b| 10f32.powf(b as f32 * k)).collect();
+        }
+        let lin = |b: u8| self.lin[b as usize];
+        out.extend((0..n).map(|i| {
             let p = 0.25 * lin(bins[i.saturating_sub(1)])
                 + 0.5 * lin(bins[i])
                 + 0.25 * lin(bins[(i + 1).min(n - 1)]);
             (p.log10() / k).clamp(0.0, 255.0)
-        })
-        .collect()
+        }));
+    }
 }
 
 // --- skimmer spot boxes ---------------------------------------------------

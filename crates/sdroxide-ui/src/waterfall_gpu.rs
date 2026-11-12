@@ -287,7 +287,7 @@ struct WaterfallResources {
     last_rows_seq: Option<u32>,
     /// The running average of the rows in linear power, one per texture
     /// column, while the SMOOTH chip is on; empty otherwise.
-    avg_row: Vec<f32>,
+    avg_row: RowAverage,
     /// Staging for the rows appended each frame, copied into the history from
     /// inside the encoder rather than written straight to the texture.
     ///
@@ -667,7 +667,7 @@ impl WaterfallResources {
             hist_view,
             active: 0,
             last_rows_seq: None,
-            avg_row: Vec::new(),
+            avg_row: RowAverage::default(),
             remap_uniforms,
             remap_bg,
             shift_bg,
@@ -698,48 +698,80 @@ pub const WELCH_KERNEL: [f32; 5] = [1.0 / 9.0, 2.0 / 9.0, 3.0 / 9.0, 2.0 / 9.0, 
 // Why: HDZ 2026-11-07: "line kann schon mal fix auf 1, und Regler weg".
 pub const REASSIGN_KERNEL: [f32; 1] = [1.0];
 
-/// Average one waterfall row in place (WELCH, REASSIGN): each column with its
-/// neighbours under `kernel` (odd length, centred), then with `avg`, the
-/// running average of the rows before it, `new` of the new row — all in linear
-/// power; averaging the bytes, which are dB, would pull every column towards
-/// its quieter neighbours.
+/// Averages waterfall rows in place (WELCH, REASSIGN): each column with its
+/// neighbours under a kernel (odd length, centred), then with the running
+/// average of the rows before it — all in linear power; averaging the bytes,
+/// which are dB, would pull every column towards its quieter neighbours.
+///
+/// What it costs per row is kept off the hot path: the byte → power table and
+/// the byte boundaries in power are built once per floor/ceil, and the column
+/// pass reuses one buffer. The running mean is held in absolute power, so a
+/// FIT glide that moves floor and ceiling every step leaves it valid; a retune
+/// or pan (another centre or span) starts it afresh, since its columns are
+/// other frequencies.
 // Why: HDZ 2026-11-06: "diesen grieseligen Kram finde ich schauerlich".
-fn average_row(
-    row: &mut [u8],
-    avg: &mut Vec<f32>,
-    frame: &SpectrumFrame,
-    new: f32,
-    kernel: &[f32],
-) {
-    // dB per byte step; the floor cancels between the conversion and back.
-    let k = (frame.db_ceil - frame.db_floor) / 255.0 / 10.0;
-    if k <= 0.0 || row.is_empty() {
-        return;
+#[derive(Default)]
+struct RowAverage {
+    avg: Vec<f32>,
+    scratch: Vec<f32>,
+    /// The floor and ceiling the tables were built for.
+    levels: Option<(f32, f32)>,
+    /// The power each byte stands for.
+    lin: Vec<f32>,
+    /// The power at which a byte rounds up to the next: 255 ascending edges.
+    edges: Vec<f32>,
+    /// The centre and span the average describes.
+    place: Option<(f64, f64)>,
+}
+
+impl RowAverage {
+    /// Forget the running mean (the average switched off).
+    fn clear(&mut self) {
+        self.avg.clear();
+        self.place = None;
     }
-    let lin = |b: u8| 10f32.powf(b as f32 * k);
-    let n = row.len();
-    let r = (kernel.len() / 2) as isize;
-    let p: Vec<f32> = (0..n)
-        .map(|i| {
+
+    /// Average `row` (from `frame`), `new` the new row's share.
+    fn row(&mut self, row: &mut [u8], frame: &SpectrumFrame, new: f32, kernel: &[f32]) {
+        let (floor, ceil) = (frame.db_floor, frame.db_ceil);
+        if !(ceil > floor) || row.is_empty() || kernel.is_empty() {
+            return;
+        }
+        if self.place != Some((frame.center_hz, frame.span_hz)) {
+            self.place = Some((frame.center_hz, frame.span_hz));
+            self.avg.clear();
+        }
+        if self.levels != Some((floor, ceil)) {
+            self.levels = Some((floor, ceil));
+            let step = (ceil - floor) / 255.0;
+            let p = |b: f32| 10f32.powf((floor + b * step) / 10.0);
+            self.lin = (0..256).map(|b| p(b as f32)).collect();
+            self.edges = (0..255).map(|b| p(b as f32 + 0.5)).collect();
+        }
+        let n = row.len();
+        let r = (kernel.len() / 2) as isize;
+        self.scratch.clear();
+        self.scratch.extend((0..n).map(|i| {
             kernel
                 .iter()
                 .enumerate()
                 .map(|(j, w)| {
                     let at = (i as isize + j as isize - r).clamp(0, n as isize - 1) as usize;
-                    w * lin(row[at])
+                    w * self.lin[row[at] as usize]
                 })
-                .sum()
-        })
-        .collect();
-    if avg.len() != n {
-        *avg = p;
-    } else {
-        for (a, v) in avg.iter_mut().zip(&p) {
-            *a += new.clamp(0.0, 1.0) * (v - *a);
+                .sum::<f32>()
+        }));
+        if self.avg.len() != n {
+            std::mem::swap(&mut self.avg, &mut self.scratch);
+        } else {
+            let new = new.clamp(0.0, 1.0);
+            for (a, v) in self.avg.iter_mut().zip(&self.scratch) {
+                *a += new * (v - *a);
+            }
         }
-    }
-    for (b, a) in row.iter_mut().zip(avg.iter()) {
-        *b = (a.log10() / k).round().clamp(0.0, 255.0) as u8;
+        for (b, a) in row.iter_mut().zip(&self.avg) {
+            *b = self.edges.partition_point(|e| e <= a) as u8;
+        }
     }
 }
 
@@ -989,9 +1021,8 @@ impl CallbackTrait for WaterfallCallback {
                     };
                     widen(src, &mut block[i * w..(i + 1) * w]);
                     if self.average {
-                        average_row(
+                        r.avg_row.row(
                             &mut block[i * w..(i + 1) * w],
-                            &mut r.avg_row,
                             &frame,
                             self.avg_new,
                             &self.kernel,
@@ -1267,7 +1298,7 @@ mod display_class_tests {
 #[cfg(test)]
 mod row_append_tests {
     use super::{MAX_FALLBACK_ROWS, rows_to_append};
-    use super::{REASSIGN_KERNEL, WELCH_KERNEL, average_row};
+    use super::{REASSIGN_KERNEL, RowAverage, WELCH_KERNEL};
 
     /// The regression: a lane that clocks rows owns the scroll completely, so a
     /// frame carrying none means "nothing new yet", not "scroll it yourself".
@@ -1320,11 +1351,11 @@ mod row_append_tests {
     #[test]
     fn the_row_average_calms_speckle_and_keeps_an_even_row() {
         let f = flat_frame();
-        let mut avg = Vec::new();
+        let mut avg = RowAverage::default();
         let mut even = vec![100u8; 64];
-        average_row(&mut even, &mut avg, &f, 0.5, &WELCH_KERNEL);
+        avg.row(&mut even, &f, 0.5, &WELCH_KERNEL);
         assert!(even.iter().all(|b| (*b as i32 - 100).abs() <= 1), "{even:?}");
-        let mut avg = Vec::new();
+        let mut avg = RowAverage::default();
         let spread = |r: &[u8]| {
             let m = r.iter().map(|b| *b as f32).sum::<f32>() / r.len() as f32;
             (r.iter().map(|b| (*b as f32 - m).powi(2)).sum::<f32>() / r.len() as f32).sqrt()
@@ -1335,7 +1366,7 @@ mod row_append_tests {
         let mut last = Vec::new();
         for t in 0..6 {
             let mut row = speckle(t);
-            average_row(&mut row, &mut avg, &f, 0.5, &WELCH_KERNEL);
+            avg.row(&mut row, &f, 0.5, &WELCH_KERNEL);
             last = row;
         }
         assert!(spread(&last) < spread(&raw) * 0.6, "{} vs {}", spread(&last), spread(&raw));
@@ -1348,11 +1379,43 @@ mod row_append_tests {
         let f = flat_frame();
         let mut row = vec![50u8; 64];
         row[32] = 200;
-        let mut avg = Vec::new();
-        average_row(&mut row, &mut avg, &f, 1.0, &REASSIGN_KERNEL);
+        let mut avg = RowAverage::default();
+        avg.row(&mut row, &f, 1.0, &REASSIGN_KERNEL);
         let top = row[32] as i32;
         let wide = row.iter().filter(|&&b| top - b as i32 <= 8).count();
         assert_eq!(wide, 1, "{row:?}");
         assert!((row[5] as i32 - 50).abs() <= 1, "floor moved: {}", row[5]);
+    }
+
+    /// A FIT glide moves floor and ceiling under the running mean: a steady
+    /// level stays the same level in dB, not the same byte.
+    #[test]
+    fn the_row_average_follows_a_new_floor_and_ceiling() {
+        let mut f = flat_frame();
+        let mut avg = RowAverage::default();
+        // -70 dB on -120…-20: byte 127.5.
+        for _ in 0..4 {
+            let mut row = vec![128u8; 16];
+            avg.row(&mut row, &f, 0.5, &WELCH_KERNEL);
+        }
+        // Floor 20 dB lower: the same -70 dB is byte ~149. A first row that
+        // says so lands there at once, as the mean already holds that power.
+        (f.db_floor, f.db_ceil) = (-140.0, -20.0);
+        let mut row = vec![149u8; 16];
+        avg.row(&mut row, &f, 0.1, &WELCH_KERNEL);
+        assert!(row.iter().all(|b| (*b as i32 - 149).abs() <= 1), "{row:?}");
+    }
+
+    /// Another centre is other frequencies: the mean starts afresh.
+    #[test]
+    fn the_row_average_starts_afresh_on_a_retune() {
+        let mut f = flat_frame();
+        let mut avg = RowAverage::default();
+        let mut row = vec![200u8; 16];
+        avg.row(&mut row, &f, 0.5, &REASSIGN_KERNEL);
+        f.center_hz = 7_100_000.0;
+        let mut row = vec![50u8; 16];
+        avg.row(&mut row, &f, 0.1, &REASSIGN_KERNEL);
+        assert!(row.iter().all(|b| (*b as i32 - 50).abs() <= 1), "{row:?}");
     }
 }
