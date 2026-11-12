@@ -20,6 +20,7 @@ const STATS_INTERVAL: Duration = Duration::from_secs(5);
 pub(crate) enum Ctrl {
     Center(f64),
     Vga(f64),
+    VgaRange(crate::device::VgaRange),
     Att(f64),
     Dither(bool),
     BiasTee(bool),
@@ -45,6 +46,7 @@ pub(crate) enum Ctrl {
 pub(crate) struct Pending {
     pub center: Option<f64>,
     pub vga: Option<f64>,
+    pub vga_range: Option<crate::device::VgaRange>,
     pub att: Option<f64>,
     pub dither: Option<bool>,
     pub bias_tee: Option<bool>,
@@ -60,6 +62,7 @@ impl Pending {
         match c {
             Ctrl::Center(v) => self.center = Some(v),
             Ctrl::Vga(v) => self.vga = Some(v),
+            Ctrl::VgaRange(v) => self.vga_range = Some(v),
             Ctrl::Att(v) => self.att = Some(v),
             Ctrl::Dither(v) => self.dither = Some(v),
             Ctrl::BiasTee(v) => self.bias_tee = Some(v),
@@ -431,6 +434,11 @@ impl Rx888Handle {
 
     pub fn set_att_db(&self, db: f64) {
         let _ = self.ctrl.send(Ctrl::Att(db));
+    }
+
+    /// Choose the VGA's range — see [`crate::device::VgaRange`].
+    pub fn set_vga_range(&self, range: crate::device::VgaRange) {
+        let _ = self.ctrl.send(Ctrl::VgaRange(range));
     }
 
     pub fn set_dither(&self, on: bool) {
