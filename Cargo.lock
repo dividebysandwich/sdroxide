@@ -5205,7 +5205,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "sdroxide"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -5249,7 +5249,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-adsb"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "num-complex",
@@ -5260,7 +5260,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-airspy"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "nusb",
@@ -5274,7 +5274,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-airspyhf"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "num-complex",
@@ -5290,7 +5290,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-ais"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "num-complex",
@@ -5302,7 +5302,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-aprs"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "sdroxide-types",
  "thiserror 2.0.20",
@@ -5310,7 +5310,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-atchat"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -5331,7 +5331,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-audio"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "cpal",
  "rtrb",
@@ -5342,7 +5342,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-ax25"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "thiserror 2.0.20",
@@ -5351,7 +5351,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-cat"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "roxmltree",
@@ -5364,7 +5364,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-config"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "directories",
  "sdroxide-types",
@@ -5378,7 +5378,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-data2g"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "cc",
  "cmake",
@@ -5388,7 +5388,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-deepcw"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "rten",
@@ -5400,7 +5400,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-digi"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "fax 0.3.0",
@@ -5430,7 +5430,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-drm"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "bindgen",
  "cc",
@@ -5447,7 +5447,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-dsp"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "deep_filter",
  "hound",
@@ -5462,7 +5462,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-elad"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "nusb",
@@ -5476,14 +5476,14 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-faad2"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "sdroxide-fobos"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "libloading 0.9.0",
@@ -5496,7 +5496,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-hackrf"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "nusb",
@@ -5510,7 +5510,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-hardrock"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "sdroxide-types",
@@ -5520,7 +5520,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-hfdl"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "sdroxide-dsp",
@@ -5532,7 +5532,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-hpsdr"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "network-interface",
@@ -5545,7 +5545,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-hydrasdr"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "nusb",
@@ -5560,7 +5560,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-icomnet"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "rtrb",
@@ -5572,7 +5572,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-ism"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "bindgen",
  "cc",
@@ -5586,7 +5586,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-kiss"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "sdroxide-ax25",
@@ -5595,7 +5595,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-kiwisdr"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "rtrb",
@@ -5609,7 +5609,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-lime"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "libloading 0.9.0",
  "num-complex",
@@ -5622,7 +5622,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-limerfe"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "libc",
@@ -5635,7 +5635,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-mercury"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "cc",
  "crossbeam-channel",
@@ -5645,7 +5645,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-midi"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "midir",
@@ -5655,7 +5655,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-net"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "ring",
@@ -5672,7 +5672,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-nrsc5"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "libloading 0.9.0",
  "num-complex",
@@ -5685,7 +5685,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-picup"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "ab_glyph",
  "chrono",
@@ -5701,7 +5701,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-pluto"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "network-interface",
@@ -5715,7 +5715,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-proto"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "image",
  "postcard",
@@ -5728,7 +5728,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-qo100"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "rustfft",
@@ -5739,7 +5739,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-r82xx"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "thiserror 2.0.20",
  "tracing",
@@ -5747,7 +5747,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-rade"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -5765,7 +5765,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-radio"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "image",
@@ -5811,7 +5811,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-relay"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "libc",
@@ -5825,7 +5825,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-rigctld"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "sdroxide-types",
@@ -5834,7 +5834,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-rotator"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "sdroxide-types",
@@ -5843,7 +5843,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-rtlsdr"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "nusb",
@@ -5857,7 +5857,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-rx888"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "nusb",
@@ -5872,7 +5872,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-sdrplay"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "libloading 0.9.0",
@@ -5886,7 +5886,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-server"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "axum",
  "crossbeam-channel",
@@ -5916,7 +5916,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-skimmer"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "num-complex",
@@ -5929,7 +5929,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-smartsdr"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "rtrb",
@@ -5942,7 +5942,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-solar"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "image",
@@ -5958,7 +5958,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-sonde"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "rustfft",
@@ -5970,7 +5970,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-speech"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "hound",
@@ -5990,7 +5990,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-spyserver"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "rtrb",
@@ -6002,7 +6002,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-tci"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "rtrb",
@@ -6014,7 +6014,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-tnc"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "tracing",
@@ -6022,7 +6022,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-types"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "postcard",
  "serde",
@@ -6031,7 +6031,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-ui"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "ab_glyph",
  "bytemuck",
@@ -6076,7 +6076,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-vdl2"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "num-complex",
@@ -6088,11 +6088,11 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-version"
-version = "1.7.1"
+version = "1.7.2"
 
 [[package]]
 name = "sdroxide-web"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "console_error_panic_hook",
  "eframe",
@@ -6107,7 +6107,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-winlink"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "md-5",
@@ -6122,7 +6122,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-wsjtx"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "sdroxide-types",
  "tracing",
@@ -6130,7 +6130,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-wxsat"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "crossbeam-channel",
  "rustfft",
