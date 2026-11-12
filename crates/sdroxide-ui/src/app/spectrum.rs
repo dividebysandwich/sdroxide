@@ -290,6 +290,43 @@ fn guide_peak(g: &crate::mean_spectrum::Guide, lo_hz: f64, hi_hz: f64) -> Option
     Some((v, g.lo_hz + (first + i) as f64 * g.cell_hz + g.cell_hz / 2.0))
 }
 
+/// What LABELS BY S/N asks of one label: the switches in force and the S/N
+/// MIN hysteresis (`on` to show, under `off` to hide).
+#[derive(Clone, Copy)]
+struct LabelChecks {
+    flanks: bool,
+    peak: bool,
+    on: f32,
+    off: f32,
+}
+
+/// Whether a label is wanted, given the guide and its last decision (`None`
+/// for a label not judged yet). Off a strong station's flank, with a peak of
+/// its own where that is asked, and its S/N over MIN. Where the guide cannot
+/// say — no cell there, or too few frames yet, as just after a pan — a label
+/// already judged keeps its decision and a new one stays hidden until the
+/// guide can judge it: with the filter on, a label is shown on evidence.
+// Why: HDZ 2026-11-12: labels below S/N MIN and on a flank "gehorchen" the
+//      filter nowhere they slip through; a label the guide cannot read used to
+//      be shown unjudged.
+fn label_wanted(
+    g: &crate::mean_spectrum::Guide,
+    hz: f64,
+    c: LabelChecks,
+    last: Option<bool>,
+) -> bool {
+    if (c.flanks && on_a_flank(g, hz, SNR_FLANK_DB)) || (c.peak && has_a_peak(g, hz) == Some(false))
+    {
+        return false;
+    }
+    match guide_max(g, hz) {
+        None => last.unwrap_or(false),
+        Some(v) if v >= c.on => true,
+        Some(v) if v < c.off => false,
+        Some(_) => last.unwrap_or(false),
+    }
+}
+
 /// PEAK: how far a label's S/N must stand over its surroundings, dB.
 const PEAK_PROMINENCE_DB: f32 = 3.0;
 /// The ring a label's peak is measured against, Hz from its frequency: past a
@@ -867,20 +904,16 @@ impl SdroxideApp {
         let on = self.view.snr_label_min_db;
         let off = snr_label_off_db(on);
         let mut st = self.snr_labels.borrow_mut();
-        let entry = st.shown.entry(id).or_insert((true, 0.0));
+        let fresh = !st.shown.contains_key(&id);
+        let entry = st.shown.entry(id).or_insert((false, 0.0));
         if recheck {
-            entry.0 = if (self.view.snr_label_flanks && on_a_flank(g, hz, SNR_FLANK_DB))
-                || (self.view.snr_label_peak && carrier && has_a_peak(g, hz) == Some(false))
-            {
-                false
-            } else {
-                match guide_max(g, hz) {
-                    None => true,
-                    Some(v) if v >= on => true,
-                    Some(v) if v < off => false,
-                    Some(_) => entry.0,
-                }
+            let checks = LabelChecks {
+                flanks: self.view.snr_label_flanks,
+                peak: self.view.snr_label_peak && carrier,
+                on,
+                off,
             };
+            entry.0 = label_wanted(g, hz, checks, (!fresh).then_some(entry.0));
         }
         let target = if entry.0 { 1.0 } else { 0.0 };
         let d = step / SNR_LABEL_FADE_S;
@@ -1301,6 +1334,28 @@ mod tests {
         assert_eq!(super::guide_max(&g(100), 9_650_000.0), Some(6.0));
         assert_eq!(super::guide_max(&g(100), 9_620_000.0), Some(0.0));
         assert_eq!(super::guide_max(&g(10), 9_650_000.0), None, "too early to judge");
+    }
+
+    /// A label the guide cannot read yet — too few frames, or no cell there —
+    /// is shown only once it has been judged: a new one stays hidden, one
+    /// already judged keeps its decision.
+    #[test]
+    fn a_label_the_guide_cannot_read_is_not_shown_unjudged() {
+        let g = |frames: u32| crate::mean_spectrum::Guide {
+            lo_hz: 9_600_000.0,
+            cell_hz: 100.0,
+            snr_db: vec![0.0f32; 1000],
+            count: vec![frames; 1000],
+            frames,
+        };
+        let c = super::LabelChecks { flanks: true, peak: false, on: 6.0, off: 4.5 };
+        // Too early to judge.
+        assert!(!super::label_wanted(&g(10), 9_650_000.0, c, None), "new: hidden");
+        assert!(super::label_wanted(&g(10), 9_650_000.0, c, Some(true)), "judged: kept");
+        // Off the guide altogether.
+        assert!(!super::label_wanted(&g(100), 12_000_000.0, c, None), "no cell: hidden");
+        // Judged on evidence once there is some: plain noise under MIN.
+        assert!(!super::label_wanted(&g(100), 9_650_000.0, c, Some(true)), "0 dB < MIN");
     }
 
     /// PEAK (HDZ 2026-11-11, strong QRM): interference lifts 30 kHz of the band
