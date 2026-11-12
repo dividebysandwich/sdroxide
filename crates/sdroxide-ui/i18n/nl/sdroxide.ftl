@@ -2211,6 +2211,7 @@ topbar-how-many-signals-model-reads = Hoeveel signalen het model tegelijk leest.
 topbar-spots = SPOTS
 topbar-save-skimmer-s-spot-list = De spotlijst van de skimmer naar een bestand opslaan
 topbar-show-hide-full-band-waterfall = De waterfall-strook over de hele band boven het panadapter tonen/verbergen — alles wat deze ontvanger tegelijk kan zien
+    Smalbandige ontvanger: SCAN → PANO sweept een bereik en bouwt hier een overzicht.
 topbar-spectrum-waterfall-either-layer-both = Spectrum en waterval — één laag, beide, of geen. Brandt terwijl beide getoond worden.
 topbar-spectrum = SPECTRUM
 topbar-show-spectrum = SPECTRUM TONEN

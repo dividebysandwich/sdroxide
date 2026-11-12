@@ -2254,6 +2254,7 @@ topbar-how-many-signals-model-reads = Wie viele Signale das Modell gleichzeitig 
 topbar-spots = SPOTS
 topbar-save-skimmer-s-spot-list = Die Spot-Liste des Skimmers in eine Datei speichern
 topbar-show-hide-full-band-waterfall = Den Wasserfallstreifen für das ganze Band über dem Panorama ein-/ausblenden — alles, was dieser Empfänger auf einmal sieht
+    Schmalbandiger Empfänger: SCAN → PANO fährt einen Bereich ab und baut hier eine Übersicht.
 topbar-spectrum-waterfall-either-layer-both = Spektrum: Kurve, Peak Hold, S/N, 3D und wie schnell sie folgt. Leuchtet, während das Spektrum angezeigt wird.
 topbar-spectrum = SPEKTRUM
 topbar-show-spectrum = SPEKTRUM ANZEIGEN

@@ -2210,6 +2210,7 @@ topbar-how-many-signals-model-reads = Cuántas señales lee el modelo a la vez. 
 topbar-spots = SPOTS
 topbar-save-skimmer-s-spot-list = Guardar en un archivo la lista de spots del skimmer
 topbar-show-hide-full-band-waterfall = Mostrar/ocultar la franja de cascada de banda completa sobre el panadaptador — todo lo que este receptor puede ver a la vez
+    Receptor de banda estrecha: SCAN → PANO barre un rango y forma aquí una vista general.
 topbar-spectrum-waterfall-either-layer-both = Espectro y cascada — cualquiera de las capas, ambas, o ninguna. Iluminado mientras se muestran ambas.
 topbar-spectrum = ESPECTRO
 topbar-show-spectrum = MOSTRAR ESPECTRO

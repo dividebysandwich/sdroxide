@@ -2195,6 +2195,7 @@ topbar-how-many-signals-model-reads = 模型一次读取多少个信号。其余
 topbar-spots = 信号列表
 topbar-save-skimmer-s-spot-list = 将 skimmer 的信号列表保存到文件
 topbar-show-hide-full-band-waterfall = 显示/隐藏全景图上方的全频段瀑布图条带——即此接收机能一次看到的全部内容
+    窄带接收机：SCAN → PANO 扫描一个范围，在此生成概览。
 topbar-spectrum-waterfall-either-layer-both = 频谱和瀑布图——任选一层、两层或都不选。两者都显示时亮起。
 topbar-spectrum = 频谱
 topbar-show-spectrum = 显示频谱

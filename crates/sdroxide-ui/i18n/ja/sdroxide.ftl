@@ -2198,6 +2198,7 @@ topbar-how-many-signals-model-reads = モデルが一度に読み取る信号の
 topbar-spots = スポット
 topbar-save-skimmer-s-spot-list = スキマーのスポット一覧をファイルに保存
 topbar-show-hide-full-band-waterfall = パナダプターの上の、全バンドのウォーターフォールのストリップを表示／非表示にします。この受信機が一度に見られるすべてです
+    狭帯域の受信機：SCAN → PANO で範囲を掃引し、ここに概観を作る。
 topbar-spectrum-waterfall-either-layer-both = スペクトラムとウォーターフォール。どちらか一方、両方、またはどちらもなし。両方が表示されている間は点灯します。
 topbar-spectrum = スペクトラム
 topbar-show-spectrum = スペクトラムを表示

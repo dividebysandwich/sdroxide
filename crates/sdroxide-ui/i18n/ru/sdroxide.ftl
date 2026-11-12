@@ -2223,6 +2223,7 @@ topbar-how-many-signals-model-reads = Сколько сигналов модел
 topbar-spots = СПОТЫ
 topbar-save-skimmer-s-spot-list = Сохранить список спотов скиммера в файл
 topbar-show-hide-full-band-waterfall = Показать/скрыть полосу водопада всего диапазона над панорамой — всё, что этот приёмник может видеть сразу
+    Узкополосный приёмник: SCAN → PANO проходит диапазон и строит здесь обзор.
 topbar-spectrum-waterfall-either-layer-both = Спектр и водопад — любой слой, оба или ни одного. Горит, когда показаны оба.
 topbar-spectrum = СПЕКТР
 topbar-show-spectrum = ПОКАЗАТЬ СПЕКТР

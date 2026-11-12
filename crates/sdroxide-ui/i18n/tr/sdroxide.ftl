@@ -2217,6 +2217,7 @@ topbar-how-many-signals-model-reads = Model bir seferde kaç sinyal okur. Kalanl
 topbar-spots = SPOTLAR
 topbar-save-skimmer-s-spot-list = Skimmer'ın spot listesini bir dosyaya kaydedin
 topbar-show-hide-full-band-waterfall = Panadaptörün üstündeki tüm bant şelale şeridini göster/gizle — bu alıcının bir anda görebildiği her şey
+    Dar bantlı alıcı: SCAN → PANO bir aralığı tarayıp burada genel bakış oluşturur.
 topbar-spectrum-waterfall-either-layer-both = Spektrum ve şelale — biri, ikisi ya da hiçbiri. İkisi de gösterilirken yanar.
 topbar-spectrum = SPEKTRUM
 topbar-show-spectrum = SPEKTRUMU GÖSTER

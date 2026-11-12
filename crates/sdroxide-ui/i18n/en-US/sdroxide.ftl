@@ -2261,6 +2261,7 @@ topbar-how-many-signals-model-reads = How many signals the model reads at once. 
 topbar-spots = SPOTS
 topbar-save-skimmer-s-spot-list = Save the skimmer's spot list to a file
 topbar-show-hide-full-band-waterfall = Show/hide the full-band waterfall strip above the panadapter — everything this receiver can see at once
+    Narrow-band receiver: SCAN → PANO sweeps a range into this strip as an overview.
 topbar-spectrum-waterfall-either-layer-both = Spectrum: the line, peak hold, S/N, 3D and how fast it follows. Lit while the spectrum is shown.
 topbar-spectrum = SPECTRUM
 topbar-show-spectrum = SHOW SPECTRUM

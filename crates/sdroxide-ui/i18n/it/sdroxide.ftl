@@ -2221,6 +2221,7 @@ topbar-how-many-signals-model-reads = Quanti segnali il modello legge contempora
 topbar-spots = SPOT
 topbar-save-skimmer-s-spot-list = Salva l'elenco spot dello skimmer su un file
 topbar-show-hide-full-band-waterfall = Mostra/nascondi la striscia della waterfall a banda piena sopra il panadapter — tutto ciò che questo ricevitore può vedere in una volta
+    Ricevitore a banda stretta: SCAN → PANO percorre un intervallo e qui ne fa una panoramica.
 topbar-spectrum-waterfall-either-layer-both = Spettro e waterfall — uno dei due livelli, entrambi, o nessuno. Acceso quando entrambi sono visibili.
 topbar-spectrum = SPETTRO
 topbar-show-spectrum = MOSTRA SPETTRO

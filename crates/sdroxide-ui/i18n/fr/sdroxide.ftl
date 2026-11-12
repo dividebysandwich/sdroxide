@@ -2215,6 +2215,7 @@ topbar-how-many-signals-model-reads = Le nombre de signaux que lit le modèle à
 topbar-spots = SPOTS
 topbar-save-skimmer-s-spot-list = Enregistrer la liste des spots du skimmer dans un fichier
 topbar-show-hide-full-band-waterfall = Afficher/masquer la bande de cascade pleine largeur au-dessus du panoramique — tout ce que ce récepteur voit à la fois
+    Récepteur à bande étroite : SCAN → PANO balaye une plage et en fait ici une vue d'ensemble.
 topbar-spectrum-waterfall-either-layer-both = Spectre et cascade — l'une ou l'autre couche, les deux, ou aucune. Allumé lorsque les deux sont affichées.
 topbar-spectrum = SPECTRE
 topbar-show-spectrum = AFFICHER LE SPECTRE
