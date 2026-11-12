@@ -2003,6 +2003,14 @@ settings-radio-automatic-board-receives-switched-transmit = On Automatic the boa
 settings-radio-limesdr-support-has-not-been = LimeSDR support has not been verified against hardware. This is the last session's trace, for an issue report.
 settings-radio-gains-filters-corrections-antenna-sockets = Gains, filters, corrections, the antenna sockets and every LimeRFE control — its connectors, band, relays, attenuator, notch and fan — apply immediately. The board, the receive chain, the sample rate, arming transmit and the LimeRFE's connection take effect on Apply.
 
+## Settings window, Radio tab: the PlutoSDR's second receive chain (issue #525).
+## Its other controls share the LimeSDR's second-chain messages above.
+
+settings-radio-pluto-rx2 = Second receive chain (RX2)
+settings-radio-pluto-rx2-intro = On a 2R2T board (Pluto+, PlutoSky R2 with 2R2T firmware) this radio can keep RX2 for itself: as a second aerial, or as a sample of your own transmitter for PureSignal. RX2 shares the oscillator and the clock with RX1, so it hears the same span at the same instant, and it runs at a fixed gain with its AGC off. While it is used here it is not free for a second radio tab. Changing what it is used for takes effect on Apply.
+settings-radio-pluto-rx2-gain = RX2 gain
+settings-radio-pluto-ps-needs-full-duplex = PureSignal needs Full duplex on and the PTT pins off: the coupler is only heard while receive keeps running through the over.
+
 ## Settings window, Radio tab: messages with values
 
 settings-radio-fill-from = FILL FROM { $name }
@@ -2044,6 +2052,8 @@ topbar-radio = RADIO
 topbar-tune-voice-keyer-drive-mic = Tune, the voice keyer, and the drive and mic levels
 topbar-transmit = TRANSMIT
 topbar-tune = {" "}TUNE{" "}
+topbar-two-tone = {" "}2T{" "}
+topbar-two-tone-hover = Two-tone test: transmits 700 Hz and 1900 Hz together at the Tune level, until clicked again. Its envelope swings from nothing to full, so it shows an amplifier's splatter plainly on a second receiver, and it is the signal PureSignal learns from fastest — a steady carrier only teaches it one point. Use a dummy load.
 topbar-panadapter-two-layers-their-speeds = The panadapter — its two layers, their speeds and detail, peak hold — plus waterfall contrast, FFT size and the skimmers
 topbar-display = DISPLAY
 topbar-logbook-spots-awards-memories-scanner = Logbook, spots, awards, memories, the scanner, settings and the manual

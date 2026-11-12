@@ -1701,7 +1701,24 @@ use sdroxide_types::{
 /// `RxState` gains `fm_decrackle`, `fm_deemph` and `fm_decrackle_dip`, and
 /// `SpectrumConfig` gains `smooth`, `reassign`, `reassign_floor_db` and
 /// `reassign_dim_db` at its tail.
-pub const PROTO_VERSION: u16 = 205;
+///
+/// v206: VARA HF. `Mode::VaraHf` and `WinlinkLane::Vara` are appended to their
+/// enums; [`sdroxide_types::Command`] gains the `Vara*` commands; `DigiStatus`
+/// gains `vara` (`Option<VaraStatus>`) and `DigiConfig` the `vara_*` settings,
+/// each on its tail, so a v205 peer reads digital status out of step.
+///
+/// v191: the PlutoSDR's second receive chain can serve the RX1 radio as a
+/// second aerial or as PureSignal feedback (issue #525). `PlutoConfig` gains
+/// `aux` (`PlutoAuxConfig`, the same block a LimeSDR's second chain uses) on
+/// its tail, and the radio configuration rides whole in both a command and an
+/// event, so a v205 peer reads the extra bytes as the start of the next field
+/// and fails to decode either.
+///
+/// v207: TUNE can send a two-tone test signal (issue #525). `TxState` gains
+/// `two_tone` on its tail and `Command` gains a trailing `SetTuneTwoTone`;
+/// `TxState` rides whole inside `RadioState`, so a v206 peer reads the extra
+/// byte as the start of the next field and fails to decode every state.
+pub const PROTO_VERSION: u16 = 207;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
