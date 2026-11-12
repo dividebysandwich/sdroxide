@@ -32,7 +32,7 @@
 
 use crate::i18n::tr;
 use eframe::egui::{self, RichText};
-use sdroxide_types::{Action, Command, Mode};
+use sdroxide_types::{Action, Command};
 
 use crate::app::SdroxideApp;
 use crate::app::checkup::{self, CheckId, Fix, Level};
