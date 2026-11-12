@@ -2639,8 +2639,13 @@ impl SdroxideApp {
         use sdroxide_types::{RtlSdrAgc, RtlSdrConfig as R};
         self.pluto_agc_owns_gain(element)
             || (self.caps.as_ref().is_some_and(|c| c.driver == "rtlsdr")
-                && [R::TUNER_GAIN_ELEMENT, R::LNA_GAIN_ELEMENT, R::MIX_GAIN_ELEMENT]
-                    .contains(&element)
+                && [
+                    R::TUNER_GAIN_ELEMENT,
+                    R::LNA_GAIN_ELEMENT,
+                    R::MIX_GAIN_ELEMENT,
+                    R::IF_GAIN_ELEMENT,
+                ]
+                .contains(&element)
                 && self.state.gains.iter().any(|(n, v)| {
                     n == R::AGC_ELEMENT && RtlSdrAgc::from_code(*v as u8).tuner_auto()
                 }))
