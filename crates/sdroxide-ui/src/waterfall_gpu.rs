@@ -734,7 +734,7 @@ impl RowAverage {
     /// Average `row` (from `frame`), `new` the new row's share.
     fn row(&mut self, row: &mut [u8], frame: &SpectrumFrame, new: f32, kernel: &[f32]) {
         let (floor, ceil) = (frame.db_floor, frame.db_ceil);
-        if !(ceil > floor) || row.is_empty() || kernel.is_empty() {
+        if ceil.is_nan() || floor.is_nan() || ceil <= floor || row.is_empty() || kernel.is_empty() {
             return;
         }
         if self.place != Some((frame.center_hz, frame.span_hz)) {

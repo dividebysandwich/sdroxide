@@ -669,7 +669,7 @@ impl Daniell {
         out.clear();
         let k = range_db / 255.0 / 10.0;
         let n = bins.len();
-        if n == 0 || !(k > 0.0) {
+        if n == 0 || k.is_nan() || k <= 0.0 {
             out.extend(bins.iter().map(|&b| b as f32));
             return;
         }
