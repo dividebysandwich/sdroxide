@@ -3988,6 +3988,7 @@ scanner-unfiled = Niet ingedeeld
 scanner-nothing-filed-under-folders-you = Er staat niets in de mappen die je koos.
 scanner-stops = Stopt bij
 scanner-use-receiver-s-own-squelch = De eigen squelch van de ontvanger gebruiken, zodat de scan precies stopt waar de audio zou openen
+scanner-stop-snr = Stopt waar een kanaal zoveel boven de ruisvloer eromheen uitsteekt; volgt versterking en bandruis.
 scanner-squelch-off-scan-will-stop = squelch staat uit — de scan stopt op het eerste waar hij naar kijkt
 scanner-channel-power-signal-has-reach = Kanaalvermogen dat een signaal moet bereiken om de scan te stoppen
 scanner-listens = Luistert naar

@@ -3994,6 +3994,7 @@ scanner-unfiled = Klasörsüz
 scanner-nothing-filed-under-folders-you = Seçtiğiniz klasörlerin altına hiçbir şey kaydedilmemiş.
 scanner-stops = Durduğu yer
 scanner-use-receiver-s-own-squelch = Alıcının kendi susturmasını kullanın; böylece tarama, ses tam olarak açılacağı yerde durur
+scanner-stop-snr = Bir kanal çevresindeki gürültü tabanını bu kadar aştığında durur; kazanç ve bant gürültüsünü izler.
 scanner-squelch-off-scan-will-stop = susturma kapalı — tarama baktığı ilk şeyde durur
 scanner-channel-power-signal-has-reach = Taramayı durdurmak için bir sinyalin ulaşması gereken kanal gücü
 scanner-listens = Dinler

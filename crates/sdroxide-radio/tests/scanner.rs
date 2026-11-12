@@ -333,6 +333,26 @@ fn a_range_scan_stops_on_a_carrier() {
     );
 }
 
+/// Judged by S/N, a range scan stops on a carrier standing out of the floor,
+/// and a dead band — floor and nothing else — never stops it.
+#[test]
+fn a_range_scan_by_snr_stops_on_a_carrier_and_not_on_the_floor() {
+    const SIGNAL: f64 = 145_312_500.0;
+    let snr = ScannerConfig { stop_snr: true, snr_db: 12.0, threshold_db: -10.0, ..range_cfg() };
+    let mut rig = Rig::new(Some(SIGNAL));
+    rig.send(Command::SetScannerConfig(snr.clone()));
+    rig.send(Command::SetScanning(true));
+    let held = rig.pump(6.0, true).held_at.expect("S/N should stop on the carrier");
+    assert!((held - SIGNAL).abs() <= 12_500.0, "stopped on {held}, not near {SIGNAL}");
+    drop(rig);
+
+    let mut quiet = Rig::new(None);
+    quiet.send(Command::SetScannerConfig(snr));
+    quiet.send(Command::SetScanning(true));
+    let w = quiet.pump(2.0, false);
+    assert!(w.running && w.held_at.is_none(), "nothing stands out, so nothing stops it");
+}
+
 /// A panorama sweeps a range wider than the front end sees, never stops — not
 /// even on a carrier — and hands the full-band strip one row across the whole
 /// range, with the carrier where it is.

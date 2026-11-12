@@ -3975,6 +3975,7 @@ scanner-unfiled = 未分類
 scanner-nothing-filed-under-folders-you = 選んだフォルダーの下には、何も格納されていません。
 scanner-stops = 停止条件
 scanner-use-receiver-s-own-squelch = 受信機自身のスケルチを使うため、音声が開くまさにその場所でスキャンが止まります
+scanner-stop-snr = 周囲のノイズフロアよりこれだけ高いチャンネルで停止。ゲインと帯域ノイズに追従。
 scanner-squelch-off-scan-will-stop = スケルチがオフです。スキャンは、最初に調べたものでそのまま止まります
 scanner-channel-power-signal-has-reach = スキャンを止めるために、信号が到達しなければならないチャンネルの電力です
 scanner-listens = 聴く時間

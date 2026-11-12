@@ -356,11 +356,29 @@ impl SdroxideApp {
         egui::Grid::new("scan-levels").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
             ui.label(tr!("scanner-stops"));
             ui.horizontal(|ui| {
+                // One of three, as chips: the squelch, a fixed level, or S/N.
+                let level = !cfg.follow_squelch && !cfg.stop_snr;
+                let snr = !cfg.follow_squelch && cfg.stop_snr;
                 if crate::chrome::chip(ui, cfg.follow_squelch, "SQL")
                     .on_hover_text(tr!("scanner-use-receiver-s-own-squelch"))
                     .clicked()
                 {
-                    cfg.follow_squelch = !cfg.follow_squelch;
+                    cfg.follow_squelch = true;
+                    cfg.stop_snr = false;
+                }
+                if crate::chrome::chip(ui, level, "dBFS")
+                    .on_hover_text(tr!("scanner-channel-power-signal-has-reach"))
+                    .clicked()
+                {
+                    cfg.follow_squelch = false;
+                    cfg.stop_snr = false;
+                }
+                if crate::chrome::chip(ui, snr, "S/N")
+                    .on_hover_text(tr!("scanner-stop-snr"))
+                    .clicked()
+                {
+                    cfg.follow_squelch = false;
+                    cfg.stop_snr = true;
                 }
                 if cfg.follow_squelch {
                     let sql = self.state.rx[0].squelch_db;
@@ -372,11 +390,17 @@ impl SdroxideApp {
                         })
                         .weak(),
                     );
+                } else if cfg.stop_snr {
+                    // A slider with its own number box: drag for a feel, type
+                    // for a figure.
+                    ui.add(
+                        egui::Slider::new(&mut cfg.snr_db, 0.0..=40.0).step_by(0.5).suffix(" dB"),
+                    )
+                    .on_hover_text(tr!("scanner-stop-snr"));
                 } else {
                     ui.add(
-                        egui::DragValue::new(&mut cfg.threshold_db)
-                            .speed(0.5)
-                            .range(-140.0..=-10.0)
+                        egui::Slider::new(&mut cfg.threshold_db, -140.0..=-10.0)
+                            .step_by(0.5)
                             .suffix(" dBFS"),
                     )
                     .on_hover_text(tr!("scanner-channel-power-signal-has-reach"));

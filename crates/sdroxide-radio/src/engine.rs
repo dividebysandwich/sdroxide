@@ -15199,12 +15199,29 @@ impl Engine {
         )
     }
 
-    fn scan_threshold_db(&self) -> f32 {
-        if self.scan_cfg.follow_squelch {
-            self.state.rx[0].squelch_db
-        } else {
-            self.scan_cfg.threshold_db
+    /// The level a channel has to reach to count as busy, for a channel as
+    /// wide as the receiver's own filter.
+    fn scan_threshold_db(&mut self) -> f32 {
+        let rx = &self.state.rx[0];
+        let bw = (rx.filter_hi - rx.filter_lo).abs().max(1.0) as f64;
+        self.scan_threshold_for(bw)
+    }
+
+    /// The level a channel `bandwidth_hz` wide has to reach to count as busy:
+    /// the squelch, a fixed level, or — judging by S/N — the noise floor of the
+    /// spectrum in hand plus the margin asked for.
+    fn scan_threshold_for(&mut self, bandwidth_hz: f64) -> f32 {
+        let cfg = &self.scan_cfg;
+        if cfg.follow_squelch {
+            return self.state.rx[0].squelch_db;
         }
+        if !cfg.stop_snr {
+            return cfg.threshold_db;
+        }
+        let snr = cfg.snr_db;
+        self.analyzer.spectrum_db(&mut self.scan_db);
+        crate::scanner::channel_noise_floor_db(&self.scan_db, self.state.sample_rate, bandwidth_hz)
+            .map_or(self.scan_cfg.threshold_db, |floor| floor + snr)
     }
 
     fn scan_is_busy(&mut self) -> bool {
@@ -15412,15 +15429,17 @@ impl Engine {
         }
         let (lo, hi) = self.scan_cfg.range();
         let (flo, fhi) = self.scan_cfg.mode.default_filter();
+        let bw = (fhi - flo).abs().max(1.0) as f64;
+        let threshold = self.scan_threshold_for(bw);
         let found = crate::scanner::busy_channels(
             &self.scan_db,
             self.state.center_hz,
             self.state.sample_rate,
             lo,
             hi,
-            (fhi - flo).abs().max(1.0) as f64,
+            bw,
             self.scan_cfg.step_hz.max(1.0),
-            self.scan_threshold_db(),
+            threshold,
         );
         // Dropped here rather than at the stop: a skipped channel then costs
         // nothing at all, instead of a dwell each time round to rediscover that
@@ -15693,14 +15712,23 @@ impl Engine {
             .collect();
         let freqs: Vec<f64> = here.iter().map(|(_, hz, _)| *hz).collect();
         let widths: Vec<f64> = here.iter().map(|(_, _, bw)| *bw).collect();
-        let busy = crate::scanner::busy_memories(
-            &self.scan_db,
-            self.state.center_hz,
-            self.state.sample_rate,
-            &freqs,
-            &widths,
-            self.scan_threshold_db(),
-        );
+        // Each channel against a threshold for its own width: by S/N a wide
+        // channel reads more of the floor than a narrow one, so one threshold
+        // for the window would call the wide ones busy on noise alone.
+        let thresholds: Vec<f32> = widths.iter().map(|&bw| self.scan_threshold_for(bw)).collect();
+        let busy: Vec<usize> = (0..freqs.len())
+            .filter(|&i| {
+                !crate::scanner::busy_memories(
+                    &self.scan_db,
+                    self.state.center_hz,
+                    self.state.sample_rate,
+                    &freqs[i..=i],
+                    &widths[i..=i],
+                    thresholds[i],
+                )
+                .is_empty()
+            })
+            .collect();
         if let Some(sc) = self.scan.as_mut() {
             sc.queue.extend(busy.into_iter().map(|i| ScanTarget::Memory(here[i].0)));
         }

@@ -2232,8 +2232,14 @@ receiver's centre, where a zero-IF front end's own local oscillator is. A CAT
 rig feeding demodulated audio has no spectrum to read, so the button is greyed
 there and its memory scan visits every channel as before.
 
-**Stops at** is how loud a channel has to be. Either give a level directly, or
-press **SQL** to use the receiver's own squelch, which makes the scan stop
+**Stops at** is how loud a channel has to be, judged one of three ways. **dBFS**
+gives a level directly, on a slider with its own number box. **S/N** asks how
+far a channel stands above the noise floor around it — the median of the
+spectrum in view, taken over one channel's width — again on a slider, 0 to
+40 dB; it follows the front end's gain and the band's noise on its own, so a
+gain change or a noisier evening does not leave the scan stopping everywhere
+or nowhere, and each memory channel is judged against a floor for its own
+width. Or press **SQL** to use the receiver's own squelch, which makes the scan stop
 exactly where the audio would have opened — one control instead of two. Note
 that with the squelch slider at `off` the scan will stop on the first channel it
 looks at, since every channel then counts as busy. The squelch is one of the

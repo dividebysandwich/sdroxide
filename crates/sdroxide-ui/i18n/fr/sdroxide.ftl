@@ -3995,6 +3995,7 @@ scanner-unfiled = Non classés
 scanner-nothing-filed-under-folders-you = Rien n'est classé dans les dossiers que vous avez choisis.
 scanner-stops = S'arrête à
 scanner-use-receiver-s-own-squelch = Utiliser le squelch propre au récepteur, pour que le balayage s'arrête exactement là où l'audio s'ouvrirait
+scanner-stop-snr = S'arrête là où un canal dépasse d'autant le bruit de fond alentour ; suit le gain et le bruit de bande.
 scanner-squelch-off-scan-will-stop = le squelch est désactivé — le balayage s'arrêtera sur la première chose qu'il examine
 scanner-channel-power-signal-has-reach = Puissance du canal qu'un signal doit atteindre pour arrêter le balayage
 scanner-listens = Écoute pendant

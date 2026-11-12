@@ -3977,6 +3977,7 @@ scanner-unfiled = Sin archivar
 scanner-nothing-filed-under-folders-you = No hay nada archivado en las carpetas que elegiste.
 scanner-stops = Se detiene en
 scanner-use-receiver-s-own-squelch = Usa el silenciador propio del receptor, para que el barrido se pare exactamente donde se abriría el audio
+scanner-stop-snr = Para donde un canal supera en esto el ruido de fondo de alrededor; sigue la ganancia y el ruido de banda.
 scanner-squelch-off-scan-will-stop = el silenciador está desactivado — el barrido se parará en lo primero que mire
 scanner-channel-power-signal-has-reach = Potencia de canal que debe alcanzar una señal para detener el barrido
 scanner-listens = Escucha durante

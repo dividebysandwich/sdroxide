@@ -3966,6 +3966,7 @@ scanner-unfiled = 未归档
 scanner-nothing-filed-under-folders-you = 你所选文件夹中没有任何归档内容。
 scanner-stops = 停止条件
 scanner-use-receiver-s-own-squelch = 使用接收机自己的静噪，使扫描恰好在音频会打开的地方停止
+scanner-stop-snr = 在信道高出周围噪声底这么多时停止；随增益和频段噪声变化。
 scanner-squelch-off-scan-will-stop = 静噪已关闭——扫描会在它检查的第一个内容上停止
 scanner-channel-power-signal-has-reach = 信号必须达到的信道功率，才能使扫描停止
 scanner-listens = 收听时间

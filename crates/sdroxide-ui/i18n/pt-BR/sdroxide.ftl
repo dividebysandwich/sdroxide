@@ -3995,6 +3995,7 @@ scanner-unfiled = Sem pasta
 scanner-nothing-filed-under-folders-you = Nada está arquivado nas pastas que você escolheu.
 scanner-stops = Para em
 scanner-use-receiver-s-own-squelch = Usa o squelch próprio do receptor, para que a varredura pare exatamente onde o áudio abriria
+scanner-stop-snr = Para onde um canal fica isto acima do ruído de fundo ao redor; acompanha ganho e ruído da banda.
 scanner-squelch-off-scan-will-stop = o squelch está desligado — a varredura parará no primeiro sinal que examinar
 scanner-channel-power-signal-has-reach = Potência do canal que um sinal precisa alcançar para parar a varredura
 scanner-listens = Escuta por

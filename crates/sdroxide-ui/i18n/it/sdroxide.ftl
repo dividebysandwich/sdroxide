@@ -3998,6 +3998,7 @@ scanner-unfiled = Senza cartella
 scanner-nothing-filed-under-folders-you = Nulla è archiviato nelle cartelle che hai scelto.
 scanner-stops = Si ferma a
 scanner-use-receiver-s-own-squelch = Usa lo squelch proprio del ricevitore, così la scansione si ferma esattamente dove si aprirebbe l'audio
+scanner-stop-snr = Si ferma dove un canale supera di tanto il rumore di fondo intorno; segue guadagno e rumore di banda.
 scanner-squelch-off-scan-will-stop = lo squelch è disattivato — la scansione si fermerà sulla prima cosa che esamina
 scanner-channel-power-signal-has-reach = Potenza del canale che un segnale deve raggiungere per fermare la scansione
 scanner-listens = Ascolta per

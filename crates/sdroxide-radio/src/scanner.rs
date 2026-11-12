@@ -261,6 +261,22 @@ pub fn channel_power_db(
     Some((10.0 * (total + 1e-30).log10()) as f32)
 }
 
+/// The noise floor of a spectrum as channel power: what a channel
+/// `bandwidth_hz` wide reads where nobody is transmitting. The median bin is
+/// the floor — most of any band is empty — times the bins one channel covers.
+/// `None` for a spectrum with nothing finite in it.
+pub fn channel_noise_floor_db(bins: &[f32], span_hz: f64, bandwidth_hz: f64) -> Option<f32> {
+    let mut finite: Vec<f32> = bins.iter().copied().filter(|v| v.is_finite()).collect();
+    if finite.is_empty() || !(span_hz > 0.0) {
+        return None;
+    }
+    let mid = finite.len() / 2;
+    let (_, median, _) = finite.select_nth_unstable_by(mid, |a, b| a.total_cmp(b));
+    let bin_hz = span_hz / bins.len() as f64;
+    let width = (bandwidth_hz / bin_hz).max(1.0);
+    Some(*median + (10.0 * width.log10()) as f32)
+}
+
 /// The most bins a panorama keeps across its range. The full-band strip pools
 /// to far fewer than this, so more would only be memory; a narrow range keeps
 /// the front end's own resolution instead (see [`panorama_bins`]).
@@ -619,6 +635,19 @@ mod tests {
         bins[20] = -70.0; // 1000× the floor in one bin of the ~80 it pools
         stitch_slice(&mut pano, 1.1e6, 1.9e6, &bins, 1.5e6, 1e6);
         assert!(pano[0] > -90.0 && pano[0] < -80.0, "{}", pano[0]);
+    }
+
+    #[test]
+    fn the_noise_floor_is_the_median_bin_over_a_channel() {
+        // A flat −100 dB floor with a few strong carriers: the carriers do not
+        // move the median, and a channel of 10 bins reads 10 dB over a bin.
+        let mut bins = vec![-100.0f32; 1000];
+        for i in [10, 200, 600] {
+            bins[i] = -30.0;
+        }
+        let floor = channel_noise_floor_db(&bins, 1e6, 10_000.0).unwrap();
+        assert!((floor - -90.0).abs() < 0.01, "{floor}");
+        assert_eq!(channel_noise_floor_db(&[f32::NAN; 4], 1e6, 1e4), None);
     }
 
     const SPAN_PANO: f64 = 2e6;

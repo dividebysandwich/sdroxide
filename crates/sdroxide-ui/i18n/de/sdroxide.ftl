@@ -4074,6 +4074,7 @@ scanner-unfiled = Ohne Ordner
 scanner-nothing-filed-under-folders-you = Unter den gewählten Ordnern ist nichts abgelegt.
 scanner-stops = Hält an bei
 scanner-use-receiver-s-own-squelch = Die eigene Rauschsperre des Empfängers nutzen, damit der Suchlauf genau dort stoppt, wo sich das Audio öffnen würde
+scanner-stop-snr = Hält an, wo ein Kanal so weit über dem Rauschboden ringsum steht; folgt Verstärkung und Bandrauschen.
 scanner-squelch-off-scan-will-stop = Rauschsperre ist aus — der Suchlauf hält bei der ersten Sache, die er ansieht
 scanner-channel-power-signal-has-reach = Kanalleistung, die ein Signal erreichen muss, um den Suchlauf zu stoppen
 scanner-listens = Hört hinein für

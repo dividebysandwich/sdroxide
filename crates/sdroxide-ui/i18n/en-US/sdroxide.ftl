@@ -4128,6 +4128,7 @@ scanner-unfiled = Unfiled
 scanner-nothing-filed-under-folders-you = Nothing is filed under the folders you picked.
 scanner-stops = Stops at
 scanner-use-receiver-s-own-squelch = Use the receiver's own squelch, so the scan stops exactly where the audio would open
+scanner-stop-snr = Stop where a channel stands this far above the noise floor around it; follows gain and band noise.
 scanner-squelch-off-scan-will-stop = squelch is off — the scan will stop on the first thing it looks at
 scanner-channel-power-signal-has-reach = Channel power a signal has to reach to stop the scan
 scanner-listens = Listens for

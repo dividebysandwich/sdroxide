@@ -89,6 +89,15 @@ pub struct ScannerConfig {
     /// Take the threshold from the receiver's own squelch instead, so one
     /// control sets both what stops the scan and what opens the audio.
     pub follow_squelch: bool,
+    /// Judge by signal-to-noise instead of a level: a channel is busy when it
+    /// stands [`Self::snr_db`] above the noise floor of the spectrum around it,
+    /// which follows the front end's gain and the band's noise on its own.
+    /// [`Self::follow_squelch`] wins when both are set.
+    // Why: HDZ 2026-11-12: "gut, wenn er bei den bestehenden Modi S/N mit
+    //      Schieberegler akzeptieren würde".
+    pub stop_snr: bool,
+    /// How far above the noise floor a channel has to stand, in dB.
+    pub snr_db: f32,
     /// How long to listen on a candidate before deciding it is really busy.
     pub dwell_ms: u32,
     pub resume: ScanResume,
@@ -161,6 +170,8 @@ impl Default for ScannerConfig {
             mode: Mode::Nfm,
             threshold_db: -80.0,
             follow_squelch: false,
+            stop_snr: false,
+            snr_db: 10.0,
             dwell_ms: 150,
             resume: ScanResume::Carrier,
             resume_ms: 2_000,
