@@ -56,6 +56,12 @@ pub struct ModeProfile {
     pub auto_notch: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wfm_stereo: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fm_decrackle: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fm_deemph: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fm_decrackle_dip: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub binaural: Option<bool>,
 }
@@ -79,6 +85,9 @@ impl ModeProfile {
             && self.noise_reduction.is_none()
             && self.auto_notch.is_none()
             && self.wfm_stereo.is_none()
+            && self.fm_decrackle.is_none()
+            && self.fm_deemph.is_none()
+            && self.fm_decrackle_dip.is_none()
             && self.binaural.is_none()
     }
 
@@ -92,6 +101,9 @@ impl ModeProfile {
             noise_reduction: self.noise_reduction.or(base.noise_reduction),
             auto_notch: self.auto_notch.or(base.auto_notch),
             wfm_stereo: self.wfm_stereo.or(base.wfm_stereo),
+            fm_decrackle: self.fm_decrackle.or(base.fm_decrackle),
+            fm_deemph: self.fm_deemph.or(base.fm_deemph),
+            fm_decrackle_dip: self.fm_decrackle_dip.or(base.fm_decrackle_dip),
             binaural: self.binaural.or(base.binaural),
         }
     }
@@ -123,6 +135,15 @@ impl ModeProfile {
         if self.wfm_stereo == default.wfm_stereo {
             self.wfm_stereo = None;
         }
+        if self.fm_decrackle == default.fm_decrackle {
+            self.fm_decrackle = None;
+        }
+        if self.fm_deemph == default.fm_deemph {
+            self.fm_deemph = None;
+        }
+        if self.fm_decrackle_dip == default.fm_decrackle_dip {
+            self.fm_decrackle_dip = None;
+        }
         if self.binaural == default.binaural {
             self.binaural = None;
         }
@@ -140,6 +161,9 @@ impl ModeProfile {
             && self.noise_reduction.is_none_or(|v| v == rx.noise_reduction)
             && self.auto_notch.is_none_or(|v| v == rx.auto_notch)
             && self.wfm_stereo.is_none_or(|v| v == rx.wfm_stereo)
+            && self.fm_decrackle.is_none_or(|v| v == rx.fm_decrackle)
+            && self.fm_deemph.is_none_or(|v| v == rx.fm_deemph)
+            && self.fm_decrackle_dip.is_none_or(|v| v == rx.fm_decrackle_dip)
             && self.binaural.is_none_or(|v| v == rx.binaural)
     }
 
@@ -169,6 +193,15 @@ impl ModeProfile {
         }
         if let Some(v) = self.wfm_stereo {
             rx.wfm_stereo = v;
+        }
+        if let Some(v) = self.fm_decrackle {
+            rx.fm_decrackle = v;
+        }
+        if let Some(v) = self.fm_deemph {
+            rx.fm_deemph = v;
+        }
+        if let Some(v) = self.fm_decrackle_dip {
+            rx.fm_decrackle_dip = v;
         }
         if let Some(v) = self.binaural {
             rx.binaural = v;

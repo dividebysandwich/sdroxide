@@ -85,6 +85,14 @@ pub enum Command {
         rx: RxId,
         on: bool,
     },
+    /// NFM FM-Decrackle (click eliminator), de-emphasis and the sensitivity
+    /// of the slip test (see `RxState::fm_decrackle_dip`).
+    SetFmDecrackle {
+        rx: RxId,
+        on: bool,
+        deemph: bool,
+        dip: f32,
+    },
     SetSubRx(bool),
     /// Park the sub receiver on an absolute frequency. The engine clamps it to
     /// the device passband — the sub is a DDC on the same IQ stream as the main

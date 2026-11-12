@@ -1012,6 +1012,7 @@ impl RxChain {
         if let Some(d) = self.demod.as_mut() {
             d.set_filter(rx.filter_lo, rx.filter_hi);
             d.set_stereo_enabled(stereo_allowed(rx));
+            d.set_fm_decrackle(rx.fm_decrackle, rx.fm_deemph, rx.fm_decrackle_dip);
         }
         let audio_rate =
             self.demod.as_ref().map(|d| d.audio_rate()).unwrap_or_else(|| self.ddc.out_rate());
@@ -1057,6 +1058,7 @@ impl RxChain {
         self.side_buf.clear();
         demod.process(&self.channel_buf, &mut self.audio_buf);
         demod.set_stereo_enabled(stereo_allowed(rx));
+        demod.set_fm_decrackle(rx.fm_decrackle, rx.fm_deemph, rx.fm_decrackle_dip);
         let stereo = demod.take_side(&mut self.side_buf);
         // The decoder's tap, taken *before* the AGC.
         //
@@ -9094,6 +9096,19 @@ impl Engine {
             SetAutoNotch { rx, on } => {
                 self.state.rx[rx.index()].auto_notch = on;
                 self.remember_mode_setting(rx, |p| p.auto_notch = Some(on));
+            }
+            SetFmDecrackle { rx, on, deemph, dip } => {
+                let (lo, hi) = sdroxide_types::FM_DECRACKLE_DIP_RANGE;
+                let dip = dip.clamp(lo, hi);
+                let r = &mut self.state.rx[rx.index()];
+                r.fm_decrackle = on;
+                r.fm_deemph = deemph;
+                r.fm_decrackle_dip = dip;
+                self.remember_mode_setting(rx, |p| {
+                    p.fm_decrackle = Some(on);
+                    p.fm_deemph = Some(deemph);
+                    p.fm_decrackle_dip = Some(dip);
+                });
             }
             SetHumFilter { rx, on } => self.state.rx[rx.index()].hum_filter = on,
             SetSkFilter { rx, on, tau_s, open_s, close_s, width, after_nr } => {

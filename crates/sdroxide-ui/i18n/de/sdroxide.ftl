@@ -2157,6 +2157,12 @@ topbar-what-capture-costs-sample-rate = Was eine Aufnahme bei dieser Abtastrate 
 topbar-engine = ENGINE
 topbar-no-noise-reduction-decoders-never = Keine Rauschunterdrückung — die Decoder haben sie ohnehin nie gesehen
 topbar-strength = STÄRKE
+topbar-fm-decrackle = FM-DECRACKLE
+topbar-fm-decrackle-chip = DECRACKLE
+topbar-fm-decrackle-hint = NFM: Phasenschlüpfe (Knistern bei schwachem Signal) im Ringpuffer erkannt und ausgebessert; ~1 ms Verzögerung
+topbar-fm-deemph = DE-EMPH
+topbar-fm-deemph-hint = De-Emphasis 6 dB/Oktave ab 300 Hz; aus bei Sendern ohne Pre-Emphasis
+topbar-fm-decrackle-sens-hint = Empfindlichkeit: Betragseinbruch unter diesen Anteil des Mittels; 0,2 Grundwert, höher greift öfter
 topbar-nr-filters = FILTER
 topbar-sk-filter-hint = SK-Nachfilter verfeinert neuronale oder andere Rauschentfernung: bestraft Restrauschen
     (Filter resoniert, dadurch Echo) · Filter von HDZ

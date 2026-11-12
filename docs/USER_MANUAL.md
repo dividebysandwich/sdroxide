@@ -725,6 +725,20 @@ menu. Ordinary dragging and keyboard adjustment still work.
     curve. It delays the audio by about 21 ms and runs ahead of HUM and the
     AGC — or, with **after NR**, behind the NR engine, where it takes what RNN
     or DFNR left and lifts the formants they found.
+  - **FM-DECRACKLE** (NFM only, greyed out in other modes) — a row of its own
+    for the crackle of a weak FM signal. Below the FM threshold the noise now
+    and then swings the received phase a whole turn round, and a plain
+    discriminator turns each turn into a click; on a weak CB or 2 m station
+    that is the "fireworks" under the voice. **DECRACKLE** finds those slips
+    in a ring buffer about a millisecond either side — the phase jumps by a
+    full turn *and* the signal's magnitude dips almost to zero — and repairs
+    the frequency over them; it delays the audio by about 1.3 ms and leaves a
+    clean signal alone. **DE-EMPH** is the 6 dB per octave de-emphasis above
+    300 Hz that matches a voice transmitter's pre-emphasis: less hiss, a
+    darker voice; switch it off for a transmitter without pre-emphasis. The
+    slider is the **sensitivity**, 0.1 to 0.6: how deep the magnitude must dip,
+    as a share of its mean, for a jump to count as a slip; 0.2 is the start,
+    higher repairs more. All three are remembered for NFM.
 
 - **BIN** (CW and SSB) — **binaural** audio: the receive passband spread across
   the two ears, so that a signal's *pitch* becomes a *direction*. Whatever sits
