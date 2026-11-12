@@ -3973,6 +3973,7 @@ scanner-sweep-range-into-panorama = Percorrer uma faixa sem parar para formar um
 scanner-panorama-hint = Percorre sem parar; cada varredura completa é uma linha da faixa de banda inteira (WIDE).
 scanner-stop = PARAR
 scanner-start = INICIAR
+scanner-band = Banda
 scanner-from = De
 scanner-step = Passo
 scanner-mode = Modo
@@ -4009,8 +4010,6 @@ scanner-stay-until-you-press-next = Fica até você pressionar PRÓXIMO
 scanner-how-long-stay = Quanto tempo permanecer
 scanner-how-long-wait-after-signal = Quanto tempo esperar depois que o sinal cai
 scanner-move-don-t-stop-channel = Segue adiante, e não para de novo neste canal
-scanner-next = PRÓXIMO
-scanner-move-now = Seguir adiante agora
 
 ## adsb (src/app/panels/adsb.rs)
 
@@ -5213,6 +5212,11 @@ sat-norad-2 = NORAD { $norad_id }
 
 scanner-holding-mhz = retendo { $here } MHz
 scanner-scanning-mhz = varrendo · { $here } MHz
+scanner-pano-first = Panorama { $range } MHz · primeira varredura …
+scanner-pano-sweeps = Panorama { $range } MHz · varredura { $n } · { $secs } s
+scanner-pano-clear = Descartar o panorama e varrer de novo
+scanner-forward = Avançar: seguir para cima
+scanner-backward = Voltar: inverter e seguir para baixo
 
 ## spectrum: mensagens com valores (src/app/spectrum.rs)
 

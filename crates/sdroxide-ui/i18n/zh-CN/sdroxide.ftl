@@ -3944,6 +3944,7 @@ scanner-sweep-range-into-panorama = 不停顿地扫描一个范围，拼成全�
 scanner-panorama-hint = 不停顿扫描；每完成一次扫描即为全频段条带（WIDE）中的一行。
 scanner-stop = 停止
 scanner-start = 开始
+scanner-band = 频段
 scanner-from = 起始
 scanner-step = 步进
 scanner-mode = 模式
@@ -3980,8 +3981,6 @@ scanner-stay-until-you-press-next = 停留直到你按下“下一个”
 scanner-how-long-stay = 停留时长
 scanner-how-long-wait-after-signal = 信号消失后等待多久
 scanner-move-don-t-stop-channel = 继续前进，并且不再在此信道上停止
-scanner-next = 下一个
-scanner-move-now = 立即继续
 
 ## ADS-B（src/app/panels/adsb.rs）
 
@@ -5146,6 +5145,11 @@ sat-norad-2 = NORAD { $norad_id }
 
 scanner-holding-mhz = 停留在 { $here } MHz
 scanner-scanning-mhz = 扫描中 · { $here } MHz
+scanner-pano-first = 全景 { $range } MHz · 首次扫描中 …
+scanner-pano-sweeps = 全景 { $range } MHz · 第 { $n } 次扫描 · { $secs } 秒
+scanner-pano-clear = 丢弃全景并重新扫描
+scanner-forward = 前进：继续向上
+scanner-backward = 后退：掉头继续向下
 
 ## 频谱：带数值的消息（src/app/spectrum.rs）
 

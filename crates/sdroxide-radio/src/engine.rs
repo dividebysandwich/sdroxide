@@ -1436,10 +1436,14 @@ struct Pano {
     lo: f64,
     hi: f64,
     bins: Vec<f32>,
+    /// When the sweep under way began.
+    sweep_at: Instant,
 }
 
 struct Scan {
     phase: ScanPhase,
+    /// Downwards rather than upwards — ◀ rather than ▶.
+    back: bool,
     /// Still to visit before the queue has to be refilled.
     queue: std::collections::VecDeque<ScanTarget>,
     /// Hardware centres a range sweep works through, and which one is up.
@@ -9221,8 +9225,13 @@ impl Engine {
                 // A different kind of scan, or the same kind gathering its
                 // candidates a different way, is a different scan: the plan in
                 // flight belongs to the old setting.
+                // So is a range scan or a panorama given a different range: its
+                // slices, and a panorama's picture, belong to the old one.
+                let ranged = matches!(cfg.kind, ScanKind::Range | ScanKind::Panorama);
                 let restart = self.state.scan.running
-                    && (cfg.kind != self.scan_cfg.kind || cfg.mem_fast != self.scan_cfg.mem_fast);
+                    && (cfg.kind != self.scan_cfg.kind
+                        || cfg.mem_fast != self.scan_cfg.mem_fast
+                        || (ranged && cfg.range() != self.scan_cfg.range()));
                 // Retuning the range (or changing the grid under it) retires the
                 // channels skipped in the old one — they described *that* band.
                 cfg.forget_stale_skips();
@@ -9236,7 +9245,18 @@ impl Engine {
                 self.save_scanner_config();
             }
             SetScanning(on) => self.set_scanning(on),
-            ScanNext => self.scan_skip(false),
+            ScanNext => {
+                if let Some(sc) = self.scan.as_mut() {
+                    sc.back = false;
+                }
+                self.scan_skip(false);
+            }
+            ScanBack => {
+                if let Some(sc) = self.scan.as_mut() {
+                    sc.back = true;
+                }
+                self.scan_skip(false);
+            }
             ScanSkip => self.scan_skip(true),
             SetAudioDuck(gain) => {
                 if let Some(mixer) = self.mixer.as_mut() {
@@ -15295,15 +15315,17 @@ impl Engine {
         let now = Instant::now();
         self.scan = Some(Scan {
             phase: ScanPhase::Probing(now),
+            back: false,
             queue: std::collections::VecDeque::new(),
             slices: Vec::new(),
             slice: usize::MAX, // rolls over to 0 on the first refill
             stepped: Vec::new(),
-            step_at: 0,
+            step_at: usize::MAX, // as `slice` above: the first step lands on 0
             mem_slices: Vec::new(),
             mem_slice: usize::MAX, // as `slice` above
         });
-        self.state.scan = sdroxide_types::ScanState { running: true, holding: false };
+        self.state.scan =
+            sdroxide_types::ScanState { running: true, holding: false, sweeps: 0, sweep_ms: 0 };
         // Pick the first target now rather than waiting a poll for it, so
         // nothing has to distinguish "just started" from "just finished a
         // dwell" later on.
@@ -15463,14 +15485,21 @@ impl Engine {
         let fresh = self.pano.as_ref().is_none_or(|p| p.lo != lo || p.hi != hi);
         if fresh {
             let n = crate::scanner::panorama_bins(lo, hi, span, self.scan_db.len());
-            self.pano = Some(Pano { lo, hi, bins: vec![f32::NAN; n] });
+            self.pano = Some(Pano { lo, hi, bins: vec![f32::NAN; n], sweep_at: now });
         }
         let last = self.scan.as_ref().is_some_and(|sc| sc.slice + 1 >= sc.slices.len());
+        if last {
+            self.emit_state();
+        }
         if let Some(p) = self.pano.as_mut() {
             crate::scanner::stitch_slice(&mut p.bins, lo, hi, &self.scan_db, center, span);
             if last {
                 let mut row = p.bins.clone();
                 crate::scanner::fill_panorama_gaps(&mut row);
+                let took = now.duration_since(p.sweep_at);
+                p.sweep_at = now;
+                self.state.scan.sweeps = self.state.scan.sweeps.saturating_add(1);
+                self.state.scan.sweep_ms = took.as_millis().min(u32::MAX as u128) as u32;
                 if row.iter().all(|v| v.is_finite()) {
                     self.wide_bins = row;
                     self.wide_window = Some(((lo + hi) / 2.0, hi - lo));
@@ -15525,7 +15554,11 @@ impl Engine {
         // that refill produced nothing to visit. Anything further waits for the
         // next poll, so no arrangement of settings can spin the DSP thread.
         for _ in 0..2 {
-            if let Some(target) = self.scan.as_mut().and_then(|s| s.queue.pop_front()) {
+            let next = self
+                .scan
+                .as_mut()
+                .and_then(|s| if s.back { s.queue.pop_back() } else { s.queue.pop_front() });
+            if let Some(target) = next {
                 self.scan_goto(target, now);
                 return;
             }
@@ -15585,10 +15618,8 @@ impl Engine {
                 return Refill::Stopped;
             }
         }
-        sc.slice = sc.slice.wrapping_add(1);
-        if sc.slice >= sc.slices.len() {
-            sc.slice = 0; // round again: a scanner runs until it is stopped
-        }
+        // Round again at either end: a scanner runs until it is stopped.
+        sc.slice = crate::scanner::step_index(sc.slice, sc.slices.len(), sc.back);
         let center = sc.slices[sc.slice];
         sc.phase = ScanPhase::Settling(now + settle);
 
@@ -15760,11 +15791,8 @@ impl Engine {
             // range skipped there is nothing left to visit, and hunting for
             // ever would spin the DSP thread instead of saying so.
             for _ in 0..sc.stepped.len() {
-                if sc.step_at >= sc.stepped.len() {
-                    sc.step_at = 0;
-                }
+                sc.step_at = crate::scanner::step_index(sc.step_at, sc.stepped.len(), sc.back);
                 let f = sc.stepped[sc.step_at];
-                sc.step_at += 1;
                 if !cfg.skips_freq(f) {
                     picked = Some(f);
                     break;

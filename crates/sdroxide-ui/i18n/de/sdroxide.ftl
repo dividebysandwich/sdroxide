@@ -4052,6 +4052,7 @@ scanner-sweep-range-into-panorama = Bereich ohne Halt zu einem Panorama abfahren
 scanner-panorama-hint = Fährt ohne Halt ab; jeder volle Durchlauf ist eine Zeile im Breitbandstreifen (WIDE).
 scanner-stop = STOPP
 scanner-start = START
+scanner-band = Band
 scanner-from = Von
 scanner-step = Schritt
 scanner-mode = Betriebsart
@@ -4088,8 +4089,6 @@ scanner-stay-until-you-press-next = Bleiben, bis Sie NÄCHSTER drücken
 scanner-how-long-stay = Wie lange bleiben
 scanner-how-long-wait-after-signal = Wie lange nach dem Abfallen des Signals gewartet wird
 scanner-move-don-t-stop-channel = Weitergehen und auf diesem Kanal nicht wieder anhalten
-scanner-next = NÄCHSTER
-scanner-move-now = Jetzt weitergehen
 
 ## adsb (src/app/panels/adsb.rs)
 
@@ -5306,6 +5305,11 @@ sat-norad-2 = NORAD { $norad_id }
 
 scanner-holding-mhz = hält { $here } MHz
 scanner-scanning-mhz = sucht · { $here } MHz
+scanner-pano-first = Panorama { $range } MHz · erster Durchlauf …
+scanner-pano-sweeps = Panorama { $range } MHz · Durchlauf { $n } · { $secs } s
+scanner-pano-clear = Panorama verwerfen und neu abfahren
+scanner-forward = Vorwärts: aufwärts weiter
+scanner-backward = Rückwärts: umkehren und abwärts weiter
 
 ## spectrum: messages with values (src/app/spectrum.rs)
 

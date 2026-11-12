@@ -19,6 +19,7 @@ impl SdroxideApp {
         // Edited in place and sent whole on any change, the way the skimmer's
         // settings are; the engine persists it and echoes it back.
         let mut cfg = self.scanner.clone();
+        let mut clear_strip = false;
         let tool_title = tr!("scanner-scanner");
         let mut tool_st = self.take_tool_state("Scanner");
         let tool_child = crate::app::undocked::ChildWindow::own(self);
@@ -28,8 +29,12 @@ impl SdroxideApp {
             &mut tool_st,
             tool_child,
             &mut open,
-            |ui| self.scanner_body(ui, &mut cfg, cmds),
+            |ui| self.scanner_body(ui, &mut cfg, cmds, &mut clear_strip),
         );
+        if clear_strip {
+            self.wide_wf.clear();
+            self.wide_frame = None;
+        }
         self.put_tool_state("Scanner", tool_st);
         if cfg != self.scanner {
             self.scanner = cfg.clone();
@@ -38,7 +43,13 @@ impl SdroxideApp {
         self.show_scanner = open;
     }
 
-    fn scanner_body(&self, ui: &mut egui::Ui, cfg: &mut ScannerConfig, cmds: &mut Vec<Command>) {
+    fn scanner_body(
+        &self,
+        ui: &mut egui::Ui,
+        cfg: &mut ScannerConfig,
+        cmds: &mut Vec<Command>,
+        clear_strip: &mut bool,
+    ) {
         let scan = self.state.scan;
 
         // What to scan.
@@ -85,11 +96,15 @@ impl SdroxideApp {
             self.scanner_thresholds(ui, cfg);
         }
         ui.separator();
-        self.scanner_status(ui, cmds);
+        self.scanner_status(ui, cfg, cmds, clear_strip);
     }
 
     fn scanner_range(&self, ui: &mut egui::Ui, cfg: &mut ScannerConfig) {
         egui::Grid::new("scan-range").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+            ui.label(tr!("scanner-band"));
+            band_pick(ui, cfg);
+            ui.end_row();
+
             ui.label(tr!("scanner-from"));
             ui.horizontal(|ui| {
                 mhz_edit(ui, &mut cfg.range_lo_hz);
@@ -149,6 +164,10 @@ impl SdroxideApp {
     /// the thresholds a range scan judges channels by do not apply.
     fn scanner_panorama(&self, ui: &mut egui::Ui, cfg: &mut ScannerConfig) {
         egui::Grid::new("scan-pano").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+            ui.label(tr!("scanner-band"));
+            band_pick(ui, cfg);
+            ui.end_row();
+
             ui.label(tr!("scanner-from"));
             ui.horizontal(|ui| {
                 mhz_edit(ui, &mut cfg.range_lo_hz);
@@ -448,36 +467,113 @@ impl SdroxideApp {
         });
     }
 
-    fn scanner_status(&self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+    fn scanner_status(
+        &self,
+        ui: &mut egui::Ui,
+        cfg: &ScannerConfig,
+        cmds: &mut Vec<Command>,
+        clear_strip: &mut bool,
+    ) {
         let scan = self.state.scan;
+        let pano = cfg.kind == ScanKind::Panorama;
         ui.horizontal(|ui| {
             if !scan.running {
                 ui.label(RichText::new("stopped").weak());
-                return;
-            }
-            let here = self.state.active_freq_hz() / 1e6;
-            let (text, colour) = if scan.holding {
-                (tr!("scanner-holding-mhz", here = format!("{:.6}", here)), crate::theme::GREEN())
+            } else if pano {
+                // A panorama stops nowhere: what it covers and how far it has
+                // got say more than the dial it happens to be passing.
+                let (lo, hi) = cfg.range();
+                let range = format!("{:.3}–{:.3}", lo / 1e6, hi / 1e6);
+                let text = if scan.sweeps == 0 {
+                    tr!("scanner-pano-first", range = range)
+                } else {
+                    tr!(
+                        "scanner-pano-sweeps",
+                        range = range,
+                        n = scan.sweeps,
+                        secs = format!("{:.1}", scan.sweep_ms as f64 / 1000.0)
+                    )
+                };
+                ui.label(RichText::new(text).color(crate::theme::CYAN()).strong());
             } else {
-                (tr!("scanner-scanning-mhz", here = format!("{:.6}", here)), crate::theme::CYAN())
-            };
-            ui.label(RichText::new(text).color(colour).strong());
+                let here = self.state.active_freq_hz() / 1e6;
+                let (text, colour) = if scan.holding {
+                    (
+                        tr!("scanner-holding-mhz", here = format!("{:.6}", here)),
+                        crate::theme::GREEN(),
+                    )
+                } else {
+                    (
+                        tr!("scanner-scanning-mhz", here = format!("{:.6}", here)),
+                        crate::theme::CYAN(),
+                    )
+                };
+                ui.label(RichText::new(text).color(colour).strong());
+            }
             crate::chrome::row_tail(ui, |ui| {
+                if pano {
+                    // Throw the picture away and start the sweep afresh.
+                    if crate::chrome::chip(ui, false, "CLR")
+                        .on_hover_text(tr!("scanner-pano-clear"))
+                        .clicked()
+                    {
+                        *clear_strip = true;
+                        if scan.running {
+                            cmds.push(Command::SetScanning(false));
+                            cmds.push(Command::SetScanning(true));
+                        }
+                    }
+                    return;
+                }
+                if !scan.running {
+                    return;
+                }
+                // Right to left: SKIP, then ▶ and ◀ read left to right.
                 if crate::chrome::chip(ui, false, tr!("scanner-skip"))
                     .on_hover_text(tr!("scanner-move-don-t-stop-channel"))
                     .clicked()
                 {
                     cmds.push(Command::ScanSkip);
                 }
-                if crate::chrome::chip(ui, false, tr!("scanner-next"))
-                    .on_hover_text(tr!("scanner-move-now"))
+                if crate::chrome::chip(ui, false, "▶")
+                    .on_hover_text(tr!("scanner-forward"))
                     .clicked()
                 {
                     cmds.push(Command::ScanNext);
                 }
+                if crate::chrome::chip(ui, false, "◀")
+                    .on_hover_text(tr!("scanner-backward"))
+                    .clicked()
+                {
+                    cmds.push(Command::ScanBack);
+                }
             });
         });
     }
+}
+
+/// A band to scan, picked from the region's allocations — amateur, broadcast,
+/// CB, AM — rather than typed: it sets both edges at once. Shows the band the
+/// edges are on, or a dash once they have been typed elsewhere.
+// Why: HDZ 2026-11-12: "ein Popdown, der die Ham- plus Radiobänder kennt …
+//      Knöpfe sollten dem Bandselektor vorbehalten sein".
+fn band_pick(ui: &mut egui::Ui, cfg: &mut ScannerConfig) {
+    let bands = crate::widgets::bandplan::allocations();
+    let (lo, hi) = cfg.range();
+    let on = bands.iter().find(|(l, h, _)| (l - lo).abs() < 1.0 && (h - hi).abs() < 1.0);
+    let shown = on.map_or("—".to_string(), |(_, _, name)| (*name).to_string());
+    egui::ComboBox::from_id_salt("scan-band").selected_text(shown).height(400.0).show_ui(
+        ui,
+        |ui| {
+            for (l, h, name) in &bands {
+                let text = format!("{name}   {:.3}–{:.3}", l / 1e6, h / 1e6);
+                if ui.selectable_label(on.is_some_and(|b| b.2 == *name), text).clicked() {
+                    cfg.range_lo_hz = *l;
+                    cfg.range_hi_hz = *h;
+                }
+            }
+        },
+    );
 }
 
 /// A frequency box in MHz, which is how an operator says one.

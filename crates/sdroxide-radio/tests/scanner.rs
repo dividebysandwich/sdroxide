@@ -353,6 +353,34 @@ fn a_range_scan_by_snr_stops_on_a_carrier_and_not_on_the_floor() {
     assert!(w.running && w.held_at.is_none(), "nothing stands out, so nothing stops it");
 }
 
+/// ◀ turns a range sweep round: the slices it tunes after the press go
+/// downwards, and ▶ turns it back up again.
+#[test]
+fn backward_turns_a_range_sweep_round() {
+    let wide = ScannerConfig { range_lo_hz: 144e6, range_hi_hz: 152e6, ..range_cfg() };
+    let mut rig = Rig::new(None);
+    rig.send(Command::SetScannerConfig(wide));
+    rig.send(Command::SetScanning(true));
+    rig.pump(0.4, false);
+    let seen = |rig: &Rig| rig.visited.lock().unwrap().len();
+    let steps = |rig: &Rig, from: usize| -> Vec<f64> {
+        let v = rig.visited.lock().unwrap();
+        v[from..].windows(2).map(|w| w[1] - w[0]).filter(|d| d.abs() > 1.0).collect()
+    };
+    let mark = seen(&rig);
+    rig.send(Command::ScanBack);
+    rig.pump(0.6, false);
+    let down = steps(&rig, mark);
+    assert!(down.len() >= 2, "it went on sweeping: {down:?}");
+    // Downwards, bar the one jump from the bottom back to the top.
+    assert!(down.iter().filter(|d| **d < 0.0).count() > down.len() / 2, "◀ goes down: {down:?}");
+    let mark = seen(&rig);
+    rig.send(Command::ScanNext);
+    rig.pump(0.6, false);
+    let up = steps(&rig, mark);
+    assert!(up.iter().filter(|d| **d > 0.0).count() > up.len() / 2, "▶ goes up again: {up:?}");
+}
+
 /// A panorama sweeps a range wider than the front end sees, never stops — not
 /// even on a carrier — and hands the full-band strip one row across the whole
 /// range, with the carrier where it is.

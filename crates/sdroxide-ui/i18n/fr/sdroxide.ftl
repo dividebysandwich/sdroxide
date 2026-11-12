@@ -3973,6 +3973,7 @@ scanner-sweep-range-into-panorama = Balayer une plage sans arrêt pour former un
 scanner-panorama-hint = Balaye sans arrêt ; chaque balayage complet est une ligne de la bande large (WIDE).
 scanner-stop = ARRÊT
 scanner-start = DÉMARRER
+scanner-band = Bande
 scanner-from = De
 scanner-step = Pas
 scanner-mode = Mode
@@ -4009,8 +4010,6 @@ scanner-stay-until-you-press-next = Rester jusqu'à ce que vous appuyiez sur SUI
 scanner-how-long-stay = Combien de temps rester
 scanner-how-long-wait-after-signal = Combien de temps attendre après la chute du signal
 scanner-move-don-t-stop-channel = Passer à la suite, et ne plus s'arrêter sur ce canal
-scanner-next = SUIVANT
-scanner-move-now = Passer à la suite maintenant
 
 ## adsb (src/app/panels/adsb.rs)
 
@@ -5212,6 +5211,11 @@ sat-norad-2 = NORAD { $norad_id }
 
 scanner-holding-mhz = maintien sur { $here } MHz
 scanner-scanning-mhz = balayage · { $here } MHz
+scanner-pano-first = Panorama { $range } MHz · premier balayage …
+scanner-pano-sweeps = Panorama { $range } MHz · balayage { $n } · { $secs } s
+scanner-pano-clear = Effacer le panorama et rebalayer
+scanner-forward = Avant : continuer vers le haut
+scanner-backward = Arrière : faire demi-tour et descendre
 
 ## spectrum: messages with values (src/app/spectrum.rs)
 

@@ -355,6 +355,12 @@ pub struct ScanState {
     pub running: bool,
     /// Stopped on a busy channel rather than moving.
     pub holding: bool,
+    /// A panorama scan's finished sweeps since it started, and how long the
+    /// last one took (ms) — what its status line shows instead of a dial.
+    #[serde(default)]
+    pub sweeps: u32,
+    #[serde(default)]
+    pub sweep_ms: u32,
 }
 
 #[cfg(test)]

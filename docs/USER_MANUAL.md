@@ -2164,10 +2164,14 @@ is transmitting. Two kinds:
 - **MEM** — the stored memory channels, each in its own mode and filter. Mark
   any of them **SKIP** to pass it over; a channel that is always busy with
   something you do not want to hear is what that is for.
-- **RANGE** — a slice of a band on a channel grid. Give it a **From** and a
-  **to** in MHz, a **Step** (5 / 6.25 / 8.33 / 10 / 12.5 / 25 kHz) and a mode.
-- **PANO** — a panorama: a range swept without stopping. Give it a **From** and
-  a **to** in MHz; nothing else applies, because it stops nowhere. The radio
+- **RANGE** — a slice of a band on a channel grid. Pick a **Band** from the
+  list — every amateur band of your region plus the broadcast, CB and AM
+  allocations — or give it a **From** and a **to** in MHz, a **Step** (5 / 6.25 / 8.33 / 10 / 12.5 / 25 kHz) and a mode.
+- **PANO** — a panorama: a range swept without stopping. Pick a **Band** or give
+  it a **From** and a **to** in MHz; nothing else applies, because it stops
+  nowhere. A new range starts the panorama afresh; **CLR** does the same on the
+  range it has, throwing the picture away. Its status line names the range, the
+  sweeps so far and how long the last one took. The radio
   tunes slice after slice across the range, as a range scan does, and stitches
   what each slice sees — the middle of it, clear of the roll-off at the edges and
   of the front end's own spike at DC — into one spectrum across the whole range.
@@ -2260,10 +2264,12 @@ missed; the default 150 ms is a reasonable balance.
   seconds is a good starting point.
 - **TIMED** — carry on after a fixed time whether or not the signal is still
   there. Useful on a channel somebody is sitting on.
-- **MANUAL** — stay until you press **NEXT**.
+- **MANUAL** — stay until you press **▶** or **◀**.
 
-While a scan is running, **NEXT** moves on now and **SKIP** moves on and adds
-the channel to the skip list. Touching the dial, changing band, recalling a
+While a scan is running, **▶** moves on now, upwards, and **◀** turns the scan
+round and moves on downwards — the two arrows of a radio's scan key; the scan
+keeps the direction last pressed, wrapping round at either end of the range or
+list. **SKIP** moves on and adds the channel to the skip list. Touching the dial, changing band, recalling a
 memory or transmitting all stop the scan where it is — as on any scanner, and so
 that the radio is not fighting you for the VFO.
 

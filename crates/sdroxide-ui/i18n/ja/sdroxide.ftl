@@ -3953,6 +3953,7 @@ scanner-sweep-range-into-panorama = 範囲を止まらずに掃引してパノ�
 scanner-panorama-hint = 止まらずに掃引。1回の掃引ごとに全帯域ストリップ（WIDE）の1行。
 scanner-stop = 停止
 scanner-start = 開始
+scanner-band = バンド
 scanner-from = 開始
 scanner-step = ステップ
 scanner-mode = モード
@@ -3989,8 +3990,6 @@ scanner-stay-until-you-press-next = 次を押すまでとどまります
 scanner-how-long-stay = とどまる時間
 scanner-how-long-wait-after-signal = 信号が下がった後に待つ時間
 scanner-move-don-t-stop-channel = 次へ進み、このチャンネルでは再び止まりません
-scanner-next = 次へ
-scanner-move-now = 今すぐ次へ進みます
 
 ## ADS-B（src/app/panels/adsb.rs）
 
@@ -5156,6 +5155,11 @@ sat-norad-2 = NORAD { $norad_id }
 
 scanner-holding-mhz = { $here } MHz で保持中
 scanner-scanning-mhz = スキャン中 · { $here } MHz
+scanner-pano-first = パノラマ { $range } MHz · 初回掃引中 …
+scanner-pano-sweeps = パノラマ { $range } MHz · 掃引 { $n } · { $secs } 秒
+scanner-pano-clear = パノラマを破棄して再掃引
+scanner-forward = 前進：上へ進む
+scanner-backward = 後退：反転して下へ進む
 
 ## スペクトラム：値を含むメッセージ（src/app/spectrum.rs）
 

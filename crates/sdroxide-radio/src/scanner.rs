@@ -261,6 +261,21 @@ pub fn channel_power_db(
     Some((10.0 * (total + 1e-30).log10()) as f32)
 }
 
+/// The next index round a list of `len`, upwards or (`back`) downwards,
+/// wrapping at either end. `usize::MAX` is "not started": the first step
+/// lands on the first entry going up and the last going down.
+pub fn step_index(i: usize, len: usize, back: bool) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    match (back, i) {
+        (false, usize::MAX) => 0,
+        (false, i) => (i + 1) % len,
+        (true, i) if i == 0 || i >= len => len - 1,
+        (true, i) => i - 1,
+    }
+}
+
 /// The noise floor of a spectrum as channel power: what a channel
 /// `bandwidth_hz` wide reads where nobody is transmitting. The median bin is
 /// the floor — most of any band is empty — times the bins one channel covers.
@@ -648,6 +663,17 @@ mod tests {
         let floor = channel_noise_floor_db(&bins, 1e6, 10_000.0).unwrap();
         assert!((floor - -90.0).abs() < 0.01, "{floor}");
         assert_eq!(channel_noise_floor_db(&[f32::NAN; 4], 1e6, 1e4), None);
+    }
+
+    #[test]
+    fn steps_wrap_both_ways() {
+        assert_eq!(step_index(usize::MAX, 3, false), 0);
+        assert_eq!(step_index(2, 3, false), 0);
+        assert_eq!(step_index(0, 3, false), 1);
+        assert_eq!(step_index(usize::MAX, 3, true), 2);
+        assert_eq!(step_index(0, 3, true), 2);
+        assert_eq!(step_index(2, 3, true), 1);
+        assert_eq!(step_index(5, 0, true), 0);
     }
 
     const SPAN_PANO: f64 = 2e6;

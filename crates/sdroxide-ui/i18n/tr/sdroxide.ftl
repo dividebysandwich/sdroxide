@@ -3972,6 +3972,7 @@ scanner-sweep-range-into-panorama = Bir aralığı durmadan tarayıp panorama ol
 scanner-panorama-hint = Durmadan tarar; her tam tarama tam bant şeridinde (WIDE) bir satırdır.
 scanner-stop = DURDUR
 scanner-start = BAŞLAT
+scanner-band = Bant
 scanner-from = Başlangıç
 scanner-step = Adım
 scanner-mode = Mod
@@ -4008,8 +4009,6 @@ scanner-stay-until-you-press-next = SONRAKİ'ye basana dek kalın
 scanner-how-long-stay = Ne kadar kalınacağı
 scanner-how-long-wait-after-signal = Sinyal düştükten sonra ne kadar beklenecek
 scanner-move-don-t-stop-channel = Devam edin ve bu kanalda bir daha durmayın
-scanner-next = SONRAKİ
-scanner-move-now = Şimdi devam et
 
 ## adsb (src/app/panels/adsb.rs)
 
@@ -5204,6 +5203,11 @@ sat-norad-2 = NORAD { $norad_id }
 
 scanner-holding-mhz = { $here } MHz'de tutuluyor
 scanner-scanning-mhz = taranıyor · { $here } MHz
+scanner-pano-first = Panorama { $range } MHz · ilk tarama …
+scanner-pano-sweeps = Panorama { $range } MHz · tarama { $n } · { $secs } sn
+scanner-pano-clear = Panoramayı at ve yeniden tara
+scanner-forward = İleri: yukarı devam
+scanner-backward = Geri: dön ve aşağı devam
 
 ## spectrum: değerli iletiler (src/app/spectrum.rs)
 
