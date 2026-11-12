@@ -1100,7 +1100,7 @@ them all at once.
 
 **Display module:**
 
-- **SOLAR** — open the [solar system 3D view](#7-solar-system-3d-view): a second
+- **SOLAR** (System box, among the window chips) — open the [solar system 3D view](#7-solar-system-3d-view): a second
   window in the native app, a second browser tab in the web client.
 - **SPEC** — opens the **spectrum popup**: everything about the spectrum line
   across the top of the panadapter. The button is lit while the spectrum is
@@ -6914,7 +6914,7 @@ ACARS is also carried over VDL2 on higher frequencies — see [3.15](#315-vdl2-w
 
 HFDL (High Frequency Data Link, ARINC 635) is the datalink airliners use where nothing else reaches: the oceans and the poles. A handful of ground stations spread around the world transmit on assigned shortwave channels between 2.8 and 22 MHz, aircraft answer on the same channel, and the exchange carries squitters, logons, position and performance reports, frequency data, and ACARS messages riding inside it. It is slow — 300 to 1800 bits per second of PSK on a 2.8 kHz single-sideband channel — and it is the only aircraft datalink you can hear from the other side of an ocean.
 
-Choose **HFDL** from the end of the **DIGITAL** row, or press the **HFDL** chip in the System box. The panel docks under the waterfall: the decode log on the left, an aircraft map on the right, with a draggable divider between them that is remembered with the rest of the layout.
+Choose **HFDL** from the end of the **DIGITAL** row, or press the **HFDL** chip in the Display box, beside SKIM. The panel docks under the waterfall: the decode log on the left, an aircraft map on the right, with a draggable divider between them that is remembered with the rest of the layout.
 
 **One channel at a time, and you choose which.** This is the difference between HFDL and the other aircraft lanes. ADS-B has exactly one frequency and AIS and VDL2 cover all of their channels at once, because theirs sit next to each other. HFDL's do not — they are scattered across the whole shortwave spectrum — so the decoder listens to one 24 kHz lane and the frequency is yours to pick.
 
@@ -14438,7 +14438,7 @@ remote or browser client sees, saves and applies the same list.
 
 ## 7. Solar system 3D view
 
-The **SOLAR** button in the Display module opens the solar system in three
+The **SOLAR** button in the System module opens the solar system in three
 dimensions — the Sun, the Earth and the Moon, the other seven planets and
 eighteen of their moons — with live solar imagery, sunspot regions and
 coronal-mass-ejection trajectories. This enables operators to see if anything is
@@ -15636,8 +15636,8 @@ row of menu buttons:
 | **VFO** | A↔B, A→B, SPLIT, SUB, and the RIT/XIT offsets |
 | **SUB** | The second receiver's frequency, mode, filter and level (only while it is running) |
 | **TX** | TUNE, the voice keyer, and the drive, tune and mic levels |
-| **DISP** | SOLAR, WIDE, FIT, CTR, the panadapter boxes (the spectrum and waterfall switches, peak hold, their speeds and the detail), the skimmers, and the spectrum floor/ceiling and FFT size |
-| **SYS** | LOG, SPOTS, AWARDS, BANDS, SAT, ISM, PUBLIC SDR, MAIL, MEM, SCAN, SETTINGS, HELP |
+| **DISP** | FFT, SPEC, FIT, WIDE, CTR, HFDL, the panadapter boxes (the spectrum and waterfall switches, peak hold, their speeds and the detail), the skimmers, and the spectrum floor/ceiling and FFT size |
+| **SYS** | LOG, SPOTS, AWARDS, BANDS, SAT, ISM, PUBLIC SDR, MAIL, MEM, SCAN, SOLAR, SETTINGS, HELP |
 
 A menu stays open until you tap outside it or tap its button again — the top-bar
 popups do not fade away on a touch screen the way they do under a mouse, because
