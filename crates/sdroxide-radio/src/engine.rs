@@ -8392,7 +8392,13 @@ impl Engine {
         }
         self.wide_fresh = false;
         let (center_hz, span_hz) = self.wide_window?;
-        let (floor, ceil) = auto_levels(&self.wide_bins, self.wide_levels);
+        // A panorama row is a whole sweep, seconds apart, and is scaled on its
+        // own: carried over, the levels fall a few percent per row — tuned for
+        // a lane at ten rows a second — so a scale left high by an earlier
+        // range or a stronger front end would keep the panorama black for
+        // minutes.
+        let prev = if self.wide_from_pano { None } else { self.wide_levels };
+        let (floor, ceil) = auto_levels(&self.wide_bins, prev);
         self.wide_levels = Some((floor, ceil));
         self.wide_seq = self.wide_seq.wrapping_add(1);
         Some(pool_window_to_frame(
