@@ -113,6 +113,10 @@ const CHIP_STRETCH_FACTOR: f32 = 2.0;
 /// The VFO/RIT box's utility chips — the labels its top row is measured and
 /// drawn from.
 const VFO_CHIPS: [&str; 4] = ["A↔B", "A→B", "SPLIT", "SUB"];
+
+/// The clipboard chip, after A→B: A→B copies within this radio, the
+/// clipboard to another. Only drawn while another radio is open.
+const CLIP_CHIP: &str = "📋";
 /// The repeater chips that follow them on the same row: the transmit shift and
 /// the tone that goes out under it.
 ///
@@ -1925,7 +1929,7 @@ impl SdroxideApp {
     fn vfo_rit_module(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, w: f32) {
         let tx_capable = self.tx_chrome_ok();
         let inner = w - 2.0 * crate::chrome::MODULE_MARGIN_X - 4.0;
-        let chips = vfo_chip_labels(tx_capable);
+        let chips = vfo_chip_labels(tx_capable, self.clip_peers);
         let extra1 = ((inner - chip_row_w(ui, &chips)) / chips.len() as f32).max(0.0);
         let fields = if tx_capable { 2.0 } else { 1.0 };
         let extra2 = ((inner - vfo_offsets_w(ui, tx_capable)) / fields).max(0.0);
@@ -1947,6 +1951,19 @@ impl SdroxideApp {
         }
         if chip_stretched(ui, false, copy, extra).on_hover_text(tr!("topbar-copy-b")).clicked() {
             cmds.push(Command::CopyAtoB);
+        }
+        if self.clip_peers {
+            let full = self.clip.is_some();
+            let hint = match self.clip {
+                None => tr!("topbar-clip"),
+                Some(c) => tr!("topbar-clip-full", freq = clip_mhz(c.hz), mode = c.mode.label()),
+            };
+            let r = chip_stretched(ui, full, CLIP_CHIP, extra).on_hover_text(hint);
+            let act = clip_click(full, r.clicked(), r.secondary_clicked())
+                .map(|k| k.into_act(|| self.clip_load()));
+            if let Some(act) = act {
+                self.radio_tab_requests.push(super::RadioTabRequest::Clip(act));
+            }
         }
         if chip_stretched(ui, self.state.split, split, extra).clicked() {
             cmds.push(Command::SetSplit(!self.state.split));
@@ -2354,7 +2371,8 @@ impl SdroxideApp {
     /// receive-only rig has no XIT, and stops paying for it.
     fn vfo_rows_w(&self, ui: &egui::Ui) -> f32 {
         let tx_capable = self.tx_chrome_ok();
-        chip_row_w(ui, &vfo_chip_labels(tx_capable)).max(vfo_offsets_w(ui, tx_capable))
+        chip_row_w(ui, &vfo_chip_labels(tx_capable, self.clip_peers))
+            .max(vfo_offsets_w(ui, tx_capable))
             + 2.0 * crate::chrome::MODULE_MARGIN_X
             + 4.0
     }
@@ -7908,13 +7926,50 @@ fn band_mode_h(ui: &egui::Ui) -> f32 {
     (base + BAND_MODE_EXTRA_H).min(ui.available_height().max(base))
 }
 
-/// The labels on the VFO box's top row, in the order they are drawn.
-///
-/// DUPLEX is a transmit-side control and a receive-only front end does not pay
-/// for it, exactly as it does not pay for XIT on the row below. TONE stays
-/// either way: the receive tone squelch behind it belongs to the receiver.
-fn vfo_chip_labels(tx_capable: bool) -> Vec<&'static str> {
+/// What a click on the clipboard chip does, before it reaches the shell.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ClipClick {
+    Copy,
+    Paste,
+    Clear,
+}
+
+impl ClipClick {
+    fn into_act(self, load: impl FnOnce() -> super::Clip) -> super::ClipAct {
+        match self {
+            ClipClick::Copy => super::ClipAct::Copy(load()),
+            ClipClick::Paste => super::ClipAct::Paste,
+            ClipClick::Clear => super::ClipAct::Clear,
+        }
+    }
+}
+
+/// The clipboard chip's rule: left click fills the clipboard when it is
+/// empty and pastes it when it is filled; right click empties it without
+/// pasting.
+// Why: HDZ 2026-11-12: "mit Rechtsklick wird es unverrichteter Dinge
+//      gelöscht, links füllt auf oder überträgt".
+fn clip_click(full: bool, left: bool, right: bool) -> Option<ClipClick> {
+    if right {
+        return full.then_some(ClipClick::Clear);
+    }
+    left.then_some(if full { ClipClick::Paste } else { ClipClick::Copy })
+}
+
+/// The clipboard's dial for its tooltip: MHz to the hertz, trailing zeros
+/// dropped down to kHz, so `14.230 MHz`, `145.5375 MHz`.
+fn clip_mhz(hz: f64) -> String {
+    let s = format!("{:.6}", hz / 1e6);
+    let (int, frac) = s.split_once('.').unwrap_or((&s, ""));
+    let frac = frac.trim_end_matches('0');
+    format!("{int}.{frac:0<3} MHz")
+}
+
+fn vfo_chip_labels(tx_capable: bool, clip: bool) -> Vec<&'static str> {
     let mut labels = VFO_CHIPS.to_vec();
+    if clip {
+        labels.insert(2, CLIP_CHIP);
+    }
     if tx_capable {
         labels.push(DUPLEX_CHIP);
     }
@@ -9941,7 +9996,7 @@ mod tests {
             + 12.0
             + RIGHT_W
             + 8.0;
-        let vfo = chip_row_w(ui, &vfo_chip_labels(true)).max(vfo_offsets_w(ui, true))
+        let vfo = chip_row_w(ui, &vfo_chip_labels(true, false)).max(vfo_offsets_w(ui, true))
             + 2.0 * crate::chrome::MODULE_MARGIN_X
             + 4.0;
         let rx = rx_rows(ui, &[], &[], false, false, mode).w()
@@ -10202,6 +10257,24 @@ mod tests {
         .drop_without_applying_deltas();
     }
 
+    #[test]
+    fn the_clipboard_chip_fills_pastes_and_empties() {
+        use super::{ClipClick, clip_click, clip_mhz};
+        // Empty: left fills, right does nothing.
+        assert_eq!(clip_click(false, true, false), Some(ClipClick::Copy));
+        assert_eq!(clip_click(false, false, true), None);
+        // Filled: left pastes, right empties.
+        assert_eq!(clip_click(true, true, false), Some(ClipClick::Paste));
+        assert_eq!(clip_click(true, false, true), Some(ClipClick::Clear));
+        // No click, nothing.
+        assert_eq!(clip_click(true, false, false), None);
+        // The tooltip's dial.
+        assert_eq!(clip_mhz(14_230_000.0), "14.230 MHz");
+        assert_eq!(clip_mhz(145_537_500.0), "145.5375 MHz");
+        assert_eq!(clip_mhz(7_074_010.0), "7.07401 MHz");
+        assert_eq!(clip_mhz(10_000_000.0), "10.000 MHz");
+    }
+
     /// Lay the condensed VFO/RIT box's rows out with real chips and drag
     /// values at desktop metrics and check both fit the width
     /// [`vfo_offsets_w`] and [`chip_row_w`] price — which is what keeps
@@ -10209,11 +10282,11 @@ mod tests {
     /// shape.
     #[test]
     fn the_condensed_vfo_box_fits_its_rows() {
-        for tx_capable in [false, true] {
+        for (tx_capable, clip) in [(false, false), (true, false), (false, true), (true, true)] {
             let (ctx, input) = desktop_ctx();
             ctx.run_ui(input, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(MODULE_ROW_SPACING, MODULE_ROW_SPACING);
-                let chips = vfo_chip_labels(tx_capable);
+                let chips = vfo_chip_labels(tx_capable, clip);
                 let room = chip_row_w(ui, &chips).max(vfo_offsets_w(ui, tx_capable)) + 4.0;
                 let row1 = ui
                     .horizontal(|ui| {
@@ -10241,7 +10314,10 @@ mod tests {
                         ui.min_rect().width()
                     })
                     .inner;
-                assert!(row1 <= room + 0.5, "tx={tx_capable}: row 1 took {row1} of {room}");
+                assert!(
+                    row1 <= room + 0.5,
+                    "tx={tx_capable} clip={clip}: row 1 took {row1} of {room}"
+                );
                 assert!(row2 <= room + 0.5, "tx={tx_capable}: row 2 took {row2} of {room}");
             })
             .drop_without_applying_deltas();
