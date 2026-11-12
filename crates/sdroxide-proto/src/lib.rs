@@ -1695,7 +1695,13 @@ use sdroxide_types::{
 ///
 /// v204: Contestia. `Mode::Contestia` appended; it shares Olivia's tones and
 /// bandwidth fields, so `DigiConfig` is unchanged.
-pub const PROTO_VERSION: u16 = 204;
+///
+/// v205: FM-DECRACKLE and the waterfall's looks. `Command` gains
+/// `SetFmDecrackle` after `SetAutoNotch` (every later variant shifts),
+/// `RxState` gains `fm_decrackle`, `fm_deemph` and `fm_decrackle_dip`, and
+/// `SpectrumConfig` gains `smooth`, `reassign`, `reassign_floor_db` and
+/// `reassign_dim_db` at its tail.
+pub const PROTO_VERSION: u16 = 205;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
