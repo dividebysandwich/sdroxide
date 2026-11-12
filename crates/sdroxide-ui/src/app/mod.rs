@@ -155,6 +155,10 @@ pub struct SdroxideApp {
     /// more than the IQ it delivers. `None` on every other backend, which is
     /// also how the UI decides whether to offer the strip at all.
     wide_frame: Option<std::sync::Arc<SpectrumFrame>>,
+    /// The S/N and SK means over the full-band strip, kept while either line
+    /// is on (see `wide_guide_note_frame`).
+    wide_grid: Option<crate::mean_spectrum::MeanGrid>,
+    wide_guide: Option<std::sync::Arc<crate::mean_spectrum::Guide>>,
     /// Scrolling history behind the full-band strip.
     wide_wf: crate::widgets::wide_spectrum::WideWaterfall,
     meters: Option<Meters>,
@@ -1533,6 +1537,8 @@ impl SdroxideApp {
             catalog_aoki: None,
             catalog_imports: 0,
             wide_frame: None,
+            wide_grid: None,
+            wide_guide: None,
             wide_wf: Default::default(),
             meters: None,
             last_swr: None,
@@ -2291,6 +2297,8 @@ impl SdroxideApp {
         self.cert_hold = false;
         self.frame = None;
         self.wide_frame = None;
+        self.wide_grid = None;
+        self.wide_guide = None;
         // The new session starts on the engine's own spectrum config, not the
         // one the old session was told. Forgetting what was sent is what makes
         // this frame's debounce push it again.

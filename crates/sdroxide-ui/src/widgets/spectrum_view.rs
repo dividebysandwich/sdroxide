@@ -1167,7 +1167,7 @@ pub struct PeakHold {
 }
 
 /// The S/N guide's colour, the green of the earlier correlation display.
-const SNR_GUIDE_COLOUR: Color32 = Color32::from_rgb(120, 255, 140);
+pub(crate) const SNR_GUIDE_COLOUR: Color32 = Color32::from_rgb(120, 255, 140);
 
 /// The S/N guide over the spectrum: from its base line (0 dB S/N, the noise
 /// floor) — the strip's bottom edge — up to a quarter of
@@ -1236,7 +1236,7 @@ fn draw_snr_guide(
 }
 
 /// The kurtosis line's colour: amber, apart from the S/N green.
-const SK_GUIDE_COLOUR: Color32 = Color32::from_rgb(255, 176, 0);
+pub(crate) const SK_GUIDE_COLOUR: Color32 = Color32::from_rgb(255, 176, 0);
 
 /// The kurtosis line over the spectrum, on the S/N line's base and in its
 /// quarter of the strip, with a faint rule where the noise reads (1).

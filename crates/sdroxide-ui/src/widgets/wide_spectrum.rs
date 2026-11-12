@@ -227,6 +227,7 @@ pub fn show(
     frame: &SpectrumFrame,
     state: &RadioState,
     palette: usize,
+    lines: Option<GuideLines>,
     cmds: &mut Vec<Command>,
 ) {
     wf.push(frame, palette);
@@ -304,6 +305,15 @@ pub fn show(
         // The band plan's allocation row along the bottom, under everything
         // drawn over the waterfall after it.
         crate::widgets::bandplan::wide_row(&painter, &rect, &x_of);
+    }
+
+    // S/N and SK over the whole band, as on the panadapter: the kurtosis
+    // shows whoever comes and goes — a voice, a key, a burst — where the
+    // waterfall already shows the carriers.
+    // Kept under its own name: `lines` below is the scale's.
+    let guide_lines = lines;
+    if let Some(l) = &guide_lines {
+        draw_guide_lines(&painter, &rect, l, &x_of);
     }
 
     // What the panadapter below is showing, outlined rather than filled so it
@@ -434,13 +444,38 @@ pub fn show(
     if let Some(p) = resp.hover_pos().filter(|_| measuring.is_none() && !resp.dragged()) {
         let line = Color32::from_rgba_unmultiplied(185, 205, 225, 70);
         painter.vline(p.x, rect.y_range(), Stroke::new(1.0, line));
-        spectrum_view::label_box(
-            &painter,
-            Pos2::new(p.x + 8.0, p.y - 9.0),
-            &format!("{:.5} MHz", tuned(hz_at(&rect, lo, hi, p.x)) / 1e6),
-            Color32::WHITE,
-            rect,
-        );
+        let hz = hz_at(&rect, lo, hi, p.x);
+        let mut boxes = vec![(format!("{:.5} MHz", tuned(hz) / 1e6), Color32::WHITE)];
+        // With the S/N or SK line on, their values under the pointer, from the
+        // strip's own means, in the lines' colours — as the panadapter does.
+        // Why: HDZ 2026-11-10: "im Panorama dann auch wie unten im Spektrum
+        //      S/N und SK am Cursor mit anzeigen".
+        if let Some(l) = &guide_lines {
+            use crate::widgets::spectrum_view::{SK_GUIDE_COLOUR, SNR_GUIDE_COLOUR};
+            if l.snr
+                && let Some(snr) = l.guide.snr_at(hz)
+            {
+                boxes.push((format!("S/N {snr:.1} dB"), SNR_GUIDE_COLOUR));
+            }
+            if l.sk
+                && let Some(k) = l.guide.sk_at(hz)
+            {
+                boxes.push((format!("SK {:.1} dB", 10.0 * k.max(1e-3).log10()), SK_GUIDE_COLOUR));
+            }
+        }
+        // As one block: the strip is low, and boxes pushed to its edge one by
+        // one would land on top of each other.
+        let step = 11.0 * crate::theme::panadapter_font_scale() + 6.0;
+        let top = (p.y - 9.0).min(rect.bottom() - step * boxes.len() as f32).max(rect.top());
+        for (i, (text, colour)) in boxes.iter().enumerate() {
+            spectrum_view::label_box(
+                &painter,
+                Pos2::new(p.x + 8.0, top + step * i as f32),
+                text,
+                *colour,
+                rect,
+            );
+        }
     }
 
     // --- bandwidth measurement (shift+drag) + fade-out --------------------
@@ -807,5 +842,54 @@ mod tests {
         // ...and the tip is inside the strip, under the same frequency.
         assert_eq!(down[2], Pos2::new(50.0, top + 7.0));
         assert_eq!(up[2], Pos2::new(50.0, bottom - 7.0));
+    }
+}
+
+/// The panadapter's S/N and SK lines, laid over the full-band strip.
+pub struct GuideLines {
+    pub guide: std::sync::Arc<crate::mean_spectrum::Guide>,
+    pub snr: bool,
+    pub sk: bool,
+    pub snr_top_db: f32,
+    pub sk_bottom_db: f32,
+    pub sk_top_db: f32,
+}
+
+/// Each line in the lower half of the strip, on the panadapter's scales and
+/// colours. No caption: the strip is busy enough, and the panadapter's 1D
+/// spectrum names the scales (HDZ 2026-11-09: "die Zahlen brauchst du in das
+/// Panorama nicht reinzuschreiben").
+fn draw_guide_lines(p: &egui::Painter, rect: &Rect, l: &GuideLines, x_of: &dyn Fn(f64) -> f32) {
+    use crate::widgets::spectrum_view::{SK_GUIDE_COLOUR, SNR_GUIDE_COLOUR};
+    let g = &l.guide;
+    let base = rect.bottom() - 1.0;
+    let full = rect.height() * 0.5;
+    let line = |vals: &mut dyn Iterator<Item = (usize, f32)>, colour: Color32| {
+        let mut run: Vec<Pos2> = Vec::new();
+        for (i, frac) in vals {
+            if !frac.is_finite() {
+                if run.len() >= 2 {
+                    p.add(egui::Shape::line(std::mem::take(&mut run), Stroke::new(1.0, colour)));
+                }
+                run.clear();
+                continue;
+            }
+            let hz = g.lo_hz + (i as f64 + 0.5) * g.cell_hz;
+            run.push(Pos2::new(x_of(hz), base - frac.clamp(0.0, 1.0) * full));
+        }
+        if run.len() >= 2 {
+            p.add(egui::Shape::line(run, Stroke::new(1.0, colour)));
+        }
+    };
+    if l.snr {
+        let top = l.snr_top_db.max(1.0);
+        line(&mut g.snr_db.iter().map(|s| s / top).enumerate(), SNR_GUIDE_COLOUR);
+    }
+    if l.sk {
+        let (lo, hi) = (l.sk_bottom_db, l.sk_top_db.max(l.sk_bottom_db + 1.0));
+        let frac = |k: &f32| {
+            if k.is_finite() { (10.0 * k.max(1e-3).log10() - lo) / (hi - lo) } else { f32::NAN }
+        };
+        line(&mut g.sk.iter().map(frac).enumerate(), SK_GUIDE_COLOUR);
     }
 }

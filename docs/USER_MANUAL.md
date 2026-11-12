@@ -1194,6 +1194,17 @@ them all at once.
   the panadapter span is all the hardware delivers — and the setting is
   remembered between sessions.
 
+  With the **S/N** or **SK** line on, the strip carries them too, across the
+  whole band, in the lower half and on the panadapter's scales: the green S/N
+  line, and the amber kurtosis line, which rises wherever power comes and goes
+  — a voice, a key, a burst — and so points at whoever is on the air anywhere
+  in the band, where the waterfall already shows the steady carriers. No
+  caption on the strip; the panadapter's spectrum names the scales. Hovering
+  the strip shows the S/N and SK under the cursor below the frequency, in
+  their lines' colours, as on the panadapter. One of the
+  strip's cells is several kilohertz wide, so a weak SSB signal is diluted in
+  it: the line finds the middling and strong ones.
+
   On such a receiver the **main panadapter can be zoomed out into the strip's
   window too**, past the I/Q the front end is streaming: keep zooming and it
   goes on widening until it covers everything the strip does, drawing those

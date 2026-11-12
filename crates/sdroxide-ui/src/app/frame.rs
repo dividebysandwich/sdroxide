@@ -906,12 +906,14 @@ impl eframe::App for SdroxideApp {
                 && !self.panadapter_window_wanted()
                 && let Some(wide) = self.wide_frame.clone()
             {
+                let lines = self.wide_guide_lines();
                 crate::widgets::wide_spectrum::show(
                     ui,
                     &mut self.wide_wf,
                     &wide,
                     &self.state,
                     self.ui_settings.waterfall_palette,
+                    lines,
                     &mut cmds,
                 );
                 ui.add_space(2.0);
@@ -1639,6 +1641,8 @@ impl SdroxideApp {
                     // this the strip from the previous backend stays on screen
                     // for good, showing a band nothing is receiving any more.
                     self.wide_frame = None;
+                    self.wide_grid = None;
+                    self.wide_guide = None;
                     self.wide_wf.clear();
                     // This also fires on a reconnect, and pictures may have
                     // come in while the link was down. Read the stores again
@@ -1725,6 +1729,7 @@ impl SdroxideApp {
                 // the "waiting for spectrum" notice, and a full-band frame is
                 // not evidence that the tuned receiver is producing samples.
                 RadioEvent::WideSpectrum(f) => {
+                    self.wide_guide_note_frame(&f);
                     self.wide_frame = Some(std::sync::Arc::new(f));
                 }
                 RadioEvent::Meters(m) => {
