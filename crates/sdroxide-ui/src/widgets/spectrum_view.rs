@@ -1166,6 +1166,75 @@ pub struct PeakHold {
     generation: u32,
 }
 
+/// The S/N guide's colour, the green of the earlier correlation display.
+const SNR_GUIDE_COLOUR: Color32 = Color32::from_rgb(120, 255, 140);
+
+/// The S/N guide over the spectrum: from its base line (0 dB S/N, the noise
+/// floor) — the strip's bottom edge — up to a quarter of
+/// the strip's height at [`ViewState::snr_guide_top_db`]; below the floor it rests on
+/// the line. A cell nothing has reached breaks the line.
+// Why: HDZ 2026-11-07: "an der Position, wo vorher im Korr-Spektrum die Null
+//      war … Höhe vielleicht 1/4 vom Original".
+fn draw_snr_guide(
+    p: &egui::Painter,
+    view: &ViewState,
+    rect: &Rect,
+    g: Option<&crate::mean_spectrum::Guide>,
+) {
+    let font = egui::FontId::monospace(10.0);
+    let at = rect.left_top() + egui::vec2(6.0, 4.0);
+    let base = rect.bottom() - 1.0;
+    let full = rect.height() / 4.0;
+    let top_db = view
+        .snr_guide_top_db
+        .clamp(*crate::view::SNR_GUIDE_TOP_RANGE.start(), *crate::view::SNR_GUIDE_TOP_RANGE.end());
+    p.hline(rect.x_range(), base, Stroke::new(1.0, SNR_GUIDE_COLOUR.gamma_multiply(0.25)));
+    let Some(g) = g else {
+        p.text(at, egui::Align2::LEFT_TOP, "S/N: collecting", font, Color32::from_gray(170));
+        return;
+    };
+    let mut run: Vec<Pos2> = Vec::new();
+    // The frames behind what is on screen, fewest and most: a grid laid anew
+    // when the dial carried the panadapter along starts the cells that came
+    // into view from nothing, and the caption has to say so.
+    // Why: HDZ 2026-11-07: "die Info über wie viele Frames du gemittelt hast
+    //      beim Reset updaten, wenn der Cursor zum Neuaufbau zwingt".
+    let (mut fewest, mut most) = (u32::MAX, 0u32);
+    for (i, s) in g.snr_db.iter().enumerate() {
+        let hz = g.lo_hz + (i as f64 + 0.5) * g.cell_hz;
+        if s.is_finite() && hz >= view.view_lo_hz && hz <= view.view_hi_hz {
+            let n = g.count.get(i).copied().unwrap_or(0);
+            fewest = fewest.min(n);
+            most = most.max(n);
+        }
+        if !s.is_finite() || hz < view.view_lo_hz || hz > view.view_hi_hz {
+            if run.len() >= 2 {
+                p.add(Shape::line(std::mem::take(&mut run), Stroke::new(1.2, SNR_GUIDE_COLOUR)));
+            }
+            run.clear();
+            continue;
+        }
+        let h = (s / top_db).clamp(0.0, 1.0) * full;
+        run.push(pos2(view.freq_to_x(hz, rect), base - h));
+    }
+    if run.len() >= 2 {
+        p.add(Shape::line(run, Stroke::new(1.2, SNR_GUIDE_COLOUR)));
+    }
+    // The caption names the scale and the frames, nothing else.
+    // Why: HDZ 2026-11-08: "mach mal diese Anzeige für S/N kürzer im Text,
+    //      keinen Roman".
+    p.text(
+        at,
+        egui::Align2::LEFT_TOP,
+        format!(
+            "S/N 0–{top_db:.0} dB · {} frames",
+            if fewest < most { format!("{fewest}–{most}") } else { most.to_string() }
+        ),
+        font,
+        SNR_GUIDE_COLOUR,
+    );
+}
+
 /// dB-scale u8 units per new spectrum frame (~3.5 dB/s at 30 fps over a
 /// 100 dB range).
 const PEAK_DECAY: f32 = 0.3;
@@ -2347,6 +2416,12 @@ pub fn show_ext(
                 compute_trace(view, f, Some(&smooth.bins), &spec_rect, wf.row_scale)
             });
             painter.add(Shape::line(pts, Stroke::new(1.0, Color32::from_rgb(120, 220, 255))));
+            if view.snr_guide {
+                let g = ui.ctx().data(|d| {
+                    d.get_temp::<Arc<crate::mean_spectrum::Guide>>(crate::mean_spectrum::guide_id())
+                });
+                draw_snr_guide(&painter, view, &spec_rect, g.as_deref());
+            }
         }
     }
     draw_scale(&painter, view, &scale_rect);
@@ -2933,6 +3008,21 @@ pub fn show_ext(
             painter.vline(p.x, wf_rect.y_range(), Stroke::new(1.0, line));
             let text = click_tune_label(view, state, &rect, p.x, cursor);
             label_box(&painter, pos2(p.x + 8.0, p.y - 9.0), &text, Color32::WHITE, rect);
+            // With the S/N guide on, its value under the pointer, from the
+            // guide's memory, in a second box under the frequency.
+            // Why: HDZ 2026-11-07: "am Cursor bei eingeschaltetem S/N eine
+            //      Zusatzinfo … dein S/N-Wert aus dem Speicher, unter der
+            //      Frequenz".
+            if view.snr_guide {
+                let g = ui.ctx().data(|d| {
+                    d.get_temp::<Arc<crate::mean_spectrum::Guide>>(crate::mean_spectrum::guide_id())
+                });
+                if let Some(snr) = g.and_then(|g| g.snr_at(view.x_to_freq(p.x, &rect))) {
+                    let below = p.y - 9.0 + 11.0 * crate::theme::panadapter_font_scale() + 6.0;
+                    let text = format!("S/N {snr:.1} dB");
+                    label_box(&painter, pos2(p.x + 8.0, below), &text, SNR_GUIDE_COLOUR, rect);
+                }
+            }
         }
     }
 

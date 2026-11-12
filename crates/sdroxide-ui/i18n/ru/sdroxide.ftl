@@ -2467,7 +2467,6 @@ topbar-sql = SQL
 topbar-stations = станции
 topbar-caption-reaction = реакция
 topbar-caption-scroll = прокрутка
-topbar-caption-surface = поверхность
 topbar-caption-flow = поток
 topbar-caption-detail = детализация
 topbar-floor = пол

@@ -5685,12 +5685,42 @@ impl SdroxideApp {
                     {
                         self.view.peak_hold = !self.view.peak_hold;
                     }
-                    if crate::chrome::chip(ui, self.view.spectrum_3d, "3D")
-                        .on_hover_text(tr!("topbar-draw-spectrum-receding-surface-instead"))
+                    // The S/N guide: the band accumulated into one mean and drawn
+                    // as S/N along the strip's bottom edge, where faint steady
+                    // carriers stand out once the noise has averaged flat.
+                    // Why: HDZ 2026-11-07: "als Guide im gleichen Grün"; then
+                    //      "braucht kein Toggle mehr, nur unten anzeigen" — on and
+                    //      off, at the bottom, where it covers least of the line.
+                    if crate::chrome::chip(ui, self.view.snr_guide, tr!("topbar-snr-guide"))
+                        .on_hover_text(tr!("topbar-snr-guide-tip"))
                         .clicked()
                     {
-                        self.view.spectrum_3d = !self.view.spectrum_3d;
+                        self.view.snr_guide = !self.view.snr_guide;
                     }
+                });
+                // How tall the S/N line draws: the S/N at its full height, on a
+                // rail under the chip that switches it, live while it runs.
+                // Why: HDZ 2026-11-08: "zu SPEC S/N oben einen Schieberegler
+                //      ran, der die Toppinggrenze des S/N-Spektrums eingrenzt in
+                //      der Höhe, Default wie derzeit min = 12 dB, max = 30 dB".
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(tr!("topbar-caption-snr-top"))
+                            .size(10.0)
+                            .color(crate::theme::CYAN_DIM()),
+                    );
+                    ui.add_enabled(
+                        self.view.snr_guide,
+                        Slider::new(
+                            &mut self.view.snr_guide_top_db,
+                            crate::view::SNR_GUIDE_TOP_RANGE,
+                        )
+                        .step_by(1.0)
+                        .show_value(true)
+                        .custom_formatter(|v, _| format!("{v:.0} dB")),
+                    )
+                    .on_hover_text(tr!("topbar-snr-top-tip"))
+                    .on_disabled_hover_text(tr!("topbar-snr-top-tip"));
                 });
                 self.spectrum_3d_rows(ui, &mut cfg);
                 speed_row(
@@ -5720,6 +5750,82 @@ impl SdroxideApp {
                 &Speed::WATERFALL,
                 &tr!("topbar-how-fast-waterfall-scrolls-lines"),
             );
+            // One row: LABELS BY S/N, WITH PEAKS, IGNORE FLANKS side by side
+            // (wrapping on a narrow screen); the S/N MIN rail on the next.
+            // Why: HDZ 2026-11-11: "räume den Dialog auf, nebeneinander (Labels
+            //      nach S/N) (mit Peaks) (ignoriere Flanken), dann nächste Reihe
+            //      mit dem S/N-Schieberegler".
+            ui.horizontal_wrapped(|ui| {
+                // Labels by S/N: a spot keeps its label only where the S/N guide
+                // sees a signal. Greyed while the guide is off.
+                if crate::chrome::chip_enabled(
+                    ui,
+                    self.view.snr_guide,
+                    self.view.snr_label_filter,
+                    &tr!("topbar-snr-label-filter"),
+                )
+                .on_hover_text(tr!("topbar-snr-label-filter-tip"))
+                .clicked()
+                {
+                    self.view.snr_label_filter = !self.view.snr_label_filter;
+                    // Rebuild the candidates now rather than at the next minute.
+                    self.broadcast_minute = -1;
+                }
+                // PEAK: a label needs a peak of its own, not just height over the
+                // band's floor, so a broad hump (interference, a sideband) lifts
+                // none.
+                // Why: HDZ 2026-11-11, strong QRM: "sind die Label in der Lage,
+                //      einen Peak im S/N zu sehen?" — "ja bitte hänge die
+                //      Spitzen-Algorithmik mit rein".
+                if crate::chrome::chip_enabled(
+                    ui,
+                    self.view.snr_guide,
+                    self.view.snr_label_peak,
+                    &tr!("topbar-snr-label-peak"),
+                )
+                .on_hover_text(tr!("topbar-snr-label-peak-tip"))
+                .clicked()
+                {
+                    self.view.snr_label_peak = !self.view.snr_label_peak;
+                }
+                // FLANKS: a station 15 dB up keeps other labels off its sidebands.
+                // Why: HDZ 2026-11-11: "keine Labels an Sendergrenzen"; "Flanke
+                //      bitte doch an/aus, Schwelle 15 dB".
+                if crate::chrome::chip_enabled(
+                    ui,
+                    self.view.snr_guide,
+                    self.view.snr_label_flanks,
+                    &tr!("topbar-snr-label-flanks"),
+                )
+                .on_hover_text(tr!("topbar-snr-label-flanks-tip"))
+                .clicked()
+                {
+                    self.view.snr_label_flanks = !self.view.snr_label_flanks;
+                }
+            });
+            // The S/N threshold for labels and candidates, on a rail under
+            // LABELS BY S/N, live while the guide runs.
+            // Why: HDZ 2026-11-07: "S/N mit 6 ist viel zu streng, Shannon hat
+            //      hier 2 … du kannst unter SPEC einen Schieberegler machen
+            //      für S/N, dann habe ich das in der Hand, mit Default 2 und
+            //      Range von 0..6"; then "der Regler mit S/N Minimum gehört nach
+            //      unten, wo die Labels mit S/N geholt werden".
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(tr!("topbar-caption-snr-min"))
+                        .size(10.0)
+                        .color(crate::theme::CYAN_DIM()),
+                );
+                ui.add_enabled(
+                    self.view.snr_guide,
+                    Slider::new(&mut self.view.snr_label_min_db, crate::view::SNR_LABEL_MIN_RANGE)
+                        .step_by(0.5)
+                        .show_value(true)
+                        .custom_formatter(|v, _| format!("{v:.1} dB")),
+                )
+                .on_hover_text(tr!("topbar-snr-min-tip"))
+                .on_disabled_hover_text(tr!("topbar-snr-min-tip"));
+            });
             if crate::chrome::chip(ui, self.view.decode_labels, tr!("topbar-decode-labels"))
                 .on_hover_text(tr!("topbar-mark-every-decoded-station-waterfall"))
                 .clicked()
@@ -5738,7 +5844,8 @@ impl SdroxideApp {
 
     /// The two rows of [`Self::panadapter_controls`] that belong to the 3D
     /// display: how the surface is drawn, and how fast it flows away from the
-    /// viewer. Both are live only once the 3D chip above them is lit.
+    /// viewer. Both are live only once the 3D chip at the head of the first is
+    /// lit.
     ///
     /// Greyed rather than hidden while the flat line is showing, the way the
     /// detail row greys a width this machine cannot hold: rows that come and go
@@ -5747,13 +5854,22 @@ impl SdroxideApp {
     fn spectrum_3d_rows(&mut self, ui: &mut egui::Ui, cfg: &mut sdroxide_types::UiSettings) {
         let on = self.view.spectrum_3d;
         let grey = tr!("topbar-switch-3d-set");
+        // 3D heads its own row, LINES and SOLID beside it: the chip that
+        // switches the surface on and the two ways it is drawn belong together.
+        // Why: HDZ 2026-11-11: "der 3D-Knopf hängt da falsch rum, mach das zum
+        //      Thema (3D), und daneben Linien, Voll in einer Reihe, das gehört
+        //      zusammen, das Wort Fläche entfällt".
         ui.horizontal_wrapped(|ui| {
-            ui.label(
-                RichText::new(tr!("topbar-caption-surface"))
-                    .size(10.0)
-                    .color(crate::theme::CYAN_DIM()),
-            )
-            .on_hover_text(tr!("topbar-how-3d-spectrum-drawn-only"));
+            if crate::chrome::chip(ui, on, "3D")
+                .on_hover_text(format!(
+                    "{}\n{}",
+                    tr!("topbar-draw-spectrum-receding-surface-instead"),
+                    tr!("topbar-how-3d-spectrum-drawn-only")
+                ))
+                .clicked()
+            {
+                self.view.spectrum_3d = !self.view.spectrum_3d;
+            }
             for (solid, label, hint) in [
                 (false, tr!("topbar-lines"), tr!("topbar-one-trace-per-remembered-spectrum")),
                 (true, tr!("topbar-solid"), tr!("topbar-filled-surface-coloured-waterfall-s")),
@@ -7391,9 +7507,8 @@ fn panadapter_group_w(ui: &egui::Ui) -> f32 {
         .map(|d| crate::chrome::chip_width(ui, &detail_chip_label(*d), None) + gap)
         .sum();
     let widest = [
-        chips(&[&tr!("topbar-show-spectrum"), &tr!("topbar-peak-hold"), "3D"]),
-        caption(&tr!("topbar-caption-surface"))
-            + chips(&[&tr!("topbar-lines"), &tr!("topbar-solid")]),
+        chips(&[&tr!("topbar-show-spectrum"), &tr!("topbar-peak-hold"), &tr!("topbar-snr-guide")]),
+        chips(&["3D", &tr!("topbar-lines"), &tr!("topbar-solid")]),
         caption(&tr!("topbar-caption-flow")) + speeds(&Speed::SURFACE),
         caption(&tr!("topbar-caption-reaction")) + speeds(&Speed::ALL),
         caption(&tr!("topbar-caption-scroll")) + speeds(&Speed::WATERFALL),

@@ -1053,11 +1053,21 @@ them all at once.
     waterfall.
   - **PEAK HOLD** — trace the highest level each column has reached over the
     live line, decaying back down.
-  - **3D** — draw the spectrum as a receding surface instead of a flat line,
-    with the newest spectrum across the front. See
-    [The 3D spectrum](#the-3d-spectrum) below.
-  - **surface** — how that surface is drawn: **LINES** or **SOLID**. Greyed
-    until 3D is switched on.
+  - **S/N** — draw along the bottom of the spectrum how far every frequency
+    stands above the noise floor, in green, as a running mean in which newer
+    frames count more (one 30 s old counts a third; a level that has fallen is let go of within half a minute). The noise flattens into a
+    line and a faint steady carrier stays standing as a peak, which makes it a
+    tuning aid: put the cursor on the peak. Full height (a quarter of the
+    spectrum) is set on the **S/N TOP** rail under the chip, 12 to 30 dB,
+    12 dB to start with; the floor is the lowest tenth of the band, the window's
+    outer tenths left out (a narrow I/Q window's filter edges are not noise). A zoom or
+    another FFT size starts the mean afresh, a pan carries it along, and
+    switching it off resets it. With S/N on, the readout under the pointer
+    shows a second box with the S/N at that frequency.
+  - **3D**, at the head of its own row — draw the spectrum as a receding
+    surface instead of a flat line, with the newest spectrum across the front;
+    beside it, how that surface is drawn: **LINES** or **SOLID** (greyed until
+    3D is switched on). See [The 3D spectrum](#the-3d-spectrum) below.
   - **flow** — how fast it flows away from you, and so how much time the
     surface holds. Greyed until 3D is switched on.
   - **reaction** — how quickly the line follows the band: **Slow**, **Medium**
@@ -1075,6 +1085,39 @@ them all at once.
     the spectrum line.
   - **scroll** — how fast it scrolls. See
     [Waterfall scroll speed](#waterfall-scroll-speed) below.
+  - **LABELS BY S/N** — while the S/N line runs, a spot keeps its label only
+    where that line stands at least **S/N MIN** over the noise within 2 kHz of
+    the spot's frequency: a station on the schedule that is not coming in here
+    gets no label. Decided every two seconds, with a margin (a label goes only
+    1.5 dB under the threshold, or half of it below 3 dB), and faded in and out over a second; where the S/N line has
+    averaged too few spectra yet, labels stay as they are. While it is on,
+    more stations are offered than the broadcast schedule: the weather-fax
+    stations, the five NCDXF/IARU beacon frequencies, NAVTEX, the Shannon
+    and RAF VOLMETs and the published FT8, FT4, JS8, WSPR, FSQ and PSK31
+    dials — only those that come in get a label. Greyed while S/N
+    is off.
+  - **S/N MIN** — the rail in the row under LABELS BY S/N: how far over the noise a
+    frequency must stand on the S/N line for a label or a candidate, 0 to 6 dB,
+    2 dB to start with. 2 dB is where a weak steady station such as the
+    Shannon VOLMET stands once the line has averaged it; 0 dB shows whatever
+    the line has not ruled out. Live while S/N is on.
+  - **WITH PEAKS** — beside LABELS BY S/N: the label of an AM or CW station also
+    needs a peak of its own, its S/N at least 3 dB over the median of the band
+    0.6 to 2 kHz either side of it. Height over the floor alone lets a broad
+    hump through — strong interference over part of the band, a station's
+    sideband — and with it every station listed there; a carrier of its own
+    stands out of its surroundings. SSB, DRM, FAX and the digital modes spread
+    over their channel and have no peak, so WITH PEAKS leaves them to the height
+    test. Off to start with.
+  - **IGNORE FLANKS** — beside WITH PEAKS: a station 15 dB or more over the noise keeps
+    every other label off ±10 kHz around it, its sidebands and splatter,
+    unless that label's own S/N is within 6 dB of the strong one — a station
+    of its own. Off to start with. The strong station keeps its label.
+  - In the SPOTS window, **S/N** beside **IN VIEW** narrows what IN VIEW shows
+    to the spots the S/N line sees a signal at: S/N MIN or more within 2 kHz
+    of the spot's frequency. It works with IN VIEW only, because the line
+    covers the panadapter alone; where the line has averaged too few spectra
+    yet, a spot is left out: the line cannot show it is there.
   - **DECODE LABELS** — mark every decoded station on the waterfall with its
     callsign, at the frequency it was heard on, in FT8, FT4 and the other
     slotted modes. On by default. A good opening puts thirty boxes across the
@@ -1303,7 +1346,7 @@ this says it in shape.
 
 ![The 3D spectrum: the solid surface above, the line rendering below](images/spectrum-3d.png)
 
-The **surface** row picks between the two renderings:
+**LINES** and **SOLID**, beside **3D**, pick between the two renderings:
 
 - **SOLID** fills the surface and colours it by the same palette the waterfall
   uses, so the level is in the colour as well as in the height and the two

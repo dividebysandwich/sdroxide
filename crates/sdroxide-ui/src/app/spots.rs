@@ -166,6 +166,20 @@ impl SdroxideApp {
         }
         self.broadcast_minute = minute;
         self.broadcast_spots = sdroxide_types::broadcast::on_air(&self.broadcast, now_utc);
+        // While LABELS BY S/N runs, more candidates than the broadcast
+        // schedule: the S/N guide keeps only those that are coming in.
+        if self.view.snr_guide && self.view.snr_label_filter {
+            // One label per station: a candidate the schedule already has
+            // within 1 kHz (Shannon VOLMET is in it as "Shannon Volmet") is
+            // left out.
+            let extra: Vec<_> = crate::mean_spectrum::extra_label_candidates(now_utc)
+                .into_iter()
+                .filter(|c| {
+                    !self.broadcast_spots.iter().any(|s| (s.freq_hz - c.freq_hz).abs() < 1_000.0)
+                })
+                .collect();
+            self.broadcast_spots.extend(extra);
+        }
     }
 
     /// Collect a finished schedule download, and start one when the broadcasting
@@ -327,6 +341,28 @@ impl SdroxideApp {
                     {
                         self.spot_in_view_only = !self.spot_in_view_only;
                     }
+                    // S/N beside IN VIEW, as a criterion added to it: of the
+                    // spots in view, only those the S/N guide sees a signal at,
+                    // at least S/N MIN over the noise. The guide covers the
+                    // panadapter alone, so the chip is live only with IN VIEW
+                    // and the guide on.
+                    // Why: HDZ 2026-11-07: "neben IM BLICK sollte noch ein
+                    //      Toggle mit S/N filtered geben, wenn verfügbar, dass
+                    //      nicht nur die grob passenden, sondern die gematchten
+                    //      gehen"; then "das S/N ist ja ein Filter, er sollte
+                    //      abhängig werden von IM BLICK als Zusatzkriterium".
+                    if crate::chrome::chip_enabled(
+                        ui,
+                        self.view.snr_guide && self.spot_in_view_only,
+                        self.view.spots_snr_only,
+                        "S/N",
+                    )
+                    .on_hover_text(tr!("spots-snr-only-tip"))
+                    .on_disabled_hover_text(tr!("spots-snr-only-tip"))
+                    .clicked()
+                    {
+                        self.view.spots_snr_only = !self.view.spots_snr_only;
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if crate::chrome::chip(ui, false, tr!("spots-setup"))
                             .on_hover_text(tr!("spots-feeds-lookup-upload-settings"))
@@ -361,7 +397,14 @@ impl SdroxideApp {
                 // is kept; with one, the best matches come first, because the
                 // whole point of typing is to get the wanted row to the top.
                 let query = self.spot_search.trim();
-                let visible: Vec<&Spot> = spots.iter().filter(|s| self.spot_visible(s)).collect();
+                let visible: Vec<&Spot> = spots
+                    .iter()
+                    .filter(|s| self.spot_visible(s))
+                    .filter(|s| {
+                        !(self.view.snr_guide && self.spot_in_view_only && self.view.spots_snr_only)
+                            || self.snr_matches(s)
+                    })
+                    .collect();
                 let mut rows: Vec<(&Spot, i32)> = visible
                     .iter()
                     .filter_map(|s| {

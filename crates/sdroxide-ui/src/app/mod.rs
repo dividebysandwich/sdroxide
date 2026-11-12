@@ -31,6 +31,7 @@ pub(in crate::app) mod hd;
 pub(in crate::app) mod hfdl;
 pub(in crate::app) mod ism;
 pub(in crate::app) mod logbook;
+pub(in crate::app) mod mean;
 pub(in crate::app) mod morse;
 pub(in crate::app) mod net;
 pub(in crate::app) mod palette;
@@ -136,6 +137,13 @@ pub struct SdroxideApp {
     /// Latest spectrum frame, shared with the GPU waterfall callback — the Arc
     /// makes the per-repaint handoff a refcount bump instead of a bins clone.
     frame: Option<std::sync::Arc<SpectrumFrame>>,
+    /// The S/N guide's accumulated mean, while it is on.
+    snr_grid: Option<crate::mean_spectrum::MeanGrid>,
+    /// The S/N guide as last computed, for the spectrum widget.
+    snr_last: Option<std::sync::Arc<crate::mean_spectrum::Guide>>,
+    /// LABELS BY S/N: each spot's label decision and fade, see
+    /// [`crate::app::spectrum::SnrLabels`].
+    snr_labels: std::cell::RefCell<crate::app::spectrum::SnrLabels>,
     /// Latest full-band frame, from a direct-sampling front end that can see far
     /// more than the IQ it delivers. `None` on every other backend, which is
     /// also how the UI decides whether to offer the strip at all.
@@ -1504,6 +1512,9 @@ impl SdroxideApp {
             caps: None,
             state: RadioState::default(),
             frame: None,
+            snr_grid: None,
+            snr_last: None,
+            snr_labels: Default::default(),
             wide_frame: None,
             wide_wf: Default::default(),
             meters: None,

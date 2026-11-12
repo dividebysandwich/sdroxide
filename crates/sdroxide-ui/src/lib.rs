@@ -34,6 +34,7 @@ mod input;
 pub mod layout;
 mod login;
 mod login_globe;
+mod mean_spectrum;
 /// Multi-radio shell: one window, one radio per tab. Native-only — the
 /// browser client drives a single (remote) radio.
 mod multi;
