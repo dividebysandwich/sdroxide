@@ -192,7 +192,7 @@ impl SdroxideApp {
         });
     }
 
-    /// The ☀ 3D chip: the solar-system view, in whichever window the platform
+    /// The SOLAR chip: the solar-system view, in whichever window the platform
     /// gives us.
     ///
     /// Natively that is a second OS window this process owns, so the chip is a

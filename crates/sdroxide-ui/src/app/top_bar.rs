@@ -7033,7 +7033,9 @@ const MODULE_WINDOWS_CHIP: &str = "▣";
 /// popup, beside the spectrum line it is drawn over. Visible to the app module
 /// because [`SdroxideApp::solar_button`], which draws its first chip, lives in
 /// `app::solar`.
-pub(in crate::app) const DISPLAY_VIEW_CHIPS: [&str; 3] = ["☀ 3D", "SPEC", "WIDE"];
+// SOLAR, not "☀ 3D": SPEC's popup has a 3D chip of its own, for the
+// spectrum's receding surface, and the two read as the same thing.
+pub(in crate::app) const DISPLAY_VIEW_CHIPS: [&str; 3] = ["SOLAR", "SPEC", "WIDE"];
 
 /// The Display box's bottom row: the level fit, centre tuning, the skimmers,
 /// and the FFT/levels popup. Read by the measurement and by each chip's own

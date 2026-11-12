@@ -169,7 +169,7 @@ mod web {
             //
             // `?view=solar` also needs no server route of its own: it resolves
             // to the same index.html through the existing static fallback,
-            // which is what lets the ☀ 3D chip open a plain relative URL.
+            // which is what lets the SOLAR chip open a plain relative URL.
             let location = window.location();
             let search = location.search().unwrap_or_default();
             let solar = search.contains("view=solar");

@@ -1100,7 +1100,7 @@ them all at once.
 
 **Display module:**
 
-- **☀ 3D** — open the [solar system 3D view](#7-solar-system-3d-view): a second
+- **SOLAR** — open the [solar system 3D view](#7-solar-system-3d-view): a second
   window in the native app, a second browser tab in the web client.
 - **SPEC** — opens the **spectrum popup**: everything about the spectrum line
   across the top of the panadapter. The button is lit while the spectrum is
@@ -14438,7 +14438,7 @@ remote or browser client sees, saves and applies the same list.
 
 ## 7. Solar system 3D view
 
-The **☀ 3D** button in the Display module opens the solar system in three
+The **SOLAR** button in the Display module opens the solar system in three
 dimensions — the Sun, the Earth and the Moon, the other seven planets and
 eighteen of their moons — with live solar imagery, sunspot regions and
 coronal-mass-ejection trajectories. This enables operators to see if anything is
@@ -15529,7 +15529,7 @@ mean the station, so it names it and asks before making one — and the **×** o
 radio's button offers **Close it on** *station* to take one out again. A radio
 added this way opens as another browser tab of the same page within a second,
 exactly as the station's other radios do.
-The [solar system 3D view](#7-solar-system-3d-view) works too: **☀ 3D**
+The [solar system 3D view](#7-solar-system-3d-view) works too: **SOLAR**
 opens it in a new tab, which connects to a separate read-only endpoint and so
 does not consume the single control connection — though it is challenged for the
 same sign-in, since it is shown your QTH and everything the station is decoding.
@@ -15636,7 +15636,7 @@ row of menu buttons:
 | **VFO** | A↔B, A→B, SPLIT, SUB, and the RIT/XIT offsets |
 | **SUB** | The second receiver's frequency, mode, filter and level (only while it is running) |
 | **TX** | TUNE, the voice keyer, and the drive, tune and mic levels |
-| **DISP** | ☀ 3D, WIDE, FIT, CTR, the panadapter boxes (the spectrum and waterfall switches, peak hold, their speeds and the detail), the skimmers, and the spectrum floor/ceiling and FFT size |
+| **DISP** | SOLAR, WIDE, FIT, CTR, the panadapter boxes (the spectrum and waterfall switches, peak hold, their speeds and the detail), the skimmers, and the spectrum floor/ceiling and FFT size |
 | **SYS** | LOG, SPOTS, AWARDS, BANDS, SAT, ISM, PUBLIC SDR, MAIL, MEM, SCAN, SETTINGS, HELP |
 
 A menu stays open until you tap outside it or tap its button again — the top-bar
