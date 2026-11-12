@@ -9225,13 +9225,16 @@ impl Engine {
                 // A different kind of scan, or the same kind gathering its
                 // candidates a different way, is a different scan: the plan in
                 // flight belongs to the old setting.
-                // So is a range scan or a panorama given a different range: its
-                // slices, and a panorama's picture, belong to the old one.
+                // So is a range scan or a panorama given a different range (or
+                // a panorama a different slice width): its slices, and a
+                // panorama's picture, belong to the old one.
                 let ranged = matches!(cfg.kind, ScanKind::Range | ScanKind::Panorama);
                 let restart = self.state.scan.running
                     && (cfg.kind != self.scan_cfg.kind
                         || cfg.mem_fast != self.scan_cfg.mem_fast
-                        || (ranged && cfg.range() != self.scan_cfg.range()));
+                        || (ranged && cfg.range() != self.scan_cfg.range())
+                        || (cfg.kind == ScanKind::Panorama
+                            && cfg.pano_usable != self.scan_cfg.pano_usable));
                 // Retuning the range (or changing the grid under it) retires the
                 // channels skipped in the old one — they described *that* band.
                 cfg.forget_stale_skips();
@@ -15487,12 +15490,47 @@ impl Engine {
             let n = crate::scanner::panorama_bins(lo, hi, span, self.scan_db.len());
             self.pano = Some(Pano { lo, hi, bins: vec![f32::NAN; n], sweep_at: now });
         }
+        let (uh, _) = crate::scanner::panorama_geometry(self.scan_cfg.pano_usable);
         let last = self.scan.as_ref().is_some_and(|sc| sc.slice + 1 >= sc.slices.len());
+        // The slice before this one in the sweep, whose overlap levels this one.
+        let prev = self.scan.as_ref().and_then(|sc| {
+            let i = sc.slice.checked_sub(1)?;
+            sc.slices.get(i).copied()
+        });
         if last {
             self.emit_state();
         }
         if let Some(p) = self.pano.as_mut() {
-            crate::scanner::stitch_slice(&mut p.bins, lo, hi, &self.scan_db, center, span);
+            // A gain step of a decibel or more between neighbours is the front
+            // end's, not the band's: match this slice to the one before it.
+            // Smaller differences are left alone, so a front end on a fixed
+            // gain does not wander from slice to slice.
+            let offset = prev
+                .and_then(|pc| {
+                    let win = (center - span * uh, pc + span * uh);
+                    crate::scanner::level_offset_db(
+                        &p.bins,
+                        lo,
+                        hi,
+                        &self.scan_db,
+                        center,
+                        span,
+                        uh,
+                        win,
+                    )
+                })
+                .filter(|o| o.abs() >= 1.0)
+                .unwrap_or(0.0);
+            crate::scanner::stitch_slice(
+                &mut p.bins,
+                lo,
+                hi,
+                &self.scan_db,
+                center,
+                span,
+                uh,
+                offset,
+            );
             if last {
                 let mut row = p.bins.clone();
                 crate::scanner::fill_panorama_gaps(&mut row);
@@ -15608,11 +15646,18 @@ impl Engine {
     /// once it has settled, which is a poll or two later.
     fn scan_next_slice(&mut self, now: Instant) -> Refill {
         let (lo, hi) = self.scan_cfg.range();
+        let pano = self.scan_cfg.kind == ScanKind::Panorama;
+        let pano_usable = self.scan_cfg.pano_usable;
         let span = self.state.sample_rate;
         let settle = self.scan_settle();
         let Some(sc) = self.scan.as_mut() else { return Refill::Stopped };
         if sc.slices.is_empty() {
-            sc.slices = crate::scanner::slice_centers(lo, hi, span);
+            sc.slices = if pano {
+                let (uh, stride) = crate::scanner::panorama_geometry(pano_usable);
+                crate::scanner::slice_centers_with(lo, hi, span, uh, stride)
+            } else {
+                crate::scanner::slice_centers(lo, hi, span)
+            };
             if sc.slices.is_empty() {
                 self.stop_scan(Some("scan stopped: the range is not a usable one"));
                 return Refill::Stopped;

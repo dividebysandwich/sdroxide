@@ -32,8 +32,12 @@ impl SdroxideApp {
             |ui| self.scanner_body(ui, &mut cfg, cmds, &mut clear_strip),
         );
         if clear_strip {
+            // The strip goes, lines and all, and comes back with the first
+            // complete sweep.
             self.wide_wf.clear();
             self.wide_frame = None;
+            self.wide_grid = None;
+            self.wide_guide = None;
         }
         self.put_tool_state("Scanner", tool_st);
         if cfg != self.scanner {
@@ -194,6 +198,17 @@ impl SdroxideApp {
                 egui::DragValue::new(&mut cfg.dwell_ms).speed(5.0).range(40..=2000).suffix(" ms"),
             )
             .on_hover_text(tr!("scanner-settles-hint"));
+            ui.end_row();
+
+            ui.label(tr!("scanner-pano-width"));
+            let mut pct = cfg.pano_usable * 100.0;
+            if ui
+                .add(egui::Slider::new(&mut pct, 50.0..=95.0).step_by(5.0).suffix(" %"))
+                .on_hover_text(tr!("scanner-pano-width-hint"))
+                .changed()
+            {
+                cfg.pano_usable = pct / 100.0;
+            }
             ui.end_row();
         });
     }

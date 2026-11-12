@@ -2179,7 +2179,15 @@ is transmitting. Two kinds:
   receiver that only sees a couple of megahertz at a time, an RTL-SDR for one,
   gets the same band-wide waterfall a direct-sampling receiver has. **Settles
   for** is how long each slice waits after retuning before it is read: longer
-  is a steadier picture and a slower sweep. A range from 0 to 30 MHz on an
+  is a steadier picture and a slower sweep. **Slice width** is how much of the
+  receiver's span each slice uses, 50–95 % (80 % by default): less keeps clear
+  of the roll-off at the edges, more sweeps faster; neighbouring slices overlap
+  by a tenth of the span. The span is the one after decimation, so **DEC /8**
+  makes every slice an eighth as wide. Where the front end's gain moves between
+  two slices — an AGC on the tuner or the RTL chip, an overload loop — the
+  overlap shows it as a step, and the panorama lowers or raises the new slice
+  by it (steps under 1 dB are left alone); for a panorama whose levels can be
+  compared from one evening to the next, run the front end on a fixed gain. A range from 0 to 30 MHz on an
   RTL-SDR needs direct sampling (its settings, *Auto* does it); a slice the
   front end cannot reach is drawn from its neighbours.
 

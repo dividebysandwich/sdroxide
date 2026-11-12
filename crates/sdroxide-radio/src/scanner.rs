@@ -25,14 +25,29 @@ const DC_GUARD_BINS: usize = 4;
 /// wideband receiver: scanning 2 m at 1.536 Msps is then a single tune and one
 /// look at the FFT, not a hundred and sixty visits.
 pub fn slice_centers(lo: f64, hi: f64, span_hz: f64) -> Vec<f64> {
+    slice_centers_with(lo, hi, span_hz, USABLE_HALF, SLICE_STRIDE)
+}
+
+/// [`slice_centers`] with the trusted half-width and the stride given, both as
+/// fractions of the span — what a panorama lets the operator set.
+pub fn slice_centers_with(
+    lo: f64,
+    hi: f64,
+    span_hz: f64,
+    usable_half: f64,
+    stride: f64,
+) -> Vec<f64> {
     if !(lo.is_finite() && hi.is_finite()) || hi <= lo || !(span_hz > 0.0) {
         return Vec::new();
     }
-    let usable = span_hz * USABLE_HALF;
+    if !(usable_half > 0.0 && stride > 0.0) {
+        return Vec::new();
+    }
+    let usable = span_hz * usable_half;
     if hi - lo <= usable * 2.0 {
         return vec![(lo + hi) / 2.0];
     }
-    let stride = span_hz * SLICE_STRIDE;
+    let stride = span_hz * stride;
     let mut out = Vec::new();
     let mut c = lo + usable;
     // `<` rather than `<=` on the far edge, plus the unconditional last slice
@@ -292,6 +307,17 @@ pub fn channel_noise_floor_db(bins: &[f32], span_hz: f64, bandwidth_hz: f64) -> 
     Some(*median + (10.0 * width.log10()) as f32)
 }
 
+/// A panorama's trusted half-width and stride for a trusted fraction of the
+/// span `usable` (0.5–0.95): neighbours overlap by a tenth of the span, which
+/// is where [`level_offset_db`] matches them up.
+pub fn panorama_geometry(usable: f32) -> (f64, f64) {
+    let u = f64::from(usable).clamp(0.5, 0.95);
+    (u / 2.0, u - PANORAMA_OVERLAP)
+}
+
+/// How much of the span neighbouring panorama slices share.
+pub const PANORAMA_OVERLAP: f64 = 0.1;
+
 /// The most bins a panorama keeps across its range. The full-band strip pools
 /// to far fewer than this, so more would only be memory; a narrow range keeps
 /// the front end's own resolution instead (see [`panorama_bins`]).
@@ -308,12 +334,39 @@ pub fn panorama_bins(lo: f64, hi: f64, span_hz: f64, fft_bins: usize) -> usize {
     (((hi - lo) / bin_hz).ceil() as usize).clamp(1, PANORAMA_MAX_BINS)
 }
 
+/// The front end's reading for the panorama bin `f0..f1`: the mean power of
+/// the bins it covers (the one under its centre when it is narrower than a
+/// bin), clear of DC. `None` where nothing usable is under it.
+fn pooled_db(bins: &[f32], base: f64, bin_hz: f64, f0: f64, f1: f64) -> Option<f32> {
+    let n = bins.len();
+    let dc = n / 2;
+    let mid = (f0 + f1) / 2.0;
+    let i0 = ((f0 - base) / bin_hz).floor().max(0.0) as usize;
+    let i1 = (((f1 - base) / bin_hz).ceil().max(0.0) as usize).min(n);
+    let (i0, i1) = if i1 <= i0 {
+        let i = (((mid - base) / bin_hz).max(0.0) as usize).min(n - 1);
+        (i, i + 1)
+    } else {
+        (i0, i1)
+    };
+    let mut sum = 0.0f64;
+    let mut count = 0usize;
+    for (i, &db) in bins.iter().enumerate().take(i1).skip(i0) {
+        if i.abs_diff(dc) <= DC_GUARD_BINS || !db.is_finite() {
+            continue;
+        }
+        sum += 10f64.powf(db as f64 / 10.0);
+        count += 1;
+    }
+    (count > 0).then(|| (10.0 * (sum / count as f64).log10()) as f32)
+}
+
 /// Write one sweep slice into a panorama: the part of `bins` (a spectrum in
-/// dB across `center_hz ± span_hz / 2`) a sweep trusts — inside the usable
-/// half-width, clear of DC — lands on the panorama bins of `lo..hi` it
-/// covers. A panorama bin wider than the front end's bins gets their mean
-/// power; one narrower gets the bin under its centre. Bins this slice does
+/// dB across `center_hz ± span_hz / 2`) a sweep trusts — inside
+/// `usable_half` of the span either side, clear of DC — lands on the panorama
+/// bins of `lo..hi` it covers, lowered by `offset_db`. Bins this slice does
 /// not cover are left as they were.
+#[allow(clippy::too_many_arguments)]
 pub fn stitch_slice(
     pano: &mut [f32],
     lo: f64,
@@ -321,6 +374,8 @@ pub fn stitch_slice(
     bins: &[f32],
     center_hz: f64,
     span_hz: f64,
+    usable_half: f64,
+    offset_db: f32,
 ) {
     let (n, m) = (bins.len(), pano.len());
     if n == 0 || m == 0 || !(span_hz > 0.0) || !(hi > lo) {
@@ -328,37 +383,63 @@ pub fn stitch_slice(
     }
     let bin_hz = span_hz / n as f64;
     let base = center_hz - span_hz / 2.0;
-    let usable = span_hz * USABLE_HALF;
-    let dc = n / 2;
+    let usable = span_hz * usable_half;
     let pano_hz = (hi - lo) / m as f64;
     for (k, out) in pano.iter_mut().enumerate() {
         let f0 = lo + k as f64 * pano_hz;
         let f1 = f0 + pano_hz;
-        let mid = (f0 + f1) / 2.0;
-        if (mid - center_hz).abs() > usable {
+        if ((f0 + f1) / 2.0 - center_hz).abs() > usable {
             continue;
         }
-        let i0 = ((f0 - base) / bin_hz).floor().max(0.0) as usize;
-        let i1 = (((f1 - base) / bin_hz).ceil() as usize).min(n);
-        let (i0, i1) = if i1 <= i0 {
-            let i = (((mid - base) / bin_hz) as usize).min(n - 1);
-            (i, i + 1)
-        } else {
-            (i0, i1)
-        };
-        let mut sum = 0.0f64;
-        let mut count = 0usize;
-        for (i, &db) in bins.iter().enumerate().take(i1).skip(i0) {
-            if i.abs_diff(dc) <= DC_GUARD_BINS || !db.is_finite() {
-                continue;
-            }
-            sum += 10f64.powf(db as f64 / 10.0);
-            count += 1;
-        }
-        if count > 0 {
-            *out = (10.0 * (sum / count as f64).log10()) as f32;
+        if let Some(db) = pooled_db(bins, base, bin_hz, f0, f1) {
+            *out = db - offset_db;
         }
     }
+}
+
+/// How much higher this slice reads than the panorama already holds over
+/// `win_lo..win_hi` — the overlap with the slice before it in the sweep: the
+/// median difference across the bins both have. A front end whose gain moved
+/// between the two (an AGC, an overload loop) shows here as a step at the
+/// seam; subtracting it matches the slice to its neighbour. `None` where they
+/// share nothing.
+#[allow(clippy::too_many_arguments)]
+pub fn level_offset_db(
+    pano: &[f32],
+    lo: f64,
+    hi: f64,
+    bins: &[f32],
+    center_hz: f64,
+    span_hz: f64,
+    usable_half: f64,
+    win: (f64, f64),
+) -> Option<f32> {
+    let (n, m) = (bins.len(), pano.len());
+    if n == 0 || m == 0 || !(span_hz > 0.0) || !(hi > lo) {
+        return None;
+    }
+    let bin_hz = span_hz / n as f64;
+    let base = center_hz - span_hz / 2.0;
+    let usable = span_hz * usable_half;
+    let pano_hz = (hi - lo) / m as f64;
+    let mut diffs: Vec<f32> = Vec::new();
+    for (k, &old) in pano.iter().enumerate() {
+        let f0 = lo + k as f64 * pano_hz;
+        let f1 = f0 + pano_hz;
+        let mid = (f0 + f1) / 2.0;
+        if !old.is_finite() || mid < win.0 || mid > win.1 || (mid - center_hz).abs() > usable {
+            continue;
+        }
+        if let Some(new) = pooled_db(bins, base, bin_hz, f0, f1) {
+            diffs.push(new - old);
+        }
+    }
+    if diffs.is_empty() {
+        return None;
+    }
+    let mid = diffs.len() / 2;
+    let (_, median, _) = diffs.select_nth_unstable_by(mid, |a, b| a.total_cmp(b));
+    Some(*median)
 }
 
 /// Fill the bins of a panorama no slice has written yet (NaN) — the guard
@@ -632,7 +713,7 @@ mod tests {
             }
             // The front end's own DC spike, which is not a station.
             bins[n / 2] = -20.0;
-            stitch_slice(&mut pano, lo, hi, &bins, c, SPAN_PANO);
+            stitch_slice(&mut pano, lo, hi, &bins, c, SPAN_PANO, USABLE_HALF, 0.0);
         }
         fill_panorama_gaps(&mut pano);
         assert!(pano.iter().all(|v| v.is_finite()), "no holes left");
@@ -648,7 +729,7 @@ mod tests {
         let mut pano = vec![f32::NAN; 1];
         let mut bins = vec![-100.0f32; 100];
         bins[20] = -70.0; // 1000× the floor in one bin of the ~80 it pools
-        stitch_slice(&mut pano, 1.1e6, 1.9e6, &bins, 1.5e6, 1e6);
+        stitch_slice(&mut pano, 1.1e6, 1.9e6, &bins, 1.5e6, 1e6, USABLE_HALF, 0.0);
         assert!(pano[0] > -90.0 && pano[0] < -80.0, "{}", pano[0]);
     }
 
@@ -674,6 +755,27 @@ mod tests {
         assert_eq!(step_index(0, 3, true), 2);
         assert_eq!(step_index(2, 3, true), 1);
         assert_eq!(step_index(5, 0, true), 0);
+    }
+
+    #[test]
+    fn a_gain_step_between_slices_is_levelled_at_the_seam() {
+        // Two slices over a flat floor; the second front end reads 8 dB hot,
+        // as if an AGC had turned it up between them.
+        let (lo, hi) = (0.0, 3e6);
+        let (uh, stride) = panorama_geometry(0.8);
+        let centers = slice_centers_with(lo, hi, SPAN_PANO, uh, stride);
+        assert!(centers.len() >= 2, "{centers:?}");
+        let n = 1024;
+        let mut pano = vec![f32::NAN; panorama_bins(lo, hi, SPAN_PANO, n)];
+        let first = vec![-100.0f32; n];
+        stitch_slice(&mut pano, lo, hi, &first, centers[0], SPAN_PANO, uh, 0.0);
+        let hot = vec![-92.0f32; n];
+        let win = (centers[1] - SPAN_PANO * uh, centers[0] + SPAN_PANO * uh);
+        let off = level_offset_db(&pano, lo, hi, &hot, centers[1], SPAN_PANO, uh, win).unwrap();
+        assert!((off - 8.0).abs() < 0.01, "{off}");
+        stitch_slice(&mut pano, lo, hi, &hot, centers[1], SPAN_PANO, uh, off);
+        fill_panorama_gaps(&mut pano);
+        assert!(pano.iter().all(|v| (v - -100.0).abs() < 0.01), "no step left at the seam");
     }
 
     const SPAN_PANO: f64 = 2e6;

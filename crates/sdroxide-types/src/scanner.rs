@@ -98,6 +98,12 @@ pub struct ScannerConfig {
     pub stop_snr: bool,
     /// How far above the noise floor a channel has to stand, in dB.
     pub snr_db: f32,
+    /// How much of the front end's span a panorama trusts, as a fraction
+    /// (0.5–0.95): less keeps clear of the anti-alias roll-off at the edges,
+    /// more moves faster. Neighbouring slices overlap by a tenth of the span.
+    // Why: HDZ 2026-11-12: "welchen Overlap benutzt du als Schrittweite …
+    //      wäre das nicht ein Parameter wie Schrittweite".
+    pub pano_usable: f32,
     /// How long to listen on a candidate before deciding it is really busy.
     pub dwell_ms: u32,
     pub resume: ScanResume,
@@ -172,6 +178,7 @@ impl Default for ScannerConfig {
             follow_squelch: false,
             stop_snr: false,
             snr_db: 10.0,
+            pano_usable: 0.8,
             dwell_ms: 150,
             resume: ScanResume::Carrier,
             resume_ms: 2_000,
