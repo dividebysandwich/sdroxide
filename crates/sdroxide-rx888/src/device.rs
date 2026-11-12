@@ -147,6 +147,8 @@ pub struct Device {
     /// settings and quietly put the whole broadcast band back on top of the IF.
     requested_att_db: f64,
     requested_vga_db: f64,
+    /// Which of the AD8370's two ranges the VGA may use — see [`VgaRange`].
+    vga_range: VgaRange,
     tuner_gain_db: f64,
     tuner_agc: bool,
     ppm: f64,
@@ -225,6 +227,7 @@ impl Device {
             vhf_failed: None,
             requested_att_db: settings.attenuator_db,
             requested_vga_db: settings.vga_db,
+            vga_range: VgaRange::Auto,
             tuner_gain_db: settings.tuner_gain_db,
             tuner_agc: settings.tuner_agc,
             ppm: settings.ppm,
@@ -426,7 +429,7 @@ impl Device {
     /// tuner's path too, and this stage is pinned near unity there.
     pub fn set_vga_db(&mut self, db: f64) -> Result<f64> {
         self.requested_vga_db = db;
-        let code = ad8370_code_for(db);
+        let code = ad8370_code_in(db, self.vga_range);
         let achieved = ad8370_db_for(code);
         if self.band == Band::Vhf {
             return Ok(achieved);
@@ -434,6 +437,13 @@ impl Device {
         self.set_arg(arg::AD8370_VGA, code)?;
         tracing::debug!("RX-888: VGA {achieved:+.1} dB (code 0x{code:02x})");
         Ok(achieved)
+    }
+
+    /// Choose the AD8370's range and program the gain last asked for in it.
+    /// Returns the gain now in effect (held, like the gain, on VHF).
+    pub fn set_vga_range(&mut self, range: VgaRange) -> Result<f64> {
+        self.vga_range = range;
+        self.set_vga_db(self.requested_vga_db)
     }
 
     /// Send one `SETARGFX3` parameter.
@@ -635,7 +645,7 @@ impl Device {
         // Restore what the operator actually asked for.
         let vga = self.requested_vga_db;
         let att = self.requested_att_db;
-        self.set_vga_reg(ad8370_code_for(vga))?;
+        self.set_vga_reg(ad8370_code_in(vga, self.vga_range))?;
         self.program_att(att)?;
         tracing::info!("RX-888: HF front end restored");
         Ok(())
@@ -754,13 +764,13 @@ fn clamp_rate_to_link(requested: f64, usb: &UsbDev) -> (f64, Option<String>) {
 // ---- gain mappings -----------------------------------------------------
 
 /// Attenuator code for a requested gain in dB (negative = attenuation).
-fn att_code_for(db: f64) -> u8 {
+pub fn att_code_for(db: f64) -> u8 {
     let atten = (-db).clamp(0.0, -ATT_MIN_DB);
     (atten / ATT_STEP_DB).round().clamp(0.0, ATT_MAX_CODE as f64) as u8
 }
 
 /// The gain a given attenuator code produces.
-fn att_db_for(code: u8) -> f64 {
+pub fn att_db_for(code: u8) -> f64 {
     -(code.min(ATT_MAX_CODE) as f64) * ATT_STEP_DB
 }
 
@@ -791,14 +801,61 @@ pub fn ad8370_db_for(reg: u8) -> f64 {
 /// which one lands nearer the request — preferring the low range on a tie, since
 /// it reaches a given gain with less pre-gain ahead of the vernier.
 pub fn ad8370_code_for(db: f64) -> u8 {
+    ad8370_code_in(db, VgaRange::Auto)
+}
+
+/// Which of the AD8370's two gain ranges the VGA uses. The ranges overlap
+/// across the middle of the span (low reaches about +16.9 dB, high starts
+/// about −8.2 dB), so a gain in the overlap can be had either way: with the
+/// pre-amplifier in (high) or out (low).
+// Why: HDZ 2026-11-09: "der rx888 hat gain mode high" — the operator picks
+//      the range instead of the driver picking it by rounding error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VgaRange {
+    /// Whichever range lands nearer the request (low on a tie) — what the
+    /// driver always did.
+    #[default]
+    Auto,
+    Low,
+    High,
+}
+
+impl VgaRange {
+    /// As carried on a gain element: 0 Auto, 1 Low, 2 High.
+    pub fn from_code(v: f64) -> Self {
+        match v.round() as i64 {
+            1 => VgaRange::Low,
+            2 => VgaRange::High,
+            _ => VgaRange::Auto,
+        }
+    }
+
+    pub fn code(self) -> f64 {
+        match self {
+            VgaRange::Auto => 0.0,
+            VgaRange::Low => 1.0,
+            VgaRange::High => 2.0,
+        }
+    }
+}
+
+/// The register value in `range` that comes closest to `db`: a gain outside
+/// a forced range lands on that range's nearest end.
+pub fn ad8370_code_in(db: f64, range: VgaRange) -> u8 {
     let av = 10f64.powf(db / 20.0);
     let pick = |scale: f64| -> u8 { (av / scale).round().clamp(1.0, 127.0) as u8 };
 
     let low = pick(AD8370_VERNIER);
     let high = pick(AD8370_VERNIER * AD8370_PREGAIN) | AD8370_HIGH;
 
-    let err = |reg: u8| (ad8370_db_for(reg) - db).abs();
-    if err(low) <= err(high) { low } else { high }
+    match range {
+        VgaRange::Low => low,
+        VgaRange::High => high,
+        VgaRange::Auto => {
+            let err = |reg: u8| (ad8370_db_for(reg) - db).abs();
+            if err(low) <= err(high) { low } else { high }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -876,6 +933,24 @@ mod tests {
         assert_eq!(ad8370_db_for(0), f64::NEG_INFINITY);
         // ...and is never chosen for a real request.
         assert!(ad8370_code_for(-40.0) >= 1);
+    }
+
+    /// A forced range holds whatever is asked: 10 dB is in both, and each
+    /// gets it in its own; past a range's end the gain stops at that end.
+    #[test]
+    fn a_forced_vga_range_holds() {
+        let lo = ad8370_code_in(10.0, VgaRange::Low);
+        let hi = ad8370_code_in(10.0, VgaRange::High);
+        assert_eq!(lo & AD8370_HIGH, 0);
+        assert_eq!(hi & AD8370_HIGH, AD8370_HIGH);
+        assert!((ad8370_db_for(lo) - 10.0).abs() < 0.5);
+        assert!((ad8370_db_for(hi) - 10.0).abs() < 0.5);
+        assert!(ad8370_db_for(ad8370_code_in(30.0, VgaRange::Low)) < 17.0);
+        assert!(ad8370_db_for(ad8370_code_in(-20.0, VgaRange::High)) > -9.0);
+        assert_eq!(ad8370_code_in(30.0, VgaRange::Auto), ad8370_code_for(30.0));
+        for r in [VgaRange::Auto, VgaRange::Low, VgaRange::High] {
+            assert_eq!(VgaRange::from_code(r.code()), r);
+        }
     }
 
     #[test]
