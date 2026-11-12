@@ -2438,7 +2438,6 @@ topbar-recording = 录制中
 topbar-sql = SQL
 topbar-stations = 电台
 topbar-caption-reaction = 响应
-topbar-caption-scroll = 滚动
 topbar-caption-flow = 流动
 topbar-caption-detail = 细节
 topbar-floor = 底噪

@@ -2460,7 +2460,6 @@ topbar-recording = kaydediliyor
 topbar-sql = sql
 topbar-stations = istasyonlar
 topbar-caption-reaction = tepki
-topbar-caption-scroll = kaydırma
 topbar-caption-flow = akış
 topbar-caption-detail = ayrıntı
 topbar-floor = taban

@@ -2441,7 +2441,6 @@ topbar-recording = 録音中
 topbar-sql = SQL
 topbar-stations = 局
 topbar-caption-reaction = 反応
-topbar-caption-scroll = スクロール
 topbar-caption-flow = 流れ
 topbar-caption-detail = 詳細
 topbar-floor = 床

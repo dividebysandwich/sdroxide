@@ -194,6 +194,10 @@ pub struct ViewState {
     /// signal at its frequency.
     // Why: HDZ 2026-11-07: "wenn da nichts ist, sollte auch kein Label hin …
     //      use S/N for label visibility".
+    /// Spot labels on the waterfall at all (the FFT popup's LABELS chip);
+    /// which kinds are shown stays the SPOTS window's choice.
+    #[serde(default = "spot_labels_default")]
+    pub spot_labels: bool,
     #[serde(default)]
     pub snr_label_filter: bool,
     /// Under [`Self::snr_label_filter`], a label also needs a peak of its own:
@@ -769,6 +773,7 @@ impl Default for ViewState {
             sk_guide: false,
             sk_guide_top_db: sk_guide_top_default(),
             sk_tau_s: sk_tau_default(),
+            spot_labels: spot_labels_default(),
             snr_label_filter: false,
             snr_label_peak: false,
             snr_label_flanks: false,
@@ -973,6 +978,10 @@ fn center_on_vfo_default() -> bool {
 /// a feed is enough to see its spots.
 fn spot_kinds_default() -> [bool; SPOT_KINDS] {
     [true; SPOT_KINDS]
+}
+
+fn spot_labels_default() -> bool {
+    true
 }
 
 /// The S/N rail's starting point, dB: what a weak steady carrier stands at once
