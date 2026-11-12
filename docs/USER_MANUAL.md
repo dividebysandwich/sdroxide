@@ -1456,7 +1456,7 @@ seconds and reads below the transistors themselves. What it is good for is the
 slow half — an HL2 running FT8 all afternoon heats up and stays hot, and this is
 where that shows. A radio with no sensor shows nothing here.
 
-Clicking the meter cycles three faces:
+Clicking the meter cycles its faces:
 
 - **Needle** (the default) — an analog moving-coil instrument. The needle has a
   little inertia, so it swings into a reading and settles the way a real
@@ -1464,7 +1464,32 @@ Clicking the meter cycles three faces:
 - **Bar** — a horizontal gradient bar with a graduated scale beneath it and a
   peak-hold marker that falls back after a moment.
 - **Trace** — the last fifteen seconds plotted as a scrolling graph, which is
-  the one to watch for fading and QSB.
+  the one to watch for fading and QSB. **Right-click** it for two rows:
+  **flow** LEFT (the default: the plot moves left, the live reading at the
+  right edge) or RIGHT, with the **S range** rail beside it — two knobs on the
+  S scale's stops (S0…S9, then +10…+60) that set the plot's bottom and top,
+  so S3–S9 or S6–S9 spreads a band that lives there over the whole height;
+  levels outside ride the edge, gridlines name the S-units inside, colours
+  stay those of the full scale, and transmit keeps its own scales. Below it
+  **speed** on the waterfall's five steps, in the waterfall's own
+  proportions — SLOW holds 168 s, MEDIUM 30 s, FAST the stock 15 s, FASTER
+  7.5 s, FASTEST 3.75 s. The time gridlines widen with the window. All of it
+  is kept with the face, in `[ui]` (`smeter_trace_speed`,
+  `smeter_trace_newest_left`, `smeter_trace_lo`, `smeter_trace_hi`); a new
+  speed starts the plot afresh.
+- **S/N** — only in the cycle while the S/N guide has a mean to read (the **S/N** line on): the receive passband's power
+  over the guide's noise floor, in dB — (S+N)/N, the same measure as the S/N
+  line, averaged over the cells between the filter edges (the width of the
+  cursor on the panadapter). A bar from 0 to 40 dB, with the marker at the
+  strongest cell in the middle of the passband (within a tenth of its width
+  either side): a signal tuned into the centre of the filter puts the marker
+  up, one at the filter's edge raises only the bar. The chip reads both, the
+  mean first and the marker's value after it (`S/N 26.5 · 31.0 dB`); the
+  header names the middle value, the filter width and the frames behind the
+  mean. Unlike the other
+  faces, which read absolute dBm, it says how far the signal stands out of
+  the noise; an empty channel reads about 0 dB. On transmit it shows the
+  transmit meter like the others.
 
 The face you pick is remembered. It belongs to the screen rather than to one
 radio — it is written to `smeter_style` in the `[ui]` table of `config.toml` the

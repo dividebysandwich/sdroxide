@@ -449,6 +449,11 @@ pub enum SmeterStyle {
     /// on transmit, how SWR behaved across the over) the way neither of the
     /// instantaneous faces can.
     Trace,
+    /// S/N in the receive passband from the panadapter's S/N guide, as a bar
+    /// over the noise floor — only in the click cycle while the guide runs.
+    // Why: HDZ 2026-11-09: "wenn wir S/N haben, da ein eigenes Instrument
+    //      haben, die werden ja mit Linksklick durchgeschaltet".
+    Snr,
     /// Analog moving-coil instrument with a swinging needle.
     ///
     /// Declared last because serde demands the catch-all be the final variant:
@@ -466,8 +471,24 @@ impl SmeterStyle {
         match self {
             SmeterStyle::Needle => SmeterStyle::Bar,
             SmeterStyle::Bar => SmeterStyle::Trace,
-            SmeterStyle::Trace => SmeterStyle::Needle,
+            SmeterStyle::Trace => SmeterStyle::Snr,
+            SmeterStyle::Snr => SmeterStyle::Needle,
         }
+    }
+
+    /// The next face, skipping the S/N face while there is no S/N to show.
+    pub fn next_with(self, snr: bool) -> Self {
+        let next = self.next();
+        if next == SmeterStyle::Snr && !snr { next.next() } else { next }
+    }
+
+    /// [`Self::next_compact`] with the same skip as [`Self::next_with`].
+    pub fn next_compact_with(self, snr: bool) -> Self {
+        let mut next = self.next_compact();
+        while next == SmeterStyle::Snr && !snr {
+            next = next.next_compact();
+        }
+        next
     }
 
     /// The face for a box wider than it is tall — the shape the compact strip
@@ -870,6 +891,26 @@ pub struct UiSettings {
     /// Cycled by clicking the meter; see [`SmeterStyle`] for why it is a
     /// screen preference rather than part of a radio's view.
     pub smeter_style: SmeterStyle,
+    /// How fast the trace face scrolls, on the waterfall's five steps and in
+    /// the same proportion as the waterfall's rows (see
+    /// [`Self::smeter_trace_hz`]). `Fast` is the quarter-minute the trace
+    /// has always shown.
+    // Why: HDZ 2026-11-09: "S-Meter … auf Rechtsklick die Richtung umdrehen,
+    //      die Geschwindigkeit an den Waterfall ausrichten, die verschiedenen
+    //      Speed-Stufen einfach frech übernehmen".
+    pub smeter_trace_speed: Speed,
+    /// Put the newest sample of the trace at the left edge instead of the
+    /// right, so the plot flows the other way.
+    pub smeter_trace_newest_left: bool,
+    /// The trace face's level range, as stops on the S scale (S0…S9 =
+    /// 0…9, then S9+10 … S9+60 = 10…15): the bottom and top of the plot, so a band that
+    /// lives between S3 and S9 can fill the height. Receive only; the
+    /// transmit meters keep their own scales.
+    // Why: HDZ 2026-11-09: "einen Regler, der unten und oben anpassbar ist,
+    //      low level in S-Stufen und high level — ich will von low 3–9 oder
+    //      6..9 spreizen können".
+    pub smeter_trace_lo: u8,
+    pub smeter_trace_hi: u8,
     /// Ask sdroxide.com once per start whether a newer release has been
     /// published, and say so in the notice banner above the panadapter. In
     /// `[ui]` because it is this screen's preference, like the theme — the
@@ -1090,6 +1131,12 @@ impl Default for UiSettings {
             menu_font_size: FontSize::Medium,
             ui_zoom: 1.0,
             smeter_style: SmeterStyle::Needle,
+            smeter_trace_speed: Speed::Fast,
+            smeter_trace_newest_left: false,
+            smeter_trace_lo: 0,
+            // The top stop, S9+60: the whole scale (see the S-meter widget's
+            // `STOPS`).
+            smeter_trace_hi: 15,
             update_check: true,
             band_conditions_download: true,
             broadcast_schedule_download: true,
@@ -1175,6 +1222,16 @@ impl UiSettings {
     /// Frame rate clamped to a sane range (guards a hand-edited config).
     pub fn fps(self) -> u32 {
         self.frame_rate_fps.clamp(5, 240)
+    }
+
+    /// Samples a second the S-meter's trace face takes: the waterfall's rate
+    /// for the same step, scaled so `Fast` keeps the trace's 16 Hz — 240
+    /// samples, fifteen seconds. `Slow` then holds 168 s, `Medium` 30 s,
+    /// `Faster` 7.5 s and `Fastest` 3.75 s.
+    pub fn smeter_trace_hz(self) -> f64 {
+        const FAST_HZ: f64 = 16.0;
+        let rows = |s: Speed| UiSettings { waterfall_speed: s, ..self }.waterfall_rows_per_sec();
+        FAST_HZ * f64::from(rows(self.smeter_trace_speed)) / f64::from(rows(Speed::Fast))
     }
 
     /// Waterfall scroll rate in rows per second. Absolute (independent of the
