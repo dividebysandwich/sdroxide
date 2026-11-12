@@ -8402,7 +8402,7 @@ impl Engine {
         // percent per row, a scale left high by an earlier range kept the
         // panorama black for minutes.
         let (floor, ceil) = if self.wide_from_pano {
-            auto_levels_paced(&self.wide_bins, self.wide_levels, self.pano_row_s / 0.1)
+            auto_levels_paced(&self.wide_bins, self.wide_levels, self.pano_row_s / 0.1, true)
         } else {
             auto_levels(&self.wide_bins, self.wide_levels)
         };
@@ -21880,7 +21880,7 @@ mod wide_frame_tests {
 /// Both ends are then smoothed towards their new values: jumping straight there
 /// makes the display flicker every time a signal keys up.
 fn auto_levels(db: &[f32], prev: Option<(f32, f32)>) -> (f32, f32) {
-    auto_levels_paced(db, prev, 1.0)
+    auto_levels_paced(db, prev, 1.0, false)
 }
 
 /// [`auto_levels`] for rows that come `rows` lane-rows apart (a lane-row is a
@@ -21889,7 +21889,17 @@ fn auto_levels(db: &[f32], prev: Option<(f32, f32)>) -> (f32, f32) {
 /// seconds whatever the row rate. A panorama sweep seconds long then adapts
 /// almost fully in one row; one that fits in a single slice, rows a few
 /// tenths apart, is smoothed much as the lane is.
-fn auto_levels_paced(db: &[f32], prev: Option<(f32, f32)>, rows: f32) -> (f32, f32) {
+///
+/// `keep_floor`: where the window has to be widened to its minimum, widen it
+/// upwards from the floor rather than about its middle, so a band of nothing
+/// but noise stays dark instead of filling the middle of the palette — what a
+/// panorama of a quiet band wants.
+fn auto_levels_paced(
+    db: &[f32],
+    prev: Option<(f32, f32)>,
+    rows: f32,
+    keep_floor: bool,
+) -> (f32, f32) {
     const FALLBACK: (f32, f32) = (-120.0, -20.0);
     /// Widest window worth showing; beyond this the interesting part of the
     /// band gets too few levels to distinguish.
@@ -21914,9 +21924,13 @@ fn auto_levels_paced(db: &[f32], prev: Option<(f32, f32)>, rows: f32) -> (f32, f
     // Never let the window collapse: a degenerate range maps everything to one
     // colour and looks like a dead receiver.
     if ceil - floor < 24.0 {
-        let mid = 0.5 * (ceil + floor);
-        floor = mid - 12.0;
-        ceil = mid + 12.0;
+        if keep_floor {
+            ceil = floor + 24.0;
+        } else {
+            let mid = 0.5 * (ceil + floor);
+            floor = mid - 12.0;
+            ceil = mid + 12.0;
+        }
     }
     if ceil - floor > MAX_RANGE {
         floor = ceil - MAX_RANGE;
@@ -22021,14 +22035,26 @@ mod auto_level_tests {
     }
 
     #[test]
+    fn a_quiet_panorama_keeps_its_floor_dark() {
+        // Noise and nothing else, a few dB of texture: widened about the
+        // middle the noise sits mid-palette; kept at the floor it stays low.
+        let db: Vec<f32> = (0..1024).map(|i| -80.0 + (i % 7) as f32).collect();
+        let (mid_floor, _) = auto_levels_paced(&db, None, 1.0, false);
+        let (floor, ceil) = auto_levels_paced(&db, None, 1.0, true);
+        assert!((ceil - floor - 24.0).abs() < 0.01);
+        assert!(floor > mid_floor, "kept floor {floor} vs centred {mid_floor}");
+        assert!((floor - (-80.0 - 4.0)).abs() < 1.5, "the floor is just under the noise: {floor}");
+    }
+
+    #[test]
     fn paced_levels_follow_in_seconds_not_rows() {
         // A scale stuck 40 dB high: one panorama row five seconds after the
         // last comes nearly all the way down; one a tenth later only a step.
         let db: Vec<f32> = (0..1024).map(|i| if i == 500 { -60.0 } else { -110.0 }).collect();
         let fresh = auto_levels(&db, None);
         let stuck = (fresh.0 + 40.0, fresh.1 + 40.0);
-        let slow = auto_levels_paced(&db, Some(stuck), 50.0);
-        let fast = auto_levels_paced(&db, Some(stuck), 1.0);
+        let slow = auto_levels_paced(&db, Some(stuck), 50.0, false);
+        let fast = auto_levels_paced(&db, Some(stuck), 1.0, false);
         assert!((slow.1 - fresh.1).abs() < 1.0, "a sweep's worth of time: {slow:?} vs {fresh:?}");
         assert!(fast.1 - fresh.1 > 30.0, "a tenth of a second: {fast:?}");
         assert_eq!(auto_levels(&db, Some(stuck)), fast, "unpaced is one lane-row");
