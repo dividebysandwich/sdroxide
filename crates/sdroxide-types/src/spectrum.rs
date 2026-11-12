@@ -169,6 +169,37 @@ pub struct SpectrumConfig {
     pub db_ceil: f32,
     /// Visible sub-span (lo_hz, hi_hz); `None` = full device passband.
     pub viewport: Option<(f64, f64)>,
+    /// Waterfall rows and display columns as the mean power of what they
+    /// cover (Welch) instead of its peak. The peak keeps a CW dot shorter
+    /// than a row and a carrier narrower than a column at full height, and
+    /// pays for it in speckle: the maximum of noisy transforms is noisier
+    /// still. Off by default; absent on the wire means off.
+    #[serde(default)]
+    pub smooth: bool,
+    /// Waterfall rows as the reassigned spectrogram (Auger & Flandrin): each
+    /// cell's power moved to the frequency it is centred on, so a tone is a
+    /// line one bin wide. The alternative to [`Self::smooth`]; absent on the
+    /// wire means off.
+    #[serde(default)]
+    pub reassign: bool,
+    /// How far over the median a cell has to stand to be moved, dB; the noise
+    /// under it stays in place.
+    #[serde(default = "reassign_floor_db_default")]
+    pub reassign_floor_db: f32,
+    /// How much darker the cells REASSIGN leaves in place are drawn, dB.
+    #[serde(default)]
+    pub reassign_dim_db: f32,
+}
+
+/// [`SpectrumConfig::reassign_floor_db`] to start from: ten times the median
+/// power. Ordinary noise passes it in about one cell of a thousand, carrying
+/// under 1 % of its energy, so dimming the cells left in place darkens the
+/// ground by up to ~17 dB; at 6 dB a quarter of the noise's energy is moved
+/// and stays bright.
+// Why: HDZ 2026-11-07: "schon gar keine Linien" — measured: with the gate at
+//      6 dB a 20 dB dim darkened the ground by under 8 dB.
+pub fn reassign_floor_db_default() -> f32 {
+    10.0
 }
 
 impl SpectrumConfig {
@@ -201,6 +232,10 @@ impl Default for SpectrumConfig {
             db_floor: -120.0,
             db_ceil: -20.0,
             viewport: None,
+            smooth: false,
+            reassign: false,
+            reassign_floor_db: reassign_floor_db_default(),
+            reassign_dim_db: 0.0,
         }
     }
 }

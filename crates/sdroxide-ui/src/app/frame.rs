@@ -26,6 +26,20 @@ const IDLE_POLL_MS: u64 = 250;
 /// The stream counts as stalled after this long without a new frame (seconds).
 pub(in crate::app) const STREAM_STALE_S: f64 = 1.0;
 
+/// One radio tab's copy of the waterfall interpolation against the value the
+/// tabs share (`theme::waterfall_smooth`). `applied` is what this tab last
+/// agreed on: a copy that left it was changed in this tab (UI tab or FFT
+/// popup) and is handed on; otherwise the copy takes the shared value, which
+/// another tab may have changed.
+fn sync_waterfall_smooth(local: &mut bool, applied: &mut bool) {
+    if *local != *applied {
+        crate::theme::set_waterfall_smooth(*local);
+    } else {
+        *local = crate::theme::waterfall_smooth();
+    }
+    *applied = *local;
+}
+
 /// The wall clock, top-right of the panadapter: UTC and the operator's own
 /// local time, so a listener always has both in view. Draw-only over the
 /// picture — it never reflows the strip — and the local half is dropped when
@@ -310,6 +324,11 @@ impl eframe::App for SdroxideApp {
         // …and whether the maps carry cities, which the four of them read
         // through one shared painter.
         crate::theme::set_map_cities(self.ui_settings.map_cities);
+        // The waterfall's interpolation has a switch in the UI tab and one in
+        // the FFT popup, and every radio tab its own copy: a change here goes
+        // to the other tabs, a change there comes in.
+        // Why: HDZ 2026-11-07: "den Schalter doppeln und synchen".
+        sync_waterfall_smooth(&mut self.ui_settings.waterfall_smooth, &mut self.applied_smooth);
         // The interface scale is egui's zoom factor, which egui also lets the
         // operator drive with ctrl+plus / ctrl+minus, so it is written only
         // when the setting itself moves — see `theme::apply_zoom`. It reads
@@ -2479,7 +2498,32 @@ impl SdroxideApp {
 mod tests {
     use sdroxide_types::{Band, Mode};
 
-    use super::{BODY_MARGIN, digi_split, qsy_clears_decodes};
+    use super::{BODY_MARGIN, digi_split, qsy_clears_decodes, sync_waterfall_smooth};
+
+    /// Two radio tabs, one setting: a switch flipped in one tab (FFT popup or
+    /// UI tab) reaches the other on its next frame, and the other's stale copy
+    /// never writes the old value back. The only test touching the shared
+    /// value, so no other test can race it.
+    #[test]
+    fn interpolation_switched_in_one_tab_reaches_the_other() {
+        crate::theme::set_waterfall_smooth(true);
+        let (mut a, mut a_seen) = (true, true);
+        let (mut b, mut b_seen) = (true, true);
+        a = !a; // the chip in tab A
+        sync_waterfall_smooth(&mut a, &mut a_seen);
+        sync_waterfall_smooth(&mut b, &mut b_seen);
+        assert!(!crate::theme::waterfall_smooth());
+        assert!(!a && !b, "tab B follows tab A");
+        // Nothing changed since: further frames in either order keep it off.
+        sync_waterfall_smooth(&mut b, &mut b_seen);
+        sync_waterfall_smooth(&mut a, &mut a_seen);
+        assert!(!a && !b && !crate::theme::waterfall_smooth());
+        // And back, from the other tab (the UI tab's checkbox in tab B).
+        b = true;
+        sync_waterfall_smooth(&mut b, &mut b_seen);
+        sync_waterfall_smooth(&mut a, &mut a_seen);
+        assert!(a && b && crate::theme::waterfall_smooth());
+    }
 
     /// The reported bug: 20 m to 40 m left the previous band's decodes in the
     /// list, because the only thing that cleared it was a mode change and the

@@ -8184,7 +8184,18 @@ impl Engine {
         // A lane that has just become the drawing one answers its first row
         // from the running average — the current spectrum, which is exactly
         // what every build before the row clock drew — and holds from the next.
-        self.lanes().for_each(|a| a.set_read_hold(true));
+        // Peak or mean, as the client asked: set on every lane here, the one
+        // place all of them pass before a row, rather than wherever each is
+        // built.
+        let smooth = self.cfg.smooth;
+        let (reassign, floor_db) = (self.cfg.reassign, self.cfg.reassign_floor_db);
+        let dim_db = self.cfg.reassign_dim_db;
+        self.lanes().for_each(|a| {
+            a.set_smooth(smooth);
+            a.set_reassign(reassign, floor_db);
+            a.set_reassign_dim(dim_db);
+            a.set_read_hold(true);
+        });
         let frame = self.make_spectrum_frame();
         self.lanes().for_each(|a| {
             a.set_read_hold(false);

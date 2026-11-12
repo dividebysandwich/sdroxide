@@ -179,7 +179,7 @@ pub(in crate::app) struct AutoFit {
 /// the dial, every nudge of the knob would then be a refit, and tuning across a
 /// band would keep re-contrasting the waterfall underneath the operator. What
 /// such a retune really changes is the levels, and drift already answers that.
-type FitKey = (f64, f64, u32, u32, f64, sdroxide_types::Band);
+type FitKey = (f64, f64, u32, u32, f64, sdroxide_types::Band, crate::view::WaterfallLook);
 
 /// Whether a new automatic fit may start: the interval since the last one began
 /// has elapsed, and the view has held still long enough that the frames in hand
@@ -621,6 +621,12 @@ impl SdroxideApp {
             // per the spectrum-speed setting (decoupled from the waterfall).
             fps: self.ui_settings.fps().min(255) as u8,
             avg_tc: 0.0,
+            smooth: self.view.waterfall_average,
+            reassign: self.view.waterfall_reassign,
+            // REASSIGN's gate, fixed at the engine's 10 dB over the median.
+            // Why: HDZ 2026-11-07: "Gate ohne Regler fix auf 10".
+            reassign_floor_db: sdroxide_types::reassign_floor_db_default(),
+            reassign_dim_db: self.view.reassign_dim_db,
         }
     }
 
@@ -672,7 +678,15 @@ impl SdroxideApp {
         // Spectrum-line smoothing: convert the time constant to a per-frame EMA
         // coefficient using the frame rate, so the reaction time is the same at
         // any fps (0 tc = no smoothing = raw frames).
-        let tc = self.ui_settings.spectrum_avg_tc();
+        // The rail's time constant, a longer one stored before held to the
+        // rail's end.
+        let rail_tc = self.view.welch_tc.min(crate::view::WELCH_TC_MAX);
+        let tc = trace_tc(
+            self.ui_settings.spectrum_avg_tc(),
+            self.view.waterfall_average,
+            self.view.waterfall_reassign,
+            rail_tc,
+        );
         let fps = self.ui_settings.fps().max(1) as f32;
         let spectrum_alpha = if tc <= 0.0 { 1.0 } else { 1.0 - (-(1.0 / fps) / tc).exp() };
         let s = &self.ui_settings;
@@ -700,6 +714,9 @@ impl SdroxideApp {
             spectrum_alpha,
             palette: s.waterfall_palette,
             smooth: s.waterfall_smooth,
+            average: self.view.waterfall_average,
+            welch_tc: rail_tc,
+            reassign: self.view.waterfall_reassign,
             gradient,
             wf_id: u64::from(self.radio_id),
         }
@@ -717,6 +734,10 @@ impl SdroxideApp {
             || sent.db_ceil != ideal.db_ceil
             || sent.fps != ideal.fps
             || sent.avg_tc != ideal.avg_tc
+            || sent.smooth != ideal.smooth
+            || sent.reassign != ideal.reassign
+            || sent.reassign_floor_db != ideal.reassign_floor_db
+            || sent.reassign_dim_db != ideal.reassign_dim_db
         {
             return false;
         }
@@ -1008,7 +1029,21 @@ impl SdroxideApp {
         let i_lo = (to_idx(self.view.view_lo_hz).floor().max(0.0) as usize).min(n);
         let i_hi = (to_idx(self.view.view_hi_hz).ceil().max(0.0) as usize).min(n);
         let slice = if i_hi > i_lo { &f.bins[i_lo..i_hi] } else { &f.bins[..] };
-        pick_levels(slice, f.db_floor, f.db_ceil)
+        let look = self.view.look();
+        let (floor, ceil) = pick_levels(slice, f.db_floor, f.db_ceil)?;
+        // REASSIGN draws the cells it leaves in place `reassign_dim_db` darker,
+        // and with the gate at ten times the median that is nearly all of the
+        // noise: the waterfall's ground lies about that much under the frame
+        // measured here. The floor follows it down; the lines keep their level,
+        // so the ceiling stays.
+        // Why: HDZ 2026-11-07: "der Fitwert liegt mir insbesondere bei
+        //      REASSIGN etwas dunkel".
+        let floor = if look == crate::view::WaterfallLook::Reassign {
+            (floor - self.view.reassign_dim_db).max(-160.0)
+        } else {
+            floor
+        };
+        Some((floor, ceil))
     }
 
     /// Fit the floor/ceiling now, on the operator's say-so (the FIT chip): it
@@ -1025,6 +1060,9 @@ impl SdroxideApp {
             self.fit.started_at = None;
             return;
         };
+        // A fit asked for is FIT from scratch: the operator's shift starts
+        // over at zero, and the levels land on the measurement itself.
+        *self.view.fit_shift_mut() = (0.0, 0.0);
         (self.view.db_floor, self.view.db_ceil) = want;
         // Where the automatic side would have got to, so it has no correction
         // of its own to make on top of the one just clicked for.
@@ -1061,6 +1099,9 @@ impl SdroxideApp {
             self.panadapter_bins(),
             self.state.sample_rate,
             sdroxide_types::Band::containing(self.state.active_freq_hz()),
+            // Another look is another FIT program: switching PEAK, WELCH or
+            // REASSIGN refits as a band change does.
+            self.view.look(),
         );
         if self.fit.key != Some(key) {
             self.fit.key = Some(key);
@@ -1087,8 +1128,11 @@ impl SdroxideApp {
         }
         let Some(want) = self.wanted_levels() else { return };
         self.fit.stepped_at = now;
-        let target = average_in(self.fit.avg, want);
-        self.fit.avg = Some(target);
+        let measured = average_in(self.fit.avg, want);
+        self.fit.avg = Some(measured);
+        // The operator's shift rides on top of the measurement, so a level
+        // set by hand while FIT is on is where FIT aims from then on.
+        let target = self.view.fit_shifted(measured);
         let have = (self.view.db_floor, self.view.db_ceil);
         if !self.fit.gliding {
             if !fit_due(&self.fit, now) || !(self.fit.pending || levels_drifted(target, have)) {
@@ -1244,6 +1288,17 @@ const MAX_FFT_WINDOW_S: f64 = 0.1;
 /// for the zoom multiplier stacked on top, where the seconds are a price the
 /// operator chose by zooming in.
 const MAX_FFT: u32 = 131_072;
+
+/// The spectrum line's time constant: the spectrum speed's own, or WELCH's
+/// rail where that is longer — under WELCH and, the rail being shared, under
+/// REASSIGN too, so the trace calms with the waterfall under both. Only in
+/// time: WELCH's averaging over neighbours stays WELCH's alone.
+// Why: HDZ 2026-11-07: "bei REASSIGN wirkt sich die Zeitkonstante derzeit nur
+//      auf den Wasserfall aus, und das Spektrum zappelt hochfrequent, das wirkt
+//      inkonsistent".
+fn trace_tc(speed_tc: f32, welch: bool, reassign: bool, rail_tc: f32) -> f32 {
+    if welch || reassign { speed_tc.max(rail_tc) } else { speed_tc }
+}
 
 /// The operator's FFT size, reduced to what `rate_hz` can deliver inside
 /// [`MAX_FFT_WINDOW_S`] — the largest power of two that fits, never below the
@@ -1436,8 +1491,18 @@ mod tests {
     use super::{
         AutoFit, FIT_ARRIVED_DB, FIT_MIN_GAP_S, FIT_SETTLE_S, FIT_STEP_S, average_in,
         base_fft_for_rate, fit_due, glide_step, levels_drifted, pick_levels,
-        refit_on_window_growth, slack_viewport,
+        refit_on_window_growth, slack_viewport, trace_tc,
     };
+
+    /// Proves: the rail's time constant reaches the spectrum line under
+    /// REASSIGN as under WELCH, and only there.
+    #[test]
+    fn the_rail_calms_the_trace_under_reassign_as_under_welch() {
+        assert_eq!(trace_tc(0.1, true, false, 0.8), 0.8, "WELCH");
+        assert_eq!(trace_tc(0.1, false, true, 0.8), 0.8, "REASSIGN");
+        assert_eq!(trace_tc(0.1, false, false, 0.8), 0.1, "neither: the speed's own");
+        assert_eq!(trace_tc(1.5, false, true, 0.8), 1.5, "a slower speed stays");
+    }
 
     /// The six sample rates one KiwiSDR reported across six connections. A view
     /// fitted to any of them must still read as "the whole passband" against
