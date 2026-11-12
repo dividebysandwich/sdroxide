@@ -97,10 +97,24 @@ fn digi_split(total: f32, divider_h: f32, fraction: f32, row_h: f32) -> (f32, f3
     // window, where 296 points is where the transcript stops being squeezed
     // into less than its own scroll area will accept. Capped at 60% of the
     // area so a floor can never leave the waterfall a sliver.
-    let min_panel = (170.0 + 4.0 * row_h.max(18.0)).min(usable * 0.6);
+    let min_panel = panel_floor(row_h).min(usable * 0.6);
     let min_wf = 80.0_f32.min(usable * 0.5);
     let panel_h = (usable * fraction).clamp(min_panel, (usable - min_wf).max(min_panel));
     (usable - panel_h, panel_h)
+}
+
+/// The least height an operating panel is laid out for: 170 points of fixed
+/// furniture plus four rows (see [`digi_split`], issue #231).
+fn panel_floor(row_h: f32) -> f32 {
+    170.0 + 4.0 * row_h.max(18.0)
+}
+
+/// The height the curtain lays its panel out for: the part that shows, so the
+/// rows pinned to the panel's bottom (Call CQ, Stop TX) stay on screen, but
+/// never less than [`panel_floor`]. Only a curtain pulled below that floor
+/// slides the bottom past the edge (#848).
+fn curtain_layout_h(usable: f32, shown: f32, row_h: f32) -> f32 {
+    shown.max(panel_floor(row_h)).min(usable.max(0.0))
 }
 
 /// How long the operating panel takes to rise over the panadapter on entering
@@ -847,16 +861,17 @@ impl eframe::App for SdroxideApp {
                 hresp.on_hover_text(tr!("frame-curtain-handle-tip"));
             }
             if show_panel && split {
-                // The curtain: the panel laid out for the whole height, the
-                // part that shows given to it, the rest below the edge clipped
+                // The curtain: the panel laid out for the part that shows
+                // (never less than its floor), anything below the edge clipped
                 // — and clipped at the sides too, so a row wider than the
                 // window ends at the frame rather than fraying past it.
+                let layout_h = curtain_layout_h(usable, panel_h, ui.spacing().interact_size.y);
                 let (shown, _) =
                     ui.allocate_exact_size(egui::vec2(width, panel_h), egui::Sense::hover());
-                let whole = egui::Rect::from_min_size(shown.min, egui::vec2(width, usable));
+                let whole = egui::Rect::from_min_size(shown.min, egui::vec2(width, layout_h));
                 let mut panel_ui = ui.new_child(egui::UiBuilder::new().max_rect(whole));
                 panel_ui.set_clip_rect(shown.intersect(ui.clip_rect()));
-                self.draw_operating_panel(&mut panel_ui, &mut cmds, mode, usable);
+                self.draw_operating_panel(&mut panel_ui, &mut cmds, mode, layout_h);
             } else if show_panel {
                 ui.allocate_ui(egui::vec2(width, panel_h), |ui| {
                     clip_to_given_rect(ui);
@@ -2535,6 +2550,16 @@ mod tests {
                 assert_eq!((wf, shown), (0.0, usable), "all the way up covers the waterfall");
             }
         }
+    }
+
+    /// #848: a curtain partly down lays its panel out for what shows, so the
+    /// transmit row at its bottom stays on screen; below the floor it slides.
+    #[test]
+    fn a_partly_lowered_curtain_fits_its_panel_into_what_shows() {
+        let floor = super::panel_floor(18.0);
+        assert_eq!(super::curtain_layout_h(800.0, 600.0, 18.0), 600.0);
+        assert_eq!(super::curtain_layout_h(800.0, 100.0, 18.0), floor);
+        assert_eq!(super::curtain_layout_h(200.0, 100.0, 18.0), 200.0);
     }
 
     #[test]

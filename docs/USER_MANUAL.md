@@ -3808,10 +3808,11 @@ is a list of paths rather than contacts (3.11).
 Every digital mode is entered the same way: open the Band/Mode popup and choose
 the mode from the **DIGITAL** row. The panadapter locks to the digital sub-band
 (the audio range just above the dial), and the mode's operating panel rises over
-it like a curtain, covering the spectrum and the waterfall. The panel is always
-laid out for the whole height; the `— — —` handle on its top edge slides it down
-to show the waterfall above it, and what slides below the window's edge is
-hidden rather than squeezed. Its header row always stays in view to pull it up
+it like a curtain, covering the spectrum and the waterfall. The `— — —` handle
+on its top edge slides it down to show the waterfall above it, and the panel
+fits itself into what is left, so its transmit buttons (Call CQ, Stop TX) stay
+in view. Only once it is pulled below the height the panel needs does its
+bottom slide past the window's edge. Its header row always stays in view to pull it up
 again, and a double-click on the handle sends it all the way up or back to
 where it was. Click the lit mode in the **DIGITAL** row again to leave it: the
 curtain falls and the mode you were in before comes back.
