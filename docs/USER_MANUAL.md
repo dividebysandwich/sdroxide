@@ -551,7 +551,30 @@ menu. Ordinary dragging and keyboard adjustment still work.
   "AGC off" means *this gain* rather than no gain at all. Switching the AGC off
   seeds it from the level the AGC was holding at that moment, so nothing jumps;
   from there it is yours to set, and it stays put however the signal moves.
-- **Vol** — audio volume.
+- **🔊** — audio volume.
+- **Front-end gain** — one rail per gain stage the radio lets software set, up
+  to three, each with its stage's short name: **ATT · VGA** on an RX-888 (the
+  attenuator first, the order the signal meets them; the VHF tuner's gain is in
+  Settings → Radio, as it does nothing on HF), **LNA · VGA** on a
+  HackRF, **LNA · MIX · IF** on an RTL-SDR on USB (over `rtl_tcp` the one
+  combined **Gain**, which is all that protocol can set). A radio with a single
+  stage shows one rail called **Gain**. The gain rails share one short length,
+  volume and squelch are a little longer and take whatever width the box has
+  to spare; the number beside a gain rail is the stage's setting without its
+  unit — hover a rail for the unit and what the stage does.
+  On an RTL-SDR the LNA and mixer read in dB from the tuner's measured steps and
+  the IF stage in steps 0–15 (there is no measured table for it); the combined
+  ladder of earlier versions is still in Settings → Radio and moves LNA and
+  mixer together. While the tuner's own AGC runs (Settings → Radio → AGC
+  `Tuner` or `Both`) the three rails are greyed out: the tuner sets them, and a
+  gain written to it would switch its loops off.
+  Beside the rails, a switch the front end has: **AMP** on a HackRF (its RF
+  amplifier, about +11 dB, lit when on) and the VGA range on an RX-888 —
+  **AUTO** picks whichever of the AD8370's two ranges lands nearer the gain
+  asked for, **LOW** keeps the pre-amplifier out (tops out near +17 dB),
+  **HIGH** puts it in (starts near −8 dB). Click to step through them.
+  On a desktop window 1800 pt wide or more, three rails cost the strip no row;
+  narrower, an RTL-SDR's three can push the strip onto another row.
 - **DEC** — **front-end decimation**: keep the middle `1/N` of the span the radio
   streams and throw the rest away, before any of it reaches the receiver. Click
   to cycle `off / 2 / 4 / 8 …`; the button reads what is running (`DEC /8`), and

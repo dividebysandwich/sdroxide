@@ -2078,6 +2078,9 @@ topbar-counted-steps-not-decibels-what =
 
     In Schritten gezählt, nicht in Dezibel: Was ein Schritt wert ist, ist die eigene Sache des Empfängers, und bei einem SDRplay hängt es außerdem vom Band ab. Richtig ist weiterhin mehr Verstärkung.
 topbar-gain = Verstärkung
+topbar-tuner-agc-owns-gain = Tuner-AGC stellt Stufe; Manuell in Einstellungen → Radio.
+topbar-hackrf-amp-hint = HF-Verstärker HackRF, ca. +11 dB. Leuchtet = an.
+topbar-rx888-vga-range-hint = VGA-Bereich (AD8370): AUTO nach Sollwert, LOW bis ~+17 dB, HIGH mit Vorverstärker ab ~−8 dB.
 topbar-plutosdr-s-own-agc-setting =
     {""}
 

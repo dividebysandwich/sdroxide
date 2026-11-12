@@ -155,11 +155,6 @@ const TX_CESSB_COL_W: f32 = 36.0;
 /// Padding between the TX rows' readouts and the mic column, so the vertical
 /// rail stands apart from the sliders beside it.
 const TX_MIC_GAP: f32 = 16.0;
-/// Width of the RX box's pinned dB rails — the front-end Gain slider and the
-/// manual gain behind an AGC that is switched off. Narrower than the Vol and
-/// SQL rails on purpose: these two carry a dB readout, and the box has to stay
-/// inside one row. See [`db_rail_w`].
-const RX_DB_RAIL_W: f32 = 76.0;
 /// Text size of the band/mode chip's label.
 const BAND_MODE_TEXT: f32 = 14.0;
 /// How much taller the band/mode chip stands than a plain one. Band and mode
@@ -754,7 +749,7 @@ impl SdroxideApp {
             }),
             (Kind::RxFilter, {
                 let w = self.rx_filter_w(ui);
-                StripBox { w, flex: 2.0, max_w: w + RAIL_STRETCH_MAX }
+                StripBox { w, flex: 2.0, max_w: w + LEVEL_STRETCH_MAX }
             }),
         ];
         // Only while two aerials are actually being combined — the same rule
@@ -2464,9 +2459,13 @@ impl SdroxideApp {
     /// [`rx_rows`] against this radio: what the front end offers, what the
     /// AGC is set to, and what mode the receiver is in.
     fn rx_rows(&self, ui: &egui::Ui) -> RxRows {
+        let rails: Vec<String> =
+            self.bar_gains().iter().map(|g| gain_label(&g.name, self.bar_gains().len())).collect();
+        let front: Vec<&[&str]> = self.front_chips().iter().map(|c| c.labels).collect();
         rx_rows(
             ui,
-            self.rx_gain().is_some(),
+            &rails,
+            &front,
             self.decim_range().is_some(),
             self.state.rx[0].agc == AgcMode::Off,
             self.state.rx[0].mode,
@@ -2489,11 +2488,11 @@ impl SdroxideApp {
     /// the Vol and SQL rails — one per row, so both rows grow by the same
     /// amount (the Gain and Man rails pin their own width and stay put).
     fn rx_filter_module(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, w: f32) {
-        let extra = (w - self.rx_filter_w(ui)).clamp(0.0, RAIL_STRETCH_MAX);
+        let extra = (w - self.rx_filter_w(ui)).clamp(0.0, LEVEL_STRETCH_MAX);
         crate::chrome::module_bare_h(ui, w, crate::chrome::MODULE_TALL_H, |ui| {
             ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(MODULE_ROW_SPACING, MODULE_ROW_SPACING);
-                ui.spacing_mut().slider_width = STRIP_RAIL_W + extra;
+                ui.spacing_mut().slider_width = LEVEL_RAIL_W + extra;
                 self.rx_controls(ui, cmds, false);
             });
         });
@@ -2510,8 +2509,70 @@ impl SdroxideApp {
             .unwrap_or_default()
     }
 
-    fn rx_gain(&self) -> Option<GainElement> {
-        self.rx_gains().first().cloned()
+    /// The gain stages the receive row carries as rails: up to
+    /// [`BAR_GAIN_STAGES`] of the front end's, attenuators first because
+    /// that is the order the signal meets them in (an RX-888's ATT ahead of
+    /// its VGA), the rest in the front end's own order. The front end's list
+    /// itself is left alone — rigctld reads its first entry as the RF gain.
+    // Why: HDZ 2026-11-09: "es fehlt ein AGC-Regler" → the bar showed only
+    //      the first stage; "bringen wir drei unter?".
+    fn bar_gains(&self) -> Vec<GainElement> {
+        let mut g = self.rx_gains();
+        // An RX-888's VHF tuner gain does nothing on HF, where the bar is
+        // used; it stays in Settings → Radio with the rest of the VHF path.
+        // Why: HDZ 2026-11-09: "RF hat gar keine Möglichkeit was zu setzen
+        //      für RX888, kann der weg?"
+        if self.caps.as_ref().is_some_and(|c| c.driver == "rx888") {
+            g.retain(|e| e.name != sdroxide_types::Rx888Config::TUNER_GAIN_ELEMENT);
+        }
+        g.sort_by_key(|e| e.max_db > 0.0);
+        g.truncate(BAR_GAIN_STAGES);
+        g
+    }
+
+    /// The front end's switches the receive row carries as chips beside the
+    /// gain rails: a HackRF's RF amplifier, an RX-888's VGA range.
+    // Why: HDZ 2026-11-09: "rx gain als chip mit toggle und die drei Regler,
+    //      mit Amp".
+    fn front_chips(&self) -> Vec<FrontChip> {
+        match self.caps.as_ref().map(|c| c.driver.as_str()) {
+            Some("hackrf") => vec![FrontChip::HACKRF_AMP],
+            Some("rx888") => vec![FrontChip::RX888_VGA_RANGE],
+            _ => Vec::new(),
+        }
+    }
+
+    /// One [`FrontChip`]: lit while it is anything but its first setting
+    /// (the amplifier on, a VGA range forced), a click steps it on.
+    fn front_chip(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, c: &FrontChip) {
+        let v = self.state.gains.iter().find(|(n, _)| n == c.element).map_or(0.0, |(_, v)| *v);
+        let i = (v.round().max(0.0) as usize).min(c.labels.len() - 1);
+        let hint = match c.element {
+            sdroxide_types::Rx888Config::VGA_RANGE_ELEMENT => tr!("topbar-rx888-vga-range-hint"),
+            _ => tr!("topbar-hackrf-amp-hint"),
+        };
+        if crate::chrome::chip(ui, i != 0, c.labels[i]).on_hover_text(hint).clicked() {
+            let next = ((i + 1) % c.labels.len()) as f64;
+            match self.state.gains.iter_mut().find(|(n, _)| n == c.element) {
+                Some((_, d)) => *d = next,
+                None => self.state.gains.push((c.element.to_string(), next)),
+            }
+            cmds.push(Command::SetGain { dir: Direction::Rx, element: c.element.into(), db: next });
+        }
+    }
+
+    /// Whether a hardware AGC owns `element`, so a rail on it would move
+    /// nothing (Pluto) or quietly switch the AGC off (an RTL-SDR's tuner
+    /// loops, which a manual gain write disables).
+    fn hardware_agc_owns(&self, element: &str) -> bool {
+        use sdroxide_types::{RtlSdrAgc, RtlSdrConfig as R};
+        self.pluto_agc_owns_gain(element)
+            || (self.caps.as_ref().is_some_and(|c| c.driver == "rtlsdr")
+                && [R::TUNER_GAIN_ELEMENT, R::LNA_GAIN_ELEMENT, R::MIX_GAIN_ELEMENT]
+                    .contains(&element)
+                && self.state.gains.iter().any(|(n, v)| {
+                    n == R::AGC_ELEMENT && RtlSdrAgc::from_code(*v as u8).tuner_auto()
+                }))
     }
 
     /// Whether `element` is a PlutoSDR's receive gain while the AD9361's own
@@ -2596,7 +2657,8 @@ impl SdroxideApp {
     /// box wider than the strip can pay for.
     fn rx_controls(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, narrow: bool) {
         let rx_gains = self.rx_gains();
-        let rx_gain = rx_gains.first().cloned();
+        let bar_gains = self.bar_gains();
+        let front_chips = self.front_chips();
         let chips = rx_chips(self.state.rx[0].mode);
         // A menu column wraps its rows and is as wide as the menu around it,
         // so there is nothing to balance there: the run stays whole, under the
@@ -2606,7 +2668,9 @@ impl SdroxideApp {
         // then as much of the chip run as this row has been given.
         crate::chrome::control_row(ui, narrow, |ui| {
             let mut vol = self.state.rx[0].volume;
-            ui.label(tr!("topbar-vol"));
+            // A speaker for the word: narrower, and the gain rails beside it
+            // need the room (HDZ 2026-11-09: "statt Lautstärke ein Icon").
+            level_label(ui, VOL_ICON).on_hover_text(tr!("topbar-vol"));
             if crate::chrome::slider_wheel(
                 crate::chrome::slider(ui, Slider::new(&mut vol, 0.0..=1.0).show_value(false)),
                 &mut vol,
@@ -2618,7 +2682,7 @@ impl SdroxideApp {
                 self.state.rx[0].volume = vol; // optimistic echo
                 cmds.push(Command::SetVolume { rx: RxId::Main, v: vol });
             }
-            if let Some(g) = &rx_gain {
+            for g in &bar_gains {
                 let mut hint = tr!("topbar-rx-gain-hint", stage = g.name.to_string());
                 // A stage counted in steps rather than decibels — an RSP's
                 // LNA state, an Airspy's place on its gain curve, a
@@ -2630,10 +2694,10 @@ impl SdroxideApp {
                 if g.unit == GainUnit::Step {
                     hint.push_str(&tr!("topbar-counted-steps-not-decibels-what"));
                 }
-                if rx_gains.len() > 1 {
+                if rx_gains.len() > bar_gains.len() {
                     hint.push_str(&tr!("topbar-rx-gain-stages", n = rx_gains.len()));
                 }
-                ui.label(tr!("topbar-gain")).on_hover_text(&hint);
+                ui.label(gain_label(&g.name, bar_gains.len())).on_hover_text(&hint);
                 let mut db = self
                     .state
                     .gains
@@ -2646,31 +2710,38 @@ impl SdroxideApp {
                 // register: the AD9361 ignores a gain written while its AGC
                 // runs, so the rail is drawn inert and says why rather than
                 // looking broken (issue #417).
-                let hardware_agc = self.pluto_agc_owns_gain(&g.name);
+                let hardware_agc = self.hardware_agc_owns(&g.name);
                 if hardware_agc {
-                    hint.push_str(&tr!("topbar-plutosdr-s-own-agc-setting"));
+                    hint.push('\n');
+                    hint.push_str(&if self.pluto_agc_owns_gain(&g.name) {
+                        tr!("topbar-plutosdr-s-own-agc-setting")
+                    } else {
+                        tr!("topbar-tuner-agc-owns-gain")
+                    });
                 }
-                // Narrower rail than Vol: this one carries a dB readout,
-                // and the module has to stay inside one wrapped row. In
-                // a menu the column is the constraint instead, and
-                // `control_row` has already sized the rail to it.
+                // Every gain rail at one pinned length, a little shorter than
+                // volume and squelch, which take the box's stretch (HDZ
+                // 2026-11-09: "Länge … gleich", then "Lautstärke und Squelch
+                // müssen etwas länger"); in a menu `control_row` sizes them.
+                // The readout is a bare number — the unit is in the hint — so
+                // the field stays small.
                 let resp = ui
                     .scope(|ui| {
                         if !narrow {
-                            ui.spacing_mut().slider_width = RX_DB_RAIL_W;
+                            ui.spacing_mut().slider_width = STRIP_RAIL_W;
                         }
                         ui.add_enabled_ui(!hardware_agc, |ui| {
                             crate::chrome::slider_wheel(
                                 crate::chrome::slider_readout(
                                     ui,
-                                    value_field_w(ui, "-888.8 dB"),
+                                    value_field_w(ui, RAIL_READOUT),
+                                    // A bare number: three rails fit the strip only
+                                    // without a unit on each readout. The unit is in
+                                    // the hint — and a stage counted in steps says so
+                                    // there — so no step index reads as "dB".
                                     Slider::new(&mut db, g.min_db..=g.max_db)
                                         .step_by(step)
-                                        // Whatever this element is actually counted
-                                        // in. Labelling a step index "dB" reported a
-                                        // number three times too small, in a unit it
-                                        // was not.
-                                        .suffix(g.suffix()),
+                                        .fixed_decimals(usize::from(step.fract() != 0.0)),
                                 ),
                                 &mut db,
                                 g.min_db..=g.max_db,
@@ -2691,6 +2762,9 @@ impl SdroxideApp {
                     }
                     cmds.push(Command::SetGain { dir: Direction::Rx, element: g.name.clone(), db });
                 }
+            }
+            for c in &front_chips {
+                self.front_chip(ui, cmds, c);
             }
             self.decim_chip(ui, cmds);
             // A cycling chip rather than a combo: a combo inside a menu
@@ -2728,15 +2802,15 @@ impl SdroxideApp {
                     let resp = ui
                         .scope(|ui| {
                             if !narrow {
-                                ui.spacing_mut().slider_width = RX_DB_RAIL_W;
+                                ui.spacing_mut().slider_width = STRIP_RAIL_W;
                             }
                             crate::chrome::slider_wheel(
                                 crate::chrome::slider_readout(
                                     ui,
-                                    value_field_w(ui, "-888.8 dB"),
+                                    value_field_w(ui, RAIL_READOUT),
                                     Slider::new(&mut db, 0.0..=sdroxide_types::MAX_MANUAL_GAIN_DB)
                                         .step_by(1.0)
-                                        .suffix(" dB"),
+                                        .fixed_decimals(0),
                                 ),
                                 &mut db,
                                 0.0..=sdroxide_types::MAX_MANUAL_GAIN_DB,
@@ -2759,7 +2833,7 @@ impl SdroxideApp {
         // noise chips, then mute and record, the two that act on the finished
         // audio rather than on the level.
         crate::chrome::control_row(ui, narrow, |ui| {
-            ui.label("SQL");
+            level_label(ui, "SQL");
             if self.rig_squelch() {
                 // The radio's own gate, on the radio's own scale. The dBFS rail
                 // below would be a control that does nothing here: what the
@@ -6841,10 +6915,9 @@ fn value_field_w(ui: &egui::Ui, text: &str) -> f32 {
     w.max(ui.spacing().interact_size.x)
 }
 
-/// One of the RX box's dB rails — the front-end Gain and the manual gain the
-/// AGC falls back to — with its readout beside it. The rail is pinned
-/// ([`RX_DB_RAIL_W`]): these two don't take the box's stretch, the Vol and SQL
-/// rails do.
+/// One of the RX box's dB rails — a front-end gain stage or the manual gain
+/// the AGC falls back to — with its readout beside it. Pinned at
+/// [`STRIP_RAIL_W`]; volume and squelch ([`LEVEL_RAIL_W`]) take the stretch.
 ///
 /// The readout is priced at a sample wider than any rig's gain range formats
 /// to rather than derived from the range, and deliberately: egui picks the
@@ -6852,8 +6925,87 @@ fn value_field_w(ui: &egui::Ui, text: &str) -> f32 {
 /// so what the box would have to reserve moves with the rail length as well
 /// as with the range. A few points of slack buys a figure that holds for
 /// every rig, and one that does not change as the rail is dragged.
-fn db_rail_w(ui: &egui::Ui) -> f32 {
-    RX_DB_RAIL_W + MODULE_ROW_SPACING + value_field_w(ui, "-888.8 dB")
+fn readout_rail_w(ui: &egui::Ui) -> f32 {
+    STRIP_RAIL_W + MODULE_ROW_SPACING + value_field_w(ui, RAIL_READOUT)
+}
+
+/// The widest figure a rail's readout shows: a gain or attenuation to a
+/// tenth, without the unit.
+const RAIL_READOUT: &str = "-88.8";
+
+/// The volume rail's label.
+const VOL_ICON: &str = "🔊";
+
+/// Volume and squelch rails' floor in the RX box: a little longer than the
+/// gain rails ([`STRIP_RAIL_W`]), and they alone take the box's stretch.
+/// Four fifths of what they were at both ends, floor and cap
+/// ([`LEVEL_STRETCH_MAX`]), so the box leaves the room to its neighbours.
+// Why: HDZ 2026-11-09: "Lautstärke und Squelch müssen etwas länger".
+//      HDZ 2026-11-10: "die Regler können 20 % kürzer sein, beide, um Platz
+//      zu schaffen".
+const LEVEL_RAIL_W: f32 = (STRIP_RAIL_W + 16.0) * 0.8;
+/// How much the RX box may add to its Vol and SQL rails: the cap that puts the
+/// longest rail at four fifths of `STRIP_RAIL_W + 16 + RAIL_STRETCH_MAX`, the
+/// length it had before.
+const LEVEL_STRETCH_MAX: f32 = (STRIP_RAIL_W + 16.0 + RAIL_STRETCH_MAX) * 0.8 - LEVEL_RAIL_W;
+
+/// The column the Vol icon and the SQL label stand in: as wide as the wider
+/// of the two, so both rails start at one x and, being one length, end at one.
+// Why: HDZ 2026-11-10: "der Lautstärkeregler und der Squelch-Regler sollten
+//      links genau exakt ausgerichtet sein … und sollten rechts auch exakt
+//      gleich enden".
+fn level_label_w(ui: &egui::Ui) -> f32 {
+    let label =
+        |s: &str| crate::chrome::text_width(ui, s, egui::TextStyle::Body.resolve(ui.style()));
+    label(VOL_ICON).max(label("SQL"))
+}
+
+/// A Vol or SQL label in its [`level_label_w`] column, left-aligned.
+fn level_label(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    let (w, h) = (level_label_w(ui), ui.spacing().interact_size.y);
+    ui.allocate_ui_with_layout(
+        egui::vec2(w, h),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_width(w);
+            ui.label(text)
+        },
+    )
+    .inner
+}
+
+/// How many of a front end's gain stages the receive row carries.
+const BAR_GAIN_STAGES: usize = 3;
+
+/// A rail's label: "Gain" where the front end has the one stage, else the
+/// stage's own name cut short — prefixes that only say which backend it is
+/// dropped, the tuner called RF, four letters at most (HDZ 2026-11-09: "knapp
+/// beschriften").
+fn gain_label(name: &str, stages: usize) -> String {
+    if stages <= 1 {
+        return tr!("topbar-gain");
+    }
+    let n = ["KIWI", "RSP", "SPY", "AUX"].iter().find_map(|p| name.strip_prefix(p)).unwrap_or(name);
+    let n = if n == "TUNER" { "RF" } else { n };
+    n.chars().take(4).collect()
+}
+
+/// A front-end switch drawn as a chip in the receive row: a pseudo gain
+/// element whose value walks `labels` on each click.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(in crate::app) struct FrontChip {
+    pub element: &'static str,
+    /// What the chip reads at each value, 0 first.
+    pub labels: &'static [&'static str],
+}
+
+impl FrontChip {
+    const HACKRF_AMP: FrontChip =
+        FrontChip { element: sdroxide_types::HackRfConfig::AMP_ELEMENT, labels: &["AMP", "AMP"] };
+    const RX888_VGA_RANGE: FrontChip = FrontChip {
+        element: sdroxide_types::Rx888Config::VGA_RANGE_ELEMENT,
+        labels: &["AUTO", "LOW", "HIGH"],
+    };
 }
 
 /// A chip on the RX box's chip run: everything that follows the SQL rail, in
@@ -7181,20 +7333,30 @@ impl RxRows {
 /// whose receive row is already full lifts nothing and is laid out exactly as
 /// before; a bare one comes out a third narrower, which is often the
 /// difference between the strip packing into two rows and taking a third.
-fn rx_rows(ui: &egui::Ui, gain: bool, decim: bool, agc_off: bool, mode: Mode) -> RxRows {
+fn rx_rows(
+    ui: &egui::Ui,
+    rails: &[String],
+    front: &[&[&str]],
+    decim: bool,
+    agc_off: bool,
+    mode: Mode,
+) -> RxRows {
     let g = MODULE_ROW_SPACING;
     // The Vol and SQL rails, which is what the box's stretch lengthens — so
     // they are priced at the floor they fall back to, not the style width.
-    let rail = STRIP_RAIL_W;
+    let rail = LEVEL_RAIL_W;
     let label =
         |s: &str| crate::chrome::text_width(ui, s, egui::TextStyle::Body.resolve(ui.style()));
     let chip = |s: &str| crate::chrome::chip_width(ui, s, None);
 
     // Receive: volume, the front-end gain rail where the rig has one, the
     // decimation chip, the AGC chip, and the manual rail behind it.
-    let mut receive = label(&tr!("topbar-vol")) + g + rail;
-    if gain {
-        receive += g + label(&tr!("topbar-gain")) + g + db_rail_w(ui);
+    let mut receive = level_label_w(ui) + g + rail;
+    for name in rails {
+        receive += g + label(name) + g + readout_rail_w(ui);
+    }
+    for labels in front {
+        receive += g + labels.iter().map(|l| chip(l)).fold(0.0, f32::max);
     }
     if decim {
         // "DEC off" and "DEC /64" measure much the same, so the chip has one
@@ -7210,7 +7372,7 @@ fn rx_rows(ui: &egui::Ui, gain: bool, decim: bool, agc_off: bool, mode: Mode) ->
         receive +=
             g + AgcMode::ALL.iter().map(|a| chip(&format!("AGC {}", a.tr()))).fold(0.0, f32::max);
         if agc_off {
-            receive += g + label(&tr!("topbar-man")) + g + db_rail_w(ui);
+            receive += g + label(&tr!("topbar-man")) + g + readout_rail_w(ui);
         }
     }
 
@@ -7221,7 +7383,7 @@ fn rx_rows(ui: &egui::Ui, gain: bool, decim: bool, agc_off: bool, mode: Mode) ->
     // be swapped under a running window (`Engine::adopt_source`), so a box
     // sized for one of them would change width when the operator applied a new
     // interface.
-    let noise = label("SQL") + g + rail + g + sql_readout_w(ui);
+    let noise = level_label_w(ui) + g + rail + g + sql_readout_w(ui);
 
     // Then the run itself. Each chip is priced at its widest label, so the box
     // does not breathe as a decode comes and goes (see [`RxChip::width_label`])
@@ -9112,8 +9274,9 @@ mod tests {
         let vfo = chip_row_w(ui, &vfo_chip_labels(true)).max(vfo_offsets_w(ui, true))
             + 2.0 * crate::chrome::MODULE_MARGIN_X
             + 4.0;
-        let rx =
-            rx_rows(ui, false, false, false, mode).w() + 2.0 * crate::chrome::MODULE_MARGIN_X + 4.0;
+        let rx = rx_rows(ui, &[], &[], false, false, mode).w()
+            + 2.0 * crate::chrome::MODULE_MARGIN_X
+            + 4.0;
         // A CAT rig modulates our audio, so a digital mode there draws the
         // transmit-audio rail rather than the mic one — and it is the wider of
         // the two. It is also why no CESSB rail joins them: the envelope is
@@ -9269,7 +9432,7 @@ mod tests {
         ctx.run_ui(input, |ui| {
             let mut boxes = cat_rig_strip_boxes(ui, Mode::Lsb);
             // The receive box an SDR draws, in place of the CAT rig's.
-            let rx = rx_rows(ui, true, true, true, Mode::Lsb).w()
+            let rx = rx_rows(ui, &["Gain".to_string()], &[], true, true, Mode::Lsb).w()
                 + 2.0 * crate::chrome::MODULE_MARGIN_X
                 + 4.0;
             boxes[3] = StripBox { w: rx, flex: 2.0, max_w: rx + RAIL_STRETCH_MAX };
@@ -9294,6 +9457,53 @@ mod tests {
                     rows(true),
                     rows(false),
                 );
+            }
+        })
+        .drop_without_applying_deltas();
+    }
+
+    /// Up to three gain stages and a front-end chip against the one-stage box
+    /// (measured 2026-11-09 for HDZ: "bringen wir drei unter?"): no row lost
+    /// from 1800 pt on, and two stages lose none at any width with the AGC on.
+    #[test]
+    fn three_gain_stages_cost_the_desktop_strip_no_row() {
+        let (ctx, input) = desktop_ctx();
+        ctx.run_ui(input, |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(MODULE_ROW_SPACING, MODULE_ROW_SPACING);
+            let mut boxes = cat_rig_strip_boxes(ui, Mode::Lsb);
+            let display = chip_row_w(ui, &DISPLAY_VIEW_CHIPS)
+                .max(chip_row_w(ui, &DISPLAY_TOOL_CHIPS))
+                + 2.0 * crate::chrome::MODULE_MARGIN_X;
+            boxes[5] = StripBox { w: display, flex: 1.0, max_w: display * CHIP_STRETCH_FACTOR };
+            let names = |n: &[&str]| n.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+            let one = names(&["Gain"]);
+            let rx888 = names(&["ATT", "VGA"]);
+            let rtl = names(&["LNA", "MIX", "IF"]);
+            let range: &[&[&str]] = &[FrontChip::RX888_VGA_RANGE.labels];
+            for agc_off in [false, true] {
+                let rx_w = |rails: &[String], front: &[&[&str]]| {
+                    rx_rows(ui, rails, front, true, agc_off, Mode::Lsb).w()
+                        + 2.0 * crate::chrome::MODULE_MARGIN_X
+                        + 4.0
+                };
+                for avail in [1280.0, 1364.0, 1440.0, 1600.0, 1700.0, 1800.0, 1920.0, 2560.0] {
+                    let rows = |w: f32| {
+                        let mut boxes = boxes.clone();
+                        boxes[3] = StripBox { w, flex: 2.0, max_w: w + RAIL_STRETCH_MAX };
+                        rows_needed(avail, 8.0, &boxes)
+                    };
+                    let base = rows(rx_w(&one, &[]));
+                    for (what, w) in [("RX-888", rx_w(&rx888, range)), ("RTL", rx_w(&rtl, &[]))] {
+                        // Measured: two stages and the chip never cost a row with
+                        // the AGC on; three, or the manual rail beside two, can
+                        // between 1600 and 1700 pt — and nothing does from
+                        // 1800 pt, the width HDZ runs the window at.
+                        let holds = avail >= 1800.0 || (what == "RX-888" && !agc_off);
+                        if holds {
+                            assert_eq!(rows(w), base, "{what} cost a {avail} pt strip a row");
+                        }
+                    }
+                }
             }
         })
         .drop_without_applying_deltas();
@@ -9761,7 +9971,17 @@ mod tests {
     /// chip the box does not know about cannot be drawn into it.
     #[test]
     fn the_condensed_rx_box_fits_its_rows() {
-        for gain in [false, true] {
+        // No front-end gain, the one stage, and the multi-stage shapes with
+        // the chips that ride beside them (RX-888, HackRF, RTL-SDR).
+        let shapes: [(&[&str], &[&[&str]]); 5] = [
+            (&[], &[]),
+            (&["Gain"], &[]),
+            (&["ATT", "VGA"], &[FrontChip::RX888_VGA_RANGE.labels]),
+            (&["LNA", "VGA"], &[FrontChip::HACKRF_AMP.labels]),
+            (&["LNA", "MIX", "IF"], &[]),
+        ];
+        for (rail_names, front) in shapes {
+            let rails: Vec<String> = rail_names.iter().map(|s| s.to_string()).collect();
             for decim in [false, true] {
                 for agc_off in [false, true] {
                     // One mode from each shape of the chip run: the plain
@@ -9775,15 +9995,15 @@ mod tests {
                             // The box draws its Vol and SQL rails at what it
                             // reserved for them, so the rows are laid out here
                             // at the same figure.
-                            ui.spacing_mut().slider_width = STRIP_RAIL_W;
-                            let rows = rx_rows(ui, gain, decim, agc_off, mode);
+                            ui.spacing_mut().slider_width = LEVEL_RAIL_W;
+                            let rows = rx_rows(ui, &rails, front, decim, agc_off, mode);
                             let chips = rx_chips(mode);
                             let (mut vol, mut db) = (0.5f32, -88.8f32);
                             // The deepest threshold, which is the longest the
                             // readout beside the rail reads.
                             let mut sql = sdroxide_types::SQUELCH_OPEN_DB + 1.0;
                             let state = format!(
-                                "gain={gain} decim={decim} agc_off={agc_off} mode={mode:?} \
+                                "rails={rails:?} decim={decim} agc_off={agc_off} mode={mode:?} \
                                  lifted={}",
                                 rows.lifted
                             );
@@ -9806,25 +10026,37 @@ mod tests {
                                 }
                             };
 
-                            let row1 = ui
+                            let (row1, vol_x) = ui
                                 .horizontal(|ui| {
-                                    ui.label("Vol");
-                                    crate::chrome::slider(
+                                    level_label(ui, VOL_ICON);
+                                    let rail = crate::chrome::slider(
                                         ui,
                                         Slider::new(&mut vol, 0.0..=1.0).show_value(false),
                                     );
-                                    if gain {
-                                        ui.label("Gain");
+                                    let x = rail.rect.left() - ui.min_rect().left();
+                                    for name in &rails {
+                                        ui.label(name);
                                         ui.scope(|ui| {
-                                            ui.spacing_mut().slider_width = RX_DB_RAIL_W;
+                                            ui.spacing_mut().slider_width = STRIP_RAIL_W;
                                             crate::chrome::slider_readout(
                                                 ui,
-                                                value_field_w(ui, "-888.8 dB"),
+                                                value_field_w(ui, RAIL_READOUT),
                                                 Slider::new(&mut db, -88.8..=0.0)
                                                     .step_by(0.1)
-                                                    .suffix(" dB"),
+                                                    .fixed_decimals(1),
                                             );
                                         });
+                                    }
+                                    for labels in front {
+                                        let widest = labels
+                                            .iter()
+                                            .max_by(|a, b| {
+                                                crate::chrome::chip_width(ui, a, None).total_cmp(
+                                                    &crate::chrome::chip_width(ui, b, None),
+                                                )
+                                            })
+                                            .unwrap();
+                                        crate::chrome::chip(ui, true, *widest);
                                     }
                                     if decim {
                                         crate::chrome::chip(ui, false, "DEC /64");
@@ -9838,29 +10070,29 @@ mod tests {
                                             let mut man = sdroxide_types::MAX_MANUAL_GAIN_DB;
                                             ui.label("Man");
                                             ui.scope(|ui| {
-                                                ui.spacing_mut().slider_width = RX_DB_RAIL_W;
+                                                ui.spacing_mut().slider_width = STRIP_RAIL_W;
                                                 crate::chrome::slider_readout(
                                                     ui,
-                                                    value_field_w(ui, "-888.8 dB"),
+                                                    value_field_w(ui, RAIL_READOUT),
                                                     Slider::new(
                                                         &mut man,
                                                         0.0..=sdroxide_types::MAX_MANUAL_GAIN_DB,
                                                     )
                                                     .step_by(1.0)
-                                                    .suffix(" dB"),
+                                                    .fixed_decimals(0),
                                                 );
                                             });
                                         }
                                     }
                                     draw(ui, &chips[..rows.lifted]);
-                                    ui.min_rect().width()
+                                    (ui.min_rect().width(), x)
                                 })
                                 .inner;
 
-                            let row2 = ui
+                            let (row2, sql_x) = ui
                                 .horizontal(|ui| {
-                                    ui.label("SQL");
-                                    crate::chrome::slider_readout(
+                                    level_label(ui, "SQL");
+                                    let rail = crate::chrome::slider_readout(
                                         ui,
                                         sql_readout_w(ui),
                                         Slider::new(
@@ -9871,11 +10103,18 @@ mod tests {
                                         .show_value(true)
                                         .custom_formatter(|v, _| format!("{v:.0}")),
                                     );
+                                    let x = rail.rect.left() - ui.min_rect().left();
                                     draw(ui, &chips[rows.lifted..]);
-                                    ui.min_rect().width()
+                                    (ui.min_rect().width(), x)
                                 })
                                 .inner;
 
+                            // Vol and SQL start at one x, so at one length
+                            // they end at one too (HDZ 2026-11-10).
+                            assert!(
+                                (vol_x - sql_x).abs() < 0.5,
+                                "{state}: Vol rail starts at {vol_x}, SQL at {sql_x}"
+                            );
                             let (room1, room2) = (rows.receive, rows.noise);
                             assert!(row1 <= room1 + 0.5, "{state}: row 1 took {row1} of {room1}");
                             assert!(row2 <= room2 + 0.5, "{state}: row 2 took {row2} of {room2}");

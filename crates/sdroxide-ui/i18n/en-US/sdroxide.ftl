@@ -2085,6 +2085,9 @@ topbar-counted-steps-not-decibels-what =
 
     Counted in steps, not decibels: what one step is worth is the receiver's own business, and on an SDRplay it depends on the band as well. Right is still more gain.
 topbar-gain = Gain
+topbar-tuner-agc-owns-gain = Tuner AGC sets this stage; Manual in Settings → Radio.
+topbar-hackrf-amp-hint = HackRF RF amplifier, about +11 dB. Lit = on.
+topbar-rx888-vga-range-hint = VGA range (AD8370): AUTO by request, LOW up to ~+17 dB, HIGH with pre-amp from ~−8 dB.
 topbar-plutosdr-s-own-agc-setting =
     {""}
 
