@@ -722,9 +722,10 @@ menu. Ordinary dragging and keyboard adjustment still work.
     the curve over that many bins either side (±1 to start with, a bin being
     about 47 Hz): narrow, the open peaks act as resonators the noise rings,
     heard as a robotic voice; wider takes them out at the price of a coarser
-    curve. It delays the audio by about 21 ms and runs ahead of HUM and the
-    AGC — or, with **after NR**, behind the NR engine, where it takes what RNN
-    or DFNR left and lifts the formants they found.
+    curve. It delays the audio by about 21 ms and runs behind the NR engine
+    (**after NR**, on to start with), where it takes what RNN or DFNR left and
+    lifts the formants they found; with after NR off it runs ahead of HUM and
+    the AGC.
   - **FM-DECRACKLE** (NFM only, greyed out in other modes) — a row of its own
     for the crackle of a weak FM signal. Below the FM threshold the noise now
     and then swings the received phase a whole turn round, and a plain
