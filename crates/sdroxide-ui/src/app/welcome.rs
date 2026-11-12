@@ -561,15 +561,13 @@ impl SdroxideApp {
         if let Some(g) = go {
             self.welcome_go(g, now, cmds);
         }
-        if finish {
+        if finish || !open {
+            // FINISH or the cross: either way the operator has seen it, so a
+            // listener who never sets a callsign is not welcomed on every
+            // start. Settings → UI opens it again.
             self.ui_settings.welcomed = true;
             crate::app::persist::persist_ui_settings(&self.ui_settings);
             self.welcome = Welcome::default();
-        } else if !open {
-            // Closed with the cross: put aside for this session. A first start
-            // that still has no callsign is welcomed again next time.
-            self.welcome.asked = false;
-            self.welcome.later = true;
         }
     }
 
