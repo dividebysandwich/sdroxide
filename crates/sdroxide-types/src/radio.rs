@@ -2567,6 +2567,11 @@ impl RtlSdrConfig {
     /// without depending on the native backend crate — same reason as
     /// [`HpsdrConfig::LNA_GAIN_ELEMENT`].
     pub const TUNER_GAIN_ELEMENT: &'static str = "TUNER";
+    /// The R82xx's three stages one by one — LNA, mixer, and the IF VGA —
+    /// each on its own 16-step ladder, beside the combined `TUNER` ladder
+    /// that walks LNA and mixer together.
+    pub const LNA_GAIN_ELEMENT: &'static str = "LNA";
+    pub const MIX_GAIN_ELEMENT: &'static str = "MIX";
     pub const IF_GAIN_ELEMENT: &'static str = "IF";
     /// Pseudo-elements carrying settings that are not gains at all.
     ///

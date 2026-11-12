@@ -2501,19 +2501,38 @@ fn rtlsdr_caps(src: &rtlsdr_source::RtlSdrSource, driver: &str) -> DeviceCaps {
         audio_mode: false,
         freq_ranges_rx,
         sample_rates: sdroxide_types::RtlSdrConfig::SAMPLE_RATES.to_vec(),
-        gains: vec![
-            // The hardware only has 29 discrete steps; a request is snapped to
-            // the nearest and reported back, so a fine slider is honest enough.
-            sdroxide_types::GainElement::db(
-                sdroxide_types::RtlSdrConfig::TUNER_GAIN_ELEMENT,
-                sdroxide_types::Direction::Rx,
-                0.0,
-                sdroxide_types::RtlSdrConfig::GAIN_MAX_DB,
-                0.1,
-            ),
-        ],
+        gains: rtlsdr_gains(driver),
         ..DeviceCaps::default()
     }
+}
+
+/// An RTL-SDR's gain stages. Over USB the tuner's three, one by one — LNA
+/// and mixer on their measured ladders, the IF VGA in steps for want of a
+/// measured table — while the combined ladder stays in Settings → Radio;
+/// `rtl_tcp` has no opcode for the R82xx's stages, so a network dongle keeps
+/// the one combined rail.
+// Why: HDZ 2026-11-09: "beim RTL-SDR … LNA Gain (RF Gain) … IF Gain"; three
+//      rails fit the strip ("bringen wir drei unter?", measured).
+fn rtlsdr_gains(driver: &str) -> Vec<sdroxide_types::GainElement> {
+    use sdroxide_rtlsdr::{STAGE_MAX_INDEX, Stage, stage_db};
+    use sdroxide_types::{Direction, GainElement, RtlSdrConfig as R};
+    if driver != "rtlsdr" {
+        // The hardware only has 29 discrete steps; a request is snapped to
+        // the nearest and reported back, so a fine slider is honest enough.
+        return vec![GainElement::db(
+            R::TUNER_GAIN_ELEMENT,
+            Direction::Rx,
+            0.0,
+            R::GAIN_MAX_DB,
+            0.1,
+        )];
+    }
+    let top = |s: Stage| (0..=STAGE_MAX_INDEX).map(|i| stage_db(s, i)).fold(0.0, f64::max);
+    vec![
+        GainElement::db(R::LNA_GAIN_ELEMENT, Direction::Rx, 0.0, top(Stage::Lna), 0.1),
+        GainElement::db(R::MIX_GAIN_ELEMENT, Direction::Rx, 0.0, top(Stage::Mixer), 0.1),
+        GainElement::steps(R::IF_GAIN_ELEMENT, Direction::Rx, 0.0, f64::from(STAGE_MAX_INDEX), 1.0),
+    ]
 }
 
 /// Build the wideband SpyServer source from radio.json.
