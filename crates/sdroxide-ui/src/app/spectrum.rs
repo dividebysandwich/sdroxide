@@ -892,7 +892,7 @@ impl SdroxideApp {
     /// the guide cannot tell (off, outside the panadapter, too few frames): the
     /// S/N chip in SPOTS keeps what is shown to be there, not what might be.
     pub(in crate::app) fn snr_matches(&self, s: &sdroxide_types::Spot) -> bool {
-        let Some(g) = self.snr_last.as_deref().filter(|_| self.view.snr_guide) else {
+        let Some(g) = self.snr_last.as_deref().filter(|_| self.snr_mean_wanted()) else {
             return false;
         };
         guide_max(g, s.freq_hz).is_some_and(|v| v >= self.view.snr_label_min_db)
@@ -902,9 +902,7 @@ impl SdroxideApp {
     /// kind PEAK can judge — SSB, DRM, FAX or FT8 spread over their channel
     /// and have no peak of their own.
     fn snr_label_alpha(&self, id: u64, hz: f64, carrier: bool, recheck: bool, step: f32) -> f32 {
-        let Some(g) =
-            self.snr_last.as_deref().filter(|_| self.view.snr_guide && self.view.snr_label_filter)
-        else {
+        let Some(g) = self.snr_last.as_deref().filter(|_| self.view.snr_label_filter) else {
             return 1.0;
         };
         let on = self.view.snr_label_min_db;
@@ -932,7 +930,7 @@ impl SdroxideApp {
         let mut st = self.snr_labels.borrow_mut();
         // Kept while the guide runs, so a label's fade and decision carry
         // over a moment with the filter off.
-        if !self.view.snr_guide {
+        if !self.snr_judging() {
             *st = SnrLabels::default();
             return (false, 0.0);
         }
@@ -1333,6 +1331,7 @@ mod tests {
             snr_db: snr.clone(),
             count: vec![frames; 1000],
             frames,
+            sk: Vec::new(),
         };
         assert_eq!(super::guide_max(&g(100), 9_650_000.0), Some(6.0));
         assert_eq!(super::guide_max(&g(100), 9_620_000.0), Some(0.0));
@@ -1350,6 +1349,7 @@ mod tests {
             snr_db: vec![0.0f32; 1000],
             count: vec![frames; 1000],
             frames,
+            sk: Vec::new(),
         };
         let c = super::LabelChecks { flanks: true, peak: false, on: 6.0, off: 4.5 };
         // Too early to judge.
@@ -1383,6 +1383,7 @@ mod tests {
             snr_db: snr,
             count: vec![100; 1000],
             frames: 100,
+            sk: Vec::new(),
         };
         let at = |cell: f64| 7_000_000.0 + cell * 100.0 + 50.0;
         assert_eq!(super::guide_max(&g, at(500.0)), Some(8.0), "the hump passes by height");
@@ -1409,6 +1410,7 @@ mod tests {
             snr_db: snr.clone(),
             count: vec![100; 1000],
             frames: 100,
+            sk: Vec::new(),
         };
         let carrier = 7_255_000.0 + 500.0 * 100.0 + 50.0;
         assert!(super::on_a_flank(&g, carrier + 6_000.0, 15.0), "sideband label kept");

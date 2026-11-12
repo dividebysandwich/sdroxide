@@ -1069,7 +1069,7 @@ them all at once.
     live line, decaying back down.
   - **S/N** — draw along the bottom of the spectrum how far every frequency
     stands above the noise floor, in green, as a running mean in which newer
-    frames count more (one 30 s old counts a third; a level that has fallen is let go of within half a minute). The noise flattens into a
+    frames count more (one 10 s old counts a third; a level that has fallen is let go of within half a minute). The noise flattens into a
     line and a faint steady carrier stays standing as a peak, which makes it a
     tuning aid: put the cursor on the peak. Full height (a quarter of the
     spectrum) is set on the **S/N TOP** rail under the chip, 12 to 30 dB,
@@ -1078,6 +1078,19 @@ them all at once.
     another FFT size starts the mean afresh, a pan carries it along, and
     switching it off resets it. With S/N on, the readout under the pointer
     shows a second box with the S/N at that frequency.
+  - **SK** — draw the spectral kurtosis of every frequency from the same
+    running mean, as an amber line in the same quarter of the spectrum, on
+    its own switch. It tells apart what S/N cannot: the noise reads 0 dB
+    (a faint amber rule), a steady unmodulated carrier falls far below it,
+    and a signal that comes and goes — speech, overs on a channel, bursts —
+    stands above it. Shown in dB (10·log₁₀ of the kurtosis, noise scaled to
+    1 by the cells under 1 dB S/N), from −10 dB up to **SK TOP** (3–30 dB,
+    20 dB to start with). **SK τ** (0.1–20 s, 10 s to start with) is how long
+    the kurtosis remembers: an over 20 dB up stays visible for about eight
+    time constants. Switching S/N or SK on, a zoom or another FFT size first
+    lets 2 s of frames pass uncounted, so the transient they open with does
+    not settle in the mean; then each cell waits 2.5 s before it shows. With
+    SK on the readout under the pointer shows SK in amber below the S/N box.
   - **3D**, at the head of its own row — draw the spectrum as a receding
     surface instead of a flat line, with the newest spectrum across the front;
     beside it, how that surface is drawn: **LINES** or **SOLID** (greyed until
@@ -1099,7 +1112,8 @@ them all at once.
     the spectrum line.
   - **scroll** — how fast it scrolls. See
     [Waterfall scroll speed](#waterfall-scroll-speed) below.
-  - **LABELS BY S/N** — while the S/N line runs, a spot keeps its label only
+  - **LABELS BY S/N** — on its own switch (the S/N mean runs for it whether
+    the S/N line shows or not), a spot keeps its label only
     where that line stands at least **S/N MIN** over the noise within 2 kHz of
     the spot's frequency: a station on the schedule that is not coming in here
     gets no label. Decided every two seconds, with a margin (a label goes only

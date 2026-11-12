@@ -1235,6 +1235,54 @@ fn draw_snr_guide(
     );
 }
 
+/// The kurtosis line's colour: amber, apart from the S/N green.
+const SK_GUIDE_COLOUR: Color32 = Color32::from_rgb(255, 176, 0);
+
+/// The kurtosis line over the spectrum, on the S/N line's base and in its
+/// quarter of the strip, with a faint rule where the noise reads (1).
+fn draw_sk_guide(
+    p: &egui::Painter,
+    view: &ViewState,
+    rect: &Rect,
+    g: &crate::mean_spectrum::Guide,
+    under_snr: bool,
+) {
+    let base = rect.bottom() - 1.0;
+    let full = rect.height() / 4.0;
+    let top = view
+        .sk_guide_top_db
+        .clamp(*crate::view::SK_GUIDE_TOP_RANGE.start(), *crate::view::SK_GUIDE_TOP_RANGE.end());
+    let bottom = crate::view::SK_GUIDE_BASE_DB;
+    // In dB like the S/N line: 0 dB is the noise, a faint rule there.
+    let frac = |db: f32| ((db - bottom) / (top - bottom)).clamp(0.0, 1.0);
+    let one = base - frac(0.0) * full;
+    p.hline(rect.x_range(), one, Stroke::new(1.0, SK_GUIDE_COLOUR.gamma_multiply(0.3)));
+    let mut run: Vec<Pos2> = Vec::new();
+    for (i, k) in g.sk.iter().enumerate() {
+        let hz = g.lo_hz + (i as f64 + 0.5) * g.cell_hz;
+        if !k.is_finite() || hz < view.view_lo_hz || hz > view.view_hi_hz {
+            if run.len() >= 2 {
+                p.add(Shape::line(std::mem::take(&mut run), Stroke::new(1.2, SK_GUIDE_COLOUR)));
+            }
+            run.clear();
+            continue;
+        }
+        let h = frac(10.0 * k.max(1e-3).log10()) * full;
+        run.push(pos2(view.freq_to_x(hz, rect), base - h));
+    }
+    if run.len() >= 2 {
+        p.add(Shape::line(run, Stroke::new(1.2, SK_GUIDE_COLOUR)));
+    }
+    p.text(
+        // Its caption under the S/N one when that shows, else in its place.
+        rect.left_top() + egui::vec2(6.0, if under_snr { 16.0 } else { 4.0 }),
+        egui::Align2::LEFT_TOP,
+        format!("SK {bottom:.0}–{top:.0} dB · {:.0} s", view.sk_tau_s),
+        egui::FontId::monospace(10.0),
+        SK_GUIDE_COLOUR,
+    );
+}
+
 /// dB-scale u8 units per new spectrum frame (~3.5 dB/s at 30 fps over a
 /// 100 dB range).
 const PEAK_DECAY: f32 = 0.3;
@@ -2416,11 +2464,21 @@ pub fn show_ext(
                 compute_trace(view, f, Some(&smooth.bins), &spec_rect, wf.row_scale)
             });
             painter.add(Shape::line(pts, Stroke::new(1.0, Color32::from_rgb(120, 220, 255))));
-            if view.snr_guide {
+            // S/N and SK each on their own chip, from the one mean.
+            // Why: HDZ 2026-11-08: "kann ich das SK-Spektrum alleine haben
+            //      ohne S/N, weil du hast die verbunden?"
+            if view.snr_guide || view.sk_guide {
                 let g = ui.ctx().data(|d| {
                     d.get_temp::<Arc<crate::mean_spectrum::Guide>>(crate::mean_spectrum::guide_id())
                 });
-                draw_snr_guide(&painter, view, &spec_rect, g.as_deref());
+                if view.snr_guide {
+                    draw_snr_guide(&painter, view, &spec_rect, g.as_deref());
+                }
+                if view.sk_guide
+                    && let Some(g) = g.as_deref()
+                {
+                    draw_sk_guide(&painter, view, &spec_rect, g, view.snr_guide);
+                }
             }
         }
     }
@@ -3013,14 +3071,33 @@ pub fn show_ext(
             // Why: HDZ 2026-11-07: "am Cursor bei eingeschaltetem S/N eine
             //      Zusatzinfo … dein S/N-Wert aus dem Speicher, unter der
             //      Frequenz".
-            if view.snr_guide {
+            if view.snr_guide || view.sk_guide {
                 let g = ui.ctx().data(|d| {
                     d.get_temp::<Arc<crate::mean_spectrum::Guide>>(crate::mean_spectrum::guide_id())
                 });
-                if let Some(snr) = g.and_then(|g| g.snr_at(view.x_to_freq(p.x, &rect))) {
-                    let below = p.y - 9.0 + 11.0 * crate::theme::panadapter_font_scale() + 6.0;
+                let hz = view.x_to_freq(p.x, &rect);
+                let step = 11.0 * crate::theme::panadapter_font_scale() + 6.0;
+                let mut below = p.y - 9.0 + step;
+                if view.snr_guide
+                    && let Some(snr) = g.as_deref().and_then(|g| g.snr_at(hz))
+                {
                     let text = format!("S/N {snr:.1} dB");
                     label_box(&painter, pos2(p.x + 8.0, below), &text, SNR_GUIDE_COLOUR, rect);
+                    below += step;
+                }
+                // The SK on a line of its own, in the SK line's amber.
+                // Why: HDZ 2026-11-08: "weil die SK-Kurve orange ist, sollte
+                //      der Wert da unter S/N in Orange stehen".
+                if view.sk_guide
+                    && let Some(k) = g.as_deref().and_then(|g| g.sk_at(hz))
+                {
+                    label_box(
+                        &painter,
+                        pos2(p.x + 8.0, below),
+                        &format!("SK {:.1} dB", 10.0 * k.max(1e-3).log10()),
+                        SK_GUIDE_COLOUR,
+                        rect,
+                    );
                 }
             }
         }

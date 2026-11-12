@@ -5808,6 +5808,14 @@ impl SdroxideApp {
                     {
                         self.view.snr_guide = !self.view.snr_guide;
                     }
+                    // Its kurtosis line, from the same mean, on or off on its
+                    // own.
+                    if crate::chrome::chip(ui, self.view.sk_guide, tr!("topbar-sk-guide"))
+                        .on_hover_text(tr!("topbar-sk-guide-tip"))
+                        .clicked()
+                    {
+                        self.view.sk_guide = !self.view.sk_guide;
+                    }
                 });
                 // How tall the S/N line draws: the S/N at its full height, on a
                 // rail under the chip that switches it, live while it runs.
@@ -5832,6 +5840,49 @@ impl SdroxideApp {
                     )
                     .on_hover_text(tr!("topbar-snr-top-tip"))
                     .on_disabled_hover_text(tr!("topbar-snr-top-tip"));
+                });
+                // The SK line's range and how long its peaks hold, live while
+                // it runs.
+                // Why: HDZ 2026-11-08: "im Settings-Menü, wo auch S/N mit
+                //      Schieberegler gesetzt wird, den Wertebereich des SK
+                //      wählbar machen … nicht langlebig genug".
+                let sk_on = self.view.sk_guide;
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(tr!("topbar-caption-sk-top"))
+                            .size(10.0)
+                            .color(crate::theme::CYAN_DIM()),
+                    );
+                    ui.add_enabled(
+                        sk_on,
+                        Slider::new(
+                            &mut self.view.sk_guide_top_db,
+                            crate::view::SK_GUIDE_TOP_RANGE,
+                        )
+                        .step_by(1.0)
+                        .show_value(true)
+                        .custom_formatter(|v, _| format!("{v:.0} dB")),
+                    )
+                    .on_hover_text(tr!("topbar-sk-top-tip"))
+                    .on_disabled_hover_text(tr!("topbar-sk-top-tip"));
+                });
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(tr!("topbar-caption-sk-tau"))
+                            .size(10.0)
+                            .color(crate::theme::CYAN_DIM()),
+                    );
+                    ui.add_enabled(
+                        sk_on,
+                        Slider::new(&mut self.view.sk_tau_s, crate::view::SK_TAU_RANGE)
+                            .logarithmic(true)
+                            .show_value(true)
+                            .custom_formatter(|v, _| {
+                                if v < 10.0 { format!("{v:.1} s") } else { format!("{v:.0} s") }
+                            }),
+                    )
+                    .on_hover_text(tr!("topbar-sk-tau-tip"))
+                    .on_disabled_hover_text(tr!("topbar-sk-tau-tip"));
                 });
                 self.spectrum_3d_rows(ui, &mut cfg);
                 speed_row(
@@ -5867,11 +5918,12 @@ impl SdroxideApp {
             //      nach S/N) (mit Peaks) (ignoriere Flanken), dann nächste Reihe
             //      mit dem S/N-Schieberegler".
             ui.horizontal_wrapped(|ui| {
-                // Labels by S/N: a spot keeps its label only where the S/N guide
-                // sees a signal. Greyed while the guide is off.
+                // Labels by S/N: a spot keeps its label only where the S/N mean
+                // sees a signal. On its own switch: the mean runs for it whether
+                // the S/N line shows or not.
                 if crate::chrome::chip_enabled(
                     ui,
-                    self.view.snr_guide,
+                    true,
                     self.view.snr_label_filter,
                     &tr!("topbar-snr-label-filter"),
                 )
@@ -5890,7 +5942,7 @@ impl SdroxideApp {
                 //      Spitzen-Algorithmik mit rein".
                 if crate::chrome::chip_enabled(
                     ui,
-                    self.view.snr_guide,
+                    true,
                     self.view.snr_label_peak,
                     &tr!("topbar-snr-label-peak"),
                 )
@@ -5904,7 +5956,7 @@ impl SdroxideApp {
                 //      bitte doch an/aus, Schwelle 15 dB".
                 if crate::chrome::chip_enabled(
                     ui,
-                    self.view.snr_guide,
+                    true,
                     self.view.snr_label_flanks,
                     &tr!("topbar-snr-label-flanks"),
                 )
@@ -5928,7 +5980,7 @@ impl SdroxideApp {
                         .color(crate::theme::CYAN_DIM()),
                 );
                 ui.add_enabled(
-                    self.view.snr_guide,
+                    true,
                     Slider::new(&mut self.view.snr_label_min_db, crate::view::SNR_LABEL_MIN_RANGE)
                         .step_by(0.5)
                         .show_value(true)
@@ -7741,7 +7793,12 @@ fn panadapter_group_w(ui: &egui::Ui) -> f32 {
         .map(|d| crate::chrome::chip_width(ui, &detail_chip_label(*d), None) + gap)
         .sum();
     let widest = [
-        chips(&[&tr!("topbar-show-spectrum"), &tr!("topbar-peak-hold"), &tr!("topbar-snr-guide")]),
+        chips(&[
+            &tr!("topbar-show-spectrum"),
+            &tr!("topbar-peak-hold"),
+            &tr!("topbar-snr-guide"),
+            &tr!("topbar-sk-guide"),
+        ]),
         chips(&["3D", &tr!("topbar-lines"), &tr!("topbar-solid")]),
         caption(&tr!("topbar-caption-flow")) + speeds(&Speed::SURFACE),
         caption(&tr!("topbar-caption-reaction")) + speeds(&Speed::ALL),
