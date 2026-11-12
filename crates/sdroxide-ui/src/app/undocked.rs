@@ -488,6 +488,8 @@ impl SdroxideApp {
         self.handle_detached_outcome(ctx, module, spec, outcome);
         if let Some(spot) = clicked_spot {
             self.prefill_from_spot(&spot);
+            // The SPOTS window's map marks it too: where it is sent from.
+            self.pick_spot_on_map(&spot);
         }
     }
 

@@ -972,6 +972,13 @@ pub struct SdroxideApp {
     show_spots: bool,
     /// Show only spots that fall inside the current panadapter view span.
     spot_in_view_only: bool,
+    /// The SPOTS window's map: its view, and the spot it marks — picked in
+    /// the list or by its label on the waterfall.
+    spots_map_view: crate::widgets::worldmap::MapView,
+    spots_map_pick: Vec<Spot>,
+    /// The next LIST frame scrolls the first pick into view: set by a pick
+    /// on the map or the waterfall, cleared once the list has shown it.
+    spots_list_focus: bool,
     /// Fuzzy search query for the spot list. Narrows the list in the SPOTS
     /// window only — the waterfall labels are positioned by frequency, so
     /// reordering them by match quality would mean nothing.
@@ -1814,6 +1821,9 @@ impl SdroxideApp {
             adopted_spots_gen: None,
             show_spots: false,
             spot_in_view_only: false,
+            spots_map_view: Default::default(),
+            spots_map_pick: Vec::new(),
+            spots_list_focus: false,
             spot_search: String::new(),
             broadcast: load_broadcast_stations(),
             broadcast_spots: Vec::new(),
