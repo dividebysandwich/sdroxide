@@ -21879,6 +21879,9 @@ mod wide_frame_tests {
 ///
 /// Both ends are then smoothed towards their new values: jumping straight there
 /// makes the display flicker every time a signal keys up.
+/// How far above the median a panorama's ceiling sits at the least.
+const PANO_HEADROOM_DB: f32 = 30.0;
+
 fn auto_levels(db: &[f32], prev: Option<(f32, f32)>) -> (f32, f32) {
     auto_levels_paced(db, prev, 1.0, false)
 }
@@ -21920,6 +21923,13 @@ fn auto_levels_paced(
     // rather than as flat black.
     let mut floor = v[((v.len() - 1) as f64 * 0.10).round() as usize] - 4.0;
     let mut ceil = v[v.len() - 1] + 6.0;
+    if keep_floor {
+        // Headroom over the noise, whatever the loudest bin: in a band of
+        // noise alone the loudest bin is a noise peak a dozen dB up, and a
+        // ceiling just over it puts the noise itself mid-palette.
+        let median = v[(v.len() - 1) / 2];
+        ceil = ceil.max(median + PANO_HEADROOM_DB);
+    }
 
     // Never let the window collapse: a degenerate range maps everything to one
     // colour and looks like a dead receiver.
@@ -22036,14 +22046,18 @@ mod auto_level_tests {
 
     #[test]
     fn a_quiet_panorama_keeps_its_floor_dark() {
-        // Noise and nothing else, a few dB of texture: widened about the
-        // middle the noise sits mid-palette; kept at the floor it stays low.
-        let db: Vec<f32> = (0..1024).map(|i| -80.0 + (i % 7) as f32).collect();
-        let (mid_floor, _) = auto_levels_paced(&db, None, 1.0, false);
+        // Noise and nothing else, with the odd noise peak 15 dB up: the noise
+        // has to sit in the bottom of the palette, not in its middle.
+        let db: Vec<f32> = (0..1024)
+            .map(|i| -80.0 + (i % 7) as f32 + if i % 97 == 0 { 15.0 } else { 0.0 })
+            .collect();
         let (floor, ceil) = auto_levels_paced(&db, None, 1.0, true);
-        assert!((ceil - floor - 24.0).abs() < 0.01);
-        assert!(floor > mid_floor, "kept floor {floor} vs centred {mid_floor}");
+        let median = -77.0;
+        let place = (median - floor) / (ceil - floor);
+        assert!(place < 0.25, "noise at {place:.2} of the palette ({floor}..{ceil})");
         assert!((floor - (-80.0 - 4.0)).abs() < 1.5, "the floor is just under the noise: {floor}");
+        let (mf, mc) = auto_levels_paced(&db, None, 1.0, false);
+        assert!((median - mf) / (mc - mf) > place, "the lane's own scale is left as it was");
     }
 
     #[test]
