@@ -396,6 +396,10 @@ fn on_a_flank(g: &crate::mean_spectrum::Guide, hz: f64, flank_db: f32) -> bool {
 #[derive(Default)]
 pub(in crate::app) struct SnrLabels {
     shown: std::collections::HashMap<u64, (bool, f32)>,
+    /// Catalogue candidates (whole EiBi, Aoki): held to the PEAK test whether
+    /// or not PEAK is on — a listed transmission is a guess until a peak of its
+    /// own shows it is there. Only modes with a carrier can show one (AM, CW).
+    pub(in crate::app) strict: std::collections::HashSet<u64>,
     checked: Option<std::time::Instant>,
     last: Option<std::time::Instant>,
 }
@@ -903,13 +907,14 @@ impl SdroxideApp {
         };
         let on = self.view.snr_label_min_db;
         let off = snr_label_off_db(on);
+        let peak = self.view.snr_label_peak || self.snr_labels.borrow().strict.contains(&id);
         let mut st = self.snr_labels.borrow_mut();
         let fresh = !st.shown.contains_key(&id);
         let entry = st.shown.entry(id).or_insert((false, 0.0));
         if recheck {
             let checks = LabelChecks {
                 flanks: self.view.snr_label_flanks,
-                peak: self.view.snr_label_peak && carrier,
+                peak: peak && carrier,
                 on,
                 off,
             };

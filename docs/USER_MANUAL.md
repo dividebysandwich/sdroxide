@@ -1094,8 +1094,14 @@ them all at once.
     more stations are offered than the broadcast schedule: the weather-fax
     stations, the five NCDXF/IARU beacon frequencies, NAVTEX, the Shannon
     and RAF VOLMETs and the published FT8, FT4, JS8, WSPR, FSQ and PSK31
-    dials — only those that come in get a label. Greyed while S/N
-    is off.
+    dials, and the catalogues: the whole EiBi schedule (utility stations,
+    fax, DRM and the rest the broadcast list leaves out, from the season file
+    the schedule download keeps) and, once imported, Aoki's list — each
+    transmission on the air now with no other candidate within 3 kHz. Only
+    those that come in get a label; catalogue candidates of AM and CW stations
+    always have to pass the **WITH PEAKS** test, whether it is on or not, since
+    a listed transmission is a guess until a peak of its own shows it is
+    there. Greyed while S/N is off.
   - **S/N MIN** — the rail in the row under LABELS BY S/N: how far over the noise a
     frequency must stand on the S/N line for a label or a candidate, 0 to 6 dB,
     2 dB to start with. 2 dB is where a weak steady station such as the
@@ -12901,6 +12907,12 @@ spoken announcements below them under `[speech]`:
   or the last one downloaded, stays in use; **Download schedule now** on the
   **Spots** tab still fetches it when you ask. On by default; native clients
   only.
+
+- **Import Aoki list…** — Nobuo Aoki's shortwave list (NDXC) adds label
+  candidates for **LABELS BY S/N**. sdroxide does not download it: fetch the
+  season's ZIP from <http://www1.s2.starcat.ne.jp/ndxc/>, unpack it, and pick
+  the text file; it is checked, then stored in the configuration folder as
+  `catalogs/aoki.txt`. No network request; optional.
 
 With these three unticked, sdroxide makes no network request you did not ask
 for. See [PRIVACY.md](../PRIVACY.md) for every case where it does.
