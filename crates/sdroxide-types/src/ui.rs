@@ -1023,6 +1023,10 @@ pub struct UiSettings {
     /// sits is a property of this screen.
     #[serde(default = "default_detached", deserialize_with = "detached_slots")]
     pub detached: [DetachedState; DetachableModule::COUNT],
+    /// The first-start welcome has been answered with "done", so it is not
+    /// shown again. It only ever appears to a station with no callsign, which
+    /// is why an existing installation needs no migration to keep quiet.
+    pub welcomed: bool,
 }
 
 /// The docked AMP window's place: its top-left corner and width, in points.
@@ -1159,6 +1163,7 @@ impl Default for UiSettings {
             amp_docked: None,
             amp_meters: None,
             detached: default_detached(),
+            welcomed: false,
         }
     }
 }

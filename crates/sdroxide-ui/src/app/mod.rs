@@ -23,6 +23,7 @@ pub(in crate::app) mod alerts;
 mod amp;
 pub(in crate::app) mod awards;
 pub(in crate::app) mod bands;
+pub(in crate::app) mod checkup;
 pub(in crate::app) mod drm;
 mod duo_power;
 pub(in crate::app) mod frame;
@@ -55,6 +56,7 @@ pub(in crate::app) mod top_bar;
 pub(in crate::app) mod tx_audio;
 pub(in crate::app) mod undocked;
 pub(crate) mod util;
+pub(in crate::app) mod welcome;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod window_fit_tests;
 pub(in crate::app) mod windows;
@@ -705,6 +707,10 @@ pub struct SdroxideApp {
     log_view: crate::app::logbook::LogView,
     /// The command palette (Ctrl+K). See [`palette`].
     palette: crate::app::palette::Palette,
+    /// The station check window is open. See [`checkup`].
+    show_check: bool,
+    /// The welcome walkthrough. See [`welcome`].
+    welcome: crate::app::welcome::Welcome,
     /// QSOs worked since this run started, which is what the FT8 panel's
     /// "Session" readout counts. Deliberately not derived from the logbook: the
     /// log is persisted and grows for ever, so counting it would report every
@@ -1739,6 +1745,8 @@ impl SdroxideApp {
             qso_log: load_qso_log(storage),
             log_view: Default::default(),
             palette: Default::default(),
+            show_check: false,
+            welcome: Default::default(),
             session_qsos: 0,
             show_digi_settings: false,
             digi_cfg_edit: sdroxide_types::DigiConfig::default(),

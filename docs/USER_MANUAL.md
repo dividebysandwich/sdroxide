@@ -210,6 +210,28 @@ sdroxide --siggen
 
 See the [command-line reference](#12-command-line-reference) for all options.
 
+**The first start.** A station with no callsign set is met by the **WELCOME**
+walkthrough: seven short pages, each with a numbered chip at the top so any of
+them can be visited in any order, and a mark on the chip (✓ ! ✕) saying how the
+things that page covers stand right now.
+
+| Page | What it is for |
+| --- | --- |
+| **Welcome** | What the program is, and its language (the same picker as Settings → UI). |
+| **Station** | Your **callsign and grid square**, with **SAVE**. Nothing transmits on the digital modes without a callsign. |
+| **Radio** | Pick what you have — an SDR on USB, a transceiver on CAT, a radio on the network, another sdroxide running as a server, or no radio yet — and the page lists the problems that kind of radio usually has (the WinUSB driver and udev rule, a device held by another program, the wrong CAT family or sound card, DATA mode, UDP blocked by a firewall…), with the button that opens where it is set up. Below that, the radio link, receiver, input level and audio lines of the station check, live, so the page says when the radio has started working. |
+| **Before you transmit** | The clock, the audio level and ALC, the drive, the band lockout and IARU region, the T/R switch for an SDR sharing an antenna, and virtual audio cables. |
+| **Online** | Callsign lookup, spot feeds, log uploads and alerts — all optional and all off until configured. |
+| **Tour** | What is easy to miss, each with an **OPEN** button: the command palette (Ctrl+K), the TCI/rigctld servers for WSJT-X and other programs, public SDRs, profiles, keys and controllers, band conditions, Winlink and help. The modes, the logbook and the spots are on the main screen and are not repeated here. |
+| **Check** | The station check's verdict, what is still left to look at (each with its fix button), and where to go next. |
+
+The window is not modal: what it opens is meant to be used beside it, and it
+stays open. **FINISH** closes it for good; the window's close button puts it
+aside until the next start, for as long as there is still no callsign. A
+station that already has a callsign is never shown it of its own accord —
+**WELCOME TOUR** on Settings → General, beside **STATION CHECK**, opens it at
+any time. Nothing in it transmits.
+
 ### 2.2 The main window
 
 The window has two parts: a **top control bar** of captioned modules that reflow
@@ -16605,6 +16627,29 @@ fall back to the config directory.
 ---
 
 ## 14. Troubleshooting
+
+**Start with the station check.** **STATION CHECK**, on Settings → General
+under the callsign, is one page that says what is and is not in order, each
+line with what it means and — where there is somewhere to fix it — a button
+that goes there:
+
+| Line | What it reports |
+| --- | --- |
+| **Callsign**, **Grid square** | Missing, or not shaped like one. Without a callsign the digital modes do not transmit. |
+| **Radio link** | The connection's error if it has one; "no radio has answered yet" if nothing has reported in. |
+| **Receiver** | Whether the spectrum is arriving, and for how long it has not been. |
+| **Input level** | The receiver's converter clipping — too much RF gain. |
+| **Radio audio** | The standing notice about the radio's sound devices, if there is one. |
+| **Speaker** | The receiver is muted (with **UNMUTE**). |
+| **Transmit** | Whether this radio can be keyed at all, or is receive only. |
+| **Computer clock** | How far the clock is out, as the stations decoded on FT8 say: fine under 0.5 s, worth fixing to 1.5 s, and beyond that others will not decode you. "Not measured" until FT8 has decoded something. |
+| **Callsign lookup**, **Spot feeds** | Whether any is configured. Optional, and reported as such. |
+
+A green ✓ is in order, a grey · is a choice rather than a fault, a yellow ! works
+with something wrong with it, and a pink ✕ will not work until it is dealt with.
+The page reads what the program already knows at that moment: it measures
+nothing afresh and transmits nothing, so it cannot tell you about your antenna,
+your power or your audio on the air.
 
 **"Waiting for spectrum" and no receive audio (CAT radio).**
 The radio's capture device could not be opened. Common causes:
