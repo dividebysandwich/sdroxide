@@ -301,6 +301,9 @@ pub fn show(
             Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
             Color32::WHITE,
         );
+        // The band plan's allocation row along the bottom, under everything
+        // drawn over the waterfall after it.
+        crate::widgets::bandplan::wide_row(&painter, &rect, &x_of);
     }
 
     // What the panadapter below is showing, outlined rather than filled so it
