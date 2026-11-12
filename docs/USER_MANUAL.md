@@ -2167,29 +2167,32 @@ is transmitting. Two kinds:
 - **RANGE** — a slice of a band on a channel grid. Pick a **Band** from the
   list — every amateur band of your region plus the broadcast, CB and AM
   allocations — or give it a **From** and a **to** in MHz, a **Step** (5 / 6.25 / 8.33 / 10 / 12.5 / 25 kHz) and a mode.
-- **PANO** — a panorama: a range swept without stopping. Pick a **Band** or give
-  it a **From** and a **to** in MHz; nothing else applies, because it stops
-  nowhere. A new range starts the panorama afresh; **CLR** does the same on the
-  range it has, throwing the picture away. Its status line names the range, the
-  sweeps so far and how long the last one took. The radio
-  tunes slice after slice across the range, as a range scan does, and stitches
-  what each slice sees — the middle of it, clear of the roll-off at the edges and
-  of the front end's own spike at DC — into one spectrum across the whole range.
-  Each finished sweep is one row of the **full-band strip** (**WIDE**), so a
-  receiver that only sees a couple of megahertz at a time, an RTL-SDR for one,
-  gets the same band-wide waterfall a direct-sampling receiver has. **Settles
-  for** is how long each slice waits after retuning before it is read: longer
-  is a steadier picture and a slower sweep. **Slice width** is how much of the
-  receiver's span each slice uses, 50–95 % (80 % by default): less keeps clear
-  of the roll-off at the edges, more sweeps faster; neighbouring slices overlap
-  by a tenth of the span. The span is the one after decimation, so **DEC /8**
-  makes every slice an eighth as wide. Where the front end's gain moves between
-  two slices — an AGC on the tuner or the RTL chip, an overload loop — the
-  overlap shows it as a step, and the panorama lowers or raises the new slice
-  by it (steps under 1 dB are left alone); for a panorama whose levels can be
-  compared from one evening to the next, run the front end on a fixed gain. A range from 0 to 30 MHz on an
+- **PANO** — a panorama: a range swept without stopping. Pick a **Band** or
+  give it a **From** and a **to** in MHz; nothing else applies, because it
+  stops nowhere. A new range starts the panorama afresh; **CLR** does the same
+  on the range it has, throwing the picture away. Its status line names the
+  range, the sweeps so far and how long the last one took. The radio tunes
+  slice after slice across the range, as a range scan does, and stitches what
+  each slice sees — the middle of it, clear of the roll-off at the edges and
+  of the front end's own spike at DC — into one spectrum across the whole
+  range. Each finished sweep is one row of the **full-band strip** (**WIDE**),
+  so a receiver that only sees a couple of megahertz at a time, an RTL-SDR for
+  one, gets the same band-wide waterfall a direct-sampling receiver has.
+  **Settles for** is how long each slice waits after retuning before it is
+  read: longer is a steadier picture and a slower sweep. **Slice width** is
+  how much of the receiver's span each slice uses, 50–95 % (80 % by default):
+  less keeps clear of the roll-off at the edges, more sweeps faster;
+  neighbouring slices overlap by a tenth of the span. The span is the one
+  after decimation, so **DEC /8** makes every slice an eighth as wide. Where
+  the front end's gain moves between two slices — an AGC on the tuner or the
+  RTL chip, an overload loop — the overlap shows it as a step, and the
+  panorama lowers or raises the new slice by it (steps under 1 dB are left
+  alone); for a panorama whose levels can be compared from one evening to the
+  next, run the front end on a fixed gain. A range from 0 to 30 MHz on an
   RTL-SDR needs direct sampling (its settings, *Auto* does it); a slice the
   front end cannot reach is drawn from its neighbours.
+
+  ![PANO on an RTL-SDR in direct sampling: 1–16 MHz as one strip, S/N line on](images/pano-rtlsdr-hf.jpg)
 
 **A range scan is fast**, and not in the way a handheld scanner is. A scanner
 has one receiver and has to visit each channel in turn, which is why sweeping
