@@ -684,14 +684,15 @@ impl SdroxideApp {
         // is free would widen the window frame by frame.
         ui.set_max_width(ui.available_width());
         // A spot its feed gives no place gets an approximate one where that
-        // can be had honestly ([`approx_loc`]); it is drawn hollow.
-        let placed_owned: Vec<Spot> = shown
-            .iter()
-            .filter_map(|s| effective_loc(s).0.map(|ll| Spot { loc: Some(ll), ..(*s).clone() }))
-            .collect();
-        let placed: Vec<&Spot> = placed_owned.iter().collect();
-        let approx =
-            shown.iter().filter(|s| s.loc.is_none()).count() - (shown.len() - placed.len());
+        // can be had honestly ([`approx_loc`]); it is drawn hollow. Worked out
+        // once per change of the shown list, not on every frame.
+        // Taken out for the frame and put back at the end, so it can be read
+        // beside `&mut self`.
+        let mut cache = std::mem::take(&mut self.spots_map_cache);
+        cache.refresh(shown);
+        let placed: Vec<&Spot> = cache.placed.iter().collect();
+        let approx = cache.approx_ids.len();
+        let unplaced = shown.len() - placed.len();
         ui.horizontal(|ui| {
             if crate::chrome::chip(ui, !self.view.spots_map_names_off, tr!("spots-map-names"))
                 .on_hover_text(tr!("spots-map-names-tip"))
@@ -711,7 +712,7 @@ impl SdroxideApp {
                     "spots-map-status",
                     shown = placed.len(),
                     approx = approx,
-                    unplaced = shown.len() - placed.len()
+                    unplaced = unplaced
                 ))
                 .size(10.0)
                 .color(crate::theme::gray(150)),
@@ -722,20 +723,6 @@ impl SdroxideApp {
                     .color(crate::theme::gray(150)),
             );
         });
-        // The dots as stations: that is what the map hit-tests a click
-        // against. Drawn over below, coloured by kind and sized by power.
-        let stations: Vec<crate::digi_map::DigiStation> = placed
-            .iter()
-            .filter_map(|s| {
-                s.loc.map(|(lat, lon)| crate::digi_map::DigiStation {
-                    lat,
-                    lon,
-                    fade: 1.0,
-                    call: Some(std::sync::Arc::from(s.call.as_str())),
-                    band: None,
-                })
-            })
-            .collect();
         let home = sdroxide_types::grid_to_latlon(&self.my_grid());
         // The line under the map first, as a bottom panel of the window, and
         // the map in all the height that leaves: the window's size is the
@@ -765,7 +752,7 @@ impl SdroxideApp {
             None,
             None,
             None,
-            &stations,
+            &cache.stations,
             &[],
             &[],
             None,
@@ -775,7 +762,7 @@ impl SdroxideApp {
             false,
             !self.view.spots_map_cities_off,
         );
-        self.spots_map_dots(ui, map_rect, &placed, shown, home);
+        self.spots_map_dots(ui, map_rect, &placed, &cache.approx_ids, home);
         // Connect and release on the map itself: a click on a dot picks it, a
         // click on the picked dot or a right-click anywhere on the map lets
         // it go, and the map hands its view back to the fit.
@@ -800,6 +787,7 @@ impl SdroxideApp {
             // The line under the map was drawn before the click: draw again.
             ui.ctx().request_repaint();
         }
+        self.spots_map_cache = cache;
         tune
     }
 
@@ -813,12 +801,9 @@ impl SdroxideApp {
         ui: &egui::Ui,
         rect: egui::Rect,
         placed: &[&Spot],
-        shown: &[&Spot],
+        approx_ids: &std::collections::HashSet<u64>,
         home: Option<(f64, f64)>,
     ) {
-        // The ids whose place is approximate: those their feed left unplaced.
-        let approx_ids: std::collections::HashSet<u64> =
-            shown.iter().filter(|s| s.loc.is_none()).map(|s| s.id).collect();
         if rect.width() < crate::widgets::worldmap::MIN_HEIGHT {
             return;
         }
@@ -895,6 +880,61 @@ impl SdroxideApp {
                 );
             }
         }
+    }
+}
+
+/// The SPOTS map's view of the shown spots, rebuilt only when that list
+/// changes: each placed spot (with an approximate place where its feed gave
+/// none), the ids placed approximately, and the dots as map stations. Built
+/// on every frame it cloned every spot and ran [`approx_loc`]'s word search
+/// over thousands of broadcast lines.
+#[derive(Default)]
+pub(in crate::app) struct SpotsMapCache {
+    key: Option<u64>,
+    pub(in crate::app) placed: Vec<Spot>,
+    pub(in crate::app) approx_ids: std::collections::HashSet<u64>,
+    pub(in crate::app) stations: Vec<crate::digi_map::DigiStation>,
+}
+
+impl SpotsMapCache {
+    /// Bring the cache up to `shown`; cheap when nothing changed.
+    pub(in crate::app) fn refresh(&mut self, shown: &[&Spot]) {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        shown.len().hash(&mut h);
+        for s in shown {
+            s.id.hash(&mut h);
+            s.freq_hz.to_bits().hash(&mut h);
+            s.loc.map(|(a, b)| (a.to_bits(), b.to_bits())).hash(&mut h);
+            s.call.hash(&mut h);
+        }
+        let key = h.finish();
+        if self.key == Some(key) {
+            return;
+        }
+        self.key = Some(key);
+        self.placed.clear();
+        self.approx_ids.clear();
+        for s in shown {
+            let Some(ll) = effective_loc(s).0 else { continue };
+            if s.loc.is_none() {
+                self.approx_ids.insert(s.id);
+            }
+            self.placed.push(Spot { loc: Some(ll), ..(*s).clone() });
+        }
+        self.stations = self
+            .placed
+            .iter()
+            .filter_map(|s| {
+                s.loc.map(|(lat, lon)| crate::digi_map::DigiStation {
+                    lat,
+                    lon,
+                    fade: 1.0,
+                    call: Some(std::sync::Arc::from(s.call.as_str())),
+                    band: None,
+                })
+            })
+            .collect();
     }
 }
 
@@ -1311,5 +1351,42 @@ mod tests {
         })
         .drop_without_applying_deltas();
         assert!(checked);
+    }
+
+    /// Proves: the SPOTS map's cache places what the feed placed, places an
+    /// unplaced broadcast spot approximately and says so, leaves the rest off
+    /// the map, and rebuilds when the shown list changes.
+    #[test]
+    fn the_spots_map_cache_follows_the_shown_list() {
+        let mk = |id: u64, call: &str, reference: &str, loc: Option<(f64, f64)>| Spot {
+            id,
+            kind: SpotKind::Broadcast,
+            freq_hz: 6_000_000.0 + id as f64,
+            call: call.into(),
+            spotter: String::new(),
+            mode: "AM".into(),
+            comment: String::new(),
+            reference: Some(reference.into()),
+            grid: None,
+            loc,
+            when_utc: 0,
+            snr_db: None,
+        };
+        let sited = mk(1, "Radio Somewhere", "AUT", Some((48.0, 16.0)));
+        let tunis = mk(2, "Radio Tunis", "TUN", None);
+        let lost = mk(3, "Nowhere", "ZZZ", None);
+        let mut c = SpotsMapCache::default();
+        c.refresh(&[&sited, &tunis, &lost]);
+        assert_eq!(c.placed.iter().map(|s| s.id).collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(c.stations.len(), 2);
+        assert!(c.approx_ids.contains(&2) && !c.approx_ids.contains(&1));
+        // Unchanged: nothing rebuilt (the same buffer, the same contents).
+        let at = c.placed.as_ptr();
+        c.refresh(&[&sited, &tunis, &lost]);
+        assert_eq!(c.placed.as_ptr(), at);
+        // A spot gone from the list leaves the map.
+        c.refresh(&[&sited]);
+        assert_eq!(c.placed.len(), 1);
+        assert!(c.approx_ids.is_empty());
     }
 }

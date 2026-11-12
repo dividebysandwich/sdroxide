@@ -991,6 +991,8 @@ pub struct SdroxideApp {
     /// the list or by its label on the waterfall.
     spots_map_view: crate::widgets::worldmap::MapView,
     spots_map_pick: Vec<Spot>,
+    /// The SPOTS map's placed spots, kept while the shown list is unchanged.
+    spots_map_cache: spots::SpotsMapCache,
     /// The next LIST frame scrolls the first pick into view: set by a pick
     /// on the map or the waterfall, cleared once the list has shown it.
     spots_list_focus: bool,
@@ -1844,6 +1846,7 @@ impl SdroxideApp {
             spot_in_view_only: false,
             spots_map_view: Default::default(),
             spots_map_pick: Vec::new(),
+            spots_map_cache: Default::default(),
             spots_list_focus: false,
             spot_search: String::new(),
             broadcast: load_broadcast_stations(),
