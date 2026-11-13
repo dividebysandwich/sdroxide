@@ -1767,10 +1767,10 @@ settings-radio-six-rates-are-six-different =
 
     FDM-S1 / FDM-S2: a command. Their FPGA is loaded by the computer at every power-up, and sdroxide runs ELAD's own elad-firmware loader to put this rate's image in. Without that loader installed a sampler sends no samples at all, and sdroxide says so on screen.
 
-    FDM-DUO: not a command. The radio boots its own FPGA and arrives at whatever rate it powered up in or FDM-SW2 last left it in (192 kHz on a fresh one), and this only says how the stream is READ. Get it wrong and the panadapter is simply the wrong width, with every frequency inside it scaled to match.
+    FDM-DUO: also a command. The radio boots its own 192 kHz image; for any wider rate sdroxide uploads the matching "remote" image from ELAD's ExtIO DLL (installed with FDM-SW2 or SDR Console) when the radio opens, which takes about 7 seconds, and puts the radio back in stand-alone at 192 kHz when you choose 192 kHz again or close sdroxide. Nothing is loaded while transmitting.
 
     The stream's real rate is measured a couple of seconds after it starts, and a mismatch is reported on screen. Takes effect on Apply.
-settings-radio-fdm-s-fpga-image-loaded = FDM-S: the FPGA image loaded — FDM-DUO: how the stream is read
+settings-radio-fdm-s-fpga-image-loaded = FDM-S: the FPGA image loaded — FDM-DUO: the wide image loaded at open (192 kHz is the radio's own)
 settings-radio-receiver-s-input-pad-one = The receiver's input pad — one step, in or out. The same control as the main window's Gain slider.
 settings-radio-pre-selection-filters = Pre-selection filters
 settings-radio-low-pass-bank-front-adc = The low-pass bank in front of the ADC. Bypassing it gives the widest view and the worst behaviour near strong out-of-band signals — a broadcast transmitter a few miles away will put images across the band. Leave it on unless you are deliberately listening outside the filtered range.
@@ -2087,6 +2087,7 @@ topbar-hide-band-chip-brings-back = Hide — the band chip brings it back
 topbar-undock = UNDOCK
 topbar-return-selector-top-bar-popup = Return the selector to the top-bar popup
 topbar-dec-off = DEC off
+topbar-elad-bw-hint = ELAD span (not the BW receive filter): the radio streams { $khz } kHz, the width of the whole panadapter. Click for the next wider rate, right-click for the next narrower; either saves it and reopens the radio, like Sample rate in Settings → Radio. On an FDM-DUO every rate above 192 kHz loads ELAD's wide image (about 7 s, from the driver FDM-SW2 or SDR Console installs), and 192 kHz puts the radio back in stand-alone.
 topbar-vol = Vol
 topbar-counted-steps-not-decibels-what =
     {""}

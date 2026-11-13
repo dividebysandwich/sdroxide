@@ -71,6 +71,11 @@ pub struct UsbDev {
     trace: Trace,
 }
 
+/// How long a refused open is retried, and how often. See
+/// [`UsbDev::claim_patiently`].
+const CLAIM_PATIENCE: std::time::Duration = std::time::Duration::from_secs(4);
+const CLAIM_RETRY: std::time::Duration = std::time::Duration::from_millis(250);
+
 impl UsbDev {
     /// Open the device with this serial, or the first one found when `serial`
     /// is empty.
@@ -81,18 +86,35 @@ impl UsbDev {
     /// taken and nothing else is disturbed.
     pub fn open(serial: &str, trace: &Trace) -> Result<UsbDev> {
         let want = serial.trim();
-        let devices = nusb::list_devices().wait()?;
+        let devices: Vec<nusb::DeviceInfo> = nusb::list_devices().wait()?.collect();
         let candidates: Vec<nusb::DeviceInfo> = devices
+            .iter()
             .filter(|d| d.vendor_id() == VID && Model::from_pid(d.product_id()).is_some())
+            .cloned()
             .collect();
 
         if candidates.is_empty() {
-            return Err(Error::NotFound("no ELAD device found on USB".to_string()));
+            // Say what *is* there, so a report shows whether the radio is
+            // missing, has another product id, or is held by another driver.
+            let seen: Vec<String> =
+                devices.iter().filter(|d| looks_elad(d)).map(describe).collect();
+            trace.note(format!("{} USB devices visible", devices.len()));
+            for line in &seen {
+                trace.note(format!("ELAD-looking device: {line}"));
+            }
+            let msg = if seen.is_empty() {
+                "no ELAD device found on USB: check the USB lead to the radio's I/Q port \
+                 and that the radio is on"
+                    .to_string()
+            } else {
+                format!("no ELAD I/Q device this driver knows on USB; seen: {}", seen.join("; "))
+            };
+            return Err(Error::NotFound(msg));
         }
 
         let mut last_err = None;
         for info in &candidates {
-            let dev = match Self::claim(info, trace) {
+            let dev = match Self::claim_patiently(info, trace) {
                 Ok(d) => d,
                 Err(e) => {
                     trace.note(format!("skipping a device that would not open: {e}"));
@@ -127,6 +149,34 @@ impl UsbDev {
              device in Settings → Radio, or clear the serial to use the first \
              one found"
         )))
+    }
+
+    /// [`Self::claim`], tried again for a few seconds while it is refused.
+    ///
+    /// A new rate reopens the device straight after the old stream let go, and
+    /// Windows can still be closing the old handle: the open then fails with
+    /// error 5, access denied (AJ3G, 25 Oct, on a SPAN change). Only a refusal
+    /// is retried; a device that has gone is not.
+    fn claim_patiently(info: &nusb::DeviceInfo, trace: &Trace) -> Result<UsbDev> {
+        let deadline = std::time::Instant::now() + CLAIM_PATIENCE;
+        let mut tries = 0;
+        loop {
+            match Self::claim(info, trace) {
+                Err(Error::Access(e)) if std::time::Instant::now() < deadline => {
+                    tries += 1;
+                    if tries == 1 {
+                        trace.note(format!("open refused, trying again: {e}"));
+                    }
+                    std::thread::sleep(CLAIM_RETRY);
+                }
+                r => {
+                    if tries > 0 && r.is_ok() {
+                        trace.note(format!("opened after {tries} refusals"));
+                    }
+                    return r;
+                }
+            }
+        }
     }
 
     /// Open one enumerated device and claim its interface.
@@ -440,6 +490,43 @@ impl UsbDev {
         }
     }
 
+    /// A vendor control-OUT traced only if it fails: twelve thousand of these
+    /// make up one FDM-DUO image load, and the trace is a bounded ring.
+    pub fn control_out_quiet(
+        &self,
+        req: Request,
+        value: u16,
+        index: u16,
+        data: &[u8],
+    ) -> Result<()> {
+        let r = self
+            .iface
+            .control_out(
+                ControlOut {
+                    control_type: ControlType::Vendor,
+                    recipient: Recipient::Device,
+                    request: req.code(),
+                    value,
+                    index,
+                    data,
+                },
+                CTRL_TIMEOUT,
+            )
+            .wait();
+        r.map_err(|source| {
+            self.trace.ctrl(
+                req.code(),
+                "load data",
+                value,
+                index,
+                data.len(),
+                None,
+                &format!("FAILED: {source}"),
+            );
+            Error::Transfer { op: "control write", source }
+        })
+    }
+
     /// Read `len` bytes from the configuration EEPROM at `addr`.
     pub fn eeprom(&self, addr: u16, len: u16) -> Result<Vec<u8>> {
         self.control_in_exact(
@@ -450,4 +537,30 @@ impl UsbDev {
             len,
         )
     }
+}
+
+/// An ELAD vendor id, or a name that says ELAD or FDM.
+fn looks_elad(d: &nusb::DeviceInfo) -> bool {
+    let named = |x: Option<&str>| {
+        x.is_some_and(|x| {
+            let x = x.to_ascii_uppercase();
+            x.contains("ELAD") || x.contains("FDM")
+        })
+    };
+    d.vendor_id() == VID || named(d.manufacturer_string()) || named(d.product_string())
+}
+
+/// One line about a device, for a bug report.
+fn describe(d: &nusb::DeviceInfo) -> String {
+    #[cfg(target_os = "windows")]
+    let driver = format!(", driver {}", d.driver().unwrap_or("none"));
+    #[cfg(not(target_os = "windows"))]
+    let driver = String::new();
+    format!(
+        "{:04x}:{:04x} {} {}{driver}",
+        d.vendor_id(),
+        d.product_id(),
+        d.manufacturer_string().unwrap_or("?"),
+        d.product_string().unwrap_or("?"),
+    )
 }

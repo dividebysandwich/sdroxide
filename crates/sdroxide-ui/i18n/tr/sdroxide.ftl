@@ -1745,15 +1745,6 @@ settings-radio-corrects-reference-oscillator-applied-when = Referans osilatörü
 settings-radio-receive-only-below-adc-s = Yalnızca alma. ADC'nin Nyquist sınırının altında anten doğrudan örneklenir ve yeniden ayar anlıktır, çünkü donanımda bir aşağı dönüştürücü yoktur — ADC'nin tüm akışı ana bilgisayarda tabanbanda çevrilir. Bunun üstünde alıcı, R828D tuner'ına ve VHF SMA'ya otomatik olarak geçer; bu yüzden iki anten de bağlı olmalıdır. VHF, tuner'ın IF'inin sığması için 32,4 Msps ya da daha yüksek bir ADC saati gerektirir ve 48 Msps'nin altındaki saatlerde iki aralık arasında hiçbir şeyin ulaşamadığı bir boşluk vardır. Buradaki her ayar hemen uygulanır — basılacak bir Uygula düğmesi yoktur.
 settings-radio-device = Aygıt
 settings-radio-no-devices-press-rescan = aygıt yok — Yeniden tara'ya basın
-settings-radio-six-rates-are-six-different =
-    Altı hız, bir yazmacın değil altı farklı FPGA görüntüsüdür — bu yüzden ELAD'ın protokolünde hiçbir şey aralarından seçim yapmaz ve bu ayarın ne anlama geldiği modele bağlıdır.
-
-    FDM-S1 / FDM-S2: bir komut. FPGA'ları bilgisayar tarafından her açılışta yüklenir ve sdroxide, bu hızın görüntüsünü yerleştirmek için ELAD'ın kendi elad-firmware yükleyicisini çalıştırır. Bu yükleyici kurulu değilse bir örnekleyici hiç örnek göndermez ve sdroxide bunu ekranda söyler.
-
-    FDM-DUO: bir komut değil. Radyo kendi FPGA'sını başlatır ve açıldığı ya da FDM-SW2'nin en son bıraktığı hızda gelir (yeni birinde 192 kHz); bu ayar yalnızca akışın NASIL OKUNACAĞINI söyler. Yanlış ayarlarsanız panadaptör yalnızca yanlış genişlikte olur ve içindeki her frekans buna göre ölçeklenir.
-
-    Akışın gerçek hızı, başladıktan birkaç saniye sonra ölçülür ve bir uyumsuzluk ekranda bildirilir. Uygula ile etkinleşir.
-settings-radio-fdm-s-fpga-image-loaded = FDM-S: yüklenen FPGA görüntüsü — FDM-DUO: akışın nasıl okunduğu
 settings-radio-receiver-s-input-pad-one = Alıcının giriş pedi — bir adım, içeri ya da dışarı. Ana penceredeki Kazanç kaydırıcısıyla aynı denetim.
 settings-radio-pre-selection-filters = Ön seçim filtreleri
 settings-radio-low-pass-bank-front-adc = ADC'nin önündeki alçak geçiren filtre bankası. Onu atlamak en geniş görünümü verir ama güçlü bant dışı sinyallerin yakınında en kötü davranışı — birkaç mil uzaktaki bir yayın vericisi bandın her yerine görüntüler düşürür. Bilerek filtrelenmiş aralığın dışında dinlemiyorsanız açık bırakın.

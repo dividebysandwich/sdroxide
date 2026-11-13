@@ -1745,15 +1745,6 @@ settings-radio-corrects-reference-oscillator-applied-when = Corrige o oscilador 
 settings-radio-receive-only-below-adc-s = Somente recepção. Abaixo do limite de Nyquist do ADC, a antena é amostrada diretamente e a sintonia é instantânea, porque não há conversor de descida de hardware — o fluxo completo do ADC é convertido para banda base no computador. Acima dele, o receptor passa automaticamente para o sintonizador R828D e para a SMA de VHF, então as duas antenas precisam estar conectadas. VHF exige um clock do ADC de 32,4 Msps ou mais para o F.I. do sintonizador caber, e com clocks abaixo de 48 Msps existe um intervalo entre as duas faixas que nada consegue alcançar. Todas as configurações aqui valem de imediato — não há botão Aplicar.
 settings-radio-device = Dispositivo
 settings-radio-no-devices-press-rescan = nenhum dispositivo — pressione Buscar novamente
-settings-radio-six-rates-are-six-different =
-    As seis taxas são seis imagens diferentes de FPGA, não um registrador — por isso nada no protocolo da ELAD seleciona entre elas, e o que esta configuração significa depende do modelo.
-
-    FDM-S1 / FDM-S2: um comando. A FPGA deles é carregada pelo computador a cada ligada, e o sdroxide roda o carregador elad-firmware da própria ELAD para colocar a imagem desta taxa. Sem esse carregador instalado, um amostrador não envia amostra nenhuma, e o sdroxide informa isso na tela.
-
-    FDM-DUO: não é um comando. O rádio inicia a própria FPGA e chega na taxa em que foi ligado ou na que o FDM-SW2 deixou por último (192 kHz em um novo), e isto só diz como o fluxo é LIDO. Se errar, o panadaptador simplesmente tem a largura errada, com cada frequência dentro dele escalada para combinar.
-
-    A taxa real do fluxo é medida alguns segundos depois de ele começar, e um desencontro é informado na tela. Tem efeito em Aplicar.
-settings-radio-fdm-s-fpga-image-loaded = FDM-S: a imagem da FPGA carregada — FDM-DUO: como o fluxo é lido
 settings-radio-receiver-s-input-pad-one = O atenuador de entrada do receptor — um passo, para dentro ou para fora. O mesmo controle do controle deslizante de Ganho da janela principal.
 settings-radio-pre-selection-filters = Filtros de pré-seleção
 settings-radio-low-pass-bank-front-adc = O banco de passa-baixas antes do ADC. Desviá-lo dá a visão mais larga e o pior comportamento perto de sinais fortes fora da faixa — um transmissor de radiodifusão a alguns quilômetros vai colocar imagens por toda a faixa. Deixe ligado a menos que esteja deliberadamente escutando fora da faixa filtrada.

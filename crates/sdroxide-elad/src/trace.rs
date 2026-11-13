@@ -164,8 +164,16 @@ impl Trace {
             }
             None => out.push_str("(the device was never identified)\n"),
         }
-        out.push_str("\n--- fpga loader ---\n");
-        out.push_str(&crate::fpga::status_line());
+        // The FDM-DUO has no loader: it boots its own image, and wider spans
+        // come from ELAD's DLL. Only the FDM-S samplers use `elad-firmware`.
+        let duo = g.identity.as_deref().is_some_and(|c| c.contains("FDM-DUO"));
+        if duo {
+            out.push_str("\n--- fpga image (FDM-DUO) ---\n");
+            out.push_str(&crate::remote::status_line());
+        } else {
+            out.push_str("\n--- fpga loader ---\n");
+            out.push_str(&crate::fpga::status_line());
+        }
         out.push('\n');
         out.push_str("\n--- session ---\n");
         for line in &g.lines {
@@ -248,6 +256,16 @@ mod tests {
         let d = t.dump();
         assert!(d.contains("req 0xA2 EEPROM serial"), "{d}");
         assert!(d.contains("123456"), "{d}");
+        // The DUO boots its own FPGA image: the FDM-S loader line would only mislead.
+        assert!(d.contains("fpga image (FDM-DUO)"), "{d}");
+        assert!(!d.contains("elad-firmware"), "{d}");
+    }
+
+    #[test]
+    fn an_fdm_s_still_reports_its_fpga_loader() {
+        let t = Trace::new();
+        t.set_identity("ELAD FDM-S2, serial 123456");
+        assert!(t.dump().contains("--- fpga loader ---"));
     }
 
     #[test]

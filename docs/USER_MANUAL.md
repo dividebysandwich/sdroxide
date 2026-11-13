@@ -12085,15 +12085,36 @@ in ELAD's vendor protocol selects between them, and why their own GNU Radio
 module takes the rate as a parameter without ever sending it. On an FDM-S1 or
 FDM-S2 this setting therefore *is* a command: it chooses the image loaded above.
 
-**On an FDM-DUO it is not.** The radio boots its own FPGA and has no front-panel
-menu for the rate, so it arrives at whatever it powered up in — 192 kHz on a
-fresh one — or whatever FDM-SW2 last left it in, and this setting says which one
-that is. Set it wrong and you still get samples: the panadapter is simply the
-wrong width, with every frequency inside it scaled to match. sdroxide measures
-the real throughput a couple of seconds after the stream starts and tells you on
-screen when the two disagree, naming the rate to pick. The one exception is
-6144 kHz, where the samples themselves are half as wide — a wrong guess there is
-noise rather than a mis-scaled spectrum.
+**On an FDM-DUO it is a command too, by another route.** The radio boots its
+own FPGA, which streams at 192 kHz — its stand-alone mode. For any wider rate
+sdroxide uploads the matching "remote" image over the receive cable when it
+opens the radio, the way FDM-SW2 and SDR Console do. It takes about seven
+seconds, and the radio's display shows *SP* while it is on a wide image.
+Choosing 192 kHz again, or closing sdroxide, puts the radio back in stand-alone
+(*STD ALONE* on its display); that takes about four seconds, so the window may
+take a moment to close. Nothing is loaded or restored while transmitting.
+
+The images are not shipped with sdroxide. They are read, as data, out of ELAD's
+`ExtIOmc_ELAD_FDMDUO.dll`, which SDR Console or FDM-SW2 installs on Windows;
+the file is never loaded as code, and each image is checked against a known
+hash before it is sent. On Linux or macOS, copy that file into sdroxide's
+configuration folder (or next to the program, or point `SDROXIDE_ELAD_DLL` at
+it). Without it the DUO stays at 192 kHz and sdroxide says why on screen.
+
+If another program left the DUO on a wide image and this setting says 192 kHz,
+sdroxide notices from the stream's throughput a couple of seconds after it
+starts, puts the radio back in stand-alone and reopens it, once per session.
+
+**The SPAN chip.** With an ELAD connected, the RX box carries a **SPAN** chip
+beside **DEC**, showing the rate the radio is streaming (*SPAN 192k*). It is
+shown only when the radio is an ELAD. Click it for the next wider rate and
+right-click for the next narrower. Either saves the setting and reopens the
+radio, exactly as changing **Sample rate** here and pressing Apply does; on an
+FDM-DUO that loads the wide image, or puts the radio back in stand-alone.
+Expect a short pause each time: the radio is closed and reopened, a wide image
+takes about 6.5 s to send over USB and be checked by the radio, and going back
+to stand-alone takes about 3.5 s while the radio reboots its own 192 kHz image.
+The waterfall resumes on its own when the radio is ready.
 
 **Attenuator and pre-selection filters.** The pad is the same control as the main
 window's Gain slider. The filters are the low-pass bank in front of the ADC:

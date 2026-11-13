@@ -1739,15 +1739,6 @@ settings-radio-corrects-reference-oscillator-applied-when = Corrigeert de refere
 settings-radio-receive-only-below-adc-s = Alleen ontvangen. Onder de Nyquist-grens van de ADC wordt de antenne rechtstreeks bemonsterd en is hertunen direct, omdat er geen hardware-downconverter is — de volledige ADC-stroom wordt op de host naar basisband omgezet. Erboven schakelt de ontvanger automatisch over naar zijn R828D-tuner en de VHF-SMA, dus beide antennes moeten aangesloten zijn. VHF heeft een ADC-klok van 32,4 Msps of meer nodig, zodat de IF van de tuner past, en bij klokken onder 48 Msps is er een gat tussen de twee bereiken dat niets kan bereiken. Elke instelling hier werkt meteen — er is geen knop Toepassen om op te drukken.
 settings-radio-device = Apparaat
 settings-radio-no-devices-press-rescan = geen apparaten — druk op Opnieuw zoeken
-settings-radio-six-rates-are-six-different =
-    De zes snelheden zijn zes verschillende FPGA-images, geen register — daarom kiest niets in het protocol van ELAD tussen hen, en betekent wat deze instelling inhoudt iets anders per model.
-
-    FDM-S1 / FDM-S2: een commando. Hun FPGA wordt bij elke inschakeling door de computer geladen, en sdroxide draait de eigen elad-firmwarelader van ELAD om het image van deze snelheid erin te zetten. Zonder die lader geïnstalleerd stuurt een sampler helemaal geen samples, en sdroxide zegt dat op het scherm.
-
-    FDM-DUO: geen commando. De radio start zijn eigen FPGA en komt op welke snelheid hij bij het inschakelen had of FDM-SW2 laatst achterliet (192 kHz op een nieuwe), en dit zegt alleen hoe de stroom GELEZEN wordt. Gaat dat mis, dan is het panadapter gewoon de verkeerde breedte, met elke frequentie erin evenredig geschaald.
-
-    De werkelijke snelheid van de stroom wordt een paar seconden na de start gemeten, en een afwijking wordt op het scherm gemeld. Werkt bij Toepassen.
-settings-radio-fdm-s-fpga-image-loaded = FDM-S: het FPGA-image dat geladen wordt — FDM-DUO: hoe de stroom gelezen wordt
 settings-radio-receiver-s-input-pad-one = De ingangsverzwakker van de ontvanger — één stap, omhoog of omlaag. Dezelfde regelaar als de schuif Gain van het hoofdvenster.
 settings-radio-pre-selection-filters = Voorselectiefilters
 settings-radio-low-pass-bank-front-adc = De laagdoorlaatbank vóór de ADC. Die te omzeilen geeft de breedste weergave en het slechtste gedrag bij sterke signalen buiten de band — een omroepzender een paar mijl verderop zet beelden over de band. Laat hem aan, tenzij je bewust buiten het gefilterde bereik luistert.

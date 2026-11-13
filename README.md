@@ -811,12 +811,19 @@ starting sdroxide before the rig is fine:
   Without the loader sdroxide says so on screen rather than sitting on "waiting
   for spectrum" for ever.
 
-  **On an FDM-DUO the sample rate cannot be commanded.** The radio boots its own
-  FPGA, has no menu for the rate, and arrives in whatever mode it was left in
-  (192 kHz on a fresh one); there the Sample rate setting says how the stream is
-  *read*, and sdroxide measures the real throughput a couple of seconds in and
-  tells you on screen if the two disagree. See "ELAD permissions" under Building
-  for the Linux udev rule.
+  **On an FDM-DUO, rates above 192 kHz load ELAD's remote images.** The radio
+  boots its own 192 kHz FPGA image; choosing 384, 768, 1536, 3072 or 6144 kHz
+  (in Settings or with the **SPAN** chip on the top bar) loads the matching
+  image from ELAD's `ExtIOmc_ELAD_FDMDUO.dll`, which SDR Console or FDM-SW2
+  installs on Windows. On Linux or macOS, copy that file into sdroxide's
+  configuration folder. Going back to 192 kHz, or closing sdroxide, puts the
+  radio back in stand-alone. **Expect a short pause on every span change**:
+  the radio is closed and reopened, loading a wide image takes about 6.5 s (it
+  is roughly 800 KB sent over USB, then checked by the radio), and returning to
+  stand-alone takes about 3.5 s while the radio reboots its own image. Nothing is
+  written to the radio's flash or EEPROM, and a power cycle always brings it
+  back to stand-alone. See "ELAD permissions" under Building for the Linux udev
+  rule.
 
   **Not verified against hardware.** The whole backend is written from ELAD's own
   [gr-elad](https://github.com/ELADIT/gr-elad), the FDM-DUO manual's CAT chapter

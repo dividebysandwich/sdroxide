@@ -1755,15 +1755,6 @@ settings-radio-corrects-reference-oscillator-applied-when = Korrigiert den Refer
 settings-radio-receive-only-below-adc-s = Nur Empfang. Unterhalb der Nyquist-Grenze des ADC wird die Antenne direkt abgetastet, und die Neuabstimmung ist sofort, weil es keinen Hardware-Abwärtsmischer gibt — der volle ADC-Strom wird auf dem Rechner ins Basisband umgesetzt. Darüber schaltet der Empfänger automatisch auf seinen R828D-Tuner und die UKW-SMA um, daher müssen beide Antennen angeschlossen sein. UKW braucht einen ADC-Takt von 32,4 Msps oder mehr, damit die ZF des Tuners passt, und bei Takten unter 48 Msps gibt es eine Lücke zwischen den beiden Bereichen, die nichts erreicht. Jede Einstellung hier wirkt sofort — es gibt keine Taste ÜBERNEHMEN.
 settings-radio-device = Gerät
 settings-radio-no-devices-press-rescan = keine Geräte — Erneut suchen drücken
-settings-radio-six-rates-are-six-different =
-    Die sechs Raten sind sechs verschiedene FPGA-Abbilder, kein Register — deshalb wählt nichts im Protokoll von ELAD zwischen ihnen, und was diese Einstellung bedeutet, hängt vom Modell ab.
-
-    FDM-S1 / FDM-S2: ein Befehl. Ihr FPGA wird bei jedem Einschalten vom Computer geladen, und sdroxide führt den eigenen elad-firmware-Lader von ELAD aus, um das Abbild dieser Rate hineinzugeben. Ohne diesen Lader installiert sendet ein Sampler gar keine Abtastwerte, und sdroxide sagt das auf dem Bildschirm.
-
-    FDM-DUO: kein Befehl. Das Funkgerät startet sein eigenes FPGA und landet bei der Rate, mit der es eingeschaltet wurde oder die FDM-SW2 zuletzt hinterlassen hat (192 kHz bei einem frischen), und dies sagt nur, wie der Strom GELESEN wird. Falsch eingestellt, ist das Panorama einfach die falsche Breite, mit jeder Frequenz darin passend skaliert.
-
-    Die echte Rate des Stroms wird ein paar Sekunden nach dem Start gemessen, und eine Abweichung wird auf dem Bildschirm gemeldet. Wirkt nach Übernehmen.
-settings-radio-fdm-s-fpga-image-loaded = FDM-S: das geladene FPGA-Abbild — FDM-DUO: wie der Strom gelesen wird
 settings-radio-receiver-s-input-pad-one = Die Eingangsdämpfung des Empfängers — eine Stufe, hinein oder hinaus. Derselbe Regler wie der Schieberegler Verstärkung im Hauptfenster.
 settings-radio-pre-selection-filters = Vorselektionsfilter
 settings-radio-low-pass-bank-front-adc = Die Tiefpassbank vor dem ADC. Sie zu überbrücken gibt die breiteste Ansicht und das schlechteste Verhalten nahe starker Signale außerhalb des Bandes — ein Rundfunksender ein paar Meilen entfernt wirft Spiegelbilder über das Band. Eingeschaltet lassen, sofern Sie nicht bewusst außerhalb des gefilterten Bereichs hören.
