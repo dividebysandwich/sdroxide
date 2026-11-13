@@ -62,9 +62,10 @@ pub struct AtChatController {
 }
 
 impl AtChatController {
-    pub fn new(cfg: DigiConfig, tap_rate: f64) -> Self {
+    /// `received_dir` is where files sent to this station are written.
+    pub fn new(cfg: DigiConfig, tap_rate: f64, received_dir: std::path::PathBuf) -> Self {
         let virt = cfg.atchat_virtual.then(|| cfg.atchat_virtual_addr.clone());
-        let session = AtChatSession::new(&cfg.my_call, virt);
+        let session = AtChatSession::with_received_dir(&cfg.my_call, virt, received_dir);
         let rx_rs = MonoResampler::new(tap_rate, MODEM_RATE);
         let last_status = build_status(&cfg, &session);
         AtChatController {

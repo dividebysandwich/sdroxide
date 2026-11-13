@@ -6892,9 +6892,10 @@ a typed line does. Every transfer is block-CRC-ARQ: missing blocks are
 requested back and resent until the file checks out, so a transfer that
 survives fades and drop-outs rather than one that has to be started over.
 
-A received file is written under a `received/` folder — created next to
-wherever sdroxide was started from — named `<transfer-id>_<filename>`, so two
-stations sending a file with the same name never collide.
+A received file is written to `~/.config/sdroxide/atchat_received/` (the
+configuration directory, [§13](#13-configuration-files)), named
+`<transfer-id>_<filename>`, so two stations sending a file with the same name
+never collide.
 
 ### 3.18 ACARS (airline datalink on airband)
 
@@ -16512,6 +16513,7 @@ and not the station's.
 | `speech_voices/` | dir | Extra voices for the spoken announcements: a Piper `.onnx` model and its `.onnx.json` config, side by side. Absent until you create it — the shipped voice lives with the program, not here. Note this is *not* `voice/`, which is the voice keyer. |
 | `sstv_tx/` | dir | The ten SSTV transmit-image slots (`slot0.png`…`slot9.png`). |
 | `sstv_rx/` | dir | Received SSTV and RIFP pictures, kept for the gallery. |
+| `atchat_received/` | dir | Files received over AtCHAT NET ([§3.17](#317-atchat-net)), named `<transfer-id>_<filename>`. |
 | `wefax_rx/` | dir | Weather-fax charts received by an earlier version. Charts now go to `~/Pictures/sdroxide/wefax/`, but this is still read so an existing collection stays in the gallery. |
 | `solar/` | dir | Cached solar imagery, space-weather JSON and subscribed element-set listings for the 3D view, with an index of HTTP validators so refreshes stay cheap. Safe to delete; it is re-fetched on demand. |
 | `radios.json` | JSON | The roster of configured radios ([§2.17](#217-running-more-than-one-radio)): each radio's id, the name you gave it (empty = named after its interface) and whether it is switched on (`enabled`, absent = on). Absent until you add a second radio. Written by the GUI, and — on a machine running `--server` — by a signed-in remote client adding or closing a radio ([§8.1](#81-start-the-server)). |

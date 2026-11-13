@@ -122,7 +122,22 @@ pub struct AtChatSession {
 impl AtChatSession {
     /// Start with a callsign and, optionally, a virtual-channel address
     /// (`None` = the real radio).
+    ///
+    /// Received files go to `received` under the working directory, as
+    /// `client.py` writes them. Fine for the standalone tools; the radio
+    /// program uses [`AtChatSession::with_received_dir`], because an installed
+    /// program's working directory is its install folder, which a user cannot
+    /// write to.
     pub fn new(callsign: &str, virtual_addr: Option<String>) -> Self {
+        Self::with_received_dir(callsign, virtual_addr, StationConfig::default().received_dir)
+    }
+
+    /// [`AtChatSession::new`], writing received files to `received_dir`.
+    pub fn with_received_dir(
+        callsign: &str,
+        virtual_addr: Option<String>,
+        received_dir: PathBuf,
+    ) -> Self {
         let (cmd_tx, cmd_rx) = unbounded_channel();
         let snap = Arc::new(Mutex::new(AtChatSnapshot {
             my_call: callsign.to_uppercase(),
@@ -139,7 +154,7 @@ impl AtChatSession {
                     .enable_all()
                     .build()
                     .expect("tokio runtime");
-                rt.block_on(session_main(cmd_rx, snap2, bridge2, call, virtual_addr));
+                rt.block_on(session_main(cmd_rx, snap2, bridge2, call, virtual_addr, received_dir));
             })
             .expect("session thread");
 
@@ -300,8 +315,9 @@ async fn build_station(
     call: &str,
     virtual_addr: &Option<String>,
     bridge: &RadioBridge,
+    received_dir: &std::path::Path,
 ) -> anyhow::Result<Backed> {
-    let cfg = StationConfig::default();
+    let cfg = StationConfig { received_dir: received_dir.to_path_buf(), ..Default::default() };
     match virtual_addr {
         Some(addr) => {
             let conn = TcpConnector::new(addr.clone(), call);
@@ -344,11 +360,12 @@ async fn session_main(
     bridge: RadioBridge,
     mut call: String,
     mut virtual_addr: Option<String>,
+    received_dir: PathBuf,
 ) {
     let mut last_err: Option<String> = None;
     loop {
         // (Re)build the station for the current callsign + backend.
-        let station = match build_station(&call, &virtual_addr, &bridge).await {
+        let station = match build_station(&call, &virtual_addr, &bridge, &received_dir).await {
             Ok(s) => s,
             Err(e) => {
                 // The station is down. Say so in the snapshot, or a JOIN badge

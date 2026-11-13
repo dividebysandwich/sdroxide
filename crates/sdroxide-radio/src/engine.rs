@@ -7484,7 +7484,14 @@ impl Engine {
             // slotted nor a keyboard modem — it runs a whole NET protocol on
             // its own thread — and nothing further down would notice it had
             // been handed an FT8 decoder.
-            Box::new(AtChatController::new(self.digi_config.clone(), tap_rate))
+            //
+            // Received files go under the config directory, never the working
+            // directory: an installed program runs in its install folder, which
+            // a user cannot write to, and the file would be dropped unsaved.
+            let received = sdroxide_config::config_dir()
+                .map(|d| d.join("atchat_received"))
+                .unwrap_or_else(|_| std::env::temp_dir().join("sdroxide-atchat-received"));
+            Box::new(AtChatController::new(self.digi_config.clone(), tap_rate, received))
         } else if mode.is_sstv() {
             // Both SSTV modes, one controller: HF and VHF differ in the radio
             // underneath, not in the picture — the same reason the two packet
