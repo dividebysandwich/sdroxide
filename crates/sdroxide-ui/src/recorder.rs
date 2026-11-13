@@ -99,6 +99,51 @@ impl StoredRow {
     }
 }
 
+/// One frame of the strip as it arrived, squeezed to [`COLS`] columns: what
+/// the recorder keeps of the strip while nothing records, so that ● REC and
+/// STORE can take along what is already on screen.
+// Why: HDZ 2026-11-13: "kannst du den scan stand des panoramas bei rec nicht
+//      einfach übernehmen … die hast du doch im speicher"; "speicher beim pano
+//      die zeit mit, weil mit der verzögerungszeit kann das variieren".
+#[derive(Debug, Clone, PartialEq)]
+pub struct Sweep {
+    /// When the frame arrived: for PANO, when its sweep finished.
+    pub t_ms: i64,
+    pub frame: SpectrumFrame,
+}
+
+impl Sweep {
+    /// The frame at `t_ms`, squeezed as the strip squeezes it: the strongest
+    /// bin in each column, on the frame's own scale.
+    pub fn new(frame: &SpectrumFrame, t_ms: i64) -> Self {
+        let n = frame.bins.len();
+        let bins = if n <= COLS {
+            frame.bins.clone()
+        } else {
+            (0..COLS)
+                .map(|c| {
+                    let b0 = c * n / COLS;
+                    let b1 = (((c + 1) * n / COLS).max(b0 + 1)).min(n);
+                    frame.bins[b0..b1].iter().copied().max().unwrap_or(0)
+                })
+                .collect()
+        };
+        Sweep {
+            t_ms,
+            frame: SpectrumFrame {
+                seq: frame.seq,
+                center_hz: frame.center_hz,
+                span_hz: frame.span_hz,
+                db_floor: frame.db_floor,
+                db_ceil: frame.db_ceil,
+                bins,
+                rows: Vec::new(),
+                rows_clocked: false,
+            },
+        }
+    }
+}
+
 /// The interval being gathered into one row.
 #[derive(Debug, Clone)]
 struct Pending {
@@ -212,17 +257,86 @@ impl Recorder {
         self.active.as_ref().map(|a| (a.session, a.rows))
     }
 
-    /// Open a new session. A running one is closed first.
+    /// Open a new session with nothing behind it. A running one is closed
+    /// first. The app always starts with the strip's backlog
+    /// ([`Recorder::start_with`], [`Recorder::start_per_sweep`]).
+    #[cfg(test)]
     pub fn start(&mut self, radio: &str, interval_s: f64, now_ms: i64) -> rusqlite::Result<i64> {
+        self.start_with(radio, interval_s, &[], now_ms)
+    }
+
+    /// Open a new session that begins with `backlog`, the sweeps already on
+    /// the strip, oldest first: they are folded into rows by their own times,
+    /// exactly as if the recording had run while they came in, and the
+    /// session starts with the oldest. A running session is closed first.
+    pub fn start_with(
+        &mut self,
+        radio: &str,
+        interval_s: f64,
+        backlog: &[Sweep],
+        now_ms: i64,
+    ) -> rusqlite::Result<i64> {
         self.stop(now_ms)?;
         let interval_s = if interval_s.is_finite() {
             interval_s.max(MIN_INTERVAL_S)
         } else {
             DEFAULT_INTERVAL_S
         };
+        let first = backlog.first().map_or(now_ms, |s| s.t_ms.min(now_ms));
+        let session = self.begin(radio, interval_s, first)?;
+        for s in backlog {
+            self.on_frame(&s.frame, s.t_ms)?;
+        }
+        self.tick(now_ms)?;
+        Ok(session)
+    }
+
+    /// Keep `sweeps` as a finished session, one row per sweep at the time it
+    /// arrived — nothing folded, so loading it back shows the strip as it
+    /// was. The session's interval is stored as zero: "per sweep". Refused
+    /// (`None`) while a session records, which takes the strip along anyway,
+    /// and when there is nothing to keep.
+    // Why: HDZ 2026-11-13: "bei rec alle x sekunden ist der timer ja wichtig,
+    //      bei einem normalen scan wäre die zeit ja nur die sweep zeit, die so
+    //      schnell wies halt kam … das ist die trennung".
+    pub fn store(&mut self, radio: &str, sweeps: &[Sweep]) -> rusqlite::Result<Option<i64>> {
+        if self.active.is_some() || sweeps.is_empty() {
+            return Ok(None);
+        }
+        let last = sweeps.last().map_or(0, |s| s.t_ms);
+        let session = self.start_per_sweep(radio, sweeps, last)?;
+        self.stop(last)?;
+        Ok(Some(session))
+    }
+
+    /// Open a session that keeps one row per sweep, as it arrives — for a
+    /// panorama, whose own times (settle and pause) already space its rows —
+    /// beginning with `backlog` as [`Recorder::start_with`] does. A running
+    /// session is closed first.
+    // Why: HDZ 2026-11-13: "die zweite zeit da weg, weil die jetzt oben mit den
+    //      beiden zeiten verfrühstückt ist".
+    pub fn start_per_sweep(
+        &mut self,
+        radio: &str,
+        backlog: &[Sweep],
+        now_ms: i64,
+    ) -> rusqlite::Result<i64> {
+        self.stop(now_ms)?;
+        let first = backlog.first().map_or(now_ms, |s| s.t_ms.min(now_ms));
+        let session = self.begin(radio, 0.0, first)?;
+        for s in backlog {
+            // Interval zero: every frame closes the row before it.
+            self.on_frame(&s.frame, s.t_ms)?;
+        }
+        // And the last one is written at once rather than with the next sweep.
+        self.tick(now_ms)?;
+        Ok(session)
+    }
+
+    fn begin(&mut self, radio: &str, interval_s: f64, started_ms: i64) -> rusqlite::Result<i64> {
         self.db.execute(
             "INSERT INTO session (started_ms, ended_ms, radio, interval_s) VALUES (?1, ?1, ?2, ?3)",
-            params![now_ms, radio, interval_s],
+            params![started_ms, radio, interval_s],
         )?;
         let session = self.db.last_insert_rowid();
         self.active = Some(Active {
@@ -514,6 +628,120 @@ mod tests {
         rec.stop(12_000).unwrap();
         assert_eq!(rec.strip_rows(1, 0).unwrap().len(), 2, "stop writes what was gathered");
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    fn sweep(seq: u32, t_ms: i64, col: usize, level: u8) -> Sweep {
+        let mut bins = vec![0u8; COLS];
+        bins[col] = level;
+        Sweep::new(&frame(seq, bins, -120.0, -20.0), t_ms)
+    }
+
+    /// ● REC on a strip that already holds sweeps: they go into the session
+    /// by their own times — PANO's sweeps come at uneven times — and the
+    /// session starts with the oldest; live frames carry on from there.
+    #[test]
+    fn rec_takes_the_strip_along_by_its_own_times() {
+        let (dir, mut rec) = temp_db("backlog");
+        // Uneven sweep times, as a dwell delay makes them: 0, 7, 19, 23 s.
+        let backlog = [
+            sweep(1, 0, 10, 200),
+            sweep(2, 7_000, 20, 210),
+            sweep(3, 19_000, 30, 220),
+            sweep(4, 23_000, 40, 230),
+        ];
+        let id = rec.start_with("RTL-SDR", 10.0, &backlog, 25_000).unwrap();
+        // Rows: [0, 10) holds sweeps 1 and 2; [19, 29) holds 3 and 4, still open.
+        assert_eq!(rec.active(), Some((id, 1)));
+        let s = &rec.sessions().unwrap()[0];
+        assert_eq!(s.started_ms, 0, "session starts with the oldest sweep");
+        let rows = rec.strip_rows(id, 0).unwrap();
+        assert_eq!((rows[0].t_ms, rows[0].bins[10], rows[0].bins[20]), (0, 200, 210));
+        // Gegenprobe: sweep 3 is not in the first row.
+        assert_eq!(rows[0].bins[30], 0);
+        // A live frame inside the open interval joins the backlog's last row.
+        let mut live = vec![0u8; COLS];
+        live[50] = 240;
+        rec.on_frame(&frame(5, live, -120.0, -20.0), 27_000).unwrap();
+        rec.stop(28_000).unwrap();
+        let rows = rec.strip_rows(id, 0).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            (rows[1].t_ms, rows[1].bins[30], rows[1].bins[40], rows[1].bins[50]),
+            (19_000, 220, 230, 240)
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// A backlog whose last interval is over by the time REC is pressed is
+    /// written at once, not with the next live frame.
+    #[test]
+    fn rec_writes_a_backlog_row_that_is_already_due() {
+        let (dir, mut rec) = temp_db("due");
+        let id = rec.start_with("RTL-SDR", 10.0, &[sweep(1, 0, 5, 100)], 60_000).unwrap();
+        assert_eq!(rec.active(), Some((id, 1)));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// STORE keeps every sweep as its own row at its own time, nothing
+    /// folded; the session says "per sweep" with an interval of zero.
+    #[test]
+    fn store_keeps_one_row_per_sweep() {
+        let (dir, mut rec) = temp_db("store");
+        let sweeps = [sweep(1, 1_000, 10, 200), sweep(2, 1_400, 20, 210), sweep(3, 9_100, 30, 220)];
+        let id = rec.store("RTL-SDR", &sweeps).unwrap().expect("stored");
+        assert_eq!(rec.active(), None, "nothing left recording");
+        let rows = rec.strip_rows(id, 0).unwrap();
+        assert_eq!(rows.iter().map(|r| r.t_ms).collect::<Vec<_>>(), vec![1_000, 1_400, 9_100]);
+        // Gegenprobe: each row holds only its own sweep's carrier.
+        assert_eq!((rows[0].bins[10], rows[0].bins[20]), (200, 0));
+        assert_eq!((rows[1].bins[20], rows[1].bins[30]), (210, 0));
+        let s = &rec.sessions().unwrap()[0];
+        assert_eq!((s.started_ms, s.ended_ms, s.interval_s, s.rows), (1_000, 9_100, 0.0, 3));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// REC on a panorama: one row per sweep from the backlog on, each written
+    /// as it arrives, and live sweeps carry on the same way.
+    #[test]
+    fn rec_per_sweep_writes_every_sweep_as_it_comes() {
+        let (dir, mut rec) = temp_db("per-sweep");
+        let backlog = [sweep(1, 0, 10, 200), sweep(2, 12_500, 20, 210)];
+        let id = rec.start_per_sweep("RTL-SDR", &backlog, 13_000).unwrap();
+        assert_eq!(rec.active(), Some((id, 2)), "both backlog sweeps written at once");
+        rec.on_frame(&sweep(3, 25_100, 30, 220).frame, 25_100).unwrap();
+        rec.tick(25_120).unwrap();
+        assert_eq!(rec.active(), Some((id, 3)), "a live sweep is written on the next pass");
+        let rows = rec.strip_rows(id, 0).unwrap();
+        assert_eq!(rows.iter().map(|r| r.t_ms).collect::<Vec<_>>(), vec![0, 12_500, 25_100]);
+        assert_eq!((rows[1].bins[10], rows[1].bins[20]), (0, 210), "nothing folded");
+        assert_eq!(rec.sessions().unwrap()[0].interval_s, 0.0);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// STORE leaves a running recording alone, and an empty strip stores
+    /// nothing.
+    #[test]
+    fn store_is_refused_while_recording_or_empty() {
+        let (dir, mut rec) = temp_db("store-refused");
+        assert_eq!(rec.store("RTL-SDR", &[]).unwrap(), None);
+        let id = rec.start("RTL-SDR", 10.0, 0).unwrap();
+        assert_eq!(rec.store("RTL-SDR", &[sweep(1, 0, 1, 1)]).unwrap(), None);
+        assert_eq!(rec.active(), Some((id, 0)), "the recording runs on");
+        assert_eq!(rec.sessions().unwrap().len(), 1);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// A wide frame is squeezed to the stored width keeping each column's
+    /// strongest bin; a narrow one is kept as it is.
+    #[test]
+    fn sweeps_are_squeezed_like_the_strip() {
+        let mut bins = vec![0u8; COLS * 4];
+        bins[4 * 300 + 3] = 250;
+        let s = Sweep::new(&frame(1, bins, -120.0, -20.0), 0);
+        assert_eq!(s.frame.bins.len(), COLS);
+        assert_eq!((s.frame.bins[299], s.frame.bins[300], s.frame.bins[301]), (0, 250, 0));
+        let narrow = Sweep::new(&frame(2, vec![7; 300], -120.0, -20.0), 0);
+        assert_eq!(narrow.frame.bins, vec![7; 300]);
     }
 
     #[test]

@@ -4001,14 +4001,22 @@ scanner-settles = Attesa per tratto
 scanner-settles-hint = Attesa dopo la risintonia, prima di leggere lo spettro. Più lunga: immagine più stabile, passata più lenta.
 scanner-pano-width = Larghezza tratto
 scanner-pano-width-hint = Quota della larghezza del ricevitore usata per tratto. Meno: lontano dal calo ai bordi; più: passata più rapida. Sovrapposizione del 10 %.
+scanner-pano-pause = Pausa dopo ogni riga
+scanner-pano-pause-hint = Attesa dopo ogni scansione completa prima della successiva. 0: senza pausa.
+scanner-pano-now = Ora
+scanner-pano-now-at = a { $mhz } MHz ({ $pct } %) · scansione { $n }
+scanner-pano-strip = Striscia
+scanner-pano-strip-is = una riga ogni { $row } s = { $strip } per striscia
+scanner-pano-strip-hint = Misurato: ultima scansione più pausa, per { $rows } righe
+scanner-pano-strip-first = dopo la prima scansione
 rec-db-error = Database di registrazione non disponibile: { $err }
 rec-retry = Riprova
 rec-live = LIVE
 rec-live-hint = Torna alla striscia dal vivo
 rec-stop = ■ STOP
 rec-record = ● REC
-rec-record-hint = Registra striscia a banda intera (WIDE): una riga per intervallo,
-    livello più forte di ogni scansione
+rec-record-hint = Registra striscia a banda intera (WIDE), partendo dalle scansioni già presenti:
+    con PANO una riga per scansione, altrimenti una per intervallo (livello più forte)
 rec-desktop-only = Solo nell'app desktop: lì si trova il database di registrazione.
 rec-interval = Ogni
 rec-interval-hint = Tempo tra le righe salvate, da 1 s.
@@ -4017,6 +4025,7 @@ rec-interval-locked = Fisso durante la registrazione
 rec-strip-span = = { $min } min per striscia
 rec-status-recording = Sessione { $id } · { $rows } righe · striscia { $strip } · { $time }
 rec-status-ready = Pronto: registra la striscia a banda intera di { $radio }
+rec-status-first-sweep = Pronto: { $radio } · prima scansione in corso …
 rec-status-no-strip = Nessuna striscia a banda intera: avviare SCAN → PANO o un ricevitore con WIDE
 rec-db-summary = Database { $size } · { $n } sessioni
 rec-init = DB INIT
@@ -4047,6 +4056,14 @@ rec-load-sure = STOP + CARICA?
 rec-load-armed-hint = Premere di nuovo: la registrazione si ferma, la striscia si carica
 rec-load-warning = ⚠ Caricare ferma la registrazione in corso (sessione { $id }).
 rec-viewing = Sessione { $id }, striscia { $strip }: { $from }–{ $to }
+rec-store = SALVA ATTUALE
+rec-store-hint = Salva la striscia così com'è come sessione:
+    una riga per scansione, alla sua ora
+rec-store-recording = La registrazione include già la striscia
+rec-store-loaded = La striscia mostra una registrazione caricata
+rec-store-empty = La striscia è vuota
+rec-status-ready-strip = Pronto: { $radio } · { $n } scansioni sulla striscia dalle { $since }
+rec-every-sweep = Una riga per scansione, in media ogni { $s } s
 scanner-how-long-stay-candidate-before = Quanto restare su un candidato prima di giudicarlo. Sotto circa un decimo di secondo lo strumento di livello non si è assestato e i segnali deboli vengono persi
 scanner-resumes = Riprende
 scanner-carry-once-signal-drops = Prosegui appena il segnale cade
@@ -5259,6 +5276,7 @@ scanner-scanning-mhz = scansione · { $here } MHz
 scanner-pano-first = Panorama { $range } MHz · prima passata …
 scanner-pano-sweeps = Panorama { $range } MHz · passata { $n } · { $secs } s
 scanner-pano-clear = Scarta il panorama e ripassa da capo
+scanner-pano-plus-pause = + pausa { $secs } s
 scanner-forward = Avanti: prosegui verso l'alto
 scanner-backward = Indietro: inverti e prosegui verso il basso
 

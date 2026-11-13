@@ -3998,14 +3998,22 @@ scanner-settles = Attente par tranche
 scanner-settles-hint = Attente après le réaccord, avant la lecture du spectre. Plus longue : image plus stable, balayage plus lent.
 scanner-pano-width = Largeur de tranche
 scanner-pano-width-hint = Part de la largeur du récepteur utilisée par tranche. Moins : loin de la retombée des bords ; plus : balayage plus rapide. Recouvrement de 10 %.
+scanner-pano-pause = Pause après chaque ligne
+scanner-pano-pause-hint = Attente après chaque balayage complet avant le suivant. 0 : sans pause.
+scanner-pano-now = Maintenant
+scanner-pano-now-at = à { $mhz } MHz ({ $pct } %) · balayage { $n }
+scanner-pano-strip = Bande
+scanner-pano-strip-is = une ligne toutes les { $row } s = { $strip } par bande
+scanner-pano-strip-hint = Mesuré : dernier balayage plus pause, fois { $rows } lignes
+scanner-pano-strip-first = après le premier balayage
 rec-db-error = Base d'enregistrement indisponible : { $err }
 rec-retry = Réessayer
 rec-live = DIRECT
 rec-live-hint = Retour à la bande en direct
 rec-stop = ■ STOP
 rec-record = ● REC
-rec-record-hint = Enregistrer la bande large (WIDE) : une ligne par intervalle,
-    niveau le plus fort de chaque balayage
+rec-record-hint = Enregistrer la bande large (WIDE), en commençant par les balayages déjà affichés :
+    sous PANO une ligne par balayage, sinon une par intervalle (niveau le plus fort)
 rec-desktop-only = Application de bureau uniquement : la base d'enregistrement s'y trouve.
 rec-interval = Toutes les
 rec-interval-hint = Temps entre lignes enregistrées, à partir de 1 s.
@@ -4014,6 +4022,7 @@ rec-interval-locked = Fixe pendant l'enregistrement
 rec-strip-span = = { $min } min par bande
 rec-status-recording = Session { $id } · { $rows } lignes · bande { $strip } · { $time }
 rec-status-ready = Prêt : enregistre la bande large de { $radio }
+rec-status-first-sweep = Prêt : { $radio } · premier balayage en cours …
 rec-status-no-strip = Pas de bande large : lancer SCAN → PANO, ou un récepteur avec WIDE
 rec-db-summary = Base { $size } · { $n } sessions
 rec-init = DB INIT
@@ -4044,6 +4053,14 @@ rec-load-sure = STOP + CHARGER ?
 rec-load-armed-hint = Appuyer encore : l'enregistrement s'arrête, la bande se charge
 rec-load-warning = ⚠ Charger arrête l'enregistrement en cours (session { $id }).
 rec-viewing = Session { $id }, bande { $strip } : { $from }–{ $to }
+rec-store = GARDER ACTUEL
+rec-store-hint = Garder la bande telle quelle comme session :
+    une ligne par balayage, à son heure
+rec-store-recording = L'enregistrement inclut déjà la bande
+rec-store-loaded = La bande affiche un enregistrement chargé
+rec-store-empty = La bande est vide
+rec-status-ready-strip = Prêt : { $radio } · { $n } balayages sur la bande depuis { $since }
+rec-every-sweep = Une ligne par balayage, toutes les { $s } s en moyenne
 scanner-how-long-stay-candidate-before = Combien de temps rester sur un candidat avant de le juger. En dessous d'environ un dixième de seconde, l'indicateur de niveau ne s'est pas stabilisé et les signaux faibles sont manqués
 scanner-resumes = Reprend
 scanner-carry-once-signal-drops = Continuer une fois le signal tombé
@@ -5256,6 +5273,7 @@ scanner-scanning-mhz = balayage · { $here } MHz
 scanner-pano-first = Panorama { $range } MHz · premier balayage …
 scanner-pano-sweeps = Panorama { $range } MHz · balayage { $n } · { $secs } s
 scanner-pano-clear = Effacer le panorama et rebalayer
+scanner-pano-plus-pause = + pause { $secs } s
 scanner-forward = Avant : continuer vers le haut
 scanner-backward = Arrière : faire demi-tour et descendre
 

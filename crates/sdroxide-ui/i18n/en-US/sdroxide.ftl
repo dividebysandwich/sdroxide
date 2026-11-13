@@ -4141,14 +4141,22 @@ scanner-settles = Settles for
 scanner-settles-hint = Wait per slice after retuning, before the spectrum is read. Longer: steadier picture, slower sweep.
 scanner-pano-width = Slice width
 scanner-pano-width-hint = Share of the receiver's span each slice uses. Less: clear of the edge roll-off; more: faster sweep. Slices overlap by 10 %.
+scanner-pano-pause = Pause after each line
+scanner-pano-pause-hint = Wait after each full sweep before the next one starts. 0: sweep without a break.
+scanner-pano-now = Now
+scanner-pano-now-at = at { $mhz } MHz ({ $pct } %) · sweep { $n }
+scanner-pano-strip = Strip
+scanner-pano-strip-is = a row every { $row } s = { $strip } per strip
+scanner-pano-strip-hint = Measured: last sweep plus pause, times { $rows } rows
+scanner-pano-strip-first = after the first sweep
 rec-db-error = Recording database unavailable: { $err }
 rec-retry = Retry
 rec-live = LIVE
 rec-live-hint = Back to the live strip
 rec-stop = ■ STOP
 rec-record = ● REC
-rec-record-hint = Record full-band strip (WIDE): one row per interval,
-    strongest level of every sweep in it
+rec-record-hint = Record full-band strip (WIDE), starting with the sweeps already on it:
+    under PANO one row per sweep, otherwise one per interval (strongest level)
 rec-desktop-only = Desktop app only: the recording database lives there.
 rec-interval = Every
 rec-interval-hint = Time between stored rows, 1 s and up.
@@ -4157,6 +4165,7 @@ rec-interval-locked = Fixed while recording
 rec-strip-span = = { $min } min per strip
 rec-status-recording = Session { $id } · { $rows } rows · strip { $strip } · { $time }
 rec-status-ready = Ready: records the full-band strip of { $radio }
+rec-status-first-sweep = Ready: { $radio } · first sweep under way …
 rec-status-no-strip = No full-band strip: start SCAN → PANO, or a receiver with WIDE
 rec-db-summary = Database { $size } · { $n } sessions
 rec-init = DB INIT
@@ -4187,6 +4196,14 @@ rec-load-sure = STOP + LOAD?
 rec-load-armed-hint = Press again: recording stops, strip loads
 rec-load-warning = ⚠ Loading stops the running recording (session { $id }).
 rec-viewing = Showing session { $id }, strip { $strip }: { $from }–{ $to }
+rec-store = STORE CURRENT
+rec-store-hint = Keep strip as it is as a session:
+    one row per sweep, at its own time
+rec-store-recording = Recording takes the strip along anyway
+rec-store-loaded = Strip shows a loaded recording
+rec-store-empty = Strip is empty
+rec-status-ready-strip = Ready: { $radio } · { $n } sweeps on the strip since { $since }
+rec-every-sweep = One row per sweep, every { $s } s on average
 scanner-how-long-stay-candidate-before = How long to stay on a candidate before judging it. Below about a tenth of a second the level meter has not settled and weak signals get missed
 scanner-resumes = Resumes
 scanner-carry-once-signal-drops = Carry on once the signal drops
@@ -5431,6 +5448,7 @@ scanner-scanning-mhz = scanning · { $here } MHz
 scanner-pano-first = Panorama { $range } MHz · first sweep …
 scanner-pano-sweeps = Panorama { $range } MHz · sweep { $n } · { $secs } s
 scanner-pano-clear = Discard the panorama and sweep afresh
+scanner-pano-plus-pause = + pause { $secs } s
 scanner-forward = Forward: carry on upwards
 scanner-backward = Backward: turn round and carry on downwards
 

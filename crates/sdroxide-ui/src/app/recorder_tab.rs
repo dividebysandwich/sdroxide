@@ -5,7 +5,8 @@ use eframe::egui::{self, RichText};
 
 use crate::i18n::tr;
 use crate::recorder::{
-    DEFAULT_INTERVAL_S, MIN_INTERVAL_S, Recorder, STRIP_ROWS, SessionInfo, StoredRow, StripInfo, mb,
+    DEFAULT_INTERVAL_S, MIN_INTERVAL_S, Recorder, STRIP_ROWS, SessionInfo, StoredRow, StripInfo,
+    Sweep, mb,
 };
 
 /// What the tab asks of the app after drawing.
@@ -42,6 +43,12 @@ pub(in crate::app) struct RecTab {
     /// Kept apart from what the strip shows: a loaded recording holds the
     /// strip, and the source behind it is live all the same.
     live_seen: bool,
+    /// The live strip's sweeps, oldest first, as many as it shows, each with
+    /// the time it arrived: what ● REC takes along and STORE keeps. Emptied
+    /// wherever the strip is, so it holds what the strip holds.
+    // Why: HDZ 2026-11-13: "den scan stand des panoramas bei rec einfach
+    //      übernehmen … das würde so wies ist zur verwirrung führen".
+    recent: std::collections::VecDeque<Sweep>,
 }
 
 impl Default for RecTab {
@@ -61,6 +68,7 @@ impl Default for RecTab {
             armed_load: None,
             viewing: None,
             live_seen: false,
+            recent: std::collections::VecDeque::new(),
         }
     }
 }
@@ -75,6 +83,20 @@ fn local(ms: i64, fmt: &str) -> String {
         .timestamp_millis_opt(ms)
         .single()
         .map_or_else(String::new, |t| t.format(fmt).to_string())
+}
+
+/// How often a session wrote a row: its interval, or — for a stored strip,
+/// interval zero — once per sweep, with the sweeps' mean spacing.
+fn every(s: &SessionInfo) -> String {
+    if s.interval_s > 0.0 {
+        return tr!("rec-every", s = format!("{:.0}", s.interval_s));
+    }
+    let mean = if s.rows > 1 {
+        (s.ended_ms - s.started_ms) as f64 / 1000.0 / (s.rows - 1) as f64
+    } else {
+        0.0
+    };
+    tr!("rec-every-sweep", s = format!("{mean:.1}"))
 }
 
 fn duration(ms: i64) -> String {
@@ -129,14 +151,16 @@ impl RecTab {
         self.viewing.is_some()
     }
 
-    /// Back to live, as far as this tab knows: the strip was cleared elsewhere.
+    /// The strip was cleared: back to live, and the sweeps it held are gone
+    /// with it.
     pub fn forget_view(&mut self) {
         self.viewing = None;
+        self.recent.clear();
     }
 
     /// A different source: nothing loaded on show, nothing heard from it yet.
     pub fn source_changed(&mut self) {
-        self.viewing = None;
+        self.forget_view();
         self.live_seen = false;
     }
 
@@ -149,14 +173,27 @@ impl RecTab {
         self.rec.as_ref().is_some_and(|r| r.active().is_some())
     }
 
-    /// A full-band frame as it arrives: recorded if a session is running.
+    /// A full-band frame as it arrives: kept with the strip's sweeps while
+    /// the strip is live, and recorded if a session is running.
     pub fn on_wide_frame(&mut self, f: &sdroxide_types::SpectrumFrame) {
         self.live_seen = true;
+        let now = now_ms();
+        // A loaded recording holds the strip: what arrives meanwhile is not on
+        // it, and the strip starts afresh at LIVE.
+        if self.viewing.is_none()
+            && !f.bins.is_empty()
+            && self.recent.back().is_none_or(|s| s.frame.seq != f.seq)
+        {
+            self.recent.push_back(Sweep::new(f, now));
+            while self.recent.len() > STRIP_ROWS as usize {
+                self.recent.pop_front();
+            }
+        }
         let Some(rec) = self.rec.as_mut() else { return };
         if rec.active().is_none() {
             return;
         }
-        if let Err(e) = rec.on_frame(f, now_ms()) {
+        if let Err(e) = rec.on_frame(f, now) {
             self.fail(e);
         }
     }
@@ -194,12 +231,14 @@ impl RecTab {
     }
 
     /// The tab's body. `radio` names the source a new session is filed under;
-    /// `wide_live` says whether a full-band strip is arriving at all.
+    /// `wide_live` says whether a full-band strip is arriving at all; `pano`
+    /// whether a panorama scan is feeding it, whose own times space the rows.
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
         radio: &str,
         wide_live: bool,
+        pano: bool,
         now: f64,
     ) -> Option<RecAction> {
         self.ensure_open();
@@ -218,7 +257,7 @@ impl RecTab {
 
         // Recording and a loaded strip exclude each other: ● REC brings the
         // strip back to live, as LOAD stops a recording.
-        if self.controls(ui, radio, wide_live) && self.viewing.is_some() {
+        if self.controls(ui, radio, wide_live, pano) && self.viewing.is_some() {
             action = Some(RecAction::Live);
         }
         if let Some((_, _, line)) = &self.viewing {
@@ -244,9 +283,14 @@ impl RecTab {
         action
     }
 
-    /// The REC switch, the interval and the status line. Returns whether a
-    /// recording was started.
-    fn controls(&mut self, ui: &mut egui::Ui, radio: &str, wide_live: bool) -> bool {
+    /// The REC switch, STORE CURRENT, the interval and the status line.
+    /// Returns whether a recording was started.
+    ///
+    /// Under a panorama a recording keeps one row per sweep: its settle time
+    /// and pause, on top of the page, already space the rows, and the strip's
+    /// length is read off there. The interval is for a wideband receiver's own
+    /// lane, which delivers several frames a second.
+    fn controls(&mut self, ui: &mut egui::Ui, radio: &str, wide_live: bool, pano: bool) -> bool {
         let recording = self.recording();
         let mut started = false;
         ui.horizontal(|ui| {
@@ -262,10 +306,16 @@ impl RecTab {
             if resp.clicked()
                 && let Some(rec) = self.rec.as_mut()
             {
+                // The strip comes along, unless it shows a loaded recording:
+                // then REC goes back to live and starts from now.
+                let backlog: &[Sweep] =
+                    if self.viewing.is_some() { &[] } else { self.recent.make_contiguous() };
                 let r = if recording {
                     rec.stop(now_ms())
+                } else if pano {
+                    rec.start_per_sweep(radio, backlog, now_ms()).map(|_| ())
                 } else {
-                    rec.start(radio, self.interval_s, now_ms()).map(|_| ())
+                    rec.start_with(radio, self.interval_s, backlog, now_ms()).map(|_| ())
                 };
                 match r {
                     Ok(()) => started = !recording,
@@ -276,26 +326,60 @@ impl RecTab {
                 self.armed_load = None;
             }
 
-            ui.label(tr!("rec-interval"));
-            let before = self.interval_s;
-            ui.add_enabled(
-                !recording,
-                egui::DragValue::new(&mut self.interval_s)
-                    .speed(1.0)
-                    .range(MIN_INTERVAL_S..=f64::INFINITY)
-                    .fixed_decimals(0)
-                    .suffix(" s"),
-            )
-            .on_hover_text(tr!("rec-interval-hint"))
-            .on_disabled_hover_text(tr!("rec-interval-locked"));
-            if self.interval_s != before
-                && let Some(rec) = self.rec.as_ref()
-                && let Err(e) = rec.set_interval_s(self.interval_s)
+            // Beside ● REC: the strip as it is, kept as a session of its own,
+            // one row per sweep, nothing folded.
+            // Why: HDZ 2026-11-13: "den store knopf neben dem record anordnen".
+            let can = !recording && self.viewing.is_none() && !self.recent.is_empty();
+            let resp = ui
+                .add_enabled_ui(can, |ui| crate::chrome::chip(ui, false, tr!("rec-store")))
+                .inner
+                .on_hover_text(tr!("rec-store-hint"))
+                .on_disabled_hover_text(if recording {
+                    tr!("rec-store-recording")
+                } else if self.viewing.is_some() {
+                    tr!("rec-store-loaded")
+                } else {
+                    tr!("rec-store-empty")
+                });
+            if resp.clicked()
+                && let Some(rec) = self.rec.as_mut()
             {
-                self.fail(e);
+                match rec.store(radio, self.recent.make_contiguous()) {
+                    // Opened, so the new session is seen at once.
+                    Ok(Some(id)) => self.expanded = Some(id),
+                    Ok(None) => {}
+                    Err(e) => self.error = Some(e.to_string()),
+                }
+                self.dirty = true;
+                self.armed_init = false;
+                self.armed_load = None;
             }
-            let strip_min = self.interval_s * STRIP_ROWS as f64 / 60.0;
-            ui.label(RichText::new(tr!("rec-strip-span", min = format!("{strip_min:.0}"))).weak());
+
+            // Under a panorama the times on top of the page space the rows.
+            if !pano {
+                ui.label(tr!("rec-interval"));
+                let before = self.interval_s;
+                ui.add_enabled(
+                    !recording,
+                    egui::DragValue::new(&mut self.interval_s)
+                        .speed(1.0)
+                        .range(MIN_INTERVAL_S..=f64::INFINITY)
+                        .fixed_decimals(0)
+                        .suffix(" s"),
+                )
+                .on_hover_text(tr!("rec-interval-hint"))
+                .on_disabled_hover_text(tr!("rec-interval-locked"));
+                if self.interval_s != before
+                    && let Some(rec) = self.rec.as_ref()
+                    && let Err(e) = rec.set_interval_s(self.interval_s)
+                {
+                    self.fail(e);
+                }
+                let strip_min = self.interval_s * STRIP_ROWS as f64 / 60.0;
+                ui.label(
+                    RichText::new(tr!("rec-strip-span", min = format!("{strip_min:.0}"))).weak(),
+                );
+            }
         });
 
         let status = match self.rec.as_ref().and_then(|r| r.active()) {
@@ -310,12 +394,25 @@ impl RecTab {
                     time = duration(running)
                 )
             }
+            None if wide_live && self.viewing.is_none() && !self.recent.is_empty() => {
+                let first = self.recent.front().map_or(0, |s| s.t_ms);
+                tr!(
+                    "rec-status-ready-strip",
+                    radio = radio.to_string(),
+                    n = self.recent.len(),
+                    since = local(first, "%H:%M:%S")
+                )
+            }
             None if wide_live => tr!("rec-status-ready", radio = radio.to_string()),
+            // A panorama under way has a strip coming, just not yet: its first
+            // sweep is still going.
+            // Why: HDZ 2026-11-13: "fehlermeldung unnötig, sdr scannt gerade".
+            None if pano => tr!("rec-status-first-sweep", radio = radio.to_string()),
             None => tr!("rec-status-no-strip"),
         };
         let colour = if recording {
             crate::theme::PINK()
-        } else if wide_live {
+        } else if wide_live || pano {
             crate::theme::TEXT()
         } else {
             crate::theme::ALERT()
@@ -453,8 +550,7 @@ impl RecTab {
                         } else {
                             "—".into()
                         });
-                        ui.label(duration(s.ended_ms - s.started_ms))
-                            .on_hover_text(tr!("rec-every", s = format!("{:.0}", s.interval_s)));
+                        ui.label(duration(s.ended_ms - s.started_ms)).on_hover_text(every(s));
                         ui.label(mb(s.bytes.max(0) as u64));
                         ui.label(format!("{}", s.strips()));
                         if recording_id == Some(s.id) {
@@ -579,6 +675,8 @@ impl RecTab {
                         to = local(st.last_ms + (interval * 1000.0) as i64, "%H:%M:%S")
                     );
                     self.viewing = Some((id, st.k, line));
+                    // The live strip gives way, and its sweeps with it.
+                    self.recent.clear();
                     action = Some(RecAction::Load(rows));
                 }
                 Ok(_) => {}

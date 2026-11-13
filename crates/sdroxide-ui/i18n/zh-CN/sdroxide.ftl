@@ -3969,14 +3969,22 @@ scanner-settles = 每段等待
 scanner-settles-hint = 重新调谐后、读取频谱前的等待。越长画面越稳，扫描越慢。
 scanner-pano-width = 分段宽度
 scanner-pano-width-hint = 每段使用的接收带宽比例。小：避开边缘滚降；大：扫描更快。相邻分段重叠 10 %。
+scanner-pano-pause = 每行后暂停
+scanner-pano-pause-hint = 每次完整扫描后、下一次开始前的等待时间。0：不暂停。
+scanner-pano-now = 当前
+scanner-pano-now-at = { $mhz } MHz ({ $pct } %) · 第 { $n } 次扫描
+scanner-pano-strip = 条带
+scanner-pano-strip-is = 每 { $row } 秒一行 = 每条带 { $strip }
+scanner-pano-strip-hint = 实测：上次扫描加暂停，乘以 { $rows } 行
+scanner-pano-strip-first = 首次扫描后
 rec-db-error = 录制数据库不可用：{ $err }
 rec-retry = 重试
 rec-live = 实时
 rec-live-hint = 返回实时条带
 rec-stop = ■ 停止
 rec-record = ● REC
-rec-record-hint = 录制全频段条带 (WIDE)：每个间隔一行，
-    取其中每次扫描的最强电平
+rec-record-hint = 录制全频段条带 (WIDE)，从条带上已有的扫描开始：
+    PANO 下每次扫描一行，否则每个间隔一行（最强电平）
 rec-desktop-only = 仅限桌面应用：录制数据库位于桌面应用中。
 rec-interval = 间隔
 rec-interval-hint = 保存行之间的时间，1 秒起。
@@ -3985,6 +3993,7 @@ rec-interval-locked = 录制时固定
 rec-strip-span = = 每条带 { $min } 分钟
 rec-status-recording = 会话 { $id } · { $rows } 行 · 条带 { $strip } · { $time }
 rec-status-ready = 就绪：录制 { $radio } 的全频段条带
+rec-status-first-sweep = 就绪：{ $radio } · 首次扫描进行中 …
 rec-status-no-strip = 无全频段条带：启动 SCAN → PANO，或使用支持 WIDE 的接收机
 rec-db-summary = 数据库 { $size } · { $n } 个会话
 rec-init = DB INIT
@@ -4015,6 +4024,14 @@ rec-load-sure = 停止并加载？
 rec-load-armed-hint = 再按一次：停止录制并加载条带
 rec-load-warning = ⚠ 加载将停止正在进行的录制（会话 { $id }）。
 rec-viewing = 会话 { $id }，条带 { $strip }：{ $from }–{ $to }
+rec-store = 保存当前
+rec-store-hint = 将条带原样保存为会话：
+    每次扫描一行，按其时间
+rec-store-recording = 录制已包含条带
+rec-store-loaded = 条带正在显示已加载的录制
+rec-store-empty = 条带为空
+rec-status-ready-strip = 就绪：{ $radio } · 自 { $since } 起条带上有 { $n } 次扫描
+rec-every-sweep = 每次扫描一行，平均每 { $s } 秒
 scanner-how-long-stay-candidate-before = 在判断候选信道之前在其上停留多久。低于约十分之一秒时，电平表尚未稳定，弱信号会被漏掉
 scanner-resumes = 恢复
 scanner-carry-once-signal-drops = 信号消失后继续
@@ -5190,6 +5207,7 @@ scanner-scanning-mhz = 扫描中 · { $here } MHz
 scanner-pano-first = 全景 { $range } MHz · 首次扫描中 …
 scanner-pano-sweeps = 全景 { $range } MHz · 第 { $n } 次扫描 · { $secs } 秒
 scanner-pano-clear = 丢弃全景并重新扫描
+scanner-pano-plus-pause = + 暂停 { $secs } 秒
 scanner-forward = 前进：继续向上
 scanner-backward = 后退：掉头继续向下
 

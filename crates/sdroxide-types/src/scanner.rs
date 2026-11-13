@@ -104,6 +104,13 @@ pub struct ScannerConfig {
     // Why: HDZ 2026-11-12: "welchen Overlap benutzt du als Schrittweite …
     //      wäre das nicht ein Parameter wie Schrittweite".
     pub pano_usable: f32,
+    /// Seconds a panorama waits after each full sweep before the next one
+    /// starts: rows at a steady, chosen spacing for a long recording rather
+    /// than as fast as the front end can sweep. Zero sweeps without a break.
+    // Why: HDZ 2026-11-13: "mach die beiden zeiten warte je segment und pause
+    //      after each line oben hin"; Loop: "Scan-Delay/Intervall für
+    //      RX-888-Langzeitaufnahmen".
+    pub pano_pause_s: f32,
     /// How long to listen on a candidate before deciding it is really busy.
     pub dwell_ms: u32,
     pub resume: ScanResume,
@@ -179,6 +186,7 @@ impl Default for ScannerConfig {
             stop_snr: false,
             snr_db: 10.0,
             pano_usable: 0.8,
+            pano_pause_s: 0.0,
             dwell_ms: 150,
             resume: ScanResume::Carrier,
             resume_ms: 2_000,

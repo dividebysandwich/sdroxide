@@ -3998,14 +3998,22 @@ scanner-settles = Espera por trecho
 scanner-settles-hint = Espera após ressintonizar, antes de ler o espectro. Mais longa: imagem mais estável, varredura mais lenta.
 scanner-pano-width = Largura do trecho
 scanner-pano-width-hint = Parte da largura do receptor usada por trecho. Menos: longe da queda nas bordas; mais: varredura mais rápida. Sobreposição de 10 %.
+scanner-pano-pause = Pausa após cada linha
+scanner-pano-pause-hint = Espera após cada varredura completa antes da próxima. 0: sem pausa.
+scanner-pano-now = Agora
+scanner-pano-now-at = em { $mhz } MHz ({ $pct } %) · varredura { $n }
+scanner-pano-strip = Faixa
+scanner-pano-strip-is = uma linha a cada { $row } s = { $strip } por faixa
+scanner-pano-strip-hint = Medido: última varredura mais pausa, vezes { $rows } linhas
+scanner-pano-strip-first = após a primeira varredura
 rec-db-error = Banco de gravação indisponível: { $err }
 rec-retry = Tentar de novo
 rec-live = AO VIVO
 rec-live-hint = Voltar à faixa ao vivo
 rec-stop = ■ PARAR
 rec-record = ● REC
-rec-record-hint = Gravar faixa de banda completa (WIDE): uma linha por intervalo,
-    nível mais forte de cada varredura
+rec-record-hint = Gravar faixa de banda completa (WIDE), começando pelas varreduras já nela:
+    no PANO uma linha por varredura, senão uma por intervalo (nível mais forte)
 rec-desktop-only = Somente no app de desktop: o banco de gravação fica lá.
 rec-interval = A cada
 rec-interval-hint = Tempo entre linhas salvas, a partir de 1 s.
@@ -4014,6 +4022,7 @@ rec-interval-locked = Fixo durante a gravação
 rec-strip-span = = { $min } min por faixa
 rec-status-recording = Sessão { $id } · { $rows } linhas · faixa { $strip } · { $time }
 rec-status-ready = Pronto: grava a faixa de banda completa de { $radio }
+rec-status-first-sweep = Pronto: { $radio } · primeira varredura em andamento …
 rec-status-no-strip = Sem faixa de banda completa: inicie SCAN → PANO ou um receptor com WIDE
 rec-db-summary = Banco { $size } · { $n } sessões
 rec-init = DB INIT
@@ -4044,6 +4053,14 @@ rec-load-sure = PARAR + CARREGAR?
 rec-load-armed-hint = Pressione de novo: a gravação para e a faixa carrega
 rec-load-warning = ⚠ Carregar para a gravação em andamento (sessão { $id }).
 rec-viewing = Sessão { $id }, faixa { $strip }: { $from }–{ $to }
+rec-store = GUARDAR ATUAL
+rec-store-hint = Guardar a faixa como está como sessão:
+    uma linha por varredura, no seu horário
+rec-store-recording = A gravação já inclui a faixa
+rec-store-loaded = A faixa mostra uma gravação carregada
+rec-store-empty = A faixa está vazia
+rec-status-ready-strip = Pronto: { $radio } · { $n } varreduras na faixa desde { $since }
+rec-every-sweep = Uma linha por varredura, a cada { $s } s em média
 scanner-how-long-stay-candidate-before = Quanto tempo permanecer em um candidato antes de julgá-lo. Abaixo de cerca de um décimo de segundo o medidor de nível não se estabiliza e sinais fracos são perdidos
 scanner-resumes = Retoma
 scanner-carry-once-signal-drops = Continua assim que o sinal cai
@@ -5257,6 +5274,7 @@ scanner-scanning-mhz = varrendo · { $here } MHz
 scanner-pano-first = Panorama { $range } MHz · primeira varredura …
 scanner-pano-sweeps = Panorama { $range } MHz · varredura { $n } · { $secs } s
 scanner-pano-clear = Descartar o panorama e varrer de novo
+scanner-pano-plus-pause = + pausa { $secs } s
 scanner-forward = Avançar: seguir para cima
 scanner-backward = Voltar: inverter e seguir para baixo
 

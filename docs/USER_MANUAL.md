@@ -2186,8 +2186,18 @@ is transmitting. Three kinds:
   range. Each finished sweep is one row of the **full-band strip** (**WIDE**),
   so a receiver that only sees a couple of megahertz at a time, an RTL-SDR for
   one, gets the same band-wide waterfall a direct-sampling receiver has.
-  **Settles for** is how long each slice waits after retuning before it is
-  read: longer is a steadier picture and a slower sweep. **Slice width** is
+  The two times stand on top, since together they set how far apart the
+  strip's rows are. **Settles for** is how long each slice waits after
+  retuning before it is read: longer is a steadier picture and a slower
+  sweep. **Pause after each line** is how long the panorama waits after each
+  full sweep before it starts the next, 0 s by default: for a recording over
+  hours, rows at a steady spacing you choose rather than as fast as the front
+  end sweeps. The status line shows the sweep time and the pause beside it.
+  Below the two times, **Now** says where the sweep is (MHz, per cent of the
+  range, which sweep), and **Strip** how long a strip of 120 rows comes out
+  at, measured: the last sweep's own time plus the pause, a row every so many
+  seconds.
+  **Slice width** is
   how much of the receiver's span each slice uses, 50–95 % (80 % by default):
   less keeps clear of the roll-off at the edges, more sweeps faster;
   neighbouring slices overlap by a tenth of the span. The span is the one
@@ -2205,10 +2215,20 @@ is transmitting. Three kinds:
   **Recording a panorama.** Below the PANO settings, **● REC** (desktop app
   only) records whatever feeds the strip — a PANO sweep, or the full-band lane of a direct-sampling receiver —
   into a database on this computer (`recordings.sqlite` in the configuration
-  folder), one row **every** so many seconds: 1 s at the least, 10 s by
-  default, no upper limit. Every sweep inside the interval is folded into its
-  row, column by column, keeping the strongest level, so a carrier that was up
-  for one sweep is still there. A recording is a **session**; sessions are
+  folder). Under a running PANO scan it keeps **one row per sweep**: the two
+  times on top already space the rows, and **Strip** there says how long a
+  strip becomes. From a wideband receiver's own lane, which delivers several
+  frames a second, it keeps one row **every** so many seconds instead (1 s at
+  the least, 10 s by default, no upper limit; the field appears beside ● REC
+  only then), and every frame inside the interval is folded into its row,
+  column by column, keeping the strongest level, so a carrier that was up for
+  one frame is still there. The recording starts with the sweeps already
+  on the strip (up to 120, each at the time it arrived; the status line says
+  how many and since when), so pressing ● REC halfway through a scan keeps
+  what was scanned so far; to start empty, press **CLR** first. **STORE CURRENT**, beside ● REC,
+  keeps the strip as it is as a finished session, one row per sweep at its
+  own time, nothing folded — for a scan that is done and only wants keeping;
+  loaded back, it looks as it did. A recording is a **session**; sessions are
   cut into **strips** of 120 rows, the height of the strip on screen — at
   10 s, twenty minutes a strip. The list below shows each session's start,
   radio, bands, MHz range, length, size and strips, and the database's size

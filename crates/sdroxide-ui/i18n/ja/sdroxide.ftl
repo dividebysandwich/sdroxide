@@ -3978,14 +3978,22 @@ scanner-settles = 区間ごとの待機
 scanner-settles-hint = 再同調後、スペクトルを読む前の待機。長いほど画像が安定し、掃引は遅くなる。
 scanner-pano-width = 区間幅
 scanner-pano-width-hint = 各区間で使う受信幅の割合。小さいほど端の減衰を避け、大きいほど掃引が速い。区間は10 %重なる。
+scanner-pano-pause = 各行の後の休止
+scanner-pano-pause-hint = 1回のスイープ完了後、次を始めるまでの待ち時間。0: 休止なし。
+scanner-pano-now = 現在
+scanner-pano-now-at = { $mhz } MHz ({ $pct } %) · スイープ { $n }
+scanner-pano-strip = ストリップ
+scanner-pano-strip-is = { $row } 秒ごとに1行 = ストリップあたり { $strip }
+scanner-pano-strip-hint = 実測: 直前のスイープ + 休止 × { $rows } 行
+scanner-pano-strip-first = 最初のスイープ後
 rec-db-error = 録音データベースを使用できません: { $err }
 rec-retry = 再試行
 rec-live = ライブ
 rec-live-hint = ライブのストリップに戻る
 rec-stop = ■ 停止
 rec-record = ● REC
-rec-record-hint = 全帯域ストリップ (WIDE) を記録: 間隔ごとに1行、
-    各スイープの最大レベル
+rec-record-hint = 全帯域ストリップ (WIDE) を記録 (表示中のスイープから開始):
+    PANO ではスイープごとに1行、それ以外は間隔ごとに1行 (最大レベル)
 rec-desktop-only = デスクトップアプリのみ: 録音データベースはそちらにあります。
 rec-interval = 間隔
 rec-interval-hint = 保存する行の間隔、1 秒以上。
@@ -3994,6 +4002,7 @@ rec-interval-locked = 記録中は固定
 rec-strip-span = = ストリップあたり { $min } 分
 rec-status-recording = セッション { $id } · { $rows } 行 · ストリップ { $strip } · { $time }
 rec-status-ready = 準備完了: { $radio } の全帯域ストリップを記録
+rec-status-first-sweep = 準備完了: { $radio } · 最初のスイープ中 …
 rec-status-no-strip = 全帯域ストリップなし: SCAN → PANO を開始、または WIDE 対応受信機
 rec-db-summary = データベース { $size } · { $n } セッション
 rec-init = DB INIT
@@ -4024,6 +4033,14 @@ rec-load-sure = 停止して読込？
 rec-load-armed-hint = もう一度押す: 記録を停止してストリップを読込
 rec-load-warning = ⚠ 読み込むと実行中の記録 (セッション { $id }) が停止します。
 rec-viewing = セッション { $id }、ストリップ { $strip }: { $from }–{ $to }
+rec-store = 現在を保存
+rec-store-hint = ストリップをそのままセッションとして保存:
+    スイープごとに1行、その時刻で
+rec-store-recording = 記録中はストリップも記録されます
+rec-store-loaded = ストリップは読込済みの記録を表示中
+rec-store-empty = ストリップは空です
+rec-status-ready-strip = 準備完了: { $radio } · { $since } 以降 { $n } スイープ
+rec-every-sweep = スイープごとに1行、平均 { $s } 秒ごと
 scanner-how-long-stay-candidate-before = 候補を判定する前に、その候補にとどまる時間です。約 0.1 秒を下回ると、レベルメーターが整定せず、弱い信号を取り逃します
 scanner-resumes = 再開
 scanner-carry-once-signal-drops = 信号が下がったら続けます
@@ -5200,6 +5217,7 @@ scanner-scanning-mhz = スキャン中 · { $here } MHz
 scanner-pano-first = パノラマ { $range } MHz · 初回掃引中 …
 scanner-pano-sweeps = パノラマ { $range } MHz · 掃引 { $n } · { $secs } 秒
 scanner-pano-clear = パノラマを破棄して再掃引
+scanner-pano-plus-pause = + 休止 { $secs } 秒
 scanner-forward = 前進：上へ進む
 scanner-backward = 後退：反転して下へ進む
 

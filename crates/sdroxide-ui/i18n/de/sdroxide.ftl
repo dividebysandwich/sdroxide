@@ -4077,14 +4077,22 @@ scanner-settles = Wartet je Abschnitt
 scanner-settles-hint = Wartezeit nach dem Umstimmen, bevor das Spektrum gelesen wird. Länger: ruhigeres Bild, langsamerer Durchlauf.
 scanner-pano-width = Abschnittsbreite
 scanner-pano-width-hint = Anteil der Empfängerbreite je Abschnitt. Weniger: frei vom Randabfall; mehr: schnellerer Durchlauf. Abschnitte überlappen 10 %.
+scanner-pano-pause = Pause nach jeder Zeile
+scanner-pano-pause-hint = Wartezeit nach jedem vollen Durchlauf, bevor der nächste beginnt. 0: ohne Pause.
+scanner-pano-now = Jetzt
+scanner-pano-now-at = bei { $mhz } MHz ({ $pct } %) · Durchlauf { $n }
+scanner-pano-strip = Streifen
+scanner-pano-strip-is = eine Zeile alle { $row } s = { $strip } je Streifen
+scanner-pano-strip-hint = Gemessen: letzter Durchlauf plus Pause, mal { $rows } Zeilen
+scanner-pano-strip-first = nach dem ersten Durchlauf
 rec-db-error = Aufnahme-Datenbank nicht verfügbar: { $err }
 rec-retry = Erneut
 rec-live = LIVE
 rec-live-hint = Zurück zum laufenden Streifen
 rec-stop = ■ STOPP
 rec-record = ● REC
-rec-record-hint = Breitbandstreifen (WIDE) aufnehmen: eine Zeile je Intervall,
-    stärkster Pegel aller Durchläufe darin
+rec-record-hint = Breitbandstreifen (WIDE) aufnehmen, beginnend mit den Durchläufen darauf:
+    unter PANO eine Zeile je Durchlauf, sonst je Intervall (stärkster Pegel)
 rec-desktop-only = Nur in der Desktop-App: dort liegt die Aufnahme-Datenbank.
 rec-interval = Alle
 rec-interval-hint = Abstand zwischen gespeicherten Zeilen, ab 1 s.
@@ -4093,6 +4101,7 @@ rec-interval-locked = Während der Aufnahme fest
 rec-strip-span = = { $min } min je Streifen
 rec-status-recording = Session { $id } · { $rows } Zeilen · Streifen { $strip } · { $time }
 rec-status-ready = Bereit: nimmt den Breitbandstreifen von { $radio } auf
+rec-status-first-sweep = Bereit: { $radio } · erster Durchlauf läuft …
 rec-status-no-strip = Kein Breitbandstreifen: SCAN → PANO starten oder Empfänger mit WIDE
 rec-db-summary = Datenbank { $size } · { $n } Sessions
 rec-init = DB INIT
@@ -4123,6 +4132,14 @@ rec-load-sure = STOPP + LOAD?
 rec-load-armed-hint = Nochmal drücken: Aufnahme stoppt, Streifen lädt
 rec-load-warning = ⚠ Laden stoppt die laufende Aufnahme (Session { $id }).
 rec-viewing = Ansicht Session { $id }, Streifen { $strip }: { $from }–{ $to }
+rec-store = STORE CURRENT
+rec-store-hint = Streifen, wie er ist, als Session speichern:
+    eine Zeile je Durchlauf, zu seiner Zeit
+rec-store-recording = Die Aufnahme nimmt den Streifen ohnehin mit
+rec-store-loaded = Streifen zeigt eine geladene Aufnahme
+rec-store-empty = Streifen ist leer
+rec-status-ready-strip = Bereit: { $radio } · { $n } Durchläufe auf dem Streifen seit { $since }
+rec-every-sweep = Eine Zeile je Durchlauf, im Mittel alle { $s } s
 scanner-how-long-stay-candidate-before = Wie lange bei einem Kandidaten geblieben wird, bevor geurteilt wird. Unter etwa einer Zehntelsekunde hat sich die Pegelanzeige nicht eingependelt, und schwache Signale werden übersehen
 scanner-resumes = Setzt fort
 scanner-carry-once-signal-drops = Weitergehen, sobald das Signal abfällt
@@ -5350,6 +5367,7 @@ scanner-scanning-mhz = sucht · { $here } MHz
 scanner-pano-first = Panorama { $range } MHz · erster Durchlauf …
 scanner-pano-sweeps = Panorama { $range } MHz · Durchlauf { $n } · { $secs } s
 scanner-pano-clear = Panorama verwerfen und neu abfahren
+scanner-pano-plus-pause = + Pause { $secs } s
 scanner-forward = Vorwärts: aufwärts weiter
 scanner-backward = Rückwärts: umkehren und abwärts weiter
 

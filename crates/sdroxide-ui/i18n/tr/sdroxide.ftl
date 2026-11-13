@@ -3997,14 +3997,22 @@ scanner-settles = Dilim başına bekler
 scanner-settles-hint = Yeniden ayardan sonra spektrum okunmadan önceki bekleme. Daha uzun: daha sakin görüntü, daha yavaş tarama.
 scanner-pano-width = Dilim genişliği
 scanner-pano-width-hint = Her dilimin kullandığı alıcı genişliği payı. Az: kenar düşüşünden uzak; çok: daha hızlı tarama. Dilimler %10 örtüşür.
+scanner-pano-pause = Her satırdan sonra duraklama
+scanner-pano-pause-hint = Her tam taramadan sonra bir sonrakine kadar bekleme. 0: duraklamasız.
+scanner-pano-now = Şimdi
+scanner-pano-now-at = { $mhz } MHz ({ $pct } %) · tarama { $n }
+scanner-pano-strip = Şerit
+scanner-pano-strip-is = her { $row } sn'de bir satır = şerit başına { $strip }
+scanner-pano-strip-hint = Ölçülen: son tarama artı duraklama, × { $rows } satır
+scanner-pano-strip-first = ilk taramadan sonra
 rec-db-error = Kayıt veritabanı kullanılamıyor: { $err }
 rec-retry = Yeniden dene
 rec-live = CANLI
 rec-live-hint = Canlı şeride dön
 rec-stop = ■ DUR
 rec-record = ● REC
-rec-record-hint = Tam bant şeridini (WIDE) kaydet: aralık başına bir satır,
-    her taramanın en güçlü seviyesi
+rec-record-hint = Tam bant şeridini (WIDE) kaydet, üzerindeki taramalardan başlayarak:
+    PANO'da tarama başına bir satır, aksi halde aralık başına (en güçlü seviye)
 rec-desktop-only = Yalnızca masaüstü uygulamasında: kayıt veritabanı orada.
 rec-interval = Her
 rec-interval-hint = Kaydedilen satırlar arası süre, 1 sn ve üzeri.
@@ -4013,6 +4021,7 @@ rec-interval-locked = Kayıt sırasında sabit
 rec-strip-span = = şerit başına { $min } dk
 rec-status-recording = Oturum { $id } · { $rows } satır · şerit { $strip } · { $time }
 rec-status-ready = Hazır: { $radio } tam bant şeridini kaydeder
+rec-status-first-sweep = Hazır: { $radio } · ilk tarama sürüyor …
 rec-status-no-strip = Tam bant şeridi yok: SCAN → PANO başlatın veya WIDE destekli alıcı
 rec-db-summary = Veritabanı { $size } · { $n } oturum
 rec-init = DB INIT
@@ -4043,6 +4052,14 @@ rec-load-sure = DUR + YÜKLE?
 rec-load-armed-hint = Tekrar basın: kayıt durur, şerit yüklenir
 rec-load-warning = ⚠ Yüklemek süren kaydı durdurur (oturum { $id }).
 rec-viewing = Oturum { $id }, şerit { $strip }: { $from }–{ $to }
+rec-store = MEVCUDU SAKLA
+rec-store-hint = Şeridi olduğu gibi oturum olarak sakla:
+    tarama başına bir satır, kendi zamanıyla
+rec-store-recording = Kayıt şeridi zaten içeriyor
+rec-store-loaded = Şerit yüklenmiş bir kaydı gösteriyor
+rec-store-empty = Şerit boş
+rec-status-ready-strip = Hazır: { $radio } · { $since } itibarıyla şeritte { $n } tarama
+rec-every-sweep = Tarama başına bir satır, ortalama her { $s } sn
 scanner-how-long-stay-candidate-before = Bir adayı yargılamadan önce onda ne kadar kalınacağı. Yaklaşık onda bir saniyenin altında seviye ölçer yerleşmez ve zayıf sinyaller kaçar
 scanner-resumes = Devam eder
 scanner-carry-once-signal-drops = Sinyal düştükten sonra devam edin
@@ -5248,6 +5265,7 @@ scanner-scanning-mhz = taranıyor · { $here } MHz
 scanner-pano-first = Panorama { $range } MHz · ilk tarama …
 scanner-pano-sweeps = Panorama { $range } MHz · tarama { $n } · { $secs } sn
 scanner-pano-clear = Panoramayı at ve yeniden tara
+scanner-pano-plus-pause = + duraklama { $secs } sn
 scanner-forward = İleri: yukarı devam
 scanner-backward = Geri: dön ve aşağı devam
 

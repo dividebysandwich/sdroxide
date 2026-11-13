@@ -3980,14 +3980,22 @@ scanner-settles = Espera por tramo
 scanner-settles-hint = Espera tras resintonizar, antes de leer el espectro. Más larga: imagen más estable, barrido más lento.
 scanner-pano-width = Ancho de tramo
 scanner-pano-width-hint = Parte del ancho del receptor que usa cada tramo. Menos: lejos de la caída de los bordes; más: barrido más rápido. Solape del 10 %.
+scanner-pano-pause = Pausa tras cada línea
+scanner-pano-pause-hint = Espera tras cada barrido completo antes del siguiente. 0: sin pausa.
+scanner-pano-now = Ahora
+scanner-pano-now-at = en { $mhz } MHz ({ $pct } %) · barrido { $n }
+scanner-pano-strip = Franja
+scanner-pano-strip-is = una fila cada { $row } s = { $strip } por franja
+scanner-pano-strip-hint = Medido: último barrido más pausa, por { $rows } filas
+scanner-pano-strip-first = tras el primer barrido
 rec-db-error = Base de datos de grabación no disponible: { $err }
 rec-retry = Reintentar
 rec-live = EN VIVO
 rec-live-hint = Volver a la franja en vivo
 rec-stop = ■ PARAR
 rec-record = ● REC
-rec-record-hint = Grabar franja de banda completa (WIDE): una fila por intervalo,
-    nivel más fuerte de cada barrido
+rec-record-hint = Grabar franja de banda completa (WIDE), empezando por los barridos ya en ella:
+    con PANO una fila por barrido, si no una por intervalo (nivel más fuerte)
 rec-desktop-only = Solo en la app de escritorio: allí está la base de datos de grabación.
 rec-interval = Cada
 rec-interval-hint = Tiempo entre filas guardadas, desde 1 s.
@@ -3996,6 +4004,7 @@ rec-interval-locked = Fijo durante la grabación
 rec-strip-span = = { $min } min por franja
 rec-status-recording = Sesión { $id } · { $rows } filas · franja { $strip } · { $time }
 rec-status-ready = Listo: graba la franja de banda completa de { $radio }
+rec-status-first-sweep = Listo: { $radio } · primer barrido en curso …
 rec-status-no-strip = Sin franja de banda completa: inicie SCAN → PANO o un receptor con WIDE
 rec-db-summary = Base de datos { $size } · { $n } sesiones
 rec-init = DB INIT
@@ -4026,6 +4035,14 @@ rec-load-sure = ¿PARAR + CARGAR?
 rec-load-armed-hint = Pulse de nuevo: la grabación se detiene y la franja se carga
 rec-load-warning = ⚠ Cargar detiene la grabación en curso (sesión { $id }).
 rec-viewing = Mostrando sesión { $id }, franja { $strip }: { $from }–{ $to }
+rec-store = GUARDAR ACTUAL
+rec-store-hint = Guardar la franja tal como está como sesión:
+    una fila por barrido, con su hora
+rec-store-recording = La grabación ya incluye la franja
+rec-store-loaded = La franja muestra una grabación cargada
+rec-store-empty = La franja está vacía
+rec-status-ready-strip = Listo: { $radio } · { $n } barridos en la franja desde { $since }
+rec-every-sweep = Una fila por barrido, cada { $s } s de media
 scanner-how-long-stay-candidate-before = Cuánto tiempo quedarse en un candidato antes de juzgarlo. Por debajo de una décima de segundo el medidor de nivel no se ha asentado y se pierden señales débiles
 scanner-resumes = Reanuda
 scanner-carry-once-signal-drops = Continúa cuando la señal cae
@@ -5237,6 +5254,7 @@ scanner-scanning-mhz = barriendo · { $here } MHz
 scanner-pano-first = Panorama { $range } MHz · primer barrido …
 scanner-pano-sweeps = Panorama { $range } MHz · barrido { $n } · { $secs } s
 scanner-pano-clear = Descartar el panorama y barrer de nuevo
+scanner-pano-plus-pause = + pausa { $secs } s
 scanner-forward = Adelante: seguir hacia arriba
 scanner-backward = Atrás: dar la vuelta y seguir hacia abajo
 

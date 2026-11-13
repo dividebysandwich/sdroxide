@@ -150,6 +150,8 @@ struct Watch {
     /// Every dial the engine has announced since the last `forget_seen`. What a
     /// scan *did not* tune to is only checkable against the whole trail.
     dials: Vec<f64>,
+    /// The last sweep time a panorama reported, ms.
+    sweep_ms: u32,
 }
 
 struct Rig {
@@ -197,6 +199,7 @@ impl Rig {
                     self.w.dial = s.active_freq_hz();
                     self.w.running = s.scan.running;
                     self.w.holding = s.scan.holding;
+                    self.w.sweep_ms = s.scan.sweep_ms;
                     if s.scan.holding && self.w.held_at.is_none() {
                         self.w.held_at = Some(s.active_freq_hz());
                         // Captured with the frequency rather than read off the
@@ -428,6 +431,41 @@ fn a_panorama_sweeps_without_stopping_and_fills_the_strip() {
     assert!(
         near > median.saturating_add(40),
         "the carrier {near} stands out of the floor {median}"
+    );
+}
+
+/// A panorama with a pause waits that long after each full sweep: the strip's
+/// rows come the pause apart on top of the sweep, and the sweep time reported
+/// is the sweep alone.
+#[test]
+fn a_panorama_pauses_after_each_sweep() {
+    const PAUSE_S: f32 = 2.0;
+    let (lo, hi) = (144_000_000.0, 150_000_000.0);
+    let mut rig = Rig::new(None);
+    rig.send(Command::SetScannerConfig(ScannerConfig {
+        kind: ScanKind::Panorama,
+        range_lo_hz: lo,
+        range_hi_hz: hi,
+        pano_pause_s: PAUSE_S,
+        ..range_cfg()
+    }));
+    rig.send(Command::SetScanning(true));
+
+    let mut rows = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline && rows.len() < 2 {
+        rig.pump(0.02, false);
+        if rig.h.wide_spectrum_out.update() {
+            rows.push(Instant::now());
+        }
+    }
+    assert_eq!(rows.len(), 2, "two sweeps should have reached the strip");
+    let gap = rows[1].duration_since(rows[0]).as_secs_f32();
+    let swept = rig.pump(0.1, false).sweep_ms as f32 / 1000.0;
+    assert!(gap >= PAUSE_S, "rows {gap:.2} s apart, the pause is {PAUSE_S} s");
+    assert!(
+        swept > 0.0 && swept < gap - PAUSE_S + 0.3,
+        "sweep {swept:.2} s, rows {gap:.2} s apart"
     );
 }
 

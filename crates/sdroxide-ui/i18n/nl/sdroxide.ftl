@@ -3991,14 +3991,22 @@ scanner-settles = Wacht per stuk
 scanner-settles-hint = Wachttijd na het afstemmen, voordat het spectrum gelezen wordt. Langer: rustiger beeld, tragere sweep.
 scanner-pano-width = Stukbreedte
 scanner-pano-width-hint = Deel van de ontvangerbreedte per stuk. Minder: vrij van de randafval; meer: snellere sweep. Stukken overlappen 10 %.
+scanner-pano-pause = Pauze na elke regel
+scanner-pano-pause-hint = Wachttijd na elke volledige sweep voordat de volgende begint. 0: zonder pauze.
+scanner-pano-now = Nu
+scanner-pano-now-at = op { $mhz } MHz ({ $pct } %) · sweep { $n }
+scanner-pano-strip = Strook
+scanner-pano-strip-is = een rij elke { $row } s = { $strip } per strook
+scanner-pano-strip-hint = Gemeten: laatste sweep plus pauze, maal { $rows } rijen
+scanner-pano-strip-first = na de eerste sweep
 rec-db-error = Opnamedatabase niet beschikbaar: { $err }
 rec-retry = Opnieuw
 rec-live = LIVE
 rec-live-hint = Terug naar de live strook
 rec-stop = ■ STOP
 rec-record = ● REC
-rec-record-hint = Volledige-bandstrook (WIDE) opnemen: één rij per interval,
-    sterkste niveau van elke sweep
+rec-record-hint = Volledige-bandstrook (WIDE) opnemen, te beginnen met de sweeps die er al op staan:
+    onder PANO één rij per sweep, anders één per interval (sterkste niveau)
 rec-desktop-only = Alleen in de desktop-app: daar staat de opnamedatabase.
 rec-interval = Elke
 rec-interval-hint = Tijd tussen opgeslagen rijen, vanaf 1 s.
@@ -4007,6 +4015,7 @@ rec-interval-locked = Vast tijdens opname
 rec-strip-span = = { $min } min per strook
 rec-status-recording = Sessie { $id } · { $rows } rijen · strook { $strip } · { $time }
 rec-status-ready = Klaar: neemt de volledige-bandstrook van { $radio } op
+rec-status-first-sweep = Klaar: { $radio } · eerste sweep loopt …
 rec-status-no-strip = Geen volledige-bandstrook: start SCAN → PANO, of een ontvanger met WIDE
 rec-db-summary = Database { $size } · { $n } sessies
 rec-init = DB INIT
@@ -4037,6 +4046,14 @@ rec-load-sure = STOP + LADEN?
 rec-load-armed-hint = Nogmaals drukken: opname stopt, strook laadt
 rec-load-warning = ⚠ Laden stopt de lopende opname (sessie { $id }).
 rec-viewing = Sessie { $id }, strook { $strip }: { $from }–{ $to }
+rec-store = BEWAAR HUIDIGE
+rec-store-hint = Strook zoals hij is als sessie bewaren:
+    één rij per sweep, op zijn eigen tijd
+rec-store-recording = De opname neemt de strook al mee
+rec-store-loaded = Strook toont een geladen opname
+rec-store-empty = Strook is leeg
+rec-status-ready-strip = Klaar: { $radio } · { $n } sweeps op de strook sinds { $since }
+rec-every-sweep = Eén rij per sweep, gemiddeld elke { $s } s
 scanner-how-long-stay-candidate-before = Hoe lang op een kandidaat te blijven voordat hij beoordeeld wordt. Onder ongeveer een tiende seconde heeft de niveaumeter zich nog niet gezet en worden zwakke signalen gemist
 scanner-resumes = Hervat
 scanner-carry-once-signal-drops = Doorgaan zodra het signaal wegvalt
@@ -5248,6 +5265,7 @@ scanner-scanning-mhz = scannen · { $here } MHz
 scanner-pano-first = Panorama { $range } MHz · eerste sweep …
 scanner-pano-sweeps = Panorama { $range } MHz · sweep { $n } · { $secs } s
 scanner-pano-clear = Panorama wissen en opnieuw sweepen
+scanner-pano-plus-pause = + pauze { $secs } s
 scanner-forward = Vooruit: omhoog verder
 scanner-backward = Achteruit: omkeren en omlaag verder
 
