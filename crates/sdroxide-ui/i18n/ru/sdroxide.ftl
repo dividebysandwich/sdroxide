@@ -2216,6 +2216,7 @@ topbar-how-many-signals-model-reads = Сколько сигналов модел
 topbar-spots = СПОТЫ
 topbar-save-skimmer-s-spot-list = Сохранить список спотов скиммера в файл
 topbar-show-hide-full-band-waterfall = Показать/скрыть полосу водопада всего диапазона над панорамой — всё, что этот приёмник может видеть сразу
+    Узкополосный приёмник: SCAN → PANO проходит диапазон и строит здесь обзор.
 topbar-spectrum-waterfall-either-layer-both = Спектр и водопад — любой слой, оба или ни одного. Горит, когда показаны оба.
 topbar-spectrum = СПЕКТР
 topbar-show-spectrum = ПОКАЗАТЬ СПЕКТР
@@ -3969,8 +3970,11 @@ logbook-no-qsos-yet-run-ft8 = QSO пока нет — проведите FT8/FT4
 scanner-scanner = Сканер
 scanner-work-through-stored-memory-channels = Пройтись по сохранённым ячейкам памяти
 scanner-work-through-slice-band-channel = Пройтись по участку диапазона по сетке каналов
+scanner-sweep-range-into-panorama = Пройти диапазон без остановок и собрать панораму
+scanner-panorama-hint = Проходит без остановок; каждый полный проход — строка полосы всего диапазона (WIDE).
 scanner-stop = СТОП
 scanner-start = СТАРТ
+scanner-band = Диапазон
 scanner-from = От
 scanner-step = Шаг
 scanner-mode = Режим
@@ -3993,9 +3997,14 @@ scanner-unfiled = Без папки
 scanner-nothing-filed-under-folders-you = В выбранных вами папках ничего не лежит.
 scanner-stops = Останавливается на
 scanner-use-receiver-s-own-squelch = Использовать собственный шумоподавитель приёмника, чтобы сканирование останавливалось ровно там, где открылся бы звук
+scanner-stop-snr = Останавливается, где канал выше окружающего шумового порога на столько; следует за усилением и шумом диапазона.
 scanner-squelch-off-scan-will-stop = шумоподавитель выключен — сканирование остановится на первом, что проверит
 scanner-channel-power-signal-has-reach = Мощность канала, которой сигнал должен достичь, чтобы остановить сканирование
 scanner-listens = Слушает
+scanner-settles = Ждёт на участке
+scanner-settles-hint = Пауза после перестройки перед чтением спектра. Дольше — спокойнее картинка, медленнее проход.
+scanner-pano-width = Ширина участка
+scanner-pano-width-hint = Доля полосы приёмника на участок. Меньше — без завала по краям; больше — быстрее проход. Перекрытие 10 %.
 scanner-how-long-stay-candidate-before = Как долго оставаться на кандидате, прежде чем судить о нём. Меньше примерно одной десятой секунды — измеритель уровня не устаканивается, и слабые сигналы пропускаются
 scanner-resumes = Продолжает
 scanner-carry-once-signal-drops = Продолжить, когда сигнал пропадает
@@ -4004,8 +4013,6 @@ scanner-stay-until-you-press-next = Оставаться, пока не нажм
 scanner-how-long-stay = Как долго оставаться
 scanner-how-long-wait-after-signal = Как долго ждать после того, как сигнал пропал
 scanner-move-don-t-stop-channel = Двигаться дальше и не останавливаться на этом канале снова
-scanner-next = ДАЛЕЕ
-scanner-move-now = Двигаться дальше сейчас
 
 ## ADS-B (src/app/panels/adsb.rs)
 
@@ -5196,6 +5203,11 @@ sat-norad-2 = NORAD { $norad_id }
 
 scanner-holding-mhz = удерживается { $here } МГц
 scanner-scanning-mhz = сканирование · { $here } МГц
+scanner-pano-first = Панорама { $range } МГц · первый проход …
+scanner-pano-sweeps = Панорама { $range } МГц · проход { $n } · { $secs } с
+scanner-pano-clear = Сбросить панораму и пройти заново
+scanner-forward = Вперёд: дальше вверх
+scanner-backward = Назад: развернуться и дальше вниз
 
 ## spectrum: сообщения со значениями (src/app/spectrum.rs)
 
@@ -5643,6 +5655,7 @@ rifp-encoding-group4 = G4
 rifp-encoding-group3 = G3
 scan-kind-memories = ПАМЯТЬ
 scan-kind-range = ДИАПАЗОН
+scan-kind-panorama = ПАНО
 scan-resume-carrier = НЕСУЩАЯ
 scan-resume-timed = ПО ВРЕМЕНИ
 scan-resume-manual = ВРУЧНУЮ

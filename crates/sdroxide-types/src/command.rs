@@ -1316,4 +1316,8 @@ pub enum Command {
     /// echoed back in [`crate::RadioState::sonde`]. Appended last, for the
     /// usual reason.
     SetSondeConfig(crate::SondeSettings),
+    /// Turn the scan round and carry on downwards — the ◀ beside ▶ (which is
+    /// [`Command::ScanNext`], and turns it back upwards). Appended: postcard
+    /// numbers variants by position.
+    ScanBack,
 }

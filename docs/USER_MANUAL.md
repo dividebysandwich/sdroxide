@@ -1255,7 +1255,8 @@ them all at once.
   amateur, broadcast, CB and AM — without labels. The button appears
   only on receivers that produce a full-band view — a direct-sampling front end
   such as the RX-888, a KiwiSDR, a SpyServer; on an RTL-SDR, HPSDR or TCI radio
-  the panadapter span is all the hardware delivers — and the setting is
+  the panadapter span is all the hardware delivers, until a **PANO** scan
+  ([Scanning](#213-scanning)) sweeps a range for it — and the setting is
   remembered between sessions.
 
   With the **S/N** or **SK** line on, the strip carries them too, across the
@@ -2171,8 +2172,35 @@ is transmitting. Two kinds:
 - **MEM** — the stored memory channels, each in its own mode and filter. Mark
   any of them **SKIP** to pass it over; a channel that is always busy with
   something you do not want to hear is what that is for.
-- **RANGE** — a slice of a band on a channel grid. Give it a **From** and a
-  **to** in MHz, a **Step** (5 / 6.25 / 8.33 / 10 / 12.5 / 25 kHz) and a mode.
+- **RANGE** — a slice of a band on a channel grid. Pick a **Band** from the
+  list — every amateur band of your region plus the broadcast, CB and AM
+  allocations — or give it a **From** and a **to** in MHz, a **Step** (5 / 6.25 / 8.33 / 10 / 12.5 / 25 kHz) and a mode.
+- **PANO** — a panorama: a range swept without stopping. Pick a **Band** or
+  give it a **From** and a **to** in MHz; nothing else applies, because it
+  stops nowhere. A new range starts the panorama afresh; **CLR** does the same
+  on the range it has, throwing the picture away. Its status line names the
+  range, the sweeps so far and how long the last one took. The radio tunes
+  slice after slice across the range, as a range scan does, and stitches what
+  each slice sees — the middle of it, clear of the roll-off at the edges and
+  of the front end's own spike at DC — into one spectrum across the whole
+  range. Each finished sweep is one row of the **full-band strip** (**WIDE**),
+  so a receiver that only sees a couple of megahertz at a time, an RTL-SDR for
+  one, gets the same band-wide waterfall a direct-sampling receiver has.
+  **Settles for** is how long each slice waits after retuning before it is
+  read: longer is a steadier picture and a slower sweep. **Slice width** is
+  how much of the receiver's span each slice uses, 50–95 % (80 % by default):
+  less keeps clear of the roll-off at the edges, more sweeps faster;
+  neighbouring slices overlap by a tenth of the span. The span is the one
+  after decimation, so **DEC /8** makes every slice an eighth as wide. Where
+  the front end's gain moves between two slices — an AGC on the tuner or the
+  RTL chip, an overload loop — the overlap shows it as a step, and the
+  panorama lowers or raises the new slice by it (steps under 1 dB are left
+  alone); for a panorama whose levels can be compared from one evening to the
+  next, run the front end on a fixed gain. A range from 0 to 30 MHz on an
+  RTL-SDR needs direct sampling (its settings, *Auto* does it); a slice the
+  front end cannot reach is drawn from its neighbours.
+
+  ![PANO on an RTL-SDR in direct sampling: 1–16 MHz as one strip, S/N line on](images/pano-rtlsdr-hf.jpg)
 
 **A range scan is fast**, and not in the way a handheld scanner is. A scanner
 has one receiver and has to visit each channel in turn, which is why sweeping
@@ -2227,8 +2255,14 @@ receiver's centre, where a zero-IF front end's own local oscillator is. A CAT
 rig feeding demodulated audio has no spectrum to read, so the button is greyed
 there and its memory scan visits every channel as before.
 
-**Stops at** is how loud a channel has to be. Either give a level directly, or
-press **SQL** to use the receiver's own squelch, which makes the scan stop
+**Stops at** is how loud a channel has to be, judged one of three ways. **dBFS**
+gives a level directly, on a slider with its own number box. **S/N** asks how
+far a channel stands above the noise floor around it — the median of the
+spectrum in view, taken over one channel's width — again on a slider, 0 to
+40 dB; it follows the front end's gain and the band's noise on its own, so a
+gain change or a noisier evening does not leave the scan stopping everywhere
+or nowhere, and each memory channel is judged against a floor for its own
+width. Or press **SQL** to use the receiver's own squelch, which makes the scan stop
 exactly where the audio would have opened — one control instead of two. Note
 that with the squelch slider at `off` the scan will stop on the first channel it
 looks at, since every channel then counts as busy. The squelch is one of the
@@ -2249,10 +2283,12 @@ missed; the default 150 ms is a reasonable balance.
   seconds is a good starting point.
 - **TIMED** — carry on after a fixed time whether or not the signal is still
   there. Useful on a channel somebody is sitting on.
-- **MANUAL** — stay until you press **NEXT**.
+- **MANUAL** — stay until you press **▶** or **◀**.
 
-While a scan is running, **NEXT** moves on now and **SKIP** moves on and adds
-the channel to the skip list. Touching the dial, changing band, recalling a
+While a scan is running, **▶** moves on now, upwards, and **◀** turns the scan
+round and moves on downwards — the two arrows of a radio's scan key; the scan
+keeps the direction last pressed, wrapping round at either end of the range or
+list. **SKIP** moves on and adds the channel to the skip list. Touching the dial, changing band, recalling a
 memory or transmitting all stop the scan where it is — as on any scanner, and so
 that the radio is not fighting you for the VFO.
 

@@ -333,6 +333,104 @@ fn a_range_scan_stops_on_a_carrier() {
     );
 }
 
+/// Judged by S/N, a range scan stops on a carrier standing out of the floor,
+/// and a dead band — floor and nothing else — never stops it.
+#[test]
+fn a_range_scan_by_snr_stops_on_a_carrier_and_not_on_the_floor() {
+    const SIGNAL: f64 = 145_312_500.0;
+    let snr = ScannerConfig { stop_snr: true, snr_db: 12.0, threshold_db: -10.0, ..range_cfg() };
+    let mut rig = Rig::new(Some(SIGNAL));
+    rig.send(Command::SetScannerConfig(snr.clone()));
+    rig.send(Command::SetScanning(true));
+    let held = rig.pump(6.0, true).held_at.expect("S/N should stop on the carrier");
+    assert!((held - SIGNAL).abs() <= 12_500.0, "stopped on {held}, not near {SIGNAL}");
+    drop(rig);
+
+    let mut quiet = Rig::new(None);
+    quiet.send(Command::SetScannerConfig(snr));
+    quiet.send(Command::SetScanning(true));
+    let w = quiet.pump(2.0, false);
+    assert!(w.running && w.held_at.is_none(), "nothing stands out, so nothing stops it");
+}
+
+/// ◀ turns a range sweep round: the slices it tunes after the press go
+/// downwards, and ▶ turns it back up again.
+#[test]
+fn backward_turns_a_range_sweep_round() {
+    let wide = ScannerConfig { range_lo_hz: 144e6, range_hi_hz: 152e6, ..range_cfg() };
+    let mut rig = Rig::new(None);
+    rig.send(Command::SetScannerConfig(wide));
+    rig.send(Command::SetScanning(true));
+    rig.pump(0.4, false);
+    let seen = |rig: &Rig| rig.visited.lock().unwrap().len();
+    let steps = |rig: &Rig, from: usize| -> Vec<f64> {
+        let v = rig.visited.lock().unwrap();
+        v[from..].windows(2).map(|w| w[1] - w[0]).filter(|d| d.abs() > 1.0).collect()
+    };
+    let mark = seen(&rig);
+    rig.send(Command::ScanBack);
+    rig.pump(0.6, false);
+    let down = steps(&rig, mark);
+    assert!(down.len() >= 2, "it went on sweeping: {down:?}");
+    // Downwards, bar the one jump from the bottom back to the top.
+    assert!(down.iter().filter(|d| **d < 0.0).count() > down.len() / 2, "◀ goes down: {down:?}");
+    let mark = seen(&rig);
+    rig.send(Command::ScanNext);
+    rig.pump(0.6, false);
+    let up = steps(&rig, mark);
+    assert!(up.iter().filter(|d| **d > 0.0).count() > up.len() / 2, "▶ goes up again: {up:?}");
+}
+
+/// A panorama sweeps a range wider than the front end sees, never stops — not
+/// even on a carrier — and hands the full-band strip one row across the whole
+/// range, with the carrier where it is.
+#[test]
+fn a_panorama_sweeps_without_stopping_and_fills_the_strip() {
+    const SIGNAL: f64 = 147_300_000.0;
+    let (lo, hi) = (144_000_000.0, 150_000_000.0);
+    let mut rig = Rig::new(Some(SIGNAL));
+    rig.send(Command::SetScannerConfig(ScannerConfig {
+        kind: ScanKind::Panorama,
+        range_lo_hz: lo,
+        range_hi_hz: hi,
+        ..range_cfg()
+    }));
+    rig.send(Command::SetScanning(true));
+
+    let mut row = None;
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < deadline && row.is_none() {
+        rig.pump(0.05, false);
+        if rig.h.wide_spectrum_out.update() {
+            row = Some(rig.h.wide_spectrum_out.output_buffer().clone());
+        }
+    }
+    let w = rig.pump(0.2, false);
+    assert!(w.running, "a panorama runs until it is stopped");
+    assert_eq!(w.held_at, None, "a panorama never stops, carrier or not");
+    let row = row.expect("a full sweep should have reached the strip");
+    assert!(
+        (row.center_hz - (lo + hi) / 2.0).abs() < 1.0,
+        "centred on the range: {}",
+        row.center_hz
+    );
+    assert!((row.span_hz - (hi - lo)).abs() < 1.0, "as wide as the range: {}", row.span_hz);
+    // The bench has no anti-alias filter, so the carrier also folds into the
+    // other slices; what matters is that it is bright where it really is.
+    let n = row.bins.len();
+    let at = ((SIGNAL - (row.center_hz - row.span_hz / 2.0)) / row.span_hz * n as f64) as usize;
+    let near = row.bins[at.saturating_sub(2)..(at + 3).min(n)].iter().copied().max().unwrap();
+    let top = row.bins.iter().copied().max().unwrap();
+    let mut sorted = row.bins.clone();
+    sorted.sort_unstable();
+    let median = sorted[n / 2];
+    assert!(near + 10 >= top, "the carrier reads {near}, the brightest bin {top}");
+    assert!(
+        near > median.saturating_add(40),
+        "the carrier {near} stands out of the floor {median}"
+    );
+}
+
 /// A dead band is scanned round and round without ever stopping, and without
 /// the dial wandering outside the range it was given.
 #[test]

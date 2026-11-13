@@ -2188,6 +2188,7 @@ topbar-how-many-signals-model-reads = 模型一次读取多少个信号。其余
 topbar-spots = 信号列表
 topbar-save-skimmer-s-spot-list = 将 skimmer 的信号列表保存到文件
 topbar-show-hide-full-band-waterfall = 显示/隐藏全景图上方的全频段瀑布图条带——即此接收机能一次看到的全部内容
+    窄带接收机：SCAN → PANO 扫描一个范围，在此生成概览。
 topbar-spectrum-waterfall-either-layer-both = 频谱和瀑布图——任选一层、两层或都不选。两者都显示时亮起。
 topbar-spectrum = 频谱
 topbar-show-spectrum = 显示频谱
@@ -3933,8 +3934,11 @@ logbook-no-qsos-yet-run-ft8 = 尚无通联——请运行 FT8/FT4，或添加手
 scanner-scanner = 扫描器
 scanner-work-through-stored-memory-channels = 依次扫描已存储的记忆信道
 scanner-work-through-slice-band-channel = 按信道网格依次扫描频段的一个片段
+scanner-sweep-range-into-panorama = 不停顿地扫描一个范围，拼成全景图
+scanner-panorama-hint = 不停顿扫描；每完成一次扫描即为全频段条带（WIDE）中的一行。
 scanner-stop = 停止
 scanner-start = 开始
+scanner-band = 频段
 scanner-from = 起始
 scanner-step = 步进
 scanner-mode = 模式
@@ -3957,9 +3961,14 @@ scanner-unfiled = 未归档
 scanner-nothing-filed-under-folders-you = 你所选文件夹中没有任何归档内容。
 scanner-stops = 停止条件
 scanner-use-receiver-s-own-squelch = 使用接收机自己的静噪，使扫描恰好在音频会打开的地方停止
+scanner-stop-snr = 在信道高出周围噪声底这么多时停止；随增益和频段噪声变化。
 scanner-squelch-off-scan-will-stop = 静噪已关闭——扫描会在它检查的第一个内容上停止
 scanner-channel-power-signal-has-reach = 信号必须达到的信道功率，才能使扫描停止
 scanner-listens = 收听时间
+scanner-settles = 每段等待
+scanner-settles-hint = 重新调谐后、读取频谱前的等待。越长画面越稳，扫描越慢。
+scanner-pano-width = 分段宽度
+scanner-pano-width-hint = 每段使用的接收带宽比例。小：避开边缘滚降；大：扫描更快。相邻分段重叠 10 %。
 scanner-how-long-stay-candidate-before = 在判断候选信道之前在其上停留多久。低于约十分之一秒时，电平表尚未稳定，弱信号会被漏掉
 scanner-resumes = 恢复
 scanner-carry-once-signal-drops = 信号消失后继续
@@ -3968,8 +3977,6 @@ scanner-stay-until-you-press-next = 停留直到你按下“下一个”
 scanner-how-long-stay = 停留时长
 scanner-how-long-wait-after-signal = 信号消失后等待多久
 scanner-move-don-t-stop-channel = 继续前进，并且不再在此信道上停止
-scanner-next = 下一个
-scanner-move-now = 立即继续
 
 ## ADS-B（src/app/panels/adsb.rs）
 
@@ -5134,6 +5141,11 @@ sat-norad-2 = NORAD { $norad_id }
 
 scanner-holding-mhz = 停留在 { $here } MHz
 scanner-scanning-mhz = 扫描中 · { $here } MHz
+scanner-pano-first = 全景 { $range } MHz · 首次扫描中 …
+scanner-pano-sweeps = 全景 { $range } MHz · 第 { $n } 次扫描 · { $secs } 秒
+scanner-pano-clear = 丢弃全景并重新扫描
+scanner-forward = 前进：继续向上
+scanner-backward = 后退：掉头继续向下
 
 ## 频谱：带数值的消息（src/app/spectrum.rs）
 
@@ -5581,6 +5593,7 @@ rifp-encoding-group4 = G4
 rifp-encoding-group3 = G3
 scan-kind-memories = 记忆
 scan-kind-range = 范围
+scan-kind-panorama = 全景
 scan-resume-carrier = 载波
 scan-resume-timed = 定时
 scan-resume-manual = 手动

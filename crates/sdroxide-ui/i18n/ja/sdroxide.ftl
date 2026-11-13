@@ -2191,6 +2191,7 @@ topbar-how-many-signals-model-reads = モデルが一度に読み取る信号の
 topbar-spots = スポット
 topbar-save-skimmer-s-spot-list = スキマーのスポット一覧をファイルに保存
 topbar-show-hide-full-band-waterfall = パナダプターの上の、全バンドのウォーターフォールのストリップを表示／非表示にします。この受信機が一度に見られるすべてです
+    狭帯域の受信機：SCAN → PANO で範囲を掃引し、ここに概観を作る。
 topbar-spectrum-waterfall-either-layer-both = スペクトラムとウォーターフォール。どちらか一方、両方、またはどちらもなし。両方が表示されている間は点灯します。
 topbar-spectrum = スペクトラム
 topbar-show-spectrum = スペクトラムを表示
@@ -3942,8 +3943,11 @@ logbook-no-qsos-yet-run-ft8 = まだ QSO がありません。FT8/FT4 を実行�
 scanner-scanner = スキャナー
 scanner-work-through-stored-memory-channels = 保存されたメモリーチャンネルを順に巡回します
 scanner-work-through-slice-band-channel = チャンネルグリッド上で、バンドの一部を順に巡回します
+scanner-sweep-range-into-panorama = 範囲を止まらずに掃引してパノラマにする
+scanner-panorama-hint = 止まらずに掃引。1回の掃引ごとに全帯域ストリップ（WIDE）の1行。
 scanner-stop = 停止
 scanner-start = 開始
+scanner-band = バンド
 scanner-from = 開始
 scanner-step = ステップ
 scanner-mode = モード
@@ -3966,9 +3970,14 @@ scanner-unfiled = 未分類
 scanner-nothing-filed-under-folders-you = 選んだフォルダーの下には、何も格納されていません。
 scanner-stops = 停止条件
 scanner-use-receiver-s-own-squelch = 受信機自身のスケルチを使うため、音声が開くまさにその場所でスキャンが止まります
+scanner-stop-snr = 周囲のノイズフロアよりこれだけ高いチャンネルで停止。ゲインと帯域ノイズに追従。
 scanner-squelch-off-scan-will-stop = スケルチがオフです。スキャンは、最初に調べたものでそのまま止まります
 scanner-channel-power-signal-has-reach = スキャンを止めるために、信号が到達しなければならないチャンネルの電力です
 scanner-listens = 聴く時間
+scanner-settles = 区間ごとの待機
+scanner-settles-hint = 再同調後、スペクトルを読む前の待機。長いほど画像が安定し、掃引は遅くなる。
+scanner-pano-width = 区間幅
+scanner-pano-width-hint = 各区間で使う受信幅の割合。小さいほど端の減衰を避け、大きいほど掃引が速い。区間は10 %重なる。
 scanner-how-long-stay-candidate-before = 候補を判定する前に、その候補にとどまる時間です。約 0.1 秒を下回ると、レベルメーターが整定せず、弱い信号を取り逃します
 scanner-resumes = 再開
 scanner-carry-once-signal-drops = 信号が下がったら続けます
@@ -3977,8 +3986,6 @@ scanner-stay-until-you-press-next = 次を押すまでとどまります
 scanner-how-long-stay = とどまる時間
 scanner-how-long-wait-after-signal = 信号が下がった後に待つ時間
 scanner-move-don-t-stop-channel = 次へ進み、このチャンネルでは再び止まりません
-scanner-next = 次へ
-scanner-move-now = 今すぐ次へ進みます
 
 ## ADS-B（src/app/panels/adsb.rs）
 
@@ -5144,6 +5151,11 @@ sat-norad-2 = NORAD { $norad_id }
 
 scanner-holding-mhz = { $here } MHz で保持中
 scanner-scanning-mhz = スキャン中 · { $here } MHz
+scanner-pano-first = パノラマ { $range } MHz · 初回掃引中 …
+scanner-pano-sweeps = パノラマ { $range } MHz · 掃引 { $n } · { $secs } 秒
+scanner-pano-clear = パノラマを破棄して再掃引
+scanner-forward = 前進：上へ進む
+scanner-backward = 後退：反転して下へ進む
 
 ## スペクトラム：値を含むメッセージ（src/app/spectrum.rs）
 
@@ -5592,6 +5604,7 @@ rifp-encoding-group4 = G4
 rifp-encoding-group3 = G3
 scan-kind-memories = MEM
 scan-kind-range = 範囲
+scan-kind-panorama = PANO
 scan-resume-carrier = キャリア
 scan-resume-timed = 時間指定
 scan-resume-manual = 手動

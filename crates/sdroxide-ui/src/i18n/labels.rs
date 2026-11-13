@@ -928,6 +928,7 @@ impl Tr for ScanKind {
         match self {
             ScanKind::Memories => tr!("scan-kind-memories"),
             ScanKind::Range => tr!("scan-kind-range"),
+            ScanKind::Panorama => tr!("scan-kind-panorama"),
         }
     }
 }

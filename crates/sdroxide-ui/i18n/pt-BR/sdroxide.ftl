@@ -2212,6 +2212,7 @@ topbar-how-many-signals-model-reads = Quantos sinais o modelo lê ao mesmo tempo
 topbar-spots = SPOTS
 topbar-save-skimmer-s-spot-list = Salvar a lista de spots do skimmer em um arquivo
 topbar-show-hide-full-band-waterfall = Mostrar/ocultar a faixa de cascata da banda inteira acima do panadaptador — tudo o que este receptor consegue ver de uma vez
+    Receptor de banda estreita: SCAN → PANO varre uma faixa e monta aqui uma visão geral.
 topbar-spectrum-waterfall-either-layer-both = Espectro e cascata — uma das camadas, as duas, ou nenhuma. Acesa quando as duas estão visíveis.
 topbar-spectrum = ESPECTRO
 topbar-show-spectrum = MOSTRAR ESPECTRO
@@ -3962,8 +3963,11 @@ logbook-no-qsos-yet-run-ft8 = nenhum QSO ainda — rode FT8/FT4 ou adicione um r
 scanner-scanner = Scanner
 scanner-work-through-stored-memory-channels = Percorre os canais de memória guardados
 scanner-work-through-slice-band-channel = Percorre uma fatia de uma faixa em uma grade de canais
+scanner-sweep-range-into-panorama = Percorrer uma faixa sem parar para formar um panorama
+scanner-panorama-hint = Percorre sem parar; cada varredura completa é uma linha da faixa de banda inteira (WIDE).
 scanner-stop = PARAR
 scanner-start = INICIAR
+scanner-band = Banda
 scanner-from = De
 scanner-step = Passo
 scanner-mode = Modo
@@ -3986,9 +3990,14 @@ scanner-unfiled = Sem pasta
 scanner-nothing-filed-under-folders-you = Nada está arquivado nas pastas que você escolheu.
 scanner-stops = Para em
 scanner-use-receiver-s-own-squelch = Usa o squelch próprio do receptor, para que a varredura pare exatamente onde o áudio abriria
+scanner-stop-snr = Para onde um canal fica isto acima do ruído de fundo ao redor; acompanha ganho e ruído da banda.
 scanner-squelch-off-scan-will-stop = o squelch está desligado — a varredura parará no primeiro sinal que examinar
 scanner-channel-power-signal-has-reach = Potência do canal que um sinal precisa alcançar para parar a varredura
 scanner-listens = Escuta por
+scanner-settles = Espera por trecho
+scanner-settles-hint = Espera após ressintonizar, antes de ler o espectro. Mais longa: imagem mais estável, varredura mais lenta.
+scanner-pano-width = Largura do trecho
+scanner-pano-width-hint = Parte da largura do receptor usada por trecho. Menos: longe da queda nas bordas; mais: varredura mais rápida. Sobreposição de 10 %.
 scanner-how-long-stay-candidate-before = Quanto tempo permanecer em um candidato antes de julgá-lo. Abaixo de cerca de um décimo de segundo o medidor de nível não se estabiliza e sinais fracos são perdidos
 scanner-resumes = Retoma
 scanner-carry-once-signal-drops = Continua assim que o sinal cai
@@ -3997,8 +4006,6 @@ scanner-stay-until-you-press-next = Fica até você pressionar PRÓXIMO
 scanner-how-long-stay = Quanto tempo permanecer
 scanner-how-long-wait-after-signal = Quanto tempo esperar depois que o sinal cai
 scanner-move-don-t-stop-channel = Segue adiante, e não para de novo neste canal
-scanner-next = PRÓXIMO
-scanner-move-now = Seguir adiante agora
 
 ## adsb (src/app/panels/adsb.rs)
 
@@ -5201,6 +5208,11 @@ sat-norad-2 = NORAD { $norad_id }
 
 scanner-holding-mhz = retendo { $here } MHz
 scanner-scanning-mhz = varrendo · { $here } MHz
+scanner-pano-first = Panorama { $range } MHz · primeira varredura …
+scanner-pano-sweeps = Panorama { $range } MHz · varredura { $n } · { $secs } s
+scanner-pano-clear = Descartar o panorama e varrer de novo
+scanner-forward = Avançar: seguir para cima
+scanner-backward = Voltar: inverter e seguir para baixo
 
 ## spectrum: mensagens com valores (src/app/spectrum.rs)
 
@@ -5648,6 +5660,7 @@ rifp-encoding-group4 = G4
 rifp-encoding-group3 = G3
 scan-kind-memories = MEM
 scan-kind-range = FAIXA
+scan-kind-panorama = PANO
 scan-resume-carrier = PORTADORA
 scan-resume-timed = TEMPORIZADO
 scan-resume-manual = MANUAL

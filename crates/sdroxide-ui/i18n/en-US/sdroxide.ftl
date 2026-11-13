@@ -2264,6 +2264,7 @@ topbar-how-many-signals-model-reads = How many signals the model reads at once. 
 topbar-spots = SPOTS
 topbar-save-skimmer-s-spot-list = Save the skimmer's spot list to a file
 topbar-show-hide-full-band-waterfall = Show/hide the full-band waterfall strip above the panadapter — everything this receiver can see at once
+    Narrow-band receiver: SCAN → PANO sweeps a range into this strip as an overview.
 topbar-spectrum-waterfall-either-layer-both = Spectrum: the line, peak hold, S/N, 3D and how fast it follows. Lit while the spectrum is shown.
 topbar-spectrum = SPECTRUM
 topbar-show-spectrum = SHOW SPECTRUM
@@ -4105,8 +4106,11 @@ logbook-no-qsos-yet-run-ft8 = no QSOs yet — run FT8/FT4 or add a manual entry
 scanner-scanner = Scanner
 scanner-work-through-stored-memory-channels = Work through the stored memory channels
 scanner-work-through-slice-band-channel = Work through a slice of a band on a channel grid
+scanner-sweep-range-into-panorama = Sweep a range without stopping into a panorama
+scanner-panorama-hint = Sweeps without stopping; each full sweep is one row of the full-band strip (WIDE).
 scanner-stop = STOP
 scanner-start = START
+scanner-band = Band
 scanner-from = From
 scanner-step = Step
 scanner-mode = Mode
@@ -4129,9 +4133,14 @@ scanner-unfiled = Unfiled
 scanner-nothing-filed-under-folders-you = Nothing is filed under the folders you picked.
 scanner-stops = Stops at
 scanner-use-receiver-s-own-squelch = Use the receiver's own squelch, so the scan stops exactly where the audio would open
+scanner-stop-snr = Stop where a channel stands this far above the noise floor around it; follows gain and band noise.
 scanner-squelch-off-scan-will-stop = squelch is off — the scan will stop on the first thing it looks at
 scanner-channel-power-signal-has-reach = Channel power a signal has to reach to stop the scan
 scanner-listens = Listens for
+scanner-settles = Settles for
+scanner-settles-hint = Wait per slice after retuning, before the spectrum is read. Longer: steadier picture, slower sweep.
+scanner-pano-width = Slice width
+scanner-pano-width-hint = Share of the receiver's span each slice uses. Less: clear of the edge roll-off; more: faster sweep. Slices overlap by 10 %.
 scanner-how-long-stay-candidate-before = How long to stay on a candidate before judging it. Below about a tenth of a second the level meter has not settled and weak signals get missed
 scanner-resumes = Resumes
 scanner-carry-once-signal-drops = Carry on once the signal drops
@@ -4140,8 +4149,6 @@ scanner-stay-until-you-press-next = Stay until you press NEXT
 scanner-how-long-stay = How long to stay
 scanner-how-long-wait-after-signal = How long to wait after the signal drops
 scanner-move-don-t-stop-channel = Move on, and don't stop on this channel again
-scanner-next = NEXT
-scanner-move-now = Move on now
 
 ## adsb (src/app/panels/adsb.rs)
 
@@ -5375,6 +5382,11 @@ sat-norad-2 = NORAD { $norad_id }
 
 scanner-holding-mhz = holding { $here } MHz
 scanner-scanning-mhz = scanning · { $here } MHz
+scanner-pano-first = Panorama { $range } MHz · first sweep …
+scanner-pano-sweeps = Panorama { $range } MHz · sweep { $n } · { $secs } s
+scanner-pano-clear = Discard the panorama and sweep afresh
+scanner-forward = Forward: carry on upwards
+scanner-backward = Backward: turn round and carry on downwards
 
 ## spectrum: messages with values (src/app/spectrum.rs)
 
@@ -5825,6 +5837,7 @@ rifp-encoding-group4 = G4
 rifp-encoding-group3 = G3
 scan-kind-memories = MEM
 scan-kind-range = RANGE
+scan-kind-panorama = PANO
 scan-resume-carrier = CARRIER
 scan-resume-timed = TIMED
 scan-resume-manual = MANUAL

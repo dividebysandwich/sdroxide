@@ -2247,6 +2247,7 @@ topbar-how-many-signals-model-reads = Wie viele Signale das Modell gleichzeitig 
 topbar-spots = SPOTS
 topbar-save-skimmer-s-spot-list = Die Spot-Liste des Skimmers in eine Datei speichern
 topbar-show-hide-full-band-waterfall = Den Wasserfallstreifen für das ganze Band über dem Panorama ein-/ausblenden — alles, was dieser Empfänger auf einmal sieht
+    Schmalbandiger Empfänger: SCAN → PANO fährt einen Bereich ab und baut hier eine Übersicht.
 topbar-spectrum-waterfall-either-layer-both = Spektrum: Kurve, Peak Hold, S/N, 3D und wie schnell sie folgt. Leuchtet, während das Spektrum angezeigt wird.
 topbar-spectrum = SPEKTRUM
 topbar-show-spectrum = SPEKTRUM ANZEIGEN
@@ -4041,8 +4042,11 @@ logbook-no-qsos-yet-run-ft8 = noch keine QSOs — FT8/FT4 betreiben oder einen m
 scanner-scanner = Scanner
 scanner-work-through-stored-memory-channels = Die gespeicherten Speicherkanäle durchgehen
 scanner-work-through-slice-band-channel = Einen Ausschnitt eines Bandes auf einem Kanalraster durchgehen
+scanner-sweep-range-into-panorama = Bereich ohne Halt zu einem Panorama abfahren
+scanner-panorama-hint = Fährt ohne Halt ab; jeder volle Durchlauf ist eine Zeile im Breitbandstreifen (WIDE).
 scanner-stop = STOPP
 scanner-start = START
+scanner-band = Band
 scanner-from = Von
 scanner-step = Schritt
 scanner-mode = Betriebsart
@@ -4065,9 +4069,14 @@ scanner-unfiled = Ohne Ordner
 scanner-nothing-filed-under-folders-you = Unter den gewählten Ordnern ist nichts abgelegt.
 scanner-stops = Hält an bei
 scanner-use-receiver-s-own-squelch = Die eigene Rauschsperre des Empfängers nutzen, damit der Suchlauf genau dort stoppt, wo sich das Audio öffnen würde
+scanner-stop-snr = Hält an, wo ein Kanal so weit über dem Rauschboden ringsum steht; folgt Verstärkung und Bandrauschen.
 scanner-squelch-off-scan-will-stop = Rauschsperre ist aus — der Suchlauf hält bei der ersten Sache, die er ansieht
 scanner-channel-power-signal-has-reach = Kanalleistung, die ein Signal erreichen muss, um den Suchlauf zu stoppen
 scanner-listens = Hört hinein für
+scanner-settles = Wartet je Abschnitt
+scanner-settles-hint = Wartezeit nach dem Umstimmen, bevor das Spektrum gelesen wird. Länger: ruhigeres Bild, langsamerer Durchlauf.
+scanner-pano-width = Abschnittsbreite
+scanner-pano-width-hint = Anteil der Empfängerbreite je Abschnitt. Weniger: frei vom Randabfall; mehr: schnellerer Durchlauf. Abschnitte überlappen 10 %.
 scanner-how-long-stay-candidate-before = Wie lange bei einem Kandidaten geblieben wird, bevor geurteilt wird. Unter etwa einer Zehntelsekunde hat sich die Pegelanzeige nicht eingependelt, und schwache Signale werden übersehen
 scanner-resumes = Setzt fort
 scanner-carry-once-signal-drops = Weitergehen, sobald das Signal abfällt
@@ -4076,8 +4085,6 @@ scanner-stay-until-you-press-next = Bleiben, bis Sie NÄCHSTER drücken
 scanner-how-long-stay = Wie lange bleiben
 scanner-how-long-wait-after-signal = Wie lange nach dem Abfallen des Signals gewartet wird
 scanner-move-don-t-stop-channel = Weitergehen und auf diesem Kanal nicht wieder anhalten
-scanner-next = NÄCHSTER
-scanner-move-now = Jetzt weitergehen
 
 ## adsb (src/app/panels/adsb.rs)
 
@@ -5294,6 +5301,11 @@ sat-norad-2 = NORAD { $norad_id }
 
 scanner-holding-mhz = hält { $here } MHz
 scanner-scanning-mhz = sucht · { $here } MHz
+scanner-pano-first = Panorama { $range } MHz · erster Durchlauf …
+scanner-pano-sweeps = Panorama { $range } MHz · Durchlauf { $n } · { $secs } s
+scanner-pano-clear = Panorama verwerfen und neu abfahren
+scanner-forward = Vorwärts: aufwärts weiter
+scanner-backward = Rückwärts: umkehren und abwärts weiter
 
 ## spectrum: messages with values (src/app/spectrum.rs)
 
@@ -5740,6 +5752,7 @@ rifp-encoding-group4 = G4
 rifp-encoding-group3 = G3
 scan-kind-memories = SPEICHER
 scan-kind-range = BEREICH
+scan-kind-panorama = PANO
 scan-resume-carrier = TRÄGER
 scan-resume-timed = ZEITGESTEUERT
 scan-resume-manual = MANUELL

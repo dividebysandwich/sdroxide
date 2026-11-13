@@ -2210,6 +2210,7 @@ topbar-how-many-signals-model-reads = Model bir seferde kaç sinyal okur. Kalanl
 topbar-spots = SPOTLAR
 topbar-save-skimmer-s-spot-list = Skimmer'ın spot listesini bir dosyaya kaydedin
 topbar-show-hide-full-band-waterfall = Panadaptörün üstündeki tüm bant şelale şeridini göster/gizle — bu alıcının bir anda görebildiği her şey
+    Dar bantlı alıcı: SCAN → PANO bir aralığı tarayıp burada genel bakış oluşturur.
 topbar-spectrum-waterfall-either-layer-both = Spektrum ve şelale — biri, ikisi ya da hiçbiri. İkisi de gösterilirken yanar.
 topbar-spectrum = SPEKTRUM
 topbar-show-spectrum = SPEKTRUMU GÖSTER
@@ -3961,8 +3962,11 @@ logbook-no-qsos-yet-run-ft8 = henüz QSO yok — FT8/FT4 çalıştırın ya da e
 scanner-scanner = Tarayıcı
 scanner-work-through-stored-memory-channels = Kayıtlı hafıza kanallarını sırayla çalışın
 scanner-work-through-slice-band-channel = Bir bandın bir dilimini kanal ızgarasında sırayla çalışın
+scanner-sweep-range-into-panorama = Bir aralığı durmadan tarayıp panorama oluştur
+scanner-panorama-hint = Durmadan tarar; her tam tarama tam bant şeridinde (WIDE) bir satırdır.
 scanner-stop = DURDUR
 scanner-start = BAŞLAT
+scanner-band = Bant
 scanner-from = Başlangıç
 scanner-step = Adım
 scanner-mode = Mod
@@ -3985,9 +3989,14 @@ scanner-unfiled = Klasörsüz
 scanner-nothing-filed-under-folders-you = Seçtiğiniz klasörlerin altına hiçbir şey kaydedilmemiş.
 scanner-stops = Durduğu yer
 scanner-use-receiver-s-own-squelch = Alıcının kendi susturmasını kullanın; böylece tarama, ses tam olarak açılacağı yerde durur
+scanner-stop-snr = Bir kanal çevresindeki gürültü tabanını bu kadar aştığında durur; kazanç ve bant gürültüsünü izler.
 scanner-squelch-off-scan-will-stop = susturma kapalı — tarama baktığı ilk şeyde durur
 scanner-channel-power-signal-has-reach = Taramayı durdurmak için bir sinyalin ulaşması gereken kanal gücü
 scanner-listens = Dinler
+scanner-settles = Dilim başına bekler
+scanner-settles-hint = Yeniden ayardan sonra spektrum okunmadan önceki bekleme. Daha uzun: daha sakin görüntü, daha yavaş tarama.
+scanner-pano-width = Dilim genişliği
+scanner-pano-width-hint = Her dilimin kullandığı alıcı genişliği payı. Az: kenar düşüşünden uzak; çok: daha hızlı tarama. Dilimler %10 örtüşür.
 scanner-how-long-stay-candidate-before = Bir adayı yargılamadan önce onda ne kadar kalınacağı. Yaklaşık onda bir saniyenin altında seviye ölçer yerleşmez ve zayıf sinyaller kaçar
 scanner-resumes = Devam eder
 scanner-carry-once-signal-drops = Sinyal düştükten sonra devam edin
@@ -3996,8 +4005,6 @@ scanner-stay-until-you-press-next = SONRAKİ'ye basana dek kalın
 scanner-how-long-stay = Ne kadar kalınacağı
 scanner-how-long-wait-after-signal = Sinyal düştükten sonra ne kadar beklenecek
 scanner-move-don-t-stop-channel = Devam edin ve bu kanalda bir daha durmayın
-scanner-next = SONRAKİ
-scanner-move-now = Şimdi devam et
 
 ## adsb (src/app/panels/adsb.rs)
 
@@ -5192,6 +5199,11 @@ sat-norad-2 = NORAD { $norad_id }
 
 scanner-holding-mhz = { $here } MHz'de tutuluyor
 scanner-scanning-mhz = taranıyor · { $here } MHz
+scanner-pano-first = Panorama { $range } MHz · ilk tarama …
+scanner-pano-sweeps = Panorama { $range } MHz · tarama { $n } · { $secs } sn
+scanner-pano-clear = Panoramayı at ve yeniden tara
+scanner-forward = İleri: yukarı devam
+scanner-backward = Geri: dön ve aşağı devam
 
 ## spectrum: değerli iletiler (src/app/spectrum.rs)
 
@@ -5639,6 +5651,7 @@ rifp-encoding-group4 = G4
 rifp-encoding-group3 = G3
 scan-kind-memories = HAF
 scan-kind-range = ARALIK
+scan-kind-panorama = PANO
 scan-resume-carrier = TAŞIYICI
 scan-resume-timed = ZAMANLI
 scan-resume-manual = ELLE

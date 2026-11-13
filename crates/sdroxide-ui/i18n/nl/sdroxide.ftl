@@ -2204,6 +2204,7 @@ topbar-how-many-signals-model-reads = Hoeveel signalen het model tegelijk leest.
 topbar-spots = SPOTS
 topbar-save-skimmer-s-spot-list = De spotlijst van de skimmer naar een bestand opslaan
 topbar-show-hide-full-band-waterfall = De waterfall-strook over de hele band boven het panadapter tonen/verbergen — alles wat deze ontvanger tegelijk kan zien
+    Smalbandige ontvanger: SCAN → PANO sweept een bereik en bouwt hier een overzicht.
 topbar-spectrum-waterfall-either-layer-both = Spectrum en waterval — één laag, beide, of geen. Brandt terwijl beide getoond worden.
 topbar-spectrum = SPECTRUM
 topbar-show-spectrum = SPECTRUM TONEN
@@ -3955,8 +3956,11 @@ logbook-no-qsos-yet-run-ft8 = nog geen QSO's — draai FT8/FT4 of voeg een handm
 scanner-scanner = Scanner
 scanner-work-through-stored-memory-channels = De opgeslagen geheugenkanalen doorlopen
 scanner-work-through-slice-band-channel = Een stuk van een band doorlopen op een kanaalraster
+scanner-sweep-range-into-panorama = Een bereik zonder stoppen tot een panorama doorlopen
+scanner-panorama-hint = Doorloopt zonder stoppen; elke volledige sweep is een rij in de volbandstrook (WIDE).
 scanner-stop = STOP
 scanner-start = START
+scanner-band = Band
 scanner-from = Van
 scanner-step = Stap
 scanner-mode = Modus
@@ -3979,9 +3983,14 @@ scanner-unfiled = Niet ingedeeld
 scanner-nothing-filed-under-folders-you = Er staat niets in de mappen die je koos.
 scanner-stops = Stopt bij
 scanner-use-receiver-s-own-squelch = De eigen squelch van de ontvanger gebruiken, zodat de scan precies stopt waar de audio zou openen
+scanner-stop-snr = Stopt waar een kanaal zoveel boven de ruisvloer eromheen uitsteekt; volgt versterking en bandruis.
 scanner-squelch-off-scan-will-stop = squelch staat uit — de scan stopt op het eerste waar hij naar kijkt
 scanner-channel-power-signal-has-reach = Kanaalvermogen dat een signaal moet bereiken om de scan te stoppen
 scanner-listens = Luistert naar
+scanner-settles = Wacht per stuk
+scanner-settles-hint = Wachttijd na het afstemmen, voordat het spectrum gelezen wordt. Langer: rustiger beeld, tragere sweep.
+scanner-pano-width = Stukbreedte
+scanner-pano-width-hint = Deel van de ontvangerbreedte per stuk. Minder: vrij van de randafval; meer: snellere sweep. Stukken overlappen 10 %.
 scanner-how-long-stay-candidate-before = Hoe lang op een kandidaat te blijven voordat hij beoordeeld wordt. Onder ongeveer een tiende seconde heeft de niveaumeter zich nog niet gezet en worden zwakke signalen gemist
 scanner-resumes = Hervat
 scanner-carry-once-signal-drops = Doorgaan zodra het signaal wegvalt
@@ -3990,8 +3999,6 @@ scanner-stay-until-you-press-next = Blijven tot je VOLGENDE indrukt
 scanner-how-long-stay = Hoe lang blijven
 scanner-how-long-wait-after-signal = Hoe lang wachten nadat het signaal wegvalt
 scanner-move-don-t-stop-channel = Doorgaan, en op dit kanaal niet opnieuw stoppen
-scanner-next = VOLGENDE
-scanner-move-now = Nu doorgaan
 
 ## adsb (src/app/panels/adsb.rs)
 
@@ -5192,6 +5199,11 @@ sat-norad-2 = NORAD { $norad_id }
 
 scanner-holding-mhz = vasthouden op { $here } MHz
 scanner-scanning-mhz = scannen · { $here } MHz
+scanner-pano-first = Panorama { $range } MHz · eerste sweep …
+scanner-pano-sweeps = Panorama { $range } MHz · sweep { $n } · { $secs } s
+scanner-pano-clear = Panorama wissen en opnieuw sweepen
+scanner-forward = Vooruit: omhoog verder
+scanner-backward = Achteruit: omkeren en omlaag verder
 
 ## spectrum: messages with values (src/app/spectrum.rs)
 
@@ -5640,6 +5652,7 @@ rifp-encoding-group4 = G4
 rifp-encoding-group3 = G3
 scan-kind-memories = GEH
 scan-kind-range = BEREIK
+scan-kind-panorama = PANO
 scan-resume-carrier = DRAAGGOLF
 scan-resume-timed = MET TIMER
 scan-resume-manual = HANDMATIG

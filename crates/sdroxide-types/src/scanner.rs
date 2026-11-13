@@ -21,15 +21,22 @@ pub enum ScanKind {
     Memories,
     /// A frequency range on a fixed channel grid, in one mode.
     Range,
+    /// A frequency range swept without stopping, its slices stitched into one
+    /// full-range spectrum for the full-band strip (WIDE): a panorama for a
+    /// front end that only sees a couple of megahertz at a time.
+    // Why: HDZ 2026-11-12: "in einer Stufe den RTL-Leuten ein Panorama
+    //      anbieten und dieses dann als Sweep-Scanner weiter ausbauen".
+    Panorama,
 }
 
 impl ScanKind {
-    pub const ALL: [ScanKind; 2] = [ScanKind::Memories, ScanKind::Range];
+    pub const ALL: [ScanKind; 3] = [ScanKind::Memories, ScanKind::Range, ScanKind::Panorama];
 
     pub fn label(self) -> &'static str {
         match self {
             ScanKind::Memories => "MEM",
             ScanKind::Range => "RANGE",
+            ScanKind::Panorama => "PANO",
         }
     }
 }
@@ -82,6 +89,21 @@ pub struct ScannerConfig {
     /// Take the threshold from the receiver's own squelch instead, so one
     /// control sets both what stops the scan and what opens the audio.
     pub follow_squelch: bool,
+    /// Judge by signal-to-noise instead of a level: a channel is busy when it
+    /// stands [`Self::snr_db`] above the noise floor of the spectrum around it,
+    /// which follows the front end's gain and the band's noise on its own.
+    /// [`Self::follow_squelch`] wins when both are set.
+    // Why: HDZ 2026-11-12: "gut, wenn er bei den bestehenden Modi S/N mit
+    //      Schieberegler akzeptieren würde".
+    pub stop_snr: bool,
+    /// How far above the noise floor a channel has to stand, in dB.
+    pub snr_db: f32,
+    /// How much of the front end's span a panorama trusts, as a fraction
+    /// (0.5–0.95): less keeps clear of the anti-alias roll-off at the edges,
+    /// more moves faster. Neighbouring slices overlap by a tenth of the span.
+    // Why: HDZ 2026-11-12: "welchen Overlap benutzt du als Schrittweite …
+    //      wäre das nicht ein Parameter wie Schrittweite".
+    pub pano_usable: f32,
     /// How long to listen on a candidate before deciding it is really busy.
     pub dwell_ms: u32,
     pub resume: ScanResume,
@@ -154,6 +176,9 @@ impl Default for ScannerConfig {
             mode: Mode::Nfm,
             threshold_db: -80.0,
             follow_squelch: false,
+            stop_snr: false,
+            snr_db: 10.0,
+            pano_usable: 0.8,
             dwell_ms: 150,
             resume: ScanResume::Carrier,
             resume_ms: 2_000,
@@ -246,7 +271,9 @@ impl ScannerConfig {
     /// Whether the settings describe a scan that could ever stop anywhere.
     pub fn range_is_usable(&self) -> bool {
         let (lo, hi) = self.range();
-        lo.is_finite() && hi.is_finite() && lo > 0.0 && hi - lo >= self.step_hz.max(1.0)
+        // From 0 Hz up: an HF range is typed as "0 to 30", and a front end that
+        // cannot reach the bottom of it says so when the slice is tuned.
+        lo.is_finite() && hi.is_finite() && lo >= 0.0 && hi - lo >= self.step_hz.max(1.0)
     }
 }
 
@@ -335,6 +362,12 @@ pub struct ScanState {
     pub running: bool,
     /// Stopped on a busy channel rather than moving.
     pub holding: bool,
+    /// A panorama scan's finished sweeps since it started, and how long the
+    /// last one took (ms) — what its status line shows instead of a dial.
+    #[serde(default)]
+    pub sweeps: u32,
+    #[serde(default)]
+    pub sweep_ms: u32,
 }
 
 #[cfg(test)]
