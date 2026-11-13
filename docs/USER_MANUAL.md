@@ -15834,7 +15834,10 @@ Spots then appear two ways:
   of the list. A click on a picked dot, or
   a right-click anywhere on the map, lets them all go. The map fills the window: resize the
   window to make it larger (it grows no taller than it is wide). A broadcast transmitter's dot grows with
-  its power on a logarithmic scale, from the plain size at 1 kW to about three
+  its power (EiBi gives none; it is taken from Aoki's list once that is
+  imported under Settings → UI, the entry on the air within 500 Hz, of the same country where
+  there is one; a station the schedule gives no site also takes its site and
+  coordinates from that Aoki entry, marked "(Aoki)") on a logarithmic scale, from the plain size at 1 kW to about three
   times as wide at 1000 kW. **NAMES** writes the names beside the
   dots (on to start with), **CITIES** the cities on this map; the status line says how many spots have no location and so no dot.
 

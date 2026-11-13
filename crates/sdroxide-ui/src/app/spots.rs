@@ -216,6 +216,7 @@ impl SdroxideApp {
         }
         self.broadcast_minute = minute;
         self.broadcast_spots = sdroxide_types::broadcast::on_air(&self.broadcast, now_utc);
+        self.broadcast_power_from_aoki(now_utc);
         // While LABELS BY S/N runs, more candidates than the broadcast
         // schedule: the S/N guide keeps only those that are coming in.
         if self.view.snr_guide && self.view.snr_label_filter {
@@ -282,6 +283,72 @@ impl SdroxideApp {
         }
         if self.catalog_aoki.is_none() {
             self.catalog_aoki = Some(crate::catalogs::load_aoki().map(std::sync::Arc::new));
+        }
+    }
+
+    /// Give the schedule's broadcast spots what Aoki's list knows and the
+    /// schedule does not: the transmitter power (EiBi has no power column) and,
+    /// for a spot the schedule leaves without a site, the site with its
+    /// coordinates. Taken from an Aoki entry on the air now within 500 Hz, of
+    /// the spot's own country where there is one (the nearest, at equal
+    /// distance the strongest); a site only ever from the same country, and
+    /// the reference then says "(Aoki)". Nothing until the list is imported
+    /// under Settings → UI (sdroxide never downloads it); read from disk once,
+    /// and again after the next import.
+    // Why: HDZ 2026-11-07: "die Leistung sehe ich noch nicht?"; then "manche
+    //      Sender haben keine Location … vielleicht gibt's einen anderen
+    //      Katalog, shortwaveschedule.com kennt eine Distanz von mir" — that
+    //      site is Aoki's list (B24), whose L/L column places 5,152 entries.
+    //      Measured on the built-in schedule: 1,957 of the 2,259 unplaced lines
+    //      have an Aoki entry with coordinates on their frequency (time not
+    //      checked).
+    fn broadcast_power_from_aoki(&mut self, now_utc: i64) {
+        if self.catalog_imports != crate::catalogs::imports() {
+            self.catalog_imports = crate::catalogs::imports();
+            self.catalog_aoki = None;
+        }
+        if self.catalog_aoki.is_none() {
+            self.catalog_aoki = Some(crate::catalogs::load_aoki().map(std::sync::Arc::new));
+        }
+        let Some(Ok(aoki)) = &self.catalog_aoki else {
+            return;
+        };
+        let on_air: Vec<&sdroxide_types::BroadcastStation> =
+            aoki.iter().filter(|e| !e.off && e.st.on_air_at(now_utc)).map(|e| &e.st).collect();
+        for s in self.broadcast_spots.iter_mut() {
+            let country = s
+                .reference
+                .as_deref()
+                .and_then(|r| r.rsplit(", ").next())
+                .map(|c| c.trim().to_string())
+                .unwrap_or_default();
+            let hz = s.freq_hz;
+            let near: Vec<&sdroxide_types::BroadcastStation> =
+                on_air.iter().copied().filter(|e| (e.freq_hz() - hz).abs() < 500.0).collect();
+            let same: Vec<&sdroxide_types::BroadcastStation> = near
+                .iter()
+                .copied()
+                .filter(|e| !country.is_empty() && e.country == country)
+                .collect();
+            let placed: fn(&sdroxide_types::BroadcastStation) -> bool =
+                |e| e.lat.is_some() && e.lon.is_some();
+            let has_kw: fn(&sdroxide_types::BroadcastStation) -> bool =
+                |e| e.power_kw.is_some_and(|k| k >= 1.0);
+            if s.loc.is_none()
+                && let Some(e) = nearest_aoki(&same, hz, placed)
+            {
+                s.loc = e.lat.zip(e.lon);
+                s.reference = Some(format!("{}, {} (Aoki)", e.site, e.country));
+            }
+            if spot_power_kw(s).is_none() {
+                let e = nearest_aoki(&same, hz, has_kw).or_else(|| nearest_aoki(&near, hz, has_kw));
+                if let Some(kw) = e.and_then(|e| e.power_kw) {
+                    if !s.comment.is_empty() {
+                        s.comment.push_str(" · ");
+                    }
+                    s.comment.push_str(&format!("{kw:.0} kW"));
+                }
+            }
         }
     }
 
@@ -1127,6 +1194,65 @@ fn spots_map_lines(ui: &mut egui::Ui, picks: &[Spot], home: Option<(f64, f64)>) 
         });
     }
     tune
+}
+
+/// Of `list`, the entry `want` accepts nearest to `hz`, at equal distance the
+/// strongest.
+fn nearest_aoki<'a>(
+    list: &[&'a sdroxide_types::BroadcastStation],
+    hz: f64,
+    want: fn(&sdroxide_types::BroadcastStation) -> bool,
+) -> Option<&'a sdroxide_types::BroadcastStation> {
+    list.iter().copied().filter(|e| want(e)).min_by(|a, b| {
+        (a.freq_hz() - hz)
+            .abs()
+            .total_cmp(&(b.freq_hz() - hz).abs())
+            .then(b.power_kw.unwrap_or(0.0).total_cmp(&a.power_kw.unwrap_or(0.0)))
+    })
+}
+
+#[cfg(test)]
+mod aoki_tests {
+    use super::*;
+
+    fn st(
+        khz: f64,
+        country: &str,
+        kw: Option<f64>,
+        ll: Option<(f64, f64)>,
+    ) -> sdroxide_types::BroadcastStation {
+        sdroxide_types::BroadcastStation {
+            name: "Test".into(),
+            freq_khz: khz,
+            site: "Site".into(),
+            country: country.into(),
+            lat: ll.map(|l| l.0),
+            lon: ll.map(|l| l.1),
+            power_kw: kw,
+            lang: String::new(),
+            target: String::new(),
+            mode: None,
+            start_utc: None,
+            end_utc: None,
+            days: String::new(),
+            season: None,
+        }
+    }
+
+    /// Proves: the nearest accepted entry wins, at equal distance the
+    /// strongest, and an entry `want` refuses is never taken.
+    #[test]
+    fn the_nearest_strongest_aoki_entry_is_taken() {
+        let a = st(6085.0, "TWN", Some(100.0), None);
+        let b = st(6085.0, "TWN", Some(300.0), Some((23.7, 120.4)));
+        let c = st(6085.4, "TWN", Some(500.0), Some((25.0, 121.5)));
+        let list = [&a, &b, &c];
+        let kw: fn(&sdroxide_types::BroadcastStation) -> bool = |e| e.power_kw.is_some();
+        let placed: fn(&sdroxide_types::BroadcastStation) -> bool = |e| e.lat.is_some();
+        assert_eq!(nearest_aoki(&list, 6_085_000.0, kw).and_then(|e| e.power_kw), Some(300.0));
+        assert_eq!(nearest_aoki(&list, 6_085_400.0, kw).and_then(|e| e.power_kw), Some(500.0));
+        assert_eq!(nearest_aoki(&[&a], 6_085_000.0, placed).map(|e| e.power_kw), None);
+    }
 }
 
 /// A broadcast spot's transmitter power, kW, read back from its comment, where
