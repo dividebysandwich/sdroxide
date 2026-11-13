@@ -7994,6 +7994,12 @@ fn clip_mhz(hz: f64) -> String {
     format!("{int}.{frac:0<3} MHz")
 }
 
+/// The labels on the VFO box's top row, in the order they are drawn; the
+/// clipboard chip only while another radio is open to paste onto.
+///
+/// DUPLEX is a transmit-side control and a receive-only front end does not pay
+/// for it, exactly as it does not pay for XIT on the row below. TONE stays
+/// either way: the receive tone squelch behind it belongs to the receiver.
 fn vfo_chip_labels(tx_capable: bool, clip: bool) -> Vec<&'static str> {
     let mut labels = VFO_CHIPS.to_vec();
     if clip {

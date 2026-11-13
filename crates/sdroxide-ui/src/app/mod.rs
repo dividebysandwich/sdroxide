@@ -2122,9 +2122,6 @@ impl SdroxideApp {
         self.state.rx[0].muted
     }
 
-    /// The tab strip's mute toggle: the same per-receiver mute the MUTE
-    /// button sends, so muting from either place lights both — and the
-    /// engine, which owns the state, remembers it across restarts.
     /// The shell's word on the clipboard: whether another radio is open, and
     /// what the clipboard holds.
     pub(crate) fn set_clip(&mut self, peers: bool, clip: Option<Clip>) {
@@ -2149,6 +2146,9 @@ impl SdroxideApp {
         self.ctrl.send(Command::SetVfo { vfo: self.state.active_vfo, hz: c.hz });
     }
 
+    /// The tab strip's mute toggle: the same per-receiver mute the MUTE
+    /// button sends, so muting from either place lights both — and the
+    /// engine, which owns the state, remembers it across restarts.
     pub(crate) fn set_tab_muted(&mut self, muted: bool) {
         self.ctrl.send(sdroxide_types::Command::SetMute { rx: sdroxide_types::RxId::Main, muted });
     }
