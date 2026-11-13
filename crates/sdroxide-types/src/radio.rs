@@ -1035,6 +1035,13 @@ pub struct CatConfig {
     /// which is what was always sent until then.
     #[serde(default = "default_elad_tx_power")]
     pub elad_tx_power: u8,
+    /// Mute receive audio for an over keyed at an ELAD FDM-DUO itself — its
+    /// microphone PTT, a foot switch, another program — which sdroxide learns
+    /// of by asking the radio (`IF;`). Off, the receiver plays the station's
+    /// own signal through the speakers. On by default; serial CAT only. Read
+    /// live (the MIC A chip right of REC is lit when this is off).
+    #[serde(default = "default_true_elad")]
+    pub elad_mute_on_radio_ptt: bool,
     pub format: SoundFormat,
     /// Conjugate the sound card's I/Q, mirroring the panadapter about the
     /// tuned frequency. Only read for [`SoundFormat::Iq`]: demod audio is real
@@ -1284,6 +1291,10 @@ fn default_rigctld_addr() -> String {
     "127.0.0.1:4532".to_string()
 }
 
+fn default_true_elad() -> bool {
+    true
+}
+
 /// Menu 34 at MAX — see [`CatConfig::elad_tx_power`].
 pub fn default_elad_tx_power() -> u8 {
     9
@@ -1312,6 +1323,7 @@ impl Default for CatConfig {
             kenwood_send: KenwoodSend::default(),
             elad_tx_input: EladTxInput::default(),
             elad_tx_power: default_elad_tx_power(),
+            elad_mute_on_radio_ptt: true,
             format: SoundFormat::default(),
             invert_spectrum: false,
             iq_offset_hz: 0.0,
@@ -3558,6 +3570,11 @@ pub struct EladConfig {
     /// which is the wider view and the worse one for strong out-of-band
     /// signals.
     pub preselector: bool,
+    /// Keep receiving through an over sdroxide keyed (TUNE, PTT, the digital
+    /// modes), so the station's own signal is heard on the speakers as the
+    /// receiver picks it up. Off by default: receive is paused for an over.
+    /// Taken at each key-down (the DIG A chip under the TX power buttons).
+    pub hear_own_tx: bool,
 }
 
 impl Default for EladConfig {
@@ -3567,6 +3584,7 @@ impl Default for EladConfig {
             sample_rate_hz: ELAD_DEFAULT_RATE_HZ,
             attenuator: false,
             preselector: true,
+            hear_own_tx: false,
         }
     }
 }

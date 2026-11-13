@@ -1904,11 +1904,10 @@ fn open_elad_source(
 /// that answers: over the USB gateway the rig cannot be asked anything, so
 /// claiming an SWR sensor there would put a needle on screen that never moves.
 ///
-/// `full_duplex` is false. Whether the DDC keeps streaming through an over has
-/// not been checked on hardware, and half duplex is the assumption that is safe
-/// to be wrong about: it costs a receiver that goes quiet for the length of a
-/// transmission, where the other way round costs a panadapter painting the
-/// station's own transmitter.
+/// `full_duplex` is false unless the operator asks to hear their own signal
+/// (`EladConfig::hear_own_tx`). The DDC does stream through an over — an
+/// FDM-DUO keyed at its own microphone is heard in the receiver — so reading
+/// it through one is a choice, not a capability.
 fn elad_caps(src: &elad_source::EladSource) -> DeviceCaps {
     use sdroxide_types::{Direction, EladConfig, GainElement};
     let model = src.model();
@@ -1918,7 +1917,10 @@ fn elad_caps(src: &elad_source::EladSource) -> DeviceCaps {
         label: src.describe(),
         rx_channels: 1,
         tx_channels: usize::from(tx),
-        full_duplex: false,
+        // Only when the operator has asked to hear their own signal: the DDC
+        // streams through an over, so reading it is all "full duplex" means
+        // here (see `EladConfig::hear_own_tx`).
+        full_duplex: src.hears_own_tx(),
         // Wideband I/Q in, audio out — the same shape as TCI.
         tx_audio: tx,
         freq_ranges_rx: vec![model.rx_range_hz()],

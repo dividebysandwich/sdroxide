@@ -4007,6 +4007,26 @@ pub(in crate::app) fn settings_elad_tab(
         }
         ui.end_row();
 
+        // Hearing the station's own signal: the DUO's DDC streams through
+        // every over, so whether it reaches the speakers is a choice, made
+        // separately for an over keyed at the radio and one keyed here.
+        ui.label(tr!("settings-radio-elad-own-signal"));
+        ui.vertical(|ui| {
+            crate::chrome::checkbox(
+                ui,
+                &mut cfg.cat.elad_mute_on_radio_ptt,
+                tr!("settings-radio-elad-mute-radio-ptt"),
+            )
+            .on_hover_text(tr!("settings-radio-elad-mute-radio-ptt-hint"));
+            crate::chrome::checkbox(
+                ui,
+                &mut cfg.elad.hear_own_tx,
+                tr!("settings-radio-elad-hear-own-tx"),
+            )
+            .on_hover_text(tr!("settings-radio-elad-hear-own-tx-hint"));
+        });
+        ui.end_row();
+
         ui.label("");
         probe_only(ui, can_probe, |ui| {
             if ui

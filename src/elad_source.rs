@@ -154,6 +154,10 @@ pub struct EladSource {
     attenuator: bool,
     preselector: bool,
 
+    /// [`EladConfig::hear_own_tx`]: keep reading the receiver through an over
+    /// sdroxide keyed, so the station's own signal is heard.
+    hear_own_tx: bool,
+
     /// Which of the two antenna sockets the receiver is on.
     ///
     /// A mirror, like the two switches above, but unlike them it starts as a
@@ -375,6 +379,7 @@ impl EladSource {
             tx_audio_gain: 1.0,
             attenuator: cfg.attenuator,
             preselector: cfg.preselector,
+            hear_own_tx: cfg.hear_own_tx,
             antenna: EladAntenna::default(),
             expect_freq: None,
             rig_vfo: Vfo::A,
@@ -420,6 +425,14 @@ impl EladSource {
 
     /// Whether the rig can be keyed at all — which is the question the caps'
     /// transmit channel count is really asking.
+    /// Whether the receiver is read through an over sdroxide keyed — the
+    /// operator's choice to hear their own signal ([`EladConfig::hear_own_tx`]).
+    /// The DDC streams through an over either way; this only decides whether
+    /// the engine keeps listening to it.
+    pub fn hears_own_tx(&self) -> bool {
+        self.hear_own_tx && self.can_transmit()
+    }
+
     pub fn can_transmit(&self) -> bool {
         self.model.transmits() && !matches!(self.control, Control::None)
     }
@@ -657,6 +670,21 @@ impl IqSource for EladSource {
     /// on a resting dial (`Engine::recentre_after_dwell`).
     fn recentre_on_dwell(&self) -> bool {
         true
+    }
+
+    /// What is waiting and no more: an over the receiver is read through
+    /// ([`EladConfig::hear_own_tx`]) owes the transmitter a block every 10 ms,
+    /// and [`Self::read`]'s nap on an empty ring would come out of that.
+    fn read_available(&mut self, buf: &mut [Complex32]) -> Result<usize> {
+        let need = buf.len() * 2;
+        if self.rx_scratch.len() < need {
+            self.rx_scratch.resize(need, 0.0);
+        }
+        let pairs = self.handle.rx_read(&mut self.rx_scratch[..need]) / 2;
+        for (p, out) in buf.iter_mut().enumerate().take(pairs) {
+            *out = Complex32::new(self.rx_scratch[2 * p], self.rx_scratch[2 * p + 1]);
+        }
+        Ok(pairs)
     }
 
     fn describe(&self) -> String {
