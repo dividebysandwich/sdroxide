@@ -5886,6 +5886,9 @@ impl SdroxideApp {
             // block of minutes-old band, drawn as if it were the last few
             // seconds. Start it again from now instead.
             self.wide_wf.clear();
+            // A loaded recording goes with it: the strip comes back live.
+            #[cfg(not(target_arch = "wasm32"))]
+            self.rec_tab.forget_view();
         }
     }
 

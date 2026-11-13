@@ -2167,7 +2167,7 @@ waterfall, as `Mem: folder / name` — see
 ### 2.13 Scanning
 
 Open **SCAN** (System module) to work through channels and stop where somebody
-is transmitting. Two kinds:
+is transmitting. Three kinds:
 
 - **MEM** — the stored memory channels, each in its own mode and filter. Mark
   any of them **SKIP** to pass it over; a channel that is always busy with
@@ -2201,6 +2201,24 @@ is transmitting. Two kinds:
   front end cannot reach is drawn from its neighbours.
 
   ![PANO on an RTL-SDR in direct sampling: 1–16 MHz as one strip, S/N line on](images/pano-rtlsdr-hf.jpg)
+
+  **Recording a panorama.** Below the PANO settings, **● REC** (desktop app
+  only) records whatever feeds the strip — a PANO sweep, or the full-band lane of a direct-sampling receiver —
+  into a database on this computer (`recordings.sqlite` in the configuration
+  folder), one row **every** so many seconds: 1 s at the least, 10 s by
+  default, no upper limit. Every sweep inside the interval is folded into its
+  row, column by column, keeping the strongest level, so a carrier that was up
+  for one sweep is still there. A recording is a **session**; sessions are
+  cut into **strips** of 120 rows, the height of the strip on screen — at
+  10 s, twenty minutes a strip. The list below shows each session's start,
+  radio, bands, MHz range, length, size and strips, and the database's size
+  on top. Click a session's date to open its strips; **LOAD** puts one into
+  the full-band strip and holds it there until **LIVE**; while a session
+  records, LOAD warns first and stops it on the second press, and **● REC**
+  brings the strip back to live. **DEL** deletes a session, **DB INIT** every session; both
+  ask a second press, and DB INIT says how much goes. The file is plain
+  SQLite: tables `session` and `row`, one row's levels a 1024-byte blob
+  scaled between its `db_floor` and `db_ceil`.
 
 **A range scan is fast**, and not in the way a handheld scanner is. A scanner
 has one receiver and has to visit each channel in turn, which is why sweeping

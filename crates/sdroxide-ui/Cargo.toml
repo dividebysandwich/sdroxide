@@ -109,6 +109,10 @@ ring = "0.17"
 # instead, so chrono never reaches the wasm dependency path.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 sdroxide-config = { path = "../sdroxide-config" }
+# The PANO recorder's file (`recorder.rs`): the full-band strip's rows by
+# session. Bundled, so no system SQLite is needed and every build reads the
+# same file format; native only, the browser has no file to keep it in.
+rusqlite = { version = "0.37", features = ["bundled"] }
 # ...and the half that links a model runtime and a sound card. Cargo unifies
 # this with the entry above, so native gets `synth` and wasm does not.
 sdroxide-speech = { path = "../sdroxide-speech", features = ["synth"] }

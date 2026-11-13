@@ -8,6 +8,8 @@ use sdroxide_types::{
 };
 
 use crate::app::SdroxideApp;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::app::recorder_tab;
 use crate::chrome::StyledCombo;
 
 impl SdroxideApp {
@@ -20,6 +22,18 @@ impl SdroxideApp {
         // settings are; the engine persists it and echoes it back.
         let mut cfg = self.scanner.clone();
         let mut clear_strip = false;
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut rec = std::mem::take(&mut self.rec_tab);
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut rec_action = None;
+        #[cfg(not(target_arch = "wasm32"))]
+        let radio = self.caps.as_ref().map_or_else(String::new, |c| {
+            if c.label.is_empty() { c.driver.clone() } else { c.label.clone() }
+        });
+        #[cfg(not(target_arch = "wasm32"))]
+        // From the source, not from the strip: a loaded recording holds the
+        // strip while the source goes on delivering.
+        let wide_live = rec.live_seen();
         let tool_title = tr!("scanner-scanner");
         let mut tool_st = self.take_tool_state("Scanner");
         let tool_child = crate::app::undocked::ChildWindow::own(self);
@@ -29,8 +43,46 @@ impl SdroxideApp {
             &mut tool_st,
             tool_child,
             &mut open,
-            |ui| self.scanner_body(ui, &mut cfg, cmds, &mut clear_strip),
+            |ui| {
+                #[cfg(not(target_arch = "wasm32"))]
+                let recording = rec.recording();
+                #[cfg(target_arch = "wasm32")]
+                let recording = false;
+                self.scanner_tabs(ui, &mut cfg, cmds, recording);
+                self.scanner_body(ui, &mut cfg, cmds, &mut clear_strip);
+                // The strip PANO draws, kept: the recorder and its sessions on
+                // the same page.
+                // Why: HDZ 2026-11-13: "führ mal Reiter 3 und 4 zusammen, das
+                //      geht auf eine Seite".
+                if cfg.kind == ScanKind::Panorama {
+                    ui.separator();
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let now = ui.input(|i| i.time);
+                        rec_action = rec.show(ui, &radio, wide_live, now);
+                    }
+                    // The browser has no file to keep a database in.
+                    #[cfg(target_arch = "wasm32")]
+                    ui.add_enabled_ui(false, |ui| {
+                        crate::chrome::chip(ui, false, tr!("rec-record"))
+                    })
+                    .inner
+                    .on_disabled_hover_text(tr!("rec-desktop-only"));
+                }
+            },
         );
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if clear_strip {
+                rec.forget_view();
+            }
+            self.rec_tab = rec;
+            match rec_action {
+                Some(recorder_tab::RecAction::Load(rows)) => self.load_recorded_strip(&rows),
+                Some(recorder_tab::RecAction::Live) => clear_strip = true,
+                None => {}
+            }
+        }
         if clear_strip {
             // The strip goes, lines and all, and comes back with the first
             // complete sweep.
@@ -47,19 +99,55 @@ impl SdroxideApp {
         self.show_scanner = open;
     }
 
-    fn scanner_body(
+    /// Whether the strip shows a loaded recording rather than live rows.
+    pub(in crate::app) fn rec_viewing(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.rec_tab.viewing();
+        #[cfg(target_arch = "wasm32")]
+        return false;
+    }
+
+    /// Put a recorded strip into the full-band strip and hold it there until
+    /// LIVE: the rows go through the strip's own intake, oldest first, so it
+    /// looks exactly as it did live.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn load_recorded_strip(&mut self, rows: &[crate::recorder::StoredRow]) {
+        self.wide_wf.clear();
+        self.wide_grid = None;
+        self.wide_guide = None;
+        let palette = self.ui_settings.waterfall_palette;
+        let mut last = None;
+        for (i, r) in rows.iter().enumerate() {
+            let f = r.frame(i as u32 + 1);
+            self.wide_wf.push(&f, palette);
+            last = Some(f);
+        }
+        // The strip draws against this frame and folds it in again — the same
+        // number, so it is not taken as one more row.
+        self.wide_frame = last.map(std::sync::Arc::new);
+        self.view.wide_waterfall = true;
+    }
+
+    /// The tab row: what to scan, START/STOP at the end. PANO turns pink while
+    /// its strip is being recorded, so a recording is seen from every tab.
+    fn scanner_tabs(
         &self,
         ui: &mut egui::Ui,
         cfg: &mut ScannerConfig,
         cmds: &mut Vec<Command>,
-        clear_strip: &mut bool,
+        recording: bool,
     ) {
         let scan = self.state.scan;
 
         // What to scan.
         ui.horizontal(|ui| {
             for kind in ScanKind::ALL {
-                if crate::chrome::chip(ui, cfg.kind == kind, kind.tr())
+                let text = if recording && kind == ScanKind::Panorama {
+                    RichText::new(format!("{} ●", kind.tr())).color(crate::theme::PINK())
+                } else {
+                    RichText::new(kind.tr())
+                };
+                if crate::chrome::chip(ui, cfg.kind == kind, text)
                     .on_hover_text(match kind {
                         ScanKind::Memories => tr!("scanner-work-through-stored-memory-channels"),
                         ScanKind::Range => tr!("scanner-work-through-slice-band-channel"),
@@ -86,7 +174,15 @@ impl SdroxideApp {
             });
         });
         ui.separator();
+    }
 
+    fn scanner_body(
+        &self,
+        ui: &mut egui::Ui,
+        cfg: &mut ScannerConfig,
+        cmds: &mut Vec<Command>,
+        clear_strip: &mut bool,
+    ) {
         match cfg.kind {
             ScanKind::Range => self.scanner_range(ui, cfg),
             ScanKind::Memories => self.scanner_memories(ui, cfg),

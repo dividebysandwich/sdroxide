@@ -42,6 +42,9 @@ pub(in crate::app) mod playback;
 pub(in crate::app) mod publicsdr;
 pub(in crate::app) mod qo100;
 pub(in crate::app) mod rds;
+/// Scanner → PANO: the full-band strip recorded into SQLite.
+#[cfg(not(target_arch = "wasm32"))]
+mod recorder_tab;
 pub(in crate::app) mod sat;
 pub(in crate::app) mod save_text;
 pub(in crate::app) mod scanner;
@@ -163,6 +166,9 @@ pub struct SdroxideApp {
     wide_guide: Option<std::sync::Arc<crate::mean_spectrum::Guide>>,
     /// Scrolling history behind the full-band strip.
     wide_wf: crate::widgets::wide_spectrum::WideWaterfall,
+    /// The strip's recorder and its inventory (Scanner → PANO).
+    #[cfg(not(target_arch = "wasm32"))]
+    rec_tab: recorder_tab::RecTab,
     meters: Option<Meters>,
     /// The last SWR the radio reported while on the air — kept after the over
     /// ends, so the tune box can still show what the antenna was matched to.
@@ -1591,6 +1597,8 @@ impl SdroxideApp {
             wide_grid: None,
             wide_guide: None,
             wide_wf: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            rec_tab: Default::default(),
             meters: None,
             last_swr: None,
             memories: Vec::new(),

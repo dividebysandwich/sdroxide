@@ -42,6 +42,9 @@ mod multi;
 mod prop_map;
 /// The PUBLIC SDRS window's map view: the receivers where they stand.
 mod publicsdr_map;
+/// The full-band strip recorded into SQLite, by session (Scanner → PANO).
+#[cfg(not(target_arch = "wasm32"))]
+mod recorder;
 #[cfg(feature = "remote")]
 mod remote;
 /// Pinned certificates for `wss://` stations nothing public vouches for.
