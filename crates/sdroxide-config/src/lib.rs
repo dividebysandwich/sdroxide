@@ -1005,6 +1005,66 @@ impl PaneLayout {
     pub fn is_empty(&self) -> bool {
         self.panes.is_empty()
     }
+
+    /// Whether radio `id` was on a pane's row — shown, or a tab beside the
+    /// one shown.
+    pub fn on_a_row(&self, id: u32) -> bool {
+        self.panes.contains(&id) || self.rows.iter().any(|r| r.contains(&id))
+    }
+
+    /// The radios this layout saw and had on no row: taken off with "−".
+    /// None while nothing is saved — then nothing has been taken off.
+    pub fn hidden(&self) -> Vec<u32> {
+        if self.is_empty() {
+            return Vec::new();
+        }
+        self.known.iter().copied().filter(|id| !self.on_a_row(*id)).collect()
+    }
+}
+
+/// Switch off, in the roster, every radio the last session left on no row,
+/// before the window opens them. Returns the ones switched off.
+///
+/// A radio nobody is looking at that comes up on the air is a radio the
+/// operator then has to hunt for — the noise, the carrier, the warm device
+/// all coming from somewhere off the screen. Off is one switch away once it
+/// is picked onto a row again. For the window only: a server has no rows.
+// Why: HDZ 2026-11-13: "ausgeblendete Radios default-mäßig aus laden als
+//      Sicherheitsmaßnahme, sonst sucht man sich tot, woher Rauchen oder
+//      Geräusch kommt".
+pub fn switch_off_hidden_radios() -> Result<Vec<u32>, ConfigError> {
+    let mut roster = load_radios();
+    let hidden = roster.layout.hidden();
+    let mut off = Vec::new();
+    for slot in roster.radios.iter_mut() {
+        if slot.enabled && hidden.contains(&slot.id) {
+            slot.enabled = false;
+            off.push(slot.id);
+        }
+    }
+    if !off.is_empty() {
+        save_radios(&roster)?;
+    }
+    Ok(off)
+}
+
+/// A connection to a radio at another station, kept so the next session can
+/// dial it again (`connections.json`). `id` is the tab's, kept so the panes
+/// find it where they left it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SavedConnection {
+    pub url: String,
+    #[serde(default)]
+    pub name: String,
+    pub id: u32,
+}
+
+pub fn load_connections() -> Vec<SavedConnection> {
+    load_json_list("connections.json")
+}
+
+pub fn save_connections(list: &[SavedConnection]) -> Result<(), ConfigError> {
+    save_json("connections.json", list)
 }
 
 impl Default for RadiosFile {
@@ -3391,7 +3451,34 @@ mod tests {
         assert_eq!(load_radios().layout, layout, "kept through a rename and a switch");
         set_radio_enabled(again.id, true).unwrap();
         rename_radio(0, "").unwrap();
+
+        // A radio left on no row comes up off; the ones on a row keep their
+        // switch, and a second start has nothing more to switch.
+        assert_eq!(layout.hidden(), vec![again.id]);
+        assert_eq!(switch_off_hidden_radios().unwrap(), vec![again.id]);
+        assert!(!load_radios().is_enabled(again.id));
+        assert!(load_radios().is_enabled(0) && load_radios().is_enabled(fourth.id));
+        assert!(switch_off_hidden_radios().unwrap().is_empty());
+        set_radio_enabled(again.id, true).unwrap();
         save_pane_layout(&PaneLayout::default()).unwrap();
+        assert!(switch_off_hidden_radios().unwrap().is_empty(), "nothing saved, nothing hidden");
+
+        // Connections to other stations' radios survive a reload.
+        let conns = vec![
+            SavedConnection {
+                url: "ws://shack:4950/ws/0".into(),
+                name: "Shack".into(),
+                id: 1 << 31,
+            },
+            SavedConnection {
+                url: "ws://kiwi:4950/ws/1".into(),
+                name: String::new(),
+                id: (1 << 31) + 1,
+            },
+        ];
+        save_connections(&conns).unwrap();
+        assert_eq!(load_connections(), conns);
+        save_connections(&[]).unwrap();
 
         remove_radio(again.id).unwrap();
         remove_radio(fourth.id).unwrap();

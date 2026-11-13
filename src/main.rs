@@ -346,6 +346,15 @@ fn main() -> anyhow::Result<()> {
         return gui_main::run_remote(&url);
     }
 
+    // The radios the last session left on no row come up off: see
+    // `switch_off_hidden_radios`. The window's choice, so not the server's.
+    match sdroxide_config::switch_off_hidden_radios() {
+        Ok(off) if !off.is_empty() => {
+            tracing::info!("radios on no row switched off at start: {off:?}")
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!("switching off the radios on no row: {e}"),
+    }
     let radios = boot_radios(&mut cli, &settings)?;
     let factory_cli = secondary_cli(&cli);
     gui_main::run_multi(radios, &settings, cli.tx_ham_only(&settings), factory_cli)

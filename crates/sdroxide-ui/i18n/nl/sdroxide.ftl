@@ -4516,6 +4516,7 @@ multi-take-radio-off-row = Deze radio uit deze rij halen. Hij blijft draaien; de
 multi-open-pane = Een volgend paneel openen met een radio die niet in beeld is
 multi-pick-radio = Radio ▼
 multi-pick-radio-tip = Een radio in deze rij zetten. De ringen markeren radio's waarvan de verbinding open is.
+multi-resting-connection-tip = Rustende verbinding: kiezen belt { $url }
 multi-new-radio = Nieuwe radio…
 multi-asked-station-another-radio = Het station om nog een radio gevraagd…
 multi-client-cannot-open-connection = Deze client kan geen verbinding openen.

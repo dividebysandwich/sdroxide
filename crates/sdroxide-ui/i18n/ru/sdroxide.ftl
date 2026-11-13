@@ -4530,6 +4530,7 @@ multi-take-radio-off-row = Убрать это радио из этого ряд
 multi-open-pane = Открыть ещё одну панель с радио, которого нет на экране
 multi-pick-radio = Радио ▼
 multi-pick-radio-tip = Поставить радио в этот ряд. Кольца отмечают радио с открытой связью.
+multi-resting-connection-tip = Спящее соединение: выбор подключает { $url }
 multi-new-radio = Новое радио…
 multi-asked-station-another-radio = Запрошено у станции другое радио…
 multi-client-cannot-open-connection = Этот клиент не может открыть соединение.

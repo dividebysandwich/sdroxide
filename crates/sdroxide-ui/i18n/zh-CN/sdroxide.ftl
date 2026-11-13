@@ -4493,6 +4493,7 @@ multi-take-radio-off-row = 把这台电台移出这一行。它继续运行；�
 multi-open-pane = 用一台未在屏幕上的电台打开另一个窗格
 multi-pick-radio = 电台 ▼
 multi-pick-radio-tip = 把一台电台放进这一行。圆环标出连接已打开的电台。
+multi-resting-connection-tip = 休眠连接：选择后连接 { $url }
 multi-new-radio = 新电台…
 multi-asked-station-another-radio = 已向电台站点请求另一台电台……
 multi-client-cannot-open-connection = 此客户端无法打开连接。

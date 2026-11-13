@@ -4521,6 +4521,7 @@ multi-take-radio-off-row = Bu telsizi bu sıradan çıkar. Çalışmaya devam ed
 multi-open-pane = Ekranda olmayan bir telsizle başka bir bölme aç
 multi-pick-radio = Radyo ▼
 multi-pick-radio-tip = Bu sıraya bir telsiz koy. Halkalar bağlantısı açık telsizleri gösterir.
+multi-resting-connection-tip = Bekleyen bağlantı: seçmek { $url } adresini arar
 multi-new-radio = Yeni telsiz…
 multi-asked-station-another-radio = İstasyondan başka bir radyo istendi…
 multi-client-cannot-open-connection = Bu istemci bir bağlantı açamaz.
