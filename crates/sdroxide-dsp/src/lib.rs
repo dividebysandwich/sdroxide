@@ -127,7 +127,7 @@ pub use resample::{ComplexResampler, MonoResampler, StereoResampler};
 pub use rifp::{RifpFrame, RifpRx, RifpTx, Tlv as RifpTlv};
 pub use rtty::{BaudotRx, RttyRx, RttyTx};
 pub use sbnr::SpecBleachNr;
-pub use sk::SkFilter;
+pub use sk::{SkFilter, boost as sk_boost};
 pub use spectrum::SpectrumAnalyzer;
 pub use spectrum_paint::{
     BAND_HI_HZ as RF_PAINT_BAND_HI, BAND_LO_HZ as RF_PAINT_BAND_LO, CENTER_HZ as RF_PAINT_CENTER,

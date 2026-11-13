@@ -1706,7 +1706,10 @@ use sdroxide_types::{
 /// `ScannerConfig` gains `stop_snr`, `snr_db` and `pano_usable` after
 /// `follow_squelch`, and `ScanState` gains `sweeps` and `sweep_ms`, which
 /// changes the layout of every state frame.
-pub const PROTO_VERSION: u16 = 206;
+///
+/// v207: SK boost. `RxState` gains `sk_filter_boost_db` after
+/// `sk_filter_after_nr`, and `Command::SetSkFilter` gains `boost_db`.
+pub const PROTO_VERSION: u16 = 207;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

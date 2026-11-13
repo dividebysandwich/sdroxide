@@ -1242,6 +1242,11 @@ impl RxChain {
         // Why: HDZ 2026-11-10: "mache noch Variante B (Reihung) gedreht".
         if rx.sk_filter_after_nr {
             run_sk(&mut self.sk, &mut self.audio_buf, rx, audio_rate as f32, stereo);
+            // Behind the AGC nothing restores what the filter took: the
+            // operator's boost does, softly limited under full scale.
+            if rx.sk_filter && !stereo {
+                sdroxide_dsp::sk_boost(&mut self.audio_buf, rx.sk_filter_boost_db);
+            }
         }
 
         // Squelch: gate on post-filter (pre-AGC) power, smoothed ~10 ms so
@@ -9171,9 +9176,13 @@ impl Engine {
                 self.state.rx[rx.index()].hum_filter = on;
                 self.remember_mode_setting(rx, |p| p.hum_filter = Some(on));
             }
-            SetSkFilter { rx, on, tau_s, open_s, close_s, width, after_nr } => {
+            SetSkFilter { rx, on, tau_s, open_s, close_s, width, after_nr, boost_db } => {
                 let r = &mut self.state.rx[rx.index()];
                 r.sk_filter = on;
+                if boost_db.is_finite() {
+                    let (lo, hi) = sdroxide_types::SK_FILTER_BOOST_RANGE_DB;
+                    r.sk_filter_boost_db = boost_db.clamp(lo, hi);
+                }
                 r.sk_filter_width = width.min(sdroxide_types::SK_FILTER_MAX_WIDTH);
                 r.sk_filter_after_nr = after_nr;
                 use sdroxide_types::{SK_FILTER_CLOSE_RANGE_S as C, SK_FILTER_OPEN_RANGE_S as O};
@@ -9194,7 +9203,8 @@ impl Engine {
                 // come back to, finds the SK filter as it was set.
                 let (tau, open, close) =
                     (r.sk_filter_tau_s, r.sk_filter_open_s, r.sk_filter_close_s);
-                let (width, after_nr) = (r.sk_filter_width, r.sk_filter_after_nr);
+                let (width, after_nr, boost) =
+                    (r.sk_filter_width, r.sk_filter_after_nr, r.sk_filter_boost_db);
                 self.remember_mode_setting(rx, |p| {
                     p.sk_filter = Some(on);
                     p.sk_filter_tau_s = Some(tau);
@@ -9202,6 +9212,7 @@ impl Engine {
                     p.sk_filter_close_s = Some(close);
                     p.sk_filter_width = Some(width);
                     p.sk_filter_after_nr = Some(after_nr);
+                    p.sk_filter_boost_db = Some(boost);
                 });
             }
             SetWfmStereo { rx, on } => {

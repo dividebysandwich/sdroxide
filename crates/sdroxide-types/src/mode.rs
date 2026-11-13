@@ -1158,6 +1158,7 @@ impl Mode {
             sk_filter_close_s: Some(crate::SK_FILTER_DEFAULT_CLOSE_S),
             sk_filter_width: Some(crate::SK_FILTER_DEFAULT_WIDTH),
             sk_filter_after_nr: Some(crate::SK_FILTER_DEFAULT_AFTER_NR),
+            sk_filter_boost_db: Some(0.0),
         }
     }
 

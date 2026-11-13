@@ -141,6 +141,17 @@ pub struct RxState {
     //      haben".
     #[serde(default = "sk_filter_default_after_nr")]
     pub sk_filter_after_nr: bool,
+    /// Gain added right after the SK filter, in dB ([`SK_FILTER_BOOST_RANGE_DB`]).
+    /// The filter only takes level away — noise bins down to −20 dB, the rest
+    /// at unity — and behind NR it also sits behind the AGC, so nothing puts
+    /// the level back: the result can be very quiet. Ahead of the AGC the
+    /// AGC restores it, so the boost only applies behind NR. A soft limiter
+    /// keeps a boosted peak off full scale. 0 dB to start with.
+    // Why: HDZ 2026-11-13: "beim SK würde ich gerne einen kleinen
+    //      Lautstärke-Booster noch dazu haben, weil das Ergebnis sehr leise
+    //      sein kann".
+    #[serde(default)]
+    pub sk_filter_boost_db: f32,
     /// NFM "FM-Decrackle": the click eliminator that takes out the 2π phase
     /// slips a weak FM signal turns into crackle, ~1 ms look-ahead. Ignored
     /// outside NFM.
@@ -178,6 +189,9 @@ fn fm_decrackle_default_dip() -> f32 {
 
 /// Whether the SK filter runs behind the NR engine to start with.
 pub const SK_FILTER_DEFAULT_AFTER_NR: bool = true;
+
+/// The SK boost the NR menu offers, in dB.
+pub const SK_FILTER_BOOST_RANGE_DB: (f32, f32) = (0.0, 18.0);
 
 fn sk_filter_default_after_nr() -> bool {
     SK_FILTER_DEFAULT_AFTER_NR
@@ -242,6 +256,7 @@ impl RxState {
             sk_filter_close_s: SK_FILTER_DEFAULT_CLOSE_S,
             sk_filter_width: SK_FILTER_DEFAULT_WIDTH,
             sk_filter_after_nr: SK_FILTER_DEFAULT_AFTER_NR,
+            sk_filter_boost_db: 0.0,
             fm_decrackle: true,
             fm_deemph: true,
             fm_decrackle_dip: FM_DECRACKLE_DEFAULT_DIP,

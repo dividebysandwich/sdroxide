@@ -1281,6 +1281,8 @@ pub enum Command {
         close_s: f32,
         width: u8,
         after_nr: bool,
+        /// Gain right after the filter, dB (see `RxState::sk_filter_boost_db`).
+        boost_db: f32,
     },
     /// The panadapter shows (true) or no longer shows (false) a stretch outside
     /// the I/Q window while it draws from the I/Q — a hole in the picture. A

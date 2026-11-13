@@ -4154,6 +4154,7 @@ impl SdroxideApp {
                     close_s: r.sk_filter_close_s,
                     width: r.sk_filter_width,
                     after_nr: r.sk_filter_after_nr,
+                    boost_db: r.sk_filter_boost_db,
                 })
             };
             if crate::chrome::chip(ui, rx.sk_filter, "SK")
@@ -4237,6 +4238,30 @@ impl SdroxideApp {
                     let r = self.state.rx[0];
                     send(cmds, true, &r);
                 }
+                // The boost: behind NR the filter sits behind the AGC too, and
+                // what it takes away stays away. Ahead of the AGC the AGC puts
+                // it back, so the field greys out there.
+                // Why: HDZ 2026-11-13: "beim SK würde ich gerne einen kleinen
+                //      Lautstärke-Booster noch dazu haben".
+                let (lo, hi) = sdroxide_types::SK_FILTER_BOOST_RANGE_DB;
+                let mut b = rx.sk_filter_boost_db;
+                let resp = ui
+                    .add_enabled(
+                        after,
+                        DragValue::new(&mut b)
+                            .range(lo..=hi)
+                            .speed(0.2)
+                            .fixed_decimals(0)
+                            .prefix("+")
+                            .suffix(" dB"),
+                    )
+                    .on_hover_text(tr!("topbar-sk-filter-boost-hint"))
+                    .on_disabled_hover_text(tr!("topbar-sk-filter-boost-before-nr"));
+                if resp.changed() {
+                    self.state.rx[0].sk_filter_boost_db = b; // optimistic echo
+                    let r = self.state.rx[0];
+                    send(cmds, true, &r);
+                }
                 // Back to the recipe the filter started from: τ 0.1 s, open
                 // 0.01 s, close 1 s, width ±1, ahead of NR.
                 // Why: HDZ 2026-11-10: "mach einen Reset dran für Defaults".
@@ -4251,6 +4276,7 @@ impl SdroxideApp {
                     r.sk_filter_close_s = sdroxide_types::SK_FILTER_DEFAULT_CLOSE_S;
                     r.sk_filter_width = sdroxide_types::SK_FILTER_DEFAULT_WIDTH;
                     r.sk_filter_after_nr = sdroxide_types::SK_FILTER_DEFAULT_AFTER_NR;
+                    r.sk_filter_boost_db = 0.0;
                     let r = *r;
                     send(cmds, true, &r);
                 }

@@ -5959,3 +5959,7 @@ textmodem-psk-coded-hint =
             [one] taşıyıcı
            *[other] taşıyıcı
         }, { $code }, { $bw } Hz genişlik
+
+topbar-sk-filter-after-nr-hint = SK, RNN/DFNR'den sonra — dolayısıyla AGC'den de sonra: filtrenin aldığı geri gelmez (yanındaki güçlendirmeye bak); kapalı: seviyeyi geri getiren AGC'den önce
+topbar-sk-filter-boost-hint = SK filtresinden sonra güçlendirme, 0–18 dB, tam ölçeğin altında yumuşak sınırlı: NR'den sonra filtrenin aldığı seviyeyi kimse geri getirmez
+topbar-sk-filter-boost-before-nr = NR'den önce AGC seviyeyi geri getirir; güçlendirme yalnızca NR'den sonra çalışır

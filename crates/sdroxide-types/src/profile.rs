@@ -81,6 +81,8 @@ pub struct ModeProfile {
     pub sk_filter_width: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sk_filter_after_nr: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sk_filter_boost_db: Option<f32>,
 }
 
 /// Float equality by representation, for [`ModeProfile::trim_against`].
@@ -113,6 +115,7 @@ impl ModeProfile {
             && self.sk_filter_close_s.is_none()
             && self.sk_filter_width.is_none()
             && self.sk_filter_after_nr.is_none()
+            && self.sk_filter_boost_db.is_none()
     }
 
     /// This profile with `base` filling in every field it does not speak to.
@@ -136,6 +139,7 @@ impl ModeProfile {
             sk_filter_close_s: self.sk_filter_close_s.or(base.sk_filter_close_s),
             sk_filter_width: self.sk_filter_width.or(base.sk_filter_width),
             sk_filter_after_nr: self.sk_filter_after_nr.or(base.sk_filter_after_nr),
+            sk_filter_boost_db: self.sk_filter_boost_db.or(base.sk_filter_boost_db),
         }
     }
 
@@ -199,6 +203,10 @@ impl ModeProfile {
         if self.sk_filter_after_nr == default.sk_filter_after_nr {
             self.sk_filter_after_nr = None;
         }
+        if self.sk_filter_boost_db.zip(default.sk_filter_boost_db).is_some_and(|(a, b)| same(a, b))
+        {
+            self.sk_filter_boost_db = None;
+        }
     }
 
     /// Whether the live settings of `rx` all match this profile.
@@ -224,6 +232,7 @@ impl ModeProfile {
             && self.sk_filter_close_s.is_none_or(|v| same(v, rx.sk_filter_close_s))
             && self.sk_filter_width.is_none_or(|v| v == rx.sk_filter_width)
             && self.sk_filter_after_nr.is_none_or(|v| v == rx.sk_filter_after_nr)
+            && self.sk_filter_boost_db.is_none_or(|v| same(v, rx.sk_filter_boost_db))
     }
 
     /// Write every field this profile has an opinion about into `rx`.
@@ -285,6 +294,9 @@ impl ModeProfile {
         }
         if let Some(v) = self.sk_filter_after_nr {
             rx.sk_filter_after_nr = v;
+        }
+        if let Some(v) = self.sk_filter_boost_db {
+            rx.sk_filter_boost_db = v;
         }
     }
 }
