@@ -71,17 +71,18 @@ pub fn bw_for_rate(effective_hz: f64) -> ffi::BwType {
 /// The bandwidth to program: the operator's override when it names a real
 /// filter, else automatic from the rate.
 ///
-/// `dual` says both of an RSPduo's tuners are running, where the low IF the
-/// API works from leaves room for nothing wider than 1.536 MHz — a wider
-/// filter is refused by the service, so a setting carried over from
-/// single-tuner operation is clamped rather than passed on.
-pub fn bw_khz_for(cfg_bw_khz: u32, effective_hz: f64, dual: bool) -> ffi::BwType {
+/// `low_if` says the tuner runs at the low IF — both of an RSPduo's tuners,
+/// or one asked to ([`SdrPlayConfig::low_if`]) — which leaves room for nothing
+/// wider than 1.536 MHz: a wider filter is refused by the service, so a
+/// setting carried over from zero-IF operation is clamped rather than passed
+/// on.
+pub fn bw_khz_for(cfg_bw_khz: u32, effective_hz: f64, low_if: bool) -> ffi::BwType {
     let khz = if SdrPlayConfig::BANDWIDTHS_KHZ.contains(&cfg_bw_khz) {
         cfg_bw_khz as ffi::BwType
     } else {
         bw_for_rate(effective_hz)
     };
-    if dual { khz.min(SdrPlayConfig::DUAL_MAX_BW_KHZ as ffi::BwType) } else { khz }
+    if low_if { khz.min(SdrPlayConfig::DUAL_MAX_BW_KHZ as ffi::BwType) } else { khz }
 }
 
 /// Highest usable LNA state for a model on a band, from the one table in
