@@ -444,6 +444,13 @@ The **VFO** module has:
   ([§2.7](#27-receiver-controls)).
 - **Swap VFOs** — exchange A and B.
 - **Copy A to B** — copy the active VFO to the other.
+- **📋** (the clipboard) — with more than one radio open, carry this radio's
+  frequency, mode and filter to another. A left click on an empty clipboard
+  fills it and lights the chip on every radio; it stays filled when you switch
+  radios. While it is filled, a left click on any radio pastes it there — mode
+  first, then filter, then the dial on whichever VFO is active — and the
+  clipboard stays filled, so one copy can go to several radios; the tooltip
+  shows what it holds. A right click empties it without pasting.
 - **SPLIT** — transmit on one VFO and receive on the other.
 - **SUB** — enable a second receiver, routed to the right ear.
 
@@ -15635,7 +15642,7 @@ row of menu buttons:
 | --- | --- |
 | **PTT** | Keys the transmitter. Hold it down to talk, or click it with a mouse to latch it on. |
 | **RX** | Volume, front-end gain, AGC, squelch, the filter width and edges, NB, ANC, NR, BIN |
-| **VFO** | A↔B, A→B, SPLIT, SUB, and the RIT/XIT offsets |
+| **VFO** | A↔B, A→B, 📋 (with more than one radio), SPLIT, SUB, and the RIT/XIT offsets |
 | **SUB** | The second receiver's frequency, mode, filter and level (only while it is running) |
 | **TX** | TUNE, the voice keyer, and the drive, tune and mic levels |
 | **DISP** | FFT, SPEC, FIT, WIDE, CTR, HFDL, the panadapter boxes (the spectrum and waterfall switches, peak hold, their speeds and the detail), the skimmers, and the spectrum floor/ceiling and FFT size |

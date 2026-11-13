@@ -32,7 +32,7 @@
 use crate::i18n::tr;
 use eframe::egui::{self, RichText};
 
-use crate::app::{RadioChip, RadioTabRequest, SdroxideApp};
+use crate::app::{Clip, ClipAct, RadioChip, RadioTabRequest, SdroxideApp};
 use sdroxide_types::RadioController;
 
 /// One radio handed to [`MultiApp::new`] by the frontend.
@@ -231,6 +231,9 @@ pub struct MultiApp {
     /// the display on purpose.
     #[cfg(not(target_arch = "wasm32"))]
     fitted: bool,
+    /// The clipboard (📋): what it holds. It stays filled across radio
+    /// switches until a right click empties it or the last other radio closes.
+    clip: Option<Clip>,
 }
 
 impl MultiApp {
@@ -307,6 +310,7 @@ impl MultiApp {
             station_radio,
             #[cfg(not(target_arch = "wasm32"))]
             fitted: false,
+            clip: None,
         }
     }
 
@@ -708,6 +712,40 @@ impl MultiApp {
                 RadioTabRequest::Rename { id, name } => self.rename_tab(id, &name),
                 RadioTabRequest::RemoveFromStation(id) => self.remove_at_station(id),
                 RadioTabRequest::Reorder(ids) => self.reorder_tabs(&ids),
+                // Normally taken straight from the radio that asked, in
+                // `take_requests`; one that arrives here belongs to the
+                // focused radio.
+                RadioTabRequest::Clip(act) => self.clip_act(self.focused, act),
+            }
+        }
+    }
+
+    /// Collect radio `ti`'s requests into `reqs`, acting on its clipboard
+    /// clicks at once: they need to know which radio was clicked, and the
+    /// focus may sit on another pane.
+    fn take_requests(&mut self, ti: usize, reqs: &mut Vec<RadioTabRequest>) {
+        for r in self.tabs[ti].app.take_radio_tab_requests() {
+            match r {
+                RadioTabRequest::Clip(act) => self.clip_act(ti, act),
+                other => reqs.push(other),
+            }
+        }
+    }
+
+    /// One clipboard click on radio `ti`: copy fills the clipboard from it,
+    /// paste lays the clipboard on it (the clipboard stays filled), clear
+    /// empties it.
+    fn clip_act(&mut self, ti: usize, act: ClipAct) {
+        let Some(tab) = self.tabs.get_mut(ti) else {
+            return;
+        };
+        match act {
+            ClipAct::Copy(c) => self.clip = Some(c),
+            ClipAct::Clear => self.clip = None,
+            ClipAct::Paste => {
+                if let Some(c) = self.clip {
+                    tab.app.apply_clip(c);
+                }
             }
         }
     }
@@ -1567,6 +1605,13 @@ impl eframe::App for MultiApp {
         // roster are drawn from it.
         self.refresh_attachments();
         self.refresh_power();
+        let peers = self.tabs.len() > 1;
+        if !peers {
+            self.clip = None;
+        }
+        for t in &mut self.tabs {
+            t.app.set_clip(peers, self.clip);
+        }
         let roster = self.roster();
         let mut actions: Vec<StripAction> = Vec::new();
         let mut reqs: Vec<RadioTabRequest> = Vec::new();
@@ -1587,7 +1632,7 @@ impl eframe::App for MultiApp {
             let f = pane_tabs[0];
             self.tabs[f].app.set_radio_roster(roster);
             eframe::App::ui(&mut self.tabs[f].app, ui, frame);
-            reqs.append(&mut self.tabs[f].app.take_radio_tab_requests());
+            self.take_requests(f, &mut reqs);
         } else {
             // Split view: one equal column per pane, each under its own strip.
             let avail = ui.available_rect_before_wrap();
@@ -1628,7 +1673,7 @@ impl eframe::App for MultiApp {
                 heights.push(drawn.response.rect.height() - pad);
                 self.tabs[ti].app.set_radio_roster(roster.clone());
                 eframe::App::ui(&mut self.tabs[ti].app, &mut pane_ui, frame);
-                reqs.append(&mut self.tabs[ti].app.take_radio_tab_requests());
+                self.take_requests(ti, &mut reqs);
                 if k + 1 < pane_tabs.len() {
                     ui.painter().vline(
                         col.right() + gap * 0.5,
