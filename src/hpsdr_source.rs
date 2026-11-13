@@ -740,6 +740,13 @@ impl IqSource for HpsdrSource {
         Ok(pairs)
     }
 
+    /// A centre of its own — a DDC's NCO, moved by a command over the network — so
+    /// the engine may centre the I/Q on a resting dial
+    /// (`Engine::recentre_after_dwell`).
+    fn recentre_on_dwell(&self) -> bool {
+        true
+    }
+
     fn describe(&self) -> String {
         self.label.clone()
     }

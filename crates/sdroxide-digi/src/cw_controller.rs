@@ -567,7 +567,7 @@ impl CwController {
             transcript: Vec::<TranscriptLine>::new(),
             config: self.cfg.clone(),
             jtty: None,
-            vara: None,
+            tnc: None,
             text_rx: self.rx_display(),
             tx_sent: self.sent_chars(now),
             fsq_heard: Vec::new(),
@@ -952,6 +952,9 @@ impl DigiEngine for CwController {
         self.tx_watchdog = false;
         self.tx.set_manual(on);
         self.tx.set_held(false);
+        // Straight keying bypasses the text resampler's output queue. Any
+        // remaining text audio would otherwise prevent the over from ending.
+        self.tx48.clear();
         // A fresh key session starts its read-back blank, so what is on screen
         // is what this hand has sent rather than the last session's.
         if on {
@@ -970,7 +973,10 @@ impl DigiEngine for CwController {
     /// fell to the voice path, which unkeyed the radio but left this latched,
     /// and nothing keyed again until CLEAR (#716).
     fn set_ptt_hold(&mut self, on: bool) -> bool {
-        if self.cat.is_some() || (!on && !self.ptt_hold && !self.tx_active) {
+        // A repeated release still belongs to CW until the engine has drained
+        // the final block and acknowledged it with `on_burst_done`. Falling
+        // back to plain PTT before then unkeys without clearing `keyed`.
+        if self.cat.is_some() || (!on && !self.ptt_hold && !self.tx_active && !self.keyed) {
             return false;
         }
         self.ptt_hold = on;
@@ -1357,8 +1363,38 @@ mod tests {
         assert!(c.set_ptt_hold(false));
         let ended = (0..20).any(|_| c.fill_tx_block(&mut blk));
         assert!(ended, "releasing PTT did not end the over");
-        // A release with no hold is not this mode's to take.
+        // Releases arriving before the engine acknowledges completion must
+        // still be handled here, not by the plain PTT path.
+        assert!(c.set_ptt_hold(false));
+        c.on_burst_done();
+        // A release after completion is not this mode's to take.
         assert!(!c.set_ptt_hold(false));
+    }
+
+    #[test]
+    fn midi_ptt_before_the_first_key_does_not_strand_the_text_audio_queue() {
+        let mut c = CwController::new(cfg(), 48_000.0, None);
+        let mut block = [0.0f32; 480];
+        for _ in 0..3 {
+            assert!(c.set_ptt_hold(true));
+            c.poll(SystemTime::now(), 14_030_000.0);
+            assert!(!c.fill_tx_block(&mut block));
+            c.set_straight(true);
+            c.key_down(true);
+            for _ in 0..10 {
+                assert!(!c.fill_tx_block(&mut block));
+            }
+            assert!(block.iter().any(|v| v.abs() > 0.5));
+            c.key_down(false);
+            assert!(c.set_ptt_hold(false));
+            assert!(
+                (0..20).any(|_| c.fill_tx_block(&mut block)),
+                "PTT-off never completed after switching from text to MIDI keying"
+            );
+            c.on_burst_done();
+            assert!(!c.tx_burst_active());
+            c.set_straight(false);
+        }
     }
 
     /// A refused or aborted over lifts the key and leaves the mode engaged: the

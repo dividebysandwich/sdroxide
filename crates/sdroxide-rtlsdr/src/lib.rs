@@ -40,4 +40,5 @@ mod usb;
 pub use device::{DIRECT_SAMPLING_TOP_HZ, Device, TUNER_MAX_HZ, TUNER_MIN_HZ};
 pub use error::{Error, Result};
 pub use handle::RtlSdrHandle;
+pub use sdroxide_r82xx::{STAGE_MAX_INDEX, Stage, ladder_indices, stage_db, stage_index_for};
 pub use usb::{Eeprom, list, parse_eeprom};

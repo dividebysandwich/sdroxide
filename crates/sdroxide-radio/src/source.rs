@@ -194,6 +194,25 @@ pub trait IqSource: Send {
     /// Human-readable description for logs/UI.
     fn describe(&self) -> String;
 
+    /// Where a recording being played back is, or `None` for every source
+    /// that is a radio. The engine reads this to know a playback is running at
+    /// all.
+    fn playback_status(&self) -> Option<sdroxide_types::PlaybackStatus> {
+        None
+    }
+
+    /// Whether an audio-mode source carries a second ear in `im` for the
+    /// speaker — a stereo recording being played back. Default: no, `im` is
+    /// nothing a speaker should hear.
+    fn audio_stereo(&self) -> bool {
+        false
+    }
+
+    /// Pause, seek or loop a playback. Default: nothing to steer.
+    fn playback_control(&mut self, _cmd: &sdroxide_types::PlaybackCommand) -> Result<()> {
+        Ok(())
+    }
+
     // Hardware controls — meaningful only for real devices; default no-ops.
     fn set_gain_element(&mut self, _name: &str, _db: f64) -> Result<()> {
         Ok(())
@@ -652,6 +671,27 @@ pub trait IqSource: Send {
         false
     }
 
+    /// Whether the engine may centre the I/Q on a dial that has come to rest
+    /// (see `Engine::recentre_after_dwell`).
+    ///
+    /// True on receivers with a centre of their own — a KiwiSDR's 12 kHz
+    /// window moved by a line to the server, an RX-888's downconverter, the
+    /// LO of an RTL-SDR, an SDRplay, an Airspy … — where one retune per
+    /// resting place is the price of hearing a station tuned near the edge
+    /// in the middle of the window. Never acted on where the centre *is* the
+    /// dial ([`Self::center_is_dial`]): that would turn a transceiver's own
+    /// frequency.
+    ///
+    /// Asked once per pass of the engine loop, so it has to be cheap.
+    /// Default: false.
+    // Why: opt-in rather than a list of drivers in the engine: the source is
+    //      the one that knows what a retune costs it.
+    // Why: HDZ 2026-11-10: "das gleiche Verhalten braucht es auch beim RX-888
+    //      … für eigentlich alle Receiver, die ein Panoramafenster haben".
+    fn recentre_on_dwell(&self) -> bool {
+        false
+    }
+
     /// Where a transceiver's I/Q lands when the radio is in CW: on the
     /// frequency its VFO displays (true), or a sidetone pitch below it (false).
     ///
@@ -1032,13 +1072,24 @@ impl ConvertedSource {
     }
 
     /// A station with more than one box in front of it — see [`ConverterPlan`].
-    pub fn with_plan(mut inner: Box<dyn IqSource>, plan: ConverterPlan) -> Self {
+    pub fn with_plan(inner: Box<dyn IqSource>, plan: ConverterPlan) -> Self {
         // Seeded by working *backwards* from where the front end already is.
         // Nothing has told us a dial yet, and the first thing the engine does
         // is read `center_hz()` — so a source that started on a transverter's
         // I.F. has to say so, or the radio comes up on 28 MHz having been
         // opened for 144.
         let step = plan.step_from_hardware(inner.center_hz());
+        Self::with_step(inner, plan, step)
+    }
+
+    /// Open using the dial requested by the caller, which disambiguates
+    /// transverters that share an intermediate frequency.
+    pub fn with_plan_at_dial(inner: Box<dyn IqSource>, plan: ConverterPlan, dial_hz: f64) -> Self {
+        let step = plan.step_for(dial_hz);
+        Self::with_step(inner, plan, step)
+    }
+
+    fn with_step(mut inner: Box<dyn IqSource>, plan: ConverterPlan, step: ConverterStep) -> Self {
         // The band decoder follows the dial too, and until a retune it would
         // otherwise be left on the I.F. (#444).
         if !step.is_identity() {
@@ -1414,6 +1465,12 @@ impl IqSource for ConvertedSource {
         format!("{} (+{:.6} MHz converter)", self.inner.describe(), self.step.rx_offset_hz / 1e6)
     }
 
+    /// A converter moves where the hardware sits, not what a retune costs it:
+    /// the answer is the hardware's.
+    fn recentre_on_dwell(&self) -> bool {
+        self.inner.recentre_on_dwell()
+    }
+
     fn wide_spectrum_db(&mut self, out: &mut Vec<f32>) -> Option<(f64, f64)> {
         let (center, span) = self.inner.wide_spectrum_db(out)?;
         Some((self.down(center), span))
@@ -1775,18 +1832,18 @@ impl IqSource for ConvertedSource {
 }
 
 /// Paces reads so a non-hardware source delivers samples in real time.
-struct Throttle {
+pub(crate) struct Throttle {
     start: Instant,
     emitted: u64,
     rate: f64,
 }
 
 impl Throttle {
-    fn new(rate: f64) -> Self {
+    pub(crate) fn new(rate: f64) -> Self {
         Throttle { start: Instant::now(), emitted: 0, rate }
     }
 
-    fn pace(&mut self, n: usize) {
+    pub(crate) fn pace(&mut self, n: usize) {
         self.emitted += n as u64;
         let due = self.start + Duration::from_secs_f64(self.emitted as f64 / self.rate);
         let now = Instant::now();

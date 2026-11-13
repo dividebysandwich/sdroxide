@@ -20,3 +20,19 @@ pub fn blackman_harris(n: usize) -> Vec<f32> {
         })
         .collect()
 }
+
+/// The derivative of [`blackman_harris`] per sample, for the reassigned
+/// spectrogram's second transform (see `SpectrumAnalyzer::set_reassign`).
+pub fn blackman_harris_derivative(n: usize) -> Vec<f32> {
+    const A: [f32; 4] = [0.35875, 0.48829, 0.14128, 0.01168];
+    if n < 2 {
+        return vec![0.0; n];
+    }
+    let w = TAU / (n as f32 - 1.0);
+    (0..n)
+        .map(|i| {
+            let x = w * i as f32;
+            w * (A[1] * x.sin() - 2.0 * A[2] * (2.0 * x).sin() + 3.0 * A[3] * (3.0 * x).sin())
+        })
+        .collect()
+}

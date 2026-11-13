@@ -1,0 +1,22 @@
+[package]
+name = "sdroxide-sonde"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Native-only: the radiosonde (Vaisala RS41) decoder runs server-side in the
+# engine, off a dedicated downconversion of the raw I/Q, like the HFDL and
+# QO-100 lanes. Not linked by the wasm client.
+#
+# The demodulation and frame decoding are `airframesio/xng`'s `xng-mode-sonde`
+# (MIT/Apache-2.0), a clean-room implementation anchored on rs1729/RS (see that
+# crate's PROVENANCE.md). This crate is the threading wrapper and the mapping
+# onto the wire types only; the protocol facts live upstream.
+
+[dependencies]
+sdroxide-types.workspace = true
+sdroxide-dsp.workspace = true
+crossbeam-channel.workspace = true
+tracing.workspace = true
+xng-mode-sonde.workspace = true
+rustfft.workspace = true

@@ -139,7 +139,7 @@ impl HellController {
             transcript: Vec::<TranscriptLine>::new(),
             config: self.cfg.clone(),
             jtty: None,
-            vara: None,
+            tnc: None,
             // Deliberately empty: Hell is read by eye, not decoded.
             text_rx: String::new(),
             tx_sent: self.tx.sent_chars(),

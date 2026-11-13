@@ -60,6 +60,30 @@ pub(in crate::app) fn settings_ui_tab(
         enum_combo(ui, "ui-win-style", &mut cfg.window_style, &ChromeStyle::ALL, ChromeStyle::tr);
         ui.end_row();
 
+        // Tooltip timing: a dense strip whose tooltips explain its controls
+        // wants them sooner than egui's half second for some operators and not
+        // at all for others.
+        // Why: HDZ 2026-11-07: "nicht ganz so snappy, wie sie sein müsste",
+        //      then "manchmal stören die aber auch" — a setting, not a value.
+        ui.label(tr!("settings-ui-tooltip-delay"))
+            .on_hover_text(tr!("settings-ui-tooltip-delay-hint"));
+        crate::chrome::slider(
+            ui,
+            egui::Slider::new(&mut cfg.tooltip_delay_s, sdroxide_types::TOOLTIP_DELAY_RANGE_S)
+                .step_by(0.05)
+                .custom_formatter(|v, _| format!("{v:.2} s")),
+        );
+        ui.end_row();
+        ui.label(tr!("settings-ui-tooltip-grace"))
+            .on_hover_text(tr!("settings-ui-tooltip-grace-hint"));
+        crate::chrome::slider(
+            ui,
+            egui::Slider::new(&mut cfg.tooltip_grace_s, sdroxide_types::TOOLTIP_GRACE_RANGE_S)
+                .step_by(0.05)
+                .custom_formatter(|v, _| format!("{v:.2} s")),
+        );
+        ui.end_row();
+
         // The **undocked** modules. A window arrangement, chosen once and kept,
         // rather than something reached for mid-QSO — so it lives here with the
         // other display settings. One row per [`DetachableModule`], so the next
@@ -292,6 +316,34 @@ pub(in crate::app) fn settings_ui_tab(
             tr!("settings-ui-broadcast-schedule-download"),
         )
         .on_hover_text(tr!("settings-ui-broadcast-schedule-download", "hint"));
+        // Aoki's list: imported by hand, never fetched (no licence for reuse,
+        // its pages ask not to be crawled), so it makes no request at all.
+        // Why: HDZ 2026-11-11: "die Datenschutzerklärung braucht bei Katalogen
+        //      ein aktives Vorgehen".
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            let result_id = egui::Id::new("settings-ui-aoki-import-result");
+            if crate::chrome::chip(ui, false, tr!("settings-ui-aoki-import"))
+                .on_hover_text(tr!("settings-ui-aoki-import", "hint"))
+                .clicked()
+                && let Some(path) =
+                    rfd::FileDialog::new().add_filter("Aoki list (text)", &["txt"]).pick_file()
+            {
+                let r = std::fs::read(&path)
+                    .map_err(|e| format!("{}: {e}", path.display()))
+                    .and_then(|b| crate::catalogs::import_aoki(&b));
+                ui.ctx().data_mut(|d| d.insert_temp(result_id, Some(r)));
+            }
+            let last: Option<Result<usize, String>> =
+                ui.ctx().data(|d| d.get_temp(result_id)).unwrap_or(None);
+            let status = match last {
+                Some(Ok(n)) => tr!("settings-ui-aoki-imported", n = n as i64),
+                Some(Err(e)) => tr!("settings-ui-aoki-refused", why = e),
+                None if crate::catalogs::aoki_imported() => tr!("settings-ui-aoki-present"),
+                None => tr!("settings-ui-aoki-absent"),
+            };
+            ui.label(RichText::new(status).weak());
+        });
     }
 
     let Some(cloud_march) = cloud_march else { return };
@@ -551,7 +603,7 @@ pub(in crate::app) fn speech_settings(
 
 /// The language picker: the system's language first, then every language a
 /// translation is carried for, each under its own name.
-fn language_combo(ui: &mut egui::Ui, cur: &mut sdroxide_types::UiLanguage) {
+pub(in crate::app) fn language_combo(ui: &mut egui::Ui, cur: &mut sdroxide_types::UiLanguage) {
     use sdroxide_types::UiLanguage;
     let system = tr!("settings-ui-language-system", language = crate::i18n::system_language_name());
     let langs = crate::i18n::languages();

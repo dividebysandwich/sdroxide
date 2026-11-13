@@ -38,7 +38,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::Receiver;
 use rtrb::{Consumer, Producer};
 
-use crate::net::{Ctrl, RxStats, SeqTracker, ThreadCtx, WATCHDOG, hex_head, push_iq};
+use crate::net::{Ctrl, RxMsg, RxStats, SeqTracker, ThreadCtx, WATCHDOG, hex_head, push_iq};
 use sdroxide_types::HpsdrOcPlan;
 
 /// UDP ports. Host→radio use these as the *destination* port; radio→host DDC IQ
@@ -83,10 +83,10 @@ pub const DUC_SAMPLES_PER_PKT: usize = 240;
 /// some of every burst and ran dry between them: choppy SSB on a Brick2 (#659).
 /// piHPSDR paces the same stream to the same interval.
 const DUC_INTERVAL: Duration = Duration::from_micros(1250);
-/// How long the receive socket waits while keyed: under [`DUC_INTERVAL`], so the
-/// send clock is serviced even when no receive datagram wakes the loop.
+/// How long the loop waits for a datagram while keyed: under [`DUC_INTERVAL`],
+/// so the send clock is serviced even when no receive datagram wakes the loop.
 const KEYED_READ_TIMEOUT: Duration = Duration::from_micros(500);
-/// The receive socket's wait otherwise — what `HpsdrBoard::open` sets.
+/// The loop's wait otherwise.
 const IDLE_READ_TIMEOUT: Duration = Duration::from_millis(2);
 /// Header bytes preceding the I/Q payload in a DDC (RX) datagram.
 pub const DDC_IQ_HEADER_LEN: usize = 16;
@@ -834,11 +834,21 @@ impl P2Thread {
             port::DDC_IQ_BASE + 7
         );
 
+        // From here the socket is read by a thread of its own (see
+        // `net::spawn_receiver`); this loop only sends on it.
+        let (datagrams, _stop_rx_on_exit) =
+            match crate::net::start_receiver(&self.socket, "hpsdr-p2-rx") {
+                Ok(r) => r,
+                Err(e) => {
+                    self.stop_stream(&format!("receive thread: {e}"));
+                    return;
+                }
+            };
+
         let mut last_watchdog = Instant::now();
         let mut rx_scratch: Vec<f32> = Vec::with_capacity(512);
         let mut tx_scratch: Vec<f32> = Vec::with_capacity(DUC_SAMPLES_PER_PKT * 2);
         let mut next_duc = Instant::now();
-        let mut buf = [0u8; 2048];
         let mut stats = RxStats::new(2, self.rate_khz as f64 * 1000.0);
         let mut logged_first_rx = false;
         let mut logged_first_tx = false;
@@ -932,14 +942,12 @@ impl P2Thread {
                     Ctrl::TxOn(hz) => {
                         self.tx_freq = hz;
                         self.ptt = true;
-                        let _ = self.socket.set_read_timeout(Some(KEYED_READ_TIMEOUT));
                         self.send_duc_command();
                         freq_changed = true;
                         tracing::info!("HPSDR P2: MOX on, TX NCO {hz:.0} Hz");
                     }
                     Ctrl::TxOff => {
                         self.ptt = false;
-                        let _ = self.socket.set_read_timeout(Some(IDLE_READ_TIMEOUT));
                         // Paced, the ring now still holds the end of the
                         // over: drop it, as Protocol 1 does, rather than key
                         // the next one up with a stale tail.
@@ -964,8 +972,10 @@ impl P2Thread {
                 self.send_high_priority();
             }
 
-            match self.socket.recv_from(&mut buf) {
-                Ok((n, src)) => {
+            let wait = if self.ptt { KEYED_READ_TIMEOUT } else { IDLE_READ_TIMEOUT };
+            match datagrams.recv_timeout(wait) {
+                Ok(RxMsg::Datagram(buf, src)) => {
+                    let n = buf.len();
                     let p = src.port();
                     let ddc = p.checked_sub(port::DDC_IQ_BASE).filter(|&d| d < MAX_DDCS as u16);
                     // MOX is connection-wide but only DDC 0 owns the
@@ -1028,11 +1038,13 @@ impl P2Thread {
                         );
                     }
                 }
-                Err(ref e)
-                    if e.kind() == std::io::ErrorKind::WouldBlock
-                        || e.kind() == std::io::ErrorKind::TimedOut => {}
-                Err(e) => {
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+                Ok(RxMsg::Failed(e)) => {
                     self.stop_stream(&format!("recv error: {e}"));
+                    return;
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                    self.stop_stream("receive thread ended");
                     return;
                 }
             }

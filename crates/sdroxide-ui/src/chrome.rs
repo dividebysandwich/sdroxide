@@ -27,6 +27,27 @@ pub const MODULE_BORDER: f32 = 1.0;
 /// A panel with a pink border and cut corners (top-right + bottom-left),
 /// sitting on the darker page background.
 pub fn angled_frame<R>(ui: &mut Ui, accent: Color32, add: impl FnOnce(&mut Ui) -> R) -> R {
+    angled_frame_in(ui, accent, false, add)
+}
+
+/// [`angled_frame`] that also keeps to the height it is given: the frame is
+/// drawn whole at that height and what does not fit is cut off inside it,
+/// rather than the frame growing down past the window's edge with its bottom
+/// line lost. For the operating panel, which the operator sizes with the
+/// divider above it (HDZ 2026-11-09, the panels under a divider left where it
+/// was: „im normalen Modus stimmt links nicht und rechts auch nicht“).
+pub fn angled_frame_held<R>(ui: &mut Ui, accent: Color32, add: impl FnOnce(&mut Ui) -> R) -> R {
+    angled_frame_in(ui, accent, true, add)
+}
+
+fn angled_frame_in<R>(
+    ui: &mut Ui,
+    accent: Color32,
+    held: bool,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    let avail_h = ui.available_height();
+    let top = ui.cursor().top();
     // A Frame measures its content with UNBOUNDED width to auto-size, and
     // `horizontal_wrapped` inside that pass never wraps (nothing to wrap
     // against). Capture the panel's real width here, before the frame, and
@@ -45,10 +66,17 @@ pub fn angled_frame<R>(ui: &mut Ui, accent: Color32, add: impl FnOnce(&mut Ui) -
     // is only known after the content ran — so reserve a slot in the paint
     // list now, leave the frame's own fill transparent, and set the gradient
     // into the slot afterwards, where it renders *under* the content.
-    let grad_slot =
-        (theme::window_style() == ChromeStyle::Gradient).then(|| ui.painter().add(Shape::Noop));
+    //
+    // The plain fill goes through the same slot: a row that does not wrap still
+    // grows the frame's measured rect past `avail`, and a fill and border drawn
+    // around that rect ran on into whatever sits beside the panel — the docked
+    // band selector, 6–53 pt deep (HDZ 2026-11-08: „die rechten Kanten sind
+    // nicht ganz richtig … unten geht das Feld zu weit in die ausgepoppte
+    // Version“). Both are drawn at the width the panel was given instead.
+    let gradient = theme::window_style() == ChromeStyle::Gradient;
+    let fill_slot = ui.painter().add(Shape::Noop);
     let inner = egui::Frame::new()
-        .fill(if grad_slot.is_some() { Color32::TRANSPARENT } else { theme::PANEL() })
+        .fill(Color32::TRANSPARENT)
         .corner_radius(window_corner_radius())
         .inner_margin(egui::Margin::symmetric(margin, 8))
         .show(ui, |ui| {
@@ -58,12 +86,36 @@ pub fn angled_frame<R>(ui: &mut Ui, accent: Color32, add: impl FnOnce(&mut Ui) -
             let w = (avail - 2.0 * margin as f32).max(120.0);
             ui.set_min_width(w);
             ui.set_max_width(w);
+            // Content that does not wrap (a row of fixed chips, a field sized
+            // by hand) is cut a few points inside the frame's line rather than
+            // painted over it and on past the window's edge.
+            // Why: HDZ 2026-11-08: "FT8 im Desktop franst ein bisschen …
+            //      der rote Rahmen muss doch berücksichtigt werden".
+            let inside = (margin as f32 - 3.0).max(0.0);
+            let m = ui.max_rect();
+            let c = ui.clip_rect();
+            // Held to its height: cut a few points inside the bottom line too.
+            let bottom = if held { top + avail_h - 3.0 } else { c.bottom() };
+            ui.set_clip_rect(c.intersect(Rect::from_x_y_ranges(
+                (m.left() - inside)..=(m.right() + inside),
+                c.top()..=bottom,
+            )));
             add(ui)
         });
-    if let Some(slot) = grad_slot {
-        ui.painter().set(slot, panel_gradient(inner.response.rect));
+    let mut rect = inner.response.rect;
+    rect.max.x = rect.max.x.min(rect.min.x + avail);
+    if held && avail_h.is_finite() {
+        rect.max.y = rect.max.y.min(top + avail_h);
     }
-    paint_cut_border(ui.painter(), inner.response.rect, accent, theme::BG_DEEP());
+    ui.painter().set(
+        fill_slot,
+        if gradient {
+            panel_gradient(rect)
+        } else {
+            Shape::rect_filled(rect, window_corner_radius(), theme::PANEL())
+        },
+    );
+    paint_cut_border(ui.painter(), rect, accent, theme::BG_DEEP());
     inner.inner
 }
 
@@ -277,6 +329,13 @@ pub fn paint_cut_border(p: &Painter, rect: Rect, color: Color32, mask: Color32) 
 fn paint_angled_border(p: &Painter, rect: Rect, color: Color32, mask: Color32) {
     let cut = FRAME_CUT.min(rect.height() * 0.4);
     let (l, r, t, b) = (rect.left(), rect.right(), rect.top(), rect.bottom());
+    // The line runs half a stroke inside the edge, so all of it is inside
+    // `rect`, as `StrokeKind::Inside` puts it for the other styles. On the
+    // edge itself half of it was outside, and where a panel ends at the
+    // window's edge (or at its clip) that half was cut off and the right
+    // border all but gone (HDZ 2026-11-09, FT8 panel).
+    let half = BORDER_W / 2.0;
+    let (lo, ro, to, bo) = (l + half, r - half, t + half, b - half);
 
     // Mask the square corners so the cut reads as a real bevel.
     p.add(Shape::convex_polygon(
@@ -291,15 +350,18 @@ fn paint_angled_border(p: &Painter, rect: Rect, color: Color32, mask: Color32) {
     ));
 
     let outline = vec![
-        pos2(l, t),
-        pos2(r - cut, t),
-        pos2(r, t + cut),
-        pos2(r, b),
-        pos2(l + cut, b),
-        pos2(l, b - cut),
+        pos2(lo, to),
+        pos2(ro - cut, to),
+        pos2(ro, to + cut),
+        pos2(ro, bo),
+        pos2(lo + cut, bo),
+        pos2(lo, bo - cut),
     ];
-    p.add(Shape::closed_line(outline, Stroke::new(1.2, color)));
+    p.add(Shape::closed_line(outline, Stroke::new(BORDER_W, color)));
 }
+
+/// The width of a window's frame line in the Angled style.
+const BORDER_W: f32 = 1.2;
 
 /// 45° yellow/black hazard stripes filling `rect` (clipped to it).
 ///
@@ -657,6 +719,41 @@ pub fn slider(ui: &mut Ui, slider: egui::Slider<'_>) -> Response {
     // No caller of this one shows a value, so the rail is the whole width.
     let width = fit_rail(ui, 0.0);
     skinned_slider(ui, Some(width), slider)
+}
+
+/// Adjust a ribbon slider by whole wheel detents while hovered, consuming
+/// the gesture so a surrounding scroll area does not move too.
+pub fn slider_wheel<Num: egui::emath::Numeric>(
+    mut response: Response,
+    value: &mut Num,
+    range: std::ops::RangeInclusive<Num>,
+    step: f64,
+) -> Response {
+    let key = response.id.with("wheel-remainder");
+    if !response.hovered() || !response.enabled() {
+        response.ctx.data_mut(|d| d.remove::<f32>(key));
+        return response;
+    }
+    if response.ctx.input(|i| i.modifiers.ctrl || i.modifiers.command) {
+        return response;
+    }
+    let mut remainder = response.ctx.data_mut(|d| d.get_temp::<f32>(key).unwrap_or_default());
+    let detents = crate::widgets::wheel_detents_ctx(&response.ctx, false, &mut remainder);
+    response.ctx.data_mut(|d| d.insert_temp(key, remainder));
+    response.ctx.input_mut(|i| {
+        i.events.retain(|event| !matches!(event, egui::Event::MouseWheel { .. }));
+        i.smooth_scroll_delta = egui::Vec2::ZERO;
+    });
+    if detents != 0.0 {
+        let old = value.to_f64();
+        let next =
+            (old + f64::from(detents) * step).clamp(range.start().to_f64(), range.end().to_f64());
+        *value = Num::from_f64(next);
+        if value.to_f64() != old {
+            response.mark_changed();
+        }
+    }
+    response
 }
 
 /// [`slider`] for a rail that runs up the box rather than across it.
@@ -1364,6 +1461,54 @@ fn paint_tick_box(ui: &Ui, rect: Rect, on: bool, v: &egui::style::WidgetVisuals)
 /// (grips stacked down it, horizontal resize cursor); a wide, short one divides
 /// two rows. `bg` fills the strip first, for handles that sit on the page
 /// background rather than inside a panel.
+/// A wrapping row of chips in a **bottom-up** layout, allotted the height it
+/// wrapped to last frame.
+///
+/// A bottom-up layout places a row by the height it is started with, and a
+/// `horizontal_wrapped` row starts at one line and then grows *downward*: a
+/// second line hangs off the bottom edge, past the panel's frame. Here the row
+/// is started at last frame's measured height, so a row that wraps sits on the
+/// edge with all of its lines above it; the first frame of a change is one
+/// frame late, and a repaint is asked for so it is never seen.
+// Why: HDZ 2026-11-08 (screenshot, tablet layout): "in Tablet JS8 fehlen noch
+//      zwei Knöpfe" — EMPFANG LEEREN and SAVE had wrapped below the window.
+pub fn wrapped_row_up<R>(ui: &mut Ui, salt: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let id = ui.id().with(salt).with("wrapped-row-up-h");
+    let start = ui.spacing().interact_size.y;
+    let h = ui.ctx().data(|d| d.get_temp::<f32>(id)).unwrap_or(start);
+    // Rows from the top of the allotted height: centred, the first line
+    // started half-way down a taller allotment and the row grew frame by frame.
+    let layout = egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true);
+    // Capped at the allotted height, so something in the row that sizes to
+    // the height there is (a vertical `separator`) takes the row's height and
+    // not the column's — which it would measure, report, and be given again
+    // next frame, a little more each time.
+    let r = ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), h), layout, |ui| {
+        ui.set_max_height(h);
+        add(ui)
+    });
+    let got = r.response.rect.height().max(start);
+    if (got - h).abs() > 0.5 {
+        ui.ctx().data_mut(|d| d.insert_temp(id, got));
+        ui.ctx().request_repaint();
+    }
+    r.inner
+}
+
+/// A vertical rule between groups of chips in a [`wrapped_row_up`] row.
+///
+/// `ui.separator()` must not go there: in a wrapping row it is as tall as the
+/// height left in the row's `Ui`, which is the height the row was given, so
+/// the row reports that height plus its spacing, is given it next frame, and
+/// grows every frame until the controls above it leave the window — the JS8
+/// composer was drawn at y = −204 in a 768-point window. This rule is one chip
+/// tall, whatever the row is given.
+pub fn row_rule(ui: &mut Ui) {
+    let (r, _) =
+        ui.allocate_exact_size(egui::vec2(9.0, ui.spacing().interact_size.y), Sense::hover());
+    ui.painter().vline(r.center().x, r.y_range(), ui.visuals().widgets.noninteractive.bg_stroke);
+}
+
 pub fn split_handle(ui: &mut Ui, size: egui::Vec2, bg: Option<Color32>) -> Response {
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click_and_drag());
     // A strip taller than it is wide separates left from right.
@@ -1524,6 +1669,34 @@ pub fn chip_link(ui: &mut Ui, selected: bool, size: egui::Vec2) -> Response {
         let p = ui.painter();
         for dx in [-0.55, 0.55] {
             p.circle_stroke(Pos2::new(c.x + dx * r, c.y), r, stroke);
+        }
+    }
+    resp
+}
+
+/// A chip carrying a small box split into columns — "another pane" — instead
+/// of a label, at an exact size. Painted rather than typed for the reason
+/// [`chip_link`] gives, and inked the same way.
+///
+/// The pane row's way to open a column beside the one it sits on.
+// Why: HDZ 2026-11-04: the "+" that opened a pane read as "add a radio",
+//      which "+" means everywhere else in the program ("das Symbol ist nur
+//      unglücklich gewählt"); his idea: "ein kleines Symbol, drei senkrechte
+//      Linien in Kästchen".
+// Invariant: three columns — the frame's two sides and two dividers inside.
+pub fn chip_columns(ui: &mut Ui, size: egui::Vec2) -> Response {
+    let resp = chip_impl(ui, false, RichText::new(""), None, Sense::click(), Some(size));
+    if ui.is_rect_visible(resp.rect) {
+        let ink = ui.style().interact_selectable(&resp, false).fg_stroke.color;
+        let stroke = Stroke::new((size.y * 0.07).clamp(1.2, 2.0), ink);
+        let h = resp.rect.height() * 0.48;
+        let w = h * 1.3;
+        let frame = egui::Rect::from_center_size(resp.rect.center(), vec2(w, h));
+        let p = ui.painter();
+        p.rect_stroke(frame, 1.0, stroke, egui::StrokeKind::Middle);
+        for k in [1.0, 2.0] {
+            let x = frame.left() + w * k / 3.0;
+            p.line_segment([Pos2::new(x, frame.top()), Pos2::new(x, frame.bottom())], stroke);
         }
     }
     resp
@@ -2483,6 +2656,152 @@ fn tab_shape(
 
 #[cfg(test)]
 mod tests {
+    struct WheelSlider {
+        ctx: egui::Context,
+        value: f32,
+        rect: egui::Rect,
+        vertical: bool,
+        enabled: bool,
+        range: std::ops::RangeInclusive<f32>,
+        step: f64,
+    }
+
+    impl WheelSlider {
+        fn new(vertical: bool) -> Self {
+            let mut s = Self {
+                ctx: egui::Context::default(),
+                value: 0.5,
+                rect: egui::Rect::NOTHING,
+                vertical,
+                enabled: true,
+                range: 0.0..=1.0,
+                step: 0.01,
+            };
+            s.frame(Vec::new());
+            s
+        }
+
+        fn frame(&mut self, events: Vec<egui::Event>) -> (bool, usize) {
+            let mut changed = false;
+            let mut remaining = 0;
+            self.ctx
+                .run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(400.0, 400.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        ui.add_enabled_ui(self.enabled, |ui| {
+                            let mut rail = egui::Slider::new(&mut self.value, self.range.clone())
+                                .show_value(false);
+                            if self.vertical {
+                                rail = rail.vertical();
+                            }
+                            let response = if self.vertical {
+                                slider_vertical(ui, rail)
+                            } else {
+                                slider_readout(ui, 50.0, rail.show_value(true))
+                            };
+                            let response = slider_wheel(
+                                response,
+                                &mut self.value,
+                                self.range.clone(),
+                                self.step,
+                            );
+                            self.rect = response.rect;
+                            changed = response.changed();
+                            remaining = ui.input(|i| {
+                                if changed {
+                                    assert_eq!(i.smooth_scroll_delta, egui::Vec2::ZERO);
+                                }
+                                i.events
+                                    .iter()
+                                    .filter(|e| matches!(e, egui::Event::MouseWheel { .. }))
+                                    .count()
+                            });
+                        });
+                    },
+                )
+                .drop_without_applying_deltas();
+            (changed, remaining)
+        }
+
+        fn scroll(&mut self, unit: egui::MouseWheelUnit, delta: f32) -> (bool, usize) {
+            self.frame(vec![
+                egui::Event::PointerMoved(self.rect.center()),
+                egui::Event::MouseWheel {
+                    unit,
+                    delta: egui::vec2(0.0, delta),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: Default::default(),
+                },
+            ])
+        }
+    }
+
+    #[test]
+    fn ribbon_slider_wheel_steps_clamps_and_consumes_in_both_orientations() {
+        for vertical in [false, true] {
+            let mut s = WheelSlider::new(vertical);
+            assert_eq!(s.scroll(egui::MouseWheelUnit::Line, 1.0), (true, 0));
+            assert!((s.value - 0.51).abs() < 1e-6);
+            assert_eq!(s.scroll(egui::MouseWheelUnit::Point, -100.0), (true, 0));
+            assert!((s.value - 0.5).abs() < 1e-6);
+            s.value = 1.0;
+            assert_eq!(s.scroll(egui::MouseWheelUnit::Line, 1.0), (false, 0));
+            assert_eq!(s.value, 1.0);
+            s.value = 0.0;
+            assert_eq!(s.scroll(egui::MouseWheelUnit::Line, -1.0), (false, 0));
+            assert_eq!(s.value, 0.0);
+        }
+    }
+
+    #[test]
+    fn ribbon_slider_wheel_banks_fine_motion_and_ignores_disabled_or_unhovered() {
+        let mut s = WheelSlider::new(false);
+        for _ in 0..2 {
+            assert_eq!(s.scroll(egui::MouseWheelUnit::Point, 10.0), (false, 0));
+        }
+        assert_eq!(s.scroll(egui::MouseWheelUnit::Point, 10.0), (true, 0));
+        assert!((s.value - 0.51).abs() < 1e-6);
+        s.enabled = false;
+        assert_eq!(s.scroll(egui::MouseWheelUnit::Line, 1.0), (false, 1));
+        s.enabled = true;
+        let events = vec![
+            egui::Event::PointerMoved(egui::pos2(390.0, 390.0)),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Line,
+                delta: egui::vec2(0.0, 1.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: Default::default(),
+            },
+        ];
+        assert_eq!(s.frame(events), (false, 1));
+        assert!((s.value - 0.51).abs() < 1e-6);
+    }
+
+    #[test]
+    fn ribbon_slider_wheel_uses_db_or_hardware_steps_and_resets_after_leaving() {
+        let mut s = WheelSlider::new(false);
+        s.range = -30.0..=30.0;
+        s.value = -10.0;
+        s.step = 2.5;
+        assert_eq!(s.scroll(egui::MouseWheelUnit::Line, 1.0), (true, 0));
+        assert_eq!(s.value, -7.5);
+        s.step = 1.0;
+        assert_eq!(s.scroll(egui::MouseWheelUnit::Line, -1.0), (true, 0));
+        assert_eq!(s.value, -8.5);
+        assert_eq!(s.scroll(egui::MouseWheelUnit::Point, 15.0), (false, 0));
+        s.frame(vec![egui::Event::PointerMoved(egui::pos2(390.0, 390.0))]);
+        assert_eq!(s.scroll(egui::MouseWheelUnit::Point, 15.0), (false, 0));
+        assert_eq!(s.value, -8.5);
+        assert_eq!(s.scroll(egui::MouseWheelUnit::Point, 15.0), (true, 0));
+        assert_eq!(s.value, -7.5);
+    }
     use super::*;
 
     /// Issue #653: in a split view's half-width column the radio strip wraps,
@@ -3058,6 +3377,64 @@ mod tests {
                 pos2(10.0, 44.0),
                 pos2(10.0, 25.0),
             ]
+        );
+    }
+
+    /// A row that wraps to several lines in a bottom-up layout keeps all of
+    /// them above the bottom edge (from the second frame on), where
+    /// `horizontal_wrapped` hangs every line after the first below it.
+    #[test]
+    fn a_wrapped_row_in_a_bottom_up_layout_stays_above_the_edge() {
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx);
+        let area = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(260.0, 300.0));
+        let pass = |wrapped_up: bool| -> f32 {
+            let mut bottom = 0.0;
+            ctx.begin_pass(egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::pos2(0.0, 0.0),
+                    egui::vec2(800.0, 600.0),
+                )),
+                ..Default::default()
+            });
+            egui::Area::new(egui::Id::new("t")).fixed_pos(area.min).show(&ctx, |ui| {
+                ui.set_min_size(area.size());
+                ui.set_max_size(area.size());
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                    let chips = |ui: &mut egui::Ui| {
+                        for label in
+                            ["CQ", "HB", "SNR?", "GRID?", "HEARING?", "STATUS?", "RR", "73"]
+                        {
+                            let _ = chip(ui, false, label);
+                        }
+                        // JS8's row has one: it sizes to the height there is.
+                        ui.separator();
+                        let _ = chip(ui, false, "CLEAR");
+                    };
+                    let r = if wrapped_up {
+                        ui.scope(|ui| wrapped_row_up(ui, "t", chips)).response
+                    } else {
+                        ui.horizontal_wrapped(chips).response
+                    };
+                    bottom = r.rect.bottom();
+                });
+            });
+            ctx.end_pass().drop_without_applying_deltas();
+            bottom
+        };
+        pass(true);
+        pass(true);
+        let fixed = pass(true);
+        assert_eq!(fixed, pass(true), "the row still moves from frame to frame");
+        assert!(
+            fixed <= area.bottom() + 0.5,
+            "the wrapped row ends at {fixed}, below {}",
+            area.bottom()
+        );
+        let plain = pass(false);
+        assert!(
+            plain > area.bottom() + 1.0,
+            "the plain row should hang below the edge, ends at {plain}"
         );
     }
 }

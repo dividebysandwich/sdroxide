@@ -77,6 +77,7 @@ fn cfg_rows(span_hz: Option<f64>, fft: u32, rows: u16) -> Command {
         viewport: span_hz.map(|s| (CENTER - s / 2.0, CENTER + s / 2.0)),
         fps: 30,
         avg_tc: 0.0,
+        ..Default::default()
     })
 }
 

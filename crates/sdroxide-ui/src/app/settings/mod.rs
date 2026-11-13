@@ -38,7 +38,7 @@ use sdroxide_types::{Command, LoginTarget, LookupProvider, NetworkConfig, Upload
 
 use self::alerts::alerts_settings;
 use self::controls::settings_controls_tab;
-use self::general::{device_combo, region_combo, remote_access_settings};
+use self::general::{device_combo, region_combo, remote_access_settings, signed_in_station};
 use self::net::{
     broadcast_stations_settings, net_heading, net_row, net_secret, operator_identity_note,
     settings_freedv_tab,
@@ -70,7 +70,7 @@ use crate::theme::ThemedScroll as _;
 /// (keyboard/mouse bindings), the network cockpit (spot feeds + uploads), the
 /// built-in TCI server, and — the other direction — the sdroxide server this
 /// screen connects *out* to.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::app) enum SettingsTab {
     General,
     Radio,
@@ -371,6 +371,10 @@ pub(in crate::app) struct SettingsIo<'a> {
     /// Set when the operator asks for the TX Audio window, which took over
     /// the transmit EQ that used to sit in this tab.
     open_tx_audio: &'a mut bool,
+    /// Set when the operator asks for the station check from the General tab.
+    open_check: &'a mut bool,
+    /// Set when the operator asks for the welcome walkthrough again.
+    open_welcome: &'a mut bool,
     tab: &'a mut SettingsTab,
     /// Which logging service the Uploads tab's own strip is showing. Its own
     /// field rather than state inside the tab's body, because the body is drawn
@@ -860,6 +864,11 @@ impl SdroxideApp {
             // Straight to the clipboard, which is what the button that asked
             // for it promised — from here it goes into a bug report.
             A::Report(_, text) => ctx.copy_text(text),
+            // The public-SDR map's receiver check, filed under its row by the
+            // address it carries back.
+            A::PublicSdrCheck { network, address, result } => {
+                self.public_sdr_check_answered(network, &address, &result)
+            }
             // The far end does not answer device questions. Said once, remembered
             // for the session: the controls that ask grey out with a reason
             // instead of each one having to discover it for itself.
@@ -1041,6 +1050,8 @@ impl SdroxideApp {
         let digi_seeded = self.digi_cfg_seeded;
         let mut region_edit = self.region_edit;
         let mut open_tx_audio = false;
+        let mut open_check = false;
+        let mut open_welcome = false;
         let mut net_edit = self.net_cfg_edit.clone();
         let mut net_cmds = self.net_cluster_cmds.clone();
         let mut rbn_cmds = self.net_rbn_cmds.clone();
@@ -1258,6 +1269,8 @@ impl SdroxideApp {
                             radio_name_edit: &mut radio_name_edit,
                             region_edit: &mut region_edit,
                             open_tx_audio: &mut open_tx_audio,
+                            open_check: &mut open_check,
+                            open_welcome: &mut open_welcome,
                             tab: &mut tab,
                             upload_tab: &mut upload_tab,
                         },
@@ -1671,6 +1684,8 @@ impl SdroxideApp {
             // diff next frame; waterfall speed is read each frame. Persist too.
             self.ui_settings = ui_edit;
             persist_ui_settings(&self.ui_settings);
+            // The channel plans follow on this frame, like the region below.
+            crate::widgets::channels::set_country(self.ui_settings.country);
         }
         if &speech_edit != self.speech.settings() {
             // Live too: rate and volume reach the running worker, and only a
@@ -1740,6 +1755,12 @@ impl SdroxideApp {
         }
         if open_tx_audio {
             self.tx_audio.open = true;
+        }
+        if open_check {
+            self.show_check = true;
+        }
+        if open_welcome {
+            self.welcome.open();
         }
     }
 
@@ -1844,6 +1865,24 @@ impl SdroxideApp {
                 });
                 ui.add_space(6.0);
                 ui.label(RichText::new(tr!("settings-your-callsign-grid-shared-across")).weak());
+                ui.add_space(6.0);
+                // Here because this is the page an operator opens when
+                // something about the station is not right, and because the
+                // first two lines of the check are the two boxes above.
+                ui.horizontal(|ui| {
+                    if crate::chrome::chip(ui, false, tr!("check-open"))
+                        .on_hover_text(tr!("check-open", "hint"))
+                        .clicked()
+                    {
+                        *io.open_check = true;
+                    }
+                    if crate::chrome::chip(ui, false, tr!("welcome-open"))
+                        .on_hover_text(tr!("welcome-open", "hint"))
+                        .clicked()
+                    {
+                        *io.open_welcome = true;
+                    }
+                });
 
                 // Its own grid, outside the enabled-ui above: the region comes
                 // from `config.toml` by way of the station announcement, not
@@ -1863,6 +1902,47 @@ impl SdroxideApp {
                     RichText::new(tr!("settings-region-note", region = io.region_edit.number()))
                         .weak(),
                 );
+                // The country: national law, which the IARU region does not
+                // reach — the licence-free channel plans.
+                // Why: HDZ 2026-11-09: "Freenet und PMR als Bandplan mit der
+                //      Regions-Erklärung Deutschland in Preferences, wo der
+                //      Locator ist … das Land steuert die CB-, Freenet- und
+                //      PMR-Kanalraster".
+                ui.add_space(8.0);
+                egui::Grid::new("general-country-grid").num_columns(2).spacing([12.0, 8.0]).show(
+                    ui,
+                    |ui| {
+                        use crate::widgets::channels::{Country, resolve};
+                        ui.label(tr!("settings-country"));
+                        let fixed = |c: Country| match c {
+                            Country::Germany => tr!("settings-country-germany"),
+                            Country::Off | Country::System => tr!("settings-country-off"),
+                        };
+                        // "Like this computer" names what it comes to, so the
+                        // operator sees which plans that is without picking.
+                        let name = |c: Country| match c {
+                            Country::System => tr!(
+                                "settings-country-system",
+                                country = fixed(resolve(Country::System))
+                            ),
+                            c => fixed(c),
+                        };
+                        let country = &mut io.ui_edit.country;
+                        ComboBox::from_id_salt("country")
+                            .width(360.0)
+                            .selected_text(name(*country))
+                            .show_styled(ui, |ui| {
+                                for c in Country::ALL {
+                                    if ui.selectable_label(*country == c, name(c)).clicked() {
+                                        *country = c;
+                                    }
+                                }
+                            });
+                        ui.end_row();
+                    },
+                );
+                ui.add_space(6.0);
+                ui.label(RichText::new(tr!("settings-country-note")).weak());
                 ui.add_space(6.0);
                 self.settings_band_plan_file(ui, cmds);
 
@@ -1892,6 +1972,18 @@ impl SdroxideApp {
                 // pair of pickers on a shared page could only describe one of
                 // them (issue #474).
                 self.settings_user_audio(ui, io.audio_pick, io.routing_pick);
+
+                // Which station this client is signed in to, and the way out of
+                // it. Above the server-side blocks below, because those are drawn
+                // only for a station in this process while this is drawn for a
+                // client of one anywhere else — which is the browser, where the
+                // sign-in cookie is the whole mechanism.
+                if let Some(url) = self.ctrl.peer_url() {
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+                    signed_in_station(ui, &url);
+                }
 
                 if let Some(access) = io.access_edit.as_deref_mut() {
                     ui.add_space(10.0);
@@ -2230,6 +2322,20 @@ impl SdroxideApp {
                     if backend == Backend::RtlSdr && *converter < 0.0 {
                         ui.label(RichText::new(tr!("settings-careful-rtl-sdr-blog-v4")).weak());
                     }
+                }
+
+                // Centring the window on a resting dial, on by default on every
+                // receiver with a centre of its own; here for whoever would
+                // rather the window stayed put.
+                // Why: HDZ 2026-11-10: "ein Setting, Autodwell aktiv und
+                //      inaktiv, damit jemand, der das nicht mag, das Verhalten
+                //      abstellen kann".
+                let mut dwell = !cfg.dwell_recentre_off;
+                if crate::chrome::checkbox(ui, &mut dwell, tr!("settings-dwell-recentre"))
+                    .on_hover_text(tr!("settings-dwell-recentre-hover"))
+                    .changed()
+                {
+                    cfg.dwell_recentre_off = !dwell;
                 }
 
                 transverter_table(ui, cfg);
@@ -2765,15 +2871,25 @@ impl SdroxideApp {
                     .on_hover_text(tr!("settings-call-rms-gateway-air-radio"));
                     ui.selectable_value(
                         &mut wl.lane,
-                        sdroxide_types::WinlinkLane::Vara,
-                        tr!("settings-radio-vara"),
+                        sdroxide_types::WinlinkLane::Mercury,
+                        tr!("settings-radio-mercury"),
                     )
-                    .on_hover_text(tr!("settings-call-rms-gateway-vara"));
+                    .on_hover_text(tr!("settings-call-gateway-mercury"));
+                    ui.selectable_value(
+                        &mut wl.lane,
+                        sdroxide_types::WinlinkLane::Data2g,
+                        tr!("settings-radio-data2g"),
+                    )
+                    .on_hover_text(tr!("settings-call-gateway-data2g"));
                 });
 
-                // VARA: a gateway and where it listens. No path and no speed —
-                // VARA has no digipeaters, and the speed is negotiated on air.
-                if wl.lane == sdroxide_types::WinlinkLane::Vara {
+                // A TNC modem: a gateway and where it listens. No path and no
+                // speed — neither modem has digipeaters, and the speed is
+                // negotiated on air.
+                if matches!(
+                    wl.lane,
+                    sdroxide_types::WinlinkLane::Mercury | sdroxide_types::WinlinkLane::Data2g
+                ) {
                     ui.add_space(4.0);
                     net_row(ui, &tr!("settings-gateway"), &mut wl.gateway, 140.0);
                     let mut mhz = wl.gateway_freq_hz / 1e6;
@@ -2795,7 +2911,7 @@ impl SdroxideApp {
                             wl.gateway_freq_hz = 0.0;
                         }
                     });
-                    ui.label(RichText::new(tr!("settings-vara-dial-note")).weak());
+                    ui.label(RichText::new(tr!("settings-tnc-dial-note")).weak());
                 }
 
                 if wl.lane == sdroxide_types::WinlinkLane::Packet {
@@ -3696,8 +3812,28 @@ impl SdroxideApp {
         let mut dragging: Option<u32> = ui.data(|d| d.get_temp(drag_id)).unwrap_or(None);
         let mut placed: Vec<(u32, egui::Rect)> = Vec::new();
         let mut dropped = false;
-        ui.horizontal_wrapped(|ui| {
-            for chip in &self.radio_roster {
+        // The station radio stands in a frame, headed "Station:", together with
+        // what goes beside it (mute, LINK). Its standing (the station's network
+        // services, the command line, `/ws`, no "×") is then read off the strip
+        // itself rather than off a close box that is missing. The frame travels
+        // with the chip: the strip stays one row, arranged by drag as before
+        // (#224), and moving the station radio moves no role.
+        // Why: HDZ 2026-11-04 (settings, Radio page): first "erste Zeile exklusiv
+        //      für Station", then "wenn das Stationsgerät ziehbar ist, dann kann
+        //      man doch mit zwei senkrechten Strichen oder einer Klammer für
+        //      Station die besondere Rolle machen, dann könnte es bei einer Zeile
+        //      bleiben … dann müsste die Station eingerahmt gehören".
+        // Invariant: the frame holds exactly the radio that has no "×", i.e.
+        //      this machine's station radio; a connection is never in it.
+        let station = self.radio_roster.iter().find(|c| c.station.is_empty() && c.first_of_station);
+        // One chip with what goes beside it: its markers, mute, LINK and "×";
+        // the gap after it is the caller's, so it falls outside the frame.
+        // `requests` is passed in rather than captured, because the "+" after
+        // the chips needs it too.
+        let mut one_chip =
+            |ui: &mut egui::Ui,
+             chip: &crate::app::RadioChip,
+             requests: &mut Vec<crate::app::RadioTabRequest>| {
                 let mut label = RichText::new(chip.display_name()).size(12.5);
                 if !chip.enabled {
                     label = label.weak();
@@ -3719,15 +3855,12 @@ impl SdroxideApp {
                 if resp.drag_stopped() {
                     dropped = true;
                 }
-                if resp
-                    .on_hover_text(if chip.focused {
-                        tr!("settings-radio-s-settings-are-below")
-                    } else {
-                        tr!("settings-switch-radio-dialog-follows-drag")
-                    })
-                    .clicked()
-                    && !chip.focused
-                {
+                let resp = resp.on_hover_text(if chip.focused {
+                    tr!("settings-radio-s-settings-are-below")
+                } else {
+                    tr!("settings-switch-radio-dialog-follows-drag")
+                });
+                if resp.clicked() && !chip.focused {
                     requests.push(crate::app::RadioTabRequest::Focus(chip.id));
                 }
                 if let Some(owner) = chip.attached_to {
@@ -3830,6 +3963,28 @@ impl SdroxideApp {
                         Self::close_station_radio_menu(ui, &close, chip, requests);
                     }
                 }
+            };
+        ui.horizontal_wrapped(|ui| {
+            for chip in &self.radio_roster {
+                if station.is_none_or(|s| s.id != chip.id) {
+                    one_chip(ui, chip, requests);
+                    ui.add_space(6.0);
+                    continue;
+                }
+                egui::Frame::new()
+                    .stroke(egui::Stroke::new(1.0, crate::theme::CYAN()))
+                    .inner_margin(egui::Margin::symmetric(6, 3))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(tr!("settings-station-radio"))
+                                    .size(11.0)
+                                    .color(crate::theme::CYAN()),
+                            )
+                            .on_hover_text(tr!("settings-station-radio-tip"));
+                            one_chip(ui, chip, requests);
+                        });
+                    });
                 ui.add_space(6.0);
             }
             // Absent where there is nothing to add: a client that only drives
@@ -3855,6 +4010,7 @@ impl SdroxideApp {
                         requests.push(crate::app::RadioTabRequest::Add {
                             station: only.key.clone(),
                             preset: None,
+                            name: None,
                         });
                     }
                 }
@@ -3882,6 +4038,7 @@ impl SdroxideApp {
                                 requests.push(crate::app::RadioTabRequest::Add {
                                     station: t.key.clone(),
                                     preset: None,
+                                    name: None,
                                 });
                                 ui.close();
                             }

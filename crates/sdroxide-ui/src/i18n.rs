@@ -403,6 +403,31 @@ mod tests {
         assert!(unused.is_empty(), "messages nothing asks for: {unused:?}");
     }
 
+    /// A message that is appended to another and opens with a blank line —
+    /// a new paragraph in a tooltip — keeps it only behind a `{""}`: Fluent
+    /// drops a value's leading blank lines, and the paragraph then ran on into
+    /// the sentence before ("…goes deaf.Counted in steps"). Checked on the raw
+    /// files, in every language.
+    #[test]
+    fn a_leading_blank_line_is_held_by_an_empty_placeable() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("i18n");
+        for lang in std::iter::once("en-US".to_string()).chain(translations()) {
+            let text = std::fs::read_to_string(dir.join(&lang).join("sdroxide.ftl")).unwrap();
+            let lines: Vec<&str> = text.lines().collect();
+            for (i, w) in lines.windows(2).enumerate() {
+                if let Some(id) = w[0].strip_suffix(" =")
+                    && !id.starts_with(char::is_whitespace)
+                {
+                    assert!(
+                        !w[1].trim().is_empty(),
+                        "{lang} line {}: {id} opens with a blank line Fluent will drop",
+                        i + 1
+                    );
+                }
+            }
+        }
+    }
+
     /// Every message formats without the bidirectional isolates egui would
     /// draw as boxes, in every language, after a language change too.
     #[test]

@@ -148,6 +148,42 @@ pub fn set_region(r: Region) {
     CURRENT.store(idx, Ordering::Relaxed);
 }
 
+/// Which country's licence-free channel plans (CB, Freenet, PMR446) the
+/// waterfall marks. National law, which the IARU region does not reach, so a
+/// setting of its own beside it — a screen preference in `[ui]`, following
+/// the computer's own country unless the operator picks one.
+// Why: HDZ 2026-11-09: "beim Land solltest du default das Land des Rechners
+//      nehmen, alles andere ist Overengineering".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum Country {
+    /// No channel plans.
+    Off,
+    /// CB 1–80 (BNetzA Vfg. 21/2021), Freenet (Vfg. 45/2025), PMR446
+    /// (ECC/DEC/(15)05).
+    Germany,
+    /// Whatever country this computer (or browser) is set to: the region
+    /// part of its preferred locale. The default, and declared last because
+    /// serde's catch-all must be the final variant — a country this build
+    /// does not know degrades to following the computer.
+    #[default]
+    #[serde(other)]
+    System,
+}
+
+impl Country {
+    /// In the order the settings list them.
+    pub const ALL: [Country; 3] = [Country::System, Country::Off, Country::Germany];
+
+    /// The country an ISO 3166 region code stands for, as far as channel
+    /// plans go: one this build carries plans for, or [`Country::Off`].
+    pub fn from_region_code(code: &str) -> Country {
+        match code.to_ascii_uppercase().as_str() {
+            "DE" => Country::Germany,
+            _ => Country::Off,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

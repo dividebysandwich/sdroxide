@@ -300,13 +300,33 @@ impl Device {
     }
 
     /// Set the manual tuner gain, in dB. Returns the snapped value.
+    ///
+    /// While the tuner's own loops run the value is only remembered — written,
+    /// it would switch them off behind the AGC setting's back — and goes in
+    /// when the AGC is set to leave the tuner alone.
     pub fn set_gain_db(&mut self, db: f64) -> Result<Option<f64>> {
         self.gain_db = db;
+        if self.agc.tuner_auto() {
+            return Ok(None);
+        }
         let eff = self.with_repeater(|d| {
             Ok(d.tuner.set_gain(&d.rtl, GainSetting::Manual { total_db: db })?)
         })?;
         self.effective_gain_db = eff;
         Ok(eff)
+    }
+
+    /// Set one tuner stage on its own: `value` in dB for LNA and mixer (the
+    /// nearest step is taken), in steps for the VGA. Ignored, like the
+    /// combined gain, while the tuner's own loops run. Returns the stage's
+    /// gain as set.
+    pub fn set_stage(&mut self, stage: sdroxide_r82xx::Stage, value: f64) -> Result<Option<f64>> {
+        if self.agc.tuner_auto() {
+            return Ok(None);
+        }
+        let index = sdroxide_r82xx::stage_index_for(stage, value);
+        let got = self.with_repeater(|d| Ok(d.tuner.set_stage(&d.rtl, stage, index)?))?;
+        Ok(Some(got))
     }
 
     /// Select which automatic gain loops run.

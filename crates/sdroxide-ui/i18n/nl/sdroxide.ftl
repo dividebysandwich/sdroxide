@@ -473,6 +473,8 @@ settings-add-radio-computer = Een radio op deze computer toevoegen
 settings-radio-s-settings-are-below = De instellingen van deze radio staan hieronder. Sleep om hem langs de balk te verplaatsen.
 settings-switch-radio-dialog-follows-drag = Naar deze radio schakelen (het dialoogvenster volgt). Sleep om hem langs de balk te verplaatsen.
 settings-tx = ● TX
+settings-station-radio = Station:
+settings-station-radio-tip = De stationsradio. Hij draait de netwerkdiensten van het station (spotfeeds, rotor, versterker, zend-/ontvangschakelaar) en krijgt de instellingen van de opdrachtregel, daarom blijft hij in de lijst. Om hem te laten rusten, schakel hem uit met VERBINDING; voor andere hardware kiest u hieronder een andere interface.
 settings-mute-radio-s-audio = De audio van deze radio dempen
 settings-link = VERBINDING
 settings-close-radio-configuration-kept = Deze radio sluiten (de configuratie blijft bewaard)
@@ -598,6 +600,10 @@ settings-controls-none = — geen —
 
 settings-general-system-default = Systeemstandaard
 settings-general-remote-access = Toegang op afstand
+settings-general-signed-in-station = Aangemeld station
+settings-general-sign-out = {" "}AFMELDEN{" "}
+settings-general-sign-out-forgets-device = Vergeet de aanmelding van dit apparaat. Het station vraagt het bij de volgende verbinding opnieuw; deze verbinding blijft open tot je haar sluit.
+settings-general-password-kept-no-cookie = Voor { $stations } wordt een wachtwoord in deze browser onthouden, omdat er geen aanmeldcookie werd gegeven. Oudere stations doen dat; het is niet hetzelfde.
 settings-general-what-remote-client-browser-page = Wat een externe client — de browserpagina, of een andere sdroxide gestart met --connect — moet opgeven voordat dit station hem laat bedienen. Geldt in servermodus (--server); de volgende aanmelding neemt een wijziging over, zonder herstart.
 settings-general-username = Gebruikersnaam
 settings-general-password = Wachtwoord
@@ -981,7 +987,6 @@ settings-wavelog-plain-http-address-internet-api = Gewone http:// naar een adres
 settings-wavelog-trusted-cert = Vertrouwd certificaat
 settings-wavelog-forget-certificate = Dit certificaat vergeten
 settings-wavelog-go-back-ordinary-checking-against = Terug naar gewone controle tegen de publieke certificaatautoriteiten — voor een server die nu een goed certificaat heeft.
-settings-wavelog-connection-check-runs-machine-radio = De verbindingscontrole draait op de machine waarop de radio is aangesloten — gebruik daar de instellingen om hem te testen en de stationslocaties op te sommen.
 settings-wavelog-server-presented-certificate-sha-256 = De server toonde dit certificaat (SHA-256):
 settings-wavelog-compare-your-server-s-e = Vergelijk het met dat van je server — bijv. `openssl x509 -noout -fingerprint -sha256 -in cert.pem` — en vertrouw het alleen als ze overeenkomen. Vanaf dan wordt precies dit certificaat geaccepteerd en elk ander geweigerd.
 settings-wavelog-trust-certificate = Dit certificaat vertrouwen
@@ -2059,12 +2064,12 @@ topbar-return-selector-top-bar-popup = De kiezer terugzetten in het pop-upvenste
 topbar-dec-off = DEC uit
 topbar-vol = Vol
 topbar-counted-steps-not-decibels-what =
-
+    {""}
 
     Geteld in stappen, niet in decibel: wat één stap waard is, is de eigen zaak van de ontvanger, en op een SDRplay hangt het ook van de band af. Rechts is nog steeds meer gain.
 topbar-gain = Gain
 topbar-plutosdr-s-own-agc-setting =
-
+    {""}
 
     De eigen AGC van de PlutoSDR stelt deze gain in, dus het verschuiven van de schuif doet niets. Zet Instellingen → Radio → AGC op Handmatig om hem hier te regelen.
 topbar-agc-hang-time-click-cycle = Hangtijd AGC — klik om te wisselen: Uit / Langzaam / Gemiddeld / Snel
@@ -2233,9 +2238,14 @@ topbar-width-force-right-now-whatever = De breedte die nu van kracht is, wat de 
 topbar-keep-floor-ceiling-set-best = De vloer/het plafond voor het beste contrast van de waterval houden — terug op zijn plaats gezet bij een bandwissel, na een verschuiving of zoom, en wanneer de niveaus wegzakken. Zet het aan om meteen te passen; zet het uit om de niveaus te houden waar je ze zette.
 topbar-keep-tuned-frequency-middle-panadapter = De afgestemde frequentie in het midden van het panadapter houden: het venster schuift onder de dial in plaats van dat het beeld een volle bereik springt wanneer je van de rand afstemt. Zet het aan om meteen te centreren; zet het uit om te verschuiven en zoomen waar je wilt.
 topbar-spectrum-floor-ceiling-fft-size = Vloer / plafond van het spectrum en FFT-grootte
-topbar-level-drawn-bottom-spectrum-darkest = Het niveau dat onderaan het spectrum getekend wordt en als de donkerste kleur van de waterval. Draai het omhoog tot de ruisvloer net donkerder wordt. Het instellen zet FIT uit.
+topbar-level-drawn-bottom-spectrum-darkest = Het niveau dat onderaan het spectrum getekend wordt en als de donkerste kleur van de waterval. Draai het omhoog tot de ruisvloer net donkerder wordt. Met FIT aan verschuift het in plaats daarvan het niveau van FIT, en FIT blijft aan.
 topbar-ceil = plafond{" "}
-topbar-level-drawn-top-bring-down = Het niveau dat bovenaan getekend wordt. Draai het omlaag tot het sterkste signaal dat je belangrijk vindt de volle kleur bereikt. Het instellen zet FIT uit.
+topbar-waterfall-mean-not-peak = De waterval als gemiddeld vermogen (Welch) in plaats van de piek: rustige ruis, dezelfde signalen. Een CW-punt korter dan een rij of een draaggolf smaller dan een kolom komt zwakker uit.
+topbar-welch-time-constant = Hoe lang WELCH middelt, voor de waterval en de spectrumlijn: langer is rustiger en toont een verandering later.
+topbar-waterfall-reassign = REASSIGN: de waterval als hertoegewezen spectrogram (Auger & Flandrin 1995): het vermogen van elke cel wordt verplaatst naar de frequentie waarop het gecentreerd is, zodat een draaggolf of toon een scherpe lijn is in plaats van een uitgesmeerde band. Het alternatief voor WELCH; de ruis blijft even rustig.
+topbar-reassign-dim = Hoeveel donkerder REASSIGN tekent wat het niet naar een lijn verplaatste: de ruis en wat onder de drempel blijft. 0 tekent het zoals WELCH; hoger laat de lijnen op een donkere grond staan.
+topbar-level-drawn-top-bring-down = Het niveau dat bovenaan getekend wordt. Draai het omlaag tot het sterkste signaal dat je belangrijk vindt de volle kleur bereikt. Met FIT aan verschuift het in plaats daarvan het niveau van FIT, en FIT blijft aan.
+topbar-fit-shift = Hoeveel het niveau van FIT op deze schuif verschoven is. FIT houdt de verschuiving op elke band; FIT opnieuw aanzetten begint weer bij nul.
 topbar-fft-size = FFT-GROOTTE
 topbar-flip = OMDRAAIEN
 topbar-scroll-waterfall-upwards-newest-row = De waterval omhoog scrollen — nieuwste rij onderaan (V)
@@ -2263,6 +2273,9 @@ topbar-user-manual-f1 = Gebruikershandleiding (F1)
 topbar-range-was-typed-settings-radio = Dat bereik is ingetypt in Instellingen ▸ Radio ▸ RX-bereik, niet door de radio gemeld. Verbreed het, of maak het vak leeg om te gebruiken wat het apparaat over zichzelf zegt.
 topbar-what-device-reports-about-itself = Dat is wat het apparaat over zichzelf meldt. Als de radio deze band wel dekt, geef dan zijn echte bereik op in Instellingen ▸ Radio ▸ RX-bereik.
 topbar-band = BAND
+topbar-recent = RECENT
+topbar-recent-empty =
+    Vult na 3 s op een plek
 topbar-mode = MODUS
 topbar-digital = DIGITAAL
 
@@ -2446,8 +2459,6 @@ topbar-recording = opnemen
 topbar-sql = sql
 topbar-stations = stations
 topbar-caption-reaction = reactie
-topbar-caption-scroll = scroll
-topbar-caption-surface = oppervlak
 topbar-caption-flow = stroom
 topbar-caption-detail = detail
 topbar-floor = vloer
@@ -3710,6 +3721,201 @@ js8-message = Bericht…
 
 ## logbook (src/app/logbook.rs)
 
+palette-hint = Ga naar… een modus, een band, een venster, een instelling, een geheugen of een frequentie (14.074)
+palette-nothing = niets met die naam
+palette-group-window = Venster
+palette-group-settings = Instellingen
+palette-group-memory = Geheugen
+palette-group-tune = Afstemmen
+palette-tune-to = Afstemmen op { $mhz } MHz
+palette-win-bands = Bandcondities
+palette-win-awards = Prijzen
+palette-win-windows = Vensterlijst
+check-open = STATIONSCHECK
+    .hint = Eén pagina die zegt wat in orde is en wat niet — roepletters, radioverbinding, ontvanger, audio, klok, opzoeken — met bij elke regel een knop die naar de plek leidt waar het wordt opgelost. Ze leest wat het programma al weet; ze meet niets en zendt niets uit.
+check-title = STATIONSCHECK
+check-verdict-ok = Hier is niets dat aandacht nodig heeft.
+check-verdict-warn = Werkt, maar er is iets om naar te kijken.
+check-verdict-fail = Iets werkt niet voordat het is opgelost.
+check-fix-settings = INSTELLINGEN
+check-fix-unmute = GELUID AAN
+check-footnote = Gelezen uit wat het programma nu weet. Er wordt niets uitgezonden en niets opnieuw gemeten; een regel die „niet gemeten” zegt, is niet gecontroleerd.
+check-callsign = Roepletters
+check-callsign-missing = Er zijn geen roepletters ingesteld. De digitale modes zenden niet uit, contacten worden zonder roepletters van het station gelogd, en spots en meldingen kunnen niet zien welke berichten voor jou zijn.
+check-callsign-odd = „{ $call }” lijkt niet op roepletters.
+check-grid = Locatievak
+check-grid-missing = Er is geen locatievak ingesteld. Afstanden, peilingen, de kaarten en de uitwisseling van FT8 hebben het nodig.
+check-grid-odd = „{ $grid }” is geen Maidenhead-locator — vier of zes tekens, zoals JN48 of JN48qm.
+check-link = Radioverbinding
+check-link-ok = De radio is verbonden en heeft zich gemeld.
+check-link-silent = Nog geen enkele radio heeft gereageerd. Als dit na een paar seconden niet verandert, is de radio die in de Instellingen is gekozen niet de aangesloten, of staat hij niet aan.
+check-receiver = Ontvanger
+check-receiver-ok = Ontvangst: het spectrum komt binnen.
+check-receiver-never = Sinds het starten van het programma is er geen spectrum binnengekomen.
+check-receiver-stalled = Al { $seconds } s komt er niets binnen van de ontvanger. Het apparaat is gestopt met streamen — een kabel, een USB-poort die in slaapstand ging, of een ander programma dat het heeft overgenomen.
+check-level = Ingangsniveau
+check-level-ok = De converter wordt niet overstuurd.
+check-level-overload = De converter van de ontvanger klipt. Alles wat hij hoort is vervormd, sterke signalen het meest — draai de RF-versterking lager of schakel een voorversterker uit.
+check-audio = Radio-audio
+check-audio-ok = Geen probleem gemeld met de geluidsapparaten van de radio.
+check-muted = Luidspreker
+check-muted-off = De ontvanger staat niet op stil.
+check-muted-on = De ontvanger staat op stil, daarom hoor je niets.
+check-transmit = Zenden
+check-transmit-ok = Deze radio kan zenden.
+check-transmit-rx-only = Alleen ontvangen: deze radio, of de manier waarop hij is aangesloten, heeft geen zender die het programma kan activeren.
+check-clock = Computerklok
+check-clock-unknown = Niet gemeten. Luister een minuut naar een drukke FT8-frequentie; de stations die daar worden gedecodeerd, laten zien hoever deze klok ernaast zit.
+check-clock-ok = { $offset } s ten opzichte van de stations die op FT8 gehoord worden — binnen de tolerantie.
+check-clock-marginal = { $offset } s ten opzichte van de stations die op FT8 gehoord worden. Nog te decoderen, maar het loont om te corrigeren: op FT4 en FT2 kost het al contacten.
+check-clock-bad = { $offset } s ten opzichte van de stations die op FT8 gehoord worden. Zo ver ernaast dat anderen je niet decoderen en jij weinig decodeert — stel de klok van de computer in via een tijdserver.
+check-lookup = Roepletter opzoeken
+check-lookup-ok = Er is een callbook ingesteld.
+check-lookup-none = Er is geen callbook ingesteld, dus namen en locatievakken worden niet voor je ingevuld. Optioneel.
+check-spots = Spotbronnen
+check-spots-ok = { $n } bron(nen) ingeschakeld.
+check-spots-none = Er is geen spotbron ingeschakeld, dus er wordt niets op het panadapter aangegeven. Optioneel.
+welcome-title = WELKOM
+welcome-open = WELKOMSTRONDLEIDING
+    .hint = De rondleiding van de eerste start nog eens: wat je instelt, wat er vaak misgaat en wat het programma allemaal biedt.
+welcome-step-welcome = Welkom
+welcome-step-station = Station
+welcome-step-radio = Radio
+welcome-step-transmit = Vóór het zenden
+welcome-step-online = Online
+welcome-step-tour = Rondleiding
+welcome-step-check = Controle
+welcome-back = ◀ TERUG
+welcome-next = VOLGENDE ▶
+welcome-finish = KLAAR
+    .hint = Sluit de rondleiding en toon haar niet meer bij het starten. Ze blijft beschikbaar onder Instellingen → Algemeen.
+welcome-reopen-note = Instellingen → Algemeen haalt haar terug.
+welcome-now = Hoe het er nu voor staat
+welcome-hello = Welkom bij SDR Oxide
+welcome-intro = Een software-gedefinieerde transceiver: panadapter en waterval, elke spraak- en digitale mode van SSB tot FT8, JS8, SSTV en Winlink, een logboek, kaarten, spotbronnen — voor SDR’s en gewone transceivers, hier of vanaf een andere computer.
+welcome-intro-how = Deze rondleiding duurt een paar minuten. Ze vraagt om de twee dingen zonder welke het programma niet kan werken, helpt je de radio aan te sluiten, waarschuwt voor de problemen waar beginners meestal tegenaan lopen en laat zien waar alles staat. Elke pagina kan worden overgeslagen en later worden gedaan.
+welcome-language-note = Wijzigt de taal van het programma meteen. Ook in Instellingen → Interface.
+welcome-intro-safe = Hier wordt niets uitgezonden
+    .hint = De rondleiding opent alleen instellingen en vensters. Het programma zet de zender nooit aan tot je iets indrukt waarvan staat dat het dat doet.
+welcome-station-why = Je roepletters en Maidenhead-locator worden overal gebruikt: de digitale modes zetten ze in elk bericht (en zenden niet zonder roepletters), het logboek schrijft ze bij elk contact, de kaarten en afstanden beginnen bij het locatievak, en spots en meldingen gebruiken de roepletters om te zien welke berichten voor jou zijn.
+welcome-station-save-note = OPSLAAN bewaart ze; dezelfde vakjes staan onder Instellingen → Algemeen.
+welcome-station-grid-how = Je locatievak niet bekend?
+    .hint = Vier tekens (IN80) zijn genoeg om te beginnen; zes (IN80dk) plaatsen je binnen een paar kilometer. Elke online kaart „Maidenhead-locator” geeft het op basis van je adres — of laat het veld voorlopig leeg en kom later terug.
+welcome-radio-intro = Wat ga je gebruiken? Kies het dichtstbijzijnde — de pagina zet dan op een rij wat er bij dat soort radio meestal misgaat en opent de plek waar het wordt ingesteld.
+welcome-radio-pick = Kies er een om de instelnotities te zien.
+welcome-radio-pitfalls = Veelvoorkomende problemen met dit soort radio
+welcome-radio-manual = Hoofdstuk 15 van de handleiding heeft notities voor elk radiomodel, en hoofdstuk 14 is probleemoplossing.
+welcome-kind-usb = Een SDR via USB
+    .hint = RTL-SDR, Airspy, HackRF, SDRplay RSP, RX-888, LimeSDR, Fobos, of alles wat SoapySDR aanstuurt.
+welcome-kind-cat = Een transceiver met CAT-kabel
+    .hint = Icom, Yaesu, Kenwood, Elecraft, Xiegu, QRP Labs… bediend via een seriële/USB-poort, met het geluid op een USB-geluidskaart.
+welcome-kind-net = Een radio op het netwerk
+    .hint = Hermes Lite 2 / ANAN (OpenHPSDR), FlexRadio, Icom via LAN, ADALM-Pluto, SunSDR of Thetis via TCI, rtl_tcp.
+welcome-kind-remote = Een andere SDR Oxide, als server
+    .hint = De radio hangt aan een andere computer waarop sdroxide --server draait; deze hier is het bedieningsscherm.
+welcome-kind-none = Nog geen radio
+    .hint = Luister meteen via een openbare ontvanger op internet (KiwiSDR, Web-888, SpyServer).
+welcome-open-radio = RADIO-INSTELLINGEN
+    .hint = Kies de interface, vul haar gedeelte in en dan TOEPASSEN. De regels hieronder worden groen zodra de radio antwoordt.
+welcome-open-remote = REMOTE-INSTELLINGEN
+    .hint = Het adres, de poort en de aanmelding van de server.
+welcome-open-public = OPENBARE SDR’s
+    .hint = Een kaart en lijst van ontvangers op internet; kies er een en hij opent als een radio.
+welcome-tip-usb-driver = Het USB-stuurprogramma of de rechten
+    .hint = Op Windows hebben de meeste USB-SDR’s (RTL-SDR, Airspy, HackRF, HydraSDR) het WinUSB-stuurprogramma nodig, met Zadig gekoppeld. Op Linux installeer je de meegeleverde udev-regel (de .deb doet dat) en steek opnieuw in. macOS heeft niets nodig.
+welcome-tip-usb-busy = Een ander programma heeft het apparaat
+    .hint = Er kan maar één programma tegelijk een SDR openen. Sluit SDR#, SDR++, GQRX, een lopende rtl_tcp — of een tweede sdroxide — voordat je TOEPASSEN drukt.
+welcome-tip-usb-port = Verloren samples
+    .hint = Hoge samplefrequenties vragen om een USB 3-poort (de RX-888 altijd), een korte kabel en geen onvoorzien hub. Meldt het logboek verloren samples, verlaag dan eerst de samplefrequentie.
+welcome-tip-usb-gain = Te veel versterking
+    .hint = De maximale RF-versterking overstuurt de converter en vult de band met valse signalen. Begin in het midden en draai terug tot de regel „Ingangsniveau” hieronder groen blijft.
+welcome-tip-usb-sdrplay = SDRplay heeft een eigen dienst nodig
+    .hint = Een RSP is alleen bereikbaar via de SDRplay API v3-dienst, die geïnstalleerd en gestart moet zijn. sdroxide --probe noemt wat er ontbreekt.
+welcome-tip-cat-port = De verkeerde seriële poort of snelheid
+    .hint = Veel radio’s bieden twee poorten via één USB-kabel — kies de CAT-poort (Enhanced/Standard) — en de baudrate moet overeenkomen met het menu van de radio.
+welcome-tip-cat-family = De verkeerde CAT-familie
+    .hint = Kenwood- en Yaesu-opdrachten lijken op elkaar maar zijn het niet. Een Kenwood ingesteld op Yaesu kan omschakelen naar zenden en niet meer stoppen; een Elecraft ingesteld op Kenwood gaat voor FT8 naar gewone SSB.
+welcome-tip-cat-audio = De verkeerde geluidskaart
+    .hint = Ontvangst- en zendgeluid gaan via de eigen USB-codec van de radio („USB Audio CODEC”), niet via de luidsprekers en microfoon van de computer. Twee identieke codecs? De probleemoplossing in de handleiding onderscheidt ze.
+welcome-tip-cat-data = Digitale modes hebben DATA-modus nodig
+    .hint = Voor FT8 en vergelijkbare modes moet de radio zijn zendgeluid van USB nemen: USB-D / DATA-U, of „DATA MOD = USB” in het menu. In gewone USB zendt hij de microfoon uit.
+welcome-tip-cat-pipewire = Linux: de geluidsserver houdt de kaart vast
+    .hint = PipeWire/PulseAudio kan de geluidskaart van de radio voor zichzelf houden, zodat het programma „wachten op spectrum” toont. De probleemoplossing in de handleiding laat zien hoe je hem vrijgeeft.
+welcome-tip-net-subnet = Niet op hetzelfde netwerk
+    .hint = Ontdekking is een broadcast en gaat niet door een router of VPN. Als de radio niet wordt gevonden, typ dan zijn IP-adres zelf in.
+welcome-tip-net-firewall = Bediening werkt, maar geen spectrum
+    .hint = Spectrum en audio gaan via UDP. Een firewall die de verbinding doorlaat maar UDP blokkeert, geeft een radio die antwoordt en niets toont — sta sdroxide toe in de firewall.
+welcome-tip-net-icom = Icom via LAN vraagt eerst om instelling van de radio
+    .hint = Op de radio: Network Control AAN, en een netwerkgebruikersnaam en wachtwoord — hetzelfde paar komt in sdroxide. Lees het IP-adres af op het Network-scherm van de radio; er is geen ontdekking.
+welcome-tip-net-one = Eén bedienend programma tegelijk
+    .hint = Een Flex die al door SmartSDR is geclaimd, of een TCI-radio die door een andere client wordt aangestuurd, weigert misschien een tweede. Sluit het andere programma, of schakel multiFLEX in.
+welcome-tip-remote-server = De server is ingesteld op de computer van de radio
+    .hint = Start daar sdroxide --server met een ingestelde gebruikersnaam en wachtwoord; zonder die kan iedereen die de poort bereikt het station bedienen.
+welcome-tip-remote-port = De poort moet bereikbaar zijn
+    .hint = De standaard is 4950. Via internet moet hij op de router worden doorgestuurd, of beter nog via een VPN — en wss:// met een certificaat als hij open staat.
+welcome-tip-remote-browser = Een browser werkt ook
+    .hint = De server levert de volledige interface ook aan een webbrowser en telefoons; geluid daar vraagt om https of localhost.
+welcome-tip-none-public = Openbare ontvangers
+    .hint = Duizenden KiwiSDR-, Web-888- en SpyServer-ontvangers staan open voor luisteraars. Alleen ontvangen — maar elke decoder, het logboek en de kaarten werken, dus het is een goede manier om het programma te leren kennen.
+welcome-tip-none-later = Wanneer de radio er is
+    .hint = Kom terug naar deze pagina via Instellingen → Algemeen → WELKOMSTRONDLEIDING.
+welcome-tx-intro = De meeste „het werkt niet” op de lucht is een van deze. Geen daarvan verschijnt als fout, daarom is het de moeite waard ze eenmaal te lezen.
+welcome-tip-tx-clock = De computerklok
+    .hint = FT8, FT4, JS8 en WSPR werken in vaste tijdslots. Binnen een halve seconde is goed; boven de 1,5 s decoderen anderen je niet meer en decodeer jij weinig — de band lijkt dood. Laat het systeem zijn klok synchroniseren met een tijdserver (NTP).
+welcome-tip-tx-level = Audioniveau en ALC
+    .hint = Houd voor digitale modes de ALC van de radio op of bijna nul: te veel audio spat over andere stations terwijl de vermogensmeter er goed uitziet. Verlaag het niveau tot de ALC nauwelijks beweegt.
+welcome-tip-tx-drive = Begin met lage aansturing
+    .hint = Aansturing is een percentage van het maximum van de radio. Begin laag, in een dummyload of op een afgestemde antenne, en verhoog terwijl je vermogen en SWR in de gaten houdt.
+welcome-tip-tx-lockout = De bandblokkering
+    .hint = De zender zendt alleen uit binnen de amateurbanden van jouw IARU-regio. Stel de regio in onder Instellingen → Algemeen, anders kan een volkomen legale frequentie worden geweigerd.
+welcome-tip-tx-trswitch = Een SDR naast een transceiver
+    .hint = Een SDR-ontvanger die de antenne deelt met een zender wordt bij de eerste zend-beurt vernield, tenzij iets hem loskoppelt. Plaats de T/R-schakelaar voordat je iets gaat zenden.
+welcome-tip-tx-cable = Virtuele geluidskabels
+    .hint = Met een virtuele kabel of Flex DAX stel je aan beide kanten 48000 Hz in. Een niet-passende snelheid verliest samples, en de getimede modes decoderen dan niets terwijl de waterval perfect lijkt.
+welcome-open-region = IARU-REGIO
+    .hint = Instellingen → Algemeen: de regio bepaalt welke frequenties de zender mag gebruiken.
+welcome-open-trswitch = T/R-SCHAKELAAR
+    .hint = Het relais dat een alleen-ontvangende SDR beschermt terwijl het station zendt.
+welcome-online-intro = Alles is optioneel, en alles staat uit tot je het aanzet. Elk maakt het programma nuttiger:
+welcome-online-lookup = ROEPLETTER OPZOEKEN
+    .hint = QRZ.com of HamQTH vullen namen, plaatsen en locatievakken in terwijl je stations werkt.
+welcome-online-spots = SPOTBRONNEN
+    .hint = DX-cluster, POTA, SOTA, PSK Reporter — spots verschijnen op het panadapter; klik er een aan om af te stemmen en het logboek vooraf in te vullen.
+welcome-online-uploads = LOGBOEK-UPLOADS
+    .hint = LoTW, eQSL, Club Log, QRZ en HamQTH, met één klik vanuit het logboek, voor bevestigingen en prijzen.
+welcome-online-alerts = MELDINGEN
+    .hint = Een geluid of melding als een gezochte roepletter, DXCC-entiteit of locatievak wordt gehoord.
+welcome-online-privacy = Er wordt niets ergens naartoe gestuurd tot er hier een dienst is ingesteld; downloads van bandcondities en uitzendschema’s hebben hun eigen schakelaars in de Instellingen.
+welcome-tour-intro = De modes, het logboek en de spots staan op het hoofdscherm. Die worden makkelijk gemist. Elke OPEN gaat er meteen naartoe, en de rondleiding blijft ernaast open.
+welcome-tour-open = OPEN
+welcome-tour-bands = Bandcondities
+    .hint = Zondata en welke banden nu open zijn.
+welcome-tour-winlink = Winlink-post
+    .hint = Radio-e-mail via internet, packet of HF — ingebouwd, zonder Pat of externe modem.
+welcome-tour-public = Openbare SDR’s
+    .hint = Luister via ontvangers overal ter wereld.
+welcome-tour-servers = WSJT-X en andere programma’s
+    .hint = De ingebouwde TCI- en rigctld-servers laten WSJT-X, JTDX, logboekprogramma’s en andere deze radio gebruiken.
+welcome-tour-controls = Toetsen en controllers
+    .hint = Elke sneltoets is opnieuw toe te wijzen; MIDI- en HID-controllers en afstemknoppen werken ook.
+welcome-tour-profiles = Profielen
+    .hint = Bewaar hoe het station is ingesteld — contest, portable, satelliet — en zet het met één klik terug.
+welcome-tour-palette = Opdrachtenpalet
+    .hint = Ctrl+K (⌘K): typ een mode, een band, een venster, een instelling of een frequentie en druk op Enter.
+welcome-tour-help = Help
+    .hint = De sneltoetsen en de bedieningselementen op het scherm.
+welcome-check-all-good = Niets heeft aandacht nodig. Veel plezier op de lucht!
+welcome-check-left = Nog na te kijken — elk heeft een knop die naar de plek leidt waar het wordt opgelost:
+welcome-check-hint = De volledige pagina, met elke regel. Ook in Instellingen → Algemeen.
+welcome-next-steps = Waar nu naartoe
+welcome-next-listen = Eerst luisteren
+    .hint = Stem af, probeer de bandknoppen, sleep de randen van de doorlaatband op de waterval. Er wordt niets uitgezonden tot je PTT, TUNE of de oproepknop van een mode indrukt.
+welcome-next-ft8 = Een eerste contact op FT8
+    .hint = Kies FT8, luister een minuut (dat meet ook je klok), druk dan op ANTWOORDEN bij een station dat CQ roept. De uitwisseling verloopt vanzelf en het contact wordt gelogd als het klaar is.
+welcome-next-palette = Verdwaald? Druk op Ctrl+K
+    .hint = Het opdrachtenpalet vindt elke mode, band, elk venster of elke instelling op naam.
+welcome-next-manual = De gebruikershandleiding
+    .hint = docs/USER_MANUAL.md, met een hoofdstuk voor elke mode en notities voor elke radio. Beweeg ook de muis over een bedieningselement voor de uitleg.
 logbook-logbook = LOGBOEK
 logbook-new-entry = + NIEUWE INVOER
 logbook-adif = ADIF
@@ -4064,21 +4270,26 @@ fsq-add = Toevoegen
 
 ## publicsdr (src/app/publicsdr.rs)
 
-publicsdr-tab = + TABBLAD
-publicsdr-open-receiver-new-radio-own = Deze ontvanger openen als een nieuwe radio, in een eigen tabblad
-publicsdr-point-radio-receiver-replacing-whatever = *Deze* radio naar deze ontvanger richten, en vervangen waar hij nu op zit — er wordt eerst opnieuw naar gevraagd, omdat dat de instelling van een hele radio is
 publicsdr-not-stated = niet opgegeven
-publicsdr-replace = VERVANGEN
-publicsdr-point-radio-you-are-receiver = De radio waarop je zit naar deze ontvanger richten
-publicsdr-tab-instead = + TABBLAD IN PLAATS
-publicsdr-open-receiver-another-radio-leave = De ontvanger openen als een andere radio, en deze ongemoeid laten
-publicsdr-cancel = ANNULEREN
 publicsdr-public-sdrs = PUBLIEKE SDR'S
 publicsdr-available = BESCHIKBAAR
 publicsdr-hide-receivers-are-full-ones = Ontvangers verbergen die vol zijn, en die waarvan de operator geen kanalen naar andere apps dan een browser heeft opengezet
 publicsdr-band = IN BAND
 publicsdr-only-receivers-cover-current-dial = Alleen ontvangers die de huidige dialfrequentie bestrijken
 publicsdr-low-bw = LAGE BW
+publicsdr-map-cities = STEDEN
+publicsdr-map-cities-tip = Steden op deze kaart, aan of uit.
+publicsdr-view-list = LIJST
+publicsdr-view-map = KAART
+publicsdr-view-map-tip = Dezelfde ontvangers op een wereldkaart. Klik op een punt om alle ontvangers eronder te kiezen.
+publicsdr-map-pick = Klik op een punt om de ontvangers eronder te kiezen.
+publicsdr-map-ghost = { $name }: nu niet in de lijst — hier voor het laatst gezien op { $seen }
+publicsdr-map-names = NAMEN
+publicsdr-map-names-tip = Toon de namen van de ontvangers op de kaart. Uit: alleen de gekozen ontvangers krijgen een naam.
+publicsdr-check-online = ONLINE
+publicsdr-check-silent = STIL
+publicsdr-check-waiting = CONTROLE…
+publicsdr-check-no-answer = Geen antwoord binnen 20 seconden.
 publicsdr-take-spyserver-low-bandwidth-shape = Een SpyServer in zijn vorm met lage bandbreedte nemen: een smal I/Q-venster dat de dial volgt plus de eigen bandweergave van de server, in plaats van megabits aan breedband-I/Q. Geen effect op een KiwiSDR, die maar de ene vorm heeft.
 publicsdr-refresh = ⟳ VERNIEUWEN
 publicsdr-fetch-both-directories-again = Beide mappen opnieuw ophalen
@@ -4088,9 +4299,6 @@ publicsdr-fetching-receiver-lists = De ontvangerlijsten ophalen…
 publicsdr-machine-radio-attached-does-not = De machine waarop deze radio is aangesloten, beantwoordt geen vragen over apparaten, dus kan hij de lijsten ook niet ophalen.
 publicsdr-no-match = geen overeenkomst
 publicsdr-nothing-matches-try-turning-filter = niets past — probeer een filter weer aan te zetten
-publicsdr-radio = deze radio
-publicsdr-radio-s-configuration-has-not = De configuratie van deze radio is nog niet aangekomen van de machine waarop hij staat, dus er is niets om de ontvanger op te richten — gebruik in plaats daarvan + TABBLAD.
-publicsdr-position-not-published-so-nothing = {" "}Zijn positie wordt niet gepubliceerd, dus wat hij hoort, wordt niet gemeld.
 
 ## hd (src/app/hd.rs)
 
@@ -4173,7 +4381,7 @@ ism-where-decoder-actually-listening-follows = Waar de decoder werkelijk luister
 ism-transmissions-gate-opened-how-many = Zendingen waarop de poort openging, en hoeveel er een geldig frame opleverden. Veel bursts en geen decoderingen betekent dat de band bezet is met apparaten die sdroxide nog niet kan lezen. Helemaal niets betekent dat niets de drempel bereikt — verlaag hem, of controleer of de dial op de band staat.
 ism-nothing-heard-yet = nog niets gehoord
 ism-click-tune-receiver =
-
+    {""}
 
     Klik om de ontvanger erop af te stemmen
 
@@ -4277,20 +4485,20 @@ frame-restart-without-oob-tx-put = Herstart zonder --oob-tx om de vergrendeling 
 
 smeter-alc-how-hard-transmitter-being = ALC — hoe hard de zender wordt aangestuurd, als percentage van het meeste wat hij kan afgeven. 100 % is volle schaal, niet volledig vermogen in watt: wat dat aan de antenne waard is, hangt af van de radio en van Aansturing.
 smeter-radio-reports-no-forward-power =
-
+    {""}
 
     Deze radio meldt geen voorwaarts vermogen, dus het getal naast ALC is opnieuw de ALC-aflezing in plaats van watt.
 smeter-no-swr-radio-has-no =
-
+    {""}
 
     Geen SWR: deze radio heeft geen brug om het mee te meten, en sdroxide verzint er geen — het kan alleen tonen wat de radio zelf meldt. Een radio met een SWR-meter (via CAT, TCI of een LAN-verbinding) en een HPSDR-bord vullen dit allebei in; een gewone SDR-zender kan dat niet.
 smeter-no-signal-report-yet-receiver = Nog geen signaalrapport — de ontvanger heeft nog geen meteraflezing geleverd.
 smeter-s9-73-dbm-each-s =
-
+    {""}
 
     S9 is −73 dBm en elke S-eenheid eronder is 6 dB. Het dBm-getal is maar zo eerlijk als de kalibratie van het front-end — een ongekalibreerde ontvanger meldt dBFS met een dBm-label.
 smeter-ovld-converter-into-rails-so =
-
+    {""}
 
     OVLD: de converter zit tegen zijn grenzen, dus het getoonde niveau onderschat het signaal. Draai de front-endgain terug.
 smeter-table-held = , tabel vastgehouden
@@ -4299,14 +4507,16 @@ smeter-ps = PS --
 ## multi (src/multi.rs)
 
 multi-tx = ● TX
-multi-link = VERBINDING
 multi-mute-radio-s-audio = De audio van deze radio dempen
-multi-close-radio-s-split-view = De gesplitste weergave van deze radio sluiten
-multi-open-radio-split-view-own = Deze radio openen in een eigen gesplitste weergave
-multi-already-open-another-split-view = Al geopend in een andere gesplitste weergave
 multi-show-radio-here = Deze radio hier tonen
+multi-show-on-map = Op de kaart tonen
 multi-add-radio-computer-settings-radio = Een radio op deze computer toevoegen (Instellingen → Radio om er één bij een station toe te voegen)
 multi-add-radio = Een radio toevoegen
+multi-take-radio-off-row = Deze radio uit deze rij halen. Hij blijft draaien; de ringen schakelen hem uit.
+multi-open-pane = Een volgend paneel openen met een radio die niet in beeld is
+multi-pick-radio = Radio ▼
+multi-pick-radio-tip = Een radio in deze rij zetten. De ringen markeren radio's waarvan de verbinding open is.
+multi-new-radio = Nieuwe radio…
 multi-asked-station-another-radio = Het station om nog een radio gevraagd…
 multi-client-cannot-open-connection = Deze client kan geen verbinding openen.
 
@@ -4380,6 +4590,10 @@ login-password = Wachtwoord
 login-remember-device = Onthouden op dit apparaat
 login-signs-without-asking-next-time = Meldt je de volgende keer aan zonder te vragen, en laat het tabblad van het 3D-beeld zonder vragen binnen. Het wachtwoord wordt in leesbare tekst bewaard, dus zet dit uit op een machine die anderen gebruiken.
 login-keeps-password-device-clear = Bewaart het wachtwoord op dit apparaat, in leesbare tekst.
+login-remember-station = Dit station onthouden
+login-remember-me = ONTHOUD MIJ
+login-station-keeps-sign-in = Het station bewaart je aanmelding, niet deze pagina — niets in te vullen op de andere radio's, en niets te vergeten als je weggaat.
+login-not-this-time = Deze keer niet: deze browser vergeet het bij het sluiten, dus je wordt de volgende sessie opnieuw gevraagd en er blijft niets van deze aanmelding op het apparaat achter.
 login-checking = {" "}CONTROLEREN…{" "}
 login-sign = {" "}AANMELDEN{" "}
 login-wrong-password-shuts-server-s = Een fout wachtwoord sluit de deur van de server voor een paar seconden, dus dit kan even duren.
@@ -4921,14 +5135,7 @@ publicsdr-antenna =
 publicsdr-receivers-fetched-ago = { $entries } ontvangers · { $per_net } · opgehaald { $age } geleden
 publicsdr-showing-search-narrow = { $shown } van { $n } getoond — zoek om te verfijnen
 publicsdr-match = { $n } treffer
-publicsdr-replace-taking-receiver-points-same =
-    { $this } vervangen door { $entry }?
-
-    { $this2 } staat op { $iface }. Deze ontvanger nemen laat hetzelfde tabblad op { $address } wijzen, hernoemt het naar “{ $entry2 }”, en houdt de dial op het { $range_label } dat de ontvanger publiceert — hier wordt niets verzonden.
-
-    De instellingen van { $iface2 } blijven staan waar ze staan, en dat geldt ook voor de bereiken die ervoor zijn opgegeven: de interface weer terugzetten in Instellingen → Radio brengt de radio terug zoals hij was.
-publicsdr-receptions-will-reported = {" "}Ontvangsten worden gemeld vanuit { $value }.
-publicsdr-pointing-radio = Deze radio richten op { $entry }…{ $site }
+publicsdr-map-status = { $shown } op de kaart · { $unplaced } zonder positie
 publicsdr-opening-another-radio = { $entry } openen als een andere radio…
 
 ## qo100: messages with values (src/app/qo100.rs)
@@ -5253,7 +5460,6 @@ cat-family-rs-hfiq = RS-HFIQ
 cat-family-tr-usdx = (tr)uSDX
 cat-family-rigctld = Hamlib rigctld (netwerk)
 cat-family-flrig = flrig (netwerk)
-publicsdr-its-interface = zijn interface
 
 ## Values from sdroxide-types drawn on chips, menus and lists (src/i18n/labels.rs).
 
@@ -5537,70 +5743,214 @@ settings-ui-workspace-save = HUIDIGE OPSLAAN
 settings-ui-workspace-save-hint = Sla de huidige indeling onder deze naam op
 settings-ui-workspace-name-first = Typ eerst een naam
 topbar-band-window2-hint = VENSTER — open de selectie in een eigen venster, zo breed als je wilt, op elke monitor
+tnc-link = VERBINDING
+tnc-connected = VERBONDEN
+tnc-calling = ROEPT
+tnc-idle = LUISTERT
+tnc-tx = TX
+tnc-busy = BEZET
+tnc-busy-hint = Er is iemand anders op het kanaal. Een oproep nu zou er bovenop vallen.
+tnc-setup = ⚙ INSTELLING
+tnc-peer = Tegenstation
+tnc-width = Breedte
+tnc-speed = Snelheid
+tnc-snr = S/R
+tnc-bytes = Bytes
+tnc-queued = In wachtrij
+tnc-host = Host
+tnc-ports = Poorten
+tnc-ports-off = uit
+tnc-nobody = niemand
+tnc-holder-panel = dit paneel
+tnc-holder-winlink = het MAIL-venster
+tnc-holder-tcp = een programma op { $addr }
+tnc-tune = AFSTEMMEN
+tnc-abort = AFBREKEN
+tnc-abort-hint = De verbinding nu verbreken, wie hem ook bedient. De andere kant loopt in een time-out in plaats van het te horen.
+tnc-terminal = TERMINAL
+tnc-callsign = roepnaam
+tnc-connect = VERBINDEN
+tnc-disconnect = VERBREKEN
+tnc-disconnect-hint = Netjes ophangen: wat in de wachtrij staat gaat eerst, daarna stemt de andere kant in.
+tnc-held-by = Het modem is in gebruik door { $holder }.
+tnc-no-callsign = Stel eerst een roepnaam in (⚙ INSTELLING)
+tnc-clear = WISSEN
+tnc-clear-hint = Het transcript leegmaken. De verbinding blijft.
+tnc-nothing-yet = Nog niets. Typ hierboven een roepnaam en VERBINDEN, of zet Luisteren aan in ⚙ INSTELLING om oproepen aan te nemen.
+tnc-type-here = typ hier, Enter verstuurt
+tnc-not-connected = niet verbonden
+tnc-send = VERSTUREN
+setup-tnc-bandwidth = Bandbreedte
+setup-tnc-listen = Oproepen aannemen
+setup-tnc-listen-check = Luisteren vanuit het paneel
+setup-tnc-listen-hint = Inkomende oproepen aannemen in de terminal van het paneel. Geen effect zolang de TCP-hostpoorten aan staan, want een programma daar wil de oproepen.
+setup-tnc-host = TCP-host
+playback-radio-n = { " " }· radio { $n }
+playback-no-stamp = geen tijdstempel in de naam — speelt af in de modus waarin je zit
+playback-title = AFSPELEN — opgenomen audio
+playback-find-hint = modus, MHz, datum, naam…
+playback-refresh-hint = Lees de opnamemap opnieuw
+playback-asking = Het station om zijn opnames vragen…
+playback-folder = Map: { $dir }
+playback-none = Nog geen opnames. Druk op REC → MP3 terwijl er iets in de lucht is; het bestand verschijnt hier, genoemd naar tijd, frequentie en modus.
+playback-on = ▶ AAN
+playback-play = ▶ AFSPELEN
+playback-iq-hint = Een I/Q-opname, geen audio. Afspelen neemt de audio die de recorder schrijft; een I/Q-opname wordt afgespeeld met --file.
+playback-not-while-tx = Niet tijdens zenden
+playback-play-hint = Speel deze opname vanaf het begin af in de decoders
+playback-busy-playing = Wordt afgespeeld — stop het voordat je het verwijdert
+playback-busy-recording = Wordt nog opgenomen — stop REC voordat je het verwijdert
+playback-delete-ask = WISSEN?
+playback-delete-hint-armed = Druk nogmaals om dit bestand definitief te wissen. Het kan niet ongedaan worden gemaakt.
+playback-delete-hint = Wis deze opname uit de map (vraagt eerst nog één keer)
+playback-strip-label = ▶ AFSPELEN
+playback-not-live = niet live — de radio staat stil
+playback-carry-on = Verder afspelen
+playback-pause = ⏸ PAUZE
+playback-pause-hint = Pauze — de decoders horen stilte totdat je verdergaat
+playback-again = ↺ OPNIEUW
+playback-again-hint = Terug naar het begin — nog een poging voor een beeld of een decode
+playback-loop = LUS
+playback-loop-hint = Begin opnieuw bovenaan wanneer het bestand eindigt
+playback-stop = ■ STOP
+playback-stop-hint = Beëindig het afspelen en zet de radio terug waar hij was
+playback-files = BESTANDEN
+playback-end-of-file = einde bestand
+playback-paused = gepauzeerd
+playback-recorded-on-mode = Opgenomen op { $mhz } MHz in { $mode } — de dial en modus zijn ingesteld op basis van de bestandsnaam.
+playback-recorded-on = Opgenomen op { $mhz } MHz — de dial en modus zijn ingesteld op basis van de bestandsnaam.
+playback-no-dial-mode = De naam bevat geen dial of modus, dus het speelt af in de modus waarin je zit — kies de decoder in het modusmenu.
+playback-format-stereo = { $rate } Hz, stereo — het linker (ontvangst)kanaal wordt afgespeeld.
+playback-format-mono = { $rate } Hz, mono — het enige kanaal wordt afgespeeld.
+playback-stopped = Gestopt: { $fault }
+playback-intro = Speel een opname terug in de decoders — SSTV, CW, RTTY, PSK, FT8 en elke andere modus die uit audio decodeert. De radio staat stil tijdens het afspelen, de dial en modus gaan naar waarop de opname is gemaakt, en STOP zet de radio terug. Wijzig de modus tijdens het afspelen om een andere decoder te proberen.
+topbar-stereo-yields-hint = WFM-stereo is uit zolang ruisonderdrukking of de auto-notch actief is — ze zouden de twee kanalen uitsmeren. Zet ze uit om stereo te horen
+topbar-stereo-playback-hint = Stereo: de opname wordt in beide oren afgespeeld, zoals opgenomen. Klik om mono te forceren
+topbar-stereo-mono-recording-hint = Deze opname is mono — er is geen tweede kanaal om af te spelen
+topbar-caption-play-back = Afspelen
+topbar-recordings-chip = ▶ OPNAMES…
+topbar-recordings-hint = Speel een opname terug in de decoders — een gemist SSTV-beeld, een zwak RTTY- of CW-signaal, een FT8-slot — met de waterfall en het decodeerlogboek, alsof het in de ether was. De radio houdt zich stil terwijl het speelt.
+playback-find = Zoeken
+playback-refresh = VERVERSEN
+wxsat-title = WEERSATELLIETEN
+sat-wxsat-hint = WEERSATELLIETEN — het beeld dat een NOAA- (APT) of Meteor-satelliet (LRPT) op 137 MHz uitzendt, getekend terwijl het binnenkomt, in een losmaakbaar venster
+sat-wxsat = WEERSATELLIETEN
+wxsat-decode = Decoderen
+wxsat-channel = Satelliet
+wxsat-tune = Hier afstemmen
+wxsat-tune-hint = Zet de decoder aan en brengt de frequentie naar dit kanaal, zodat het signaal binnen het samplevenster valt.
+wxsat-clear = Wissen
+wxsat-save = Opslaan als PNG
+wxsat-flip = Omdraaien
+wxsat-flip-hint = Draait het beeld om: een satelliet die naar het zuiden vliegt wordt ondersteboven getekend.
+wxsat-state-off = Decoder uit
+wxsat-level = Niveau { $db } dBFS
+wxsat-locked = Lijnsync vergrendeld
+wxsat-searching = Zoeken naar de lijnsync
+wxsat-lines = { $n } lijnen
+wxsat-outside-window = Het kanaal ligt buiten het samplevenster, of te dicht bij de rand voor het hele signaal. Gebruik Hier afstemmen, of een breder venster.
+wxsat-waiting = Nog geen beeld. Zet de decoder aan zodra een satelliet boven de horizon staat; een overkomst duurt ongeveer tien minuten.
+wxsat-signal = Signaal
+wxsat-kind-apt = APT
+wxsat-kind-lrpt = LRPT
+wxsat-image-channel = Kanaal { $n }
+wxsat-rows = { $n } rijen
+wxsat-frame-locked = Framesync vergrendeld
+wxsat-frames = { $n } goede frames
+wxsat-waiting-lrpt = Nog geen beeld. Meteor LRPT is digitaal: het beeld begint een paar seconden nadat de satelliet is gehoord, rij voor rij, en elk kanaal is een apart beeld.
+wxsat-searching-frame = Zoeken naar de framesync
+sondemap-no-sonde-yet = Nog geen radiosonde ontvangen
+sonde-decoding = DECODEREN
+sonde-decoding-off = DECODER UIT
+sonde-count = Sondes: { $n }
+sonde-frames = Frames: { $n }
+sonde-channel = Kanaal
+sonde-channel-hover = De sondefrequentie waarop wordt geluisterd (400–406 MHz). De radio wordt er ook op afgestemd, zodat het kanaal in het venster ligt.
+sonde-col-serial = Sonde
+sonde-col-alt = Hoogte
+sonde-col-climb = Stijging
+sonde-col-speed = Snelheid
+sonde-col-battery = Batterij
+sonde-col-heard = Ontvangen
+sonde-scan = Scan
+sonde-scan-hover = Zoekt in het hele samplevenster naar sondes en decodeert er tot vier tegelijk, in plaats van op één kanaal te luisteren. Het venster moet ze bestrijken: het kanaalveld centreert de radio.
+sonde-online = Online (SondeHub)
+sonde-online-hover = Toont ook sondes die andere stations hebben ontvangen, uit de openbare lijst van SondeHub. Alleen lezen: uw locator op 0,1° afgerond en een straal van 400 km worden verstuurd; er wordt niets geüpload. Uit tot u het inschakelt.
+sonde-online-count = { $n } online
+sonde-online-no-grid = Vul uw locator in bij de instellingen van de digitale modes om online sondes te zien.
+sonde-online-failed = SondeHub antwoordde niet.
+sonde-export = Vlucht exporteren
+sonde-export-kml-hover = De vlucht van deze sonde opslaan als KML-track (Google Earth): tijd, lengtegraad, breedtegraad, hoogte in meters
+sonde-export-csv-hover = De vlucht van deze sonde opslaan als CSV-tabel voor een spreadsheet: tijd, breedtegraad, lengtegraad, hoogte in meters
+sonde-export-none = Nog geen positie bewaard voor deze sonde.
+sonde-col-temp = Temp.
+sonde-col-humidity = Vochtigheid
+sonde-col-pressure = Druk
+sonde-online-why-signin = Het station vraagt eerst om aanmelden.
+sonde-online-why-busy = Het station vraagt SondeHub al zo vaak als is toegestaan. Probeer het over een minuut opnieuw.
+sonde-online-why-upstream = Het station kon SondeHub niet bereiken.
+sonde-online-why-unreadable = Het antwoord was geen lijst met sondes.
+sonde-online-why-no-station = Geen station om te vragen, en deze pagina kan SondeHub zelf niet bereiken.
+sonde-online-why-http = Antwoord: HTTP { $n }.
+sonde-card-source = Bron
+sonde-card-source-radio = Deze radio
+sonde-card-source-hub = SondeHub (door een ander station gehoord)
+sonde-card-model = Model
+sonde-card-maker = Fabrikant
+sonde-card-variant = Variant
+sonde-card-position = Positie
+sonde-card-from-you = Vanaf u
+sonde-card-heading = Koers
+sonde-card-satellites = Satellieten
+sonde-card-snr = Signaal-ruisverhouding
+sonde-card-station = Gehoord door
+sonde-card-station-position = Positie van het station
+sonde-card-antenna = Antenne
+sonde-card-software = Software
+sonde-card-frames = Ontvangen frames
+sonde-card-open = Openen op { $site }
+sonde-card-close = Sluiten
+sonde-card-source-both = Radio + SondeHub (beide horen haar)
+sonde-card-stale = Status
+sonde-card-stale-value = Niet meer in de lijst: laatst bekende positie
+sonde-card-detach = Losmaken
+sonde-card-attach = Vastmaken
+sonde-card-listen-hover = Klik om de radio op dit kanaal af te stemmen: de afstemknop gaat erheen en de decoder luistert alleen daar.
+sonde-card-decoding = Gedecodeerd door deze radio
+sonde-card-waiting = Luistert op dit kanaal, nog niets gedecodeerd
+sonde-card-click-to-listen = Klik op de frequentie om te luisteren
+sonde-type-all = Alle typen
+sonde-type-hover = Zoek één type sonde: een keuze start de scan, die het venster over de band verschuift tot dat type te horen is. Alleen dat type wordt getoond en getekend.
+sonde-export-saved = { $name } opgeslagen.
 
-## VARA HF panel
+## Keyboard modes: MT63 (src/app/panels/text_modem.rs)
+textmodem-mt63-long-hint = MT63-{ $label }, { $bw } Hz breed — de lange interleave spreidt een burst over { $chars } tekens
+textmodem-mt63-short-hint = MT63-{ $label }, { $bw } Hz breed, korte interleave — de korte interleave spreidt een burst over { $chars } tekens
+textmodem-mt63-not-offered = 1K en 500L nog niet beschikbaar
+textmodem-mt63-not-offered-hint = MT63-1K en de lange interleave van 500 Hz worden gelezen met de batchdecoder, maar nog niet via de live ontvanger: de lock zoekt de symboolfase en de polariteit maar niet het bandcentrum, en een zoekactie die dat wel doet bleek de ene variant voor de andere in te ruilen.
 
-vara-starting = VARA-modem start…
-vara-link = VERBINDING
-vara-connected = VERBONDEN
-vara-calling = ROEPT
-vara-idle = LUISTERT
-vara-session-state = Sessiestatus van het modem: { $state }
-vara-tx = TX
-vara-busy = BEZET
-vara-busy-hint = Er is iemand anders op het kanaal. Een oproep nu zou er bovenop vallen.
-vara-setup = ⚙ INSTELLING
-vara-setup-hint = Stationsroepnaam, bandbreedte, geregistreerde niveaus, TCP-hostpoorten
-vara-peer = Tegenstation
-vara-width = Breedte
-vara-speed = Snelheid
-vara-snr = S/R
-vara-bytes = Bytes
-vara-queued = In wachtrij
-vara-attempt = Poging
-vara-host = Host
-vara-ports = Poorten
-vara-ports-off = uit
-vara-nobody = niemand
-vara-holder-panel = dit paneel
-vara-holder-winlink = het MAIL-venster
-vara-holder-tcp = een programma op { $addr }
-vara-tune = AFSTEMMEN
-vara-tune-hint = Een continue toon voor de antennetuner, hooguit een minuut. Niet tijdens een verbinding.
-vara-abort = AFBREKEN
-vara-abort-hint = De verbinding nu verbreken, wie hem ook bedient. De andere kant loopt in een time-out in plaats van het te horen.
-vara-terminal = TERMINAL
-vara-callsign = roepnaam
-vara-connect = VERBINDEN
-vara-connect-hint = Dit station oproepen op VARA HF
-vara-disconnect = VERBREKEN
-vara-disconnect-hint = Netjes ophangen: wat in de wachtrij staat gaat eerst, daarna stemt de andere kant in.
-vara-held-by = Het modem is in gebruik door { $holder }.
-vara-no-callsign = Stel eerst een roepnaam in (⚙ INSTELLING)
-vara-clear = WISSEN
-vara-clear-hint = Het transcript leegmaken. De verbinding blijft.
-vara-nothing-yet = Nog niets. Typ hierboven een roepnaam en VERBINDEN, of zet Luisteren aan in ⚙ INSTELLING om oproepen aan te nemen.
-vara-type-here = typ hier, Enter verstuurt
-vara-not-connected = niet verbonden
-vara-send = VERSTUREN
-setup-vara-setup = VARA HF-instellingen
-setup-vara-call-hint = De roepnaam waarop het modem antwoordt, eventueel met SSID. Leeg gebruikt je roepnaam hierboven. Een programma dat het modem bedient (Pat, VarAC) zet zijn eigen.
-setup-vara-bandwidth = Bandbreedte
-setup-vara-registered = Snelheidsniveaus
-setup-vara-registered-check = Geregistreerd
-setup-vara-registered-hint = De niveaus boven 4 vrijgeven, zoals een geregistreerde VARA-kopie doet. Voor bezitters van een VARA-licentie; een ongeregistreerd station blijft op niveau 4 hoe goed het pad ook is.
-setup-vara-retries = Herhalingen
-setup-vara-retries-hint = Verbindingspogingen voordat een oproep wordt opgegeven.
-setup-vara-cwid = CW-ID
-setup-vara-cwid-check = Aan het eind van een verbinding in CW identificeren
-setup-vara-latency = TX-latentie
-setup-vara-latency-auto = Auto
-setup-vara-latency-hint = Hoe lang de zendketen nodig heeft van modem tot antenne. Auto kiest ongeveer 20 ms voor een IQ-SDR en 120 ms voor een set met geluidskaart. Verhoog het als verbindingen mislukken net nadat de oproep beantwoord is.
-setup-vara-listen = Oproepen aannemen
-setup-vara-listen-check = Luisteren vanuit het paneel
-setup-vara-listen-hint = Inkomende oproepen aannemen in de terminal van het paneel. Geen effect zolang de TCP-hostpoorten aan staan, want een programma daar wil de oproepen.
-setup-vara-host = TCP-host
-setup-vara-host-hint = Het modem aanbieden op VARA's eigen commandopoort en de volgende (standaard 8300/8301, alleen localhost), zodat Pat, Winlink Express of VarAC deze radio als VARA-modem kunnen gebruiken.
-settings-radio-vara = Radio (VARA HF)
-settings-call-rms-gateway-vara = Een RMS-gateway via de radio oproepen op VARA HF. Zet de radio eerst op VARA HF.
-settings-vara-dial-note = De afstemfrequentie, bovenzijband, zoals gatewaylijsten die voor VARA geven. Nul laat de afstemming waar ze is.
+## Keyboard modes: MFSK (src/app/panels/text_modem.rs)
+textmodem-mfsk-hint = { $label } — { $baud } baud, { $tones } tonen, { $bw } Hz breed{ $caveat }
+textmodem-mfsk-reverse-hint = Draai de toonvolgorde om. Een station dat is ontvangen op de andere zijband dan waarop het is verzonden, komt gespiegeld om zijn midden binnen en klinkt als ruis totdat dit aan staat.
+
+## Keyboard modes: DominoEX (src/app/panels/text_modem.rs)
+textmodem-domino-hint = { $name } — { $baud } baud, 18 tonen, incrementele frequentiesleuteling zonder foutcorrectie vooraf
+textmodem-ifk-reverse-hint = Draai de toonstappen om. IFK+ draagt zijn data in de stap tussen opeenvolgende tonen, dus een station dat op de andere zijband is ontvangen heeft elke stap negatief en klinkt als ruis totdat dit aan staat.
+
+## Keyboard modes: PSK families (src/app/panels/text_modem.rs)
+textmodem-psk-family = Familie
+textmodem-psk-family-plain-hint = De eigen familie van PSK31: één differentiële draaggolf, geen foutcorrectie vooraf
+textmodem-psk-family-bpsk63f-hint = De robuuste code op 62,5 baud, zonder interleaver — de enige gecodeerde modus die fldigi zonder verzendt
+textmodem-psk-family-robust-hint = Eén draaggolf met de robuuste code en een 2x2xN-interleaver
+textmodem-psk-family-multi-hint = Meerdere draaggolven, de varicode van PSK31 en **geen** code — breder en sneller, en het vraagt een schoon signaal
+textmodem-psk-family-robust-multi-hint = Meerdere draaggolven **en** de robuuste code: de breedste en de meest robuuste van de PSK-modi
+textmodem-psk-baud-fast-hint = { $baud } baud — leest vanaf ongeveer een seconde: bij deze snelheid is de lock-tijd van de ontvanger een derde van een bericht
+textmodem-psk-baud-hint = { $baud } baud
+textmodem-psk-bpsk-hint = Eén bit per symbool, differentieel gedetecteerd
+textmodem-psk-coded = gecodeerd
+textmodem-psk-no-code = geen code
+textmodem-psk-coded-hint =
+    { $baud } baud, { $n } { $n ->
+            [one] draaggolf
+           *[other] draaggolven
+        }, { $code }, { $bw } Hz breed

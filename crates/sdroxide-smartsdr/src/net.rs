@@ -40,6 +40,7 @@ use sdroxide_types::{Mode, TxTelemetry};
 
 use crate::protocol::{self as p, Line};
 use crate::trace::Trace;
+use crate::udp_rx::{self, Datagram};
 
 /// How long the TCP connect and the version/handle exchange may take.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(4);
@@ -324,11 +325,8 @@ impl FlexHandle {
         let udp = UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0))
             .map_err(|e| err(format!("bind VITA-49 UDP socket: {e}")))?;
         let udp_port = udp.local_addr().map_err(|e| err(e.to_string()))?.port();
-        // Short, because this read is also what paces the TX audio pump: a long
-        // timeout would starve the radio's transmit buffer whenever RX packets
-        // stop arriving, which is exactly what a half-duplex radio does on
-        // key-down.
-        udp.set_read_timeout(Some(Duration::from_millis(2))).ok();
+        // Read on a thread of its own (see `udp_rx`), which sets the socket's
+        // timeout; the data loop's own wait is [`DATA_POLL`].
         trace.note(format!("VITA-49 UDP port {udp_port}"));
 
         // Identify first. FlexLib's order — `client program`, then any
@@ -574,10 +572,14 @@ impl FlexHandle {
         let radio_udp = SocketAddr::new(sockaddr.ip(), VITA_PORT);
         let register_udp = SocketAddr::new(sockaddr.ip(), port);
 
+        let (datagrams, stop_udp_rx) = udp_rx::start(&udp, "smartsdr-udp-rx")
+            .map_err(|e| err(format!("start the VITA-49 receive thread: {e}")))?;
         let data = DataThread {
             rig_on_air: Arc::clone(&rig_on_air),
             our_over: Arc::clone(&our_over),
             udp,
+            datagrams,
+            _stop_udp_rx: stop_udp_rx,
             fallback,
             radio_udp,
             register_udp,
@@ -1790,10 +1792,15 @@ fn mode_to_flex(m: Mode) -> &'static str {
         | Mode::Rtty
         | Mode::Olivia
         | Mode::Thor
+        | Mode::Contestia
+        | Mode::DominoEx
+        | Mode::Mfsk
+        | Mode::Mt63
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf
-        | Mode::VaraHf
+        | Mode::Mercury
+        | Mode::Data2g
         | Mode::AtChat
         | Mode::Rade => "DIGU",
         Mode::Usb
@@ -1831,7 +1838,11 @@ struct DataThread {
     rig_on_air: Arc<AtomicBool>,
     /// See [`ControlThread::our_over`].
     our_over: Arc<AtomicBool>,
+    /// Only ever sent on: it is read by the thread behind [`Self::datagrams`].
     udp: UdpSocket,
+    /// What that thread has read, and the guard that stops it with this one.
+    datagrams: Receiver<Datagram>,
+    _stop_udp_rx: udp_rx::StopOnDrop,
     /// A second listening socket on [`VITA_PORT`], when it was free. See where
     /// it is bound for why it exists and why it is not shared.
     fallback: Option<UdpSocket>,
@@ -1876,6 +1887,12 @@ struct DataThread {
     tx_frames: u64,
 }
 
+/// How long the data loop waits for a datagram. Short, because this wait is also
+/// what paces the TX audio pump: a long one would starve the radio's transmit
+/// buffer whenever RX packets stop arriving, which is exactly what a half-duplex
+/// radio does on key-down.
+const DATA_POLL: Duration = Duration::from_millis(2);
+
 /// How far ahead of the wall clock the radio's TX buffer is kept. Four packets
 /// is ~21 ms: enough that a late block from the engine does not leave the radio
 /// with nothing to play, short enough not to add audible latency.
@@ -1891,13 +1908,29 @@ impl DataThread {
     /// The fallback is non-blocking, so it is checked first at the cost of one
     /// syscall that returns immediately when it is empty — which is every turn
     /// of the loop unless the radio really is streaming to the wrong port. The
-    /// primary socket goes last because *its* read timeout is what paces this
-    /// whole loop, and with it the TX audio clock.
+    /// primary socket's datagrams come from the receive thread, and waiting for
+    /// them goes last because [`DATA_POLL`] is what paces this whole loop, and
+    /// with it the TX audio clock. A wait that ends with nothing reads as
+    /// `TimedOut`, which the loop already treats as an ordinary quiet turn.
     fn recv(&self, buf: &mut [u8]) -> std::io::Result<(usize, SocketAddr, bool)> {
         if let Some(Ok((n, from))) = self.fallback.as_ref().map(|f| f.recv_from(buf)) {
             return Ok((n, from, true));
         }
-        self.udp.recv_from(buf).map(|(n, from)| (n, from, false))
+        match self.datagrams.recv_timeout(DATA_POLL) {
+            Ok(Ok((d, from))) => {
+                let n = d.len().min(buf.len());
+                buf[..n].copy_from_slice(&d[..n]);
+                Ok((n, from, false))
+            }
+            Ok(Err(e)) => Err(e),
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                Err(std::io::ErrorKind::TimedOut.into())
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "the VITA-49 receive thread ended",
+            )),
+        }
     }
 
     fn run(mut self) {

@@ -2,14 +2,16 @@
 //!
 //! Reuses the same streaming STFT as the CW skimmer, but treats the FFT as a
 //! *filterbank*: each bin is a down-converted, decimated complex stream at the
-//! frame rate (~187 Hz over a 192 kHz window), so a per-track BPSK or FSK
+//! frame rate (750 Hz over a 192 kHz window), so a per-track BPSK or FSK
 //! decoder consumes bins directly — no per-track decimation. Detection finds
 //! persistent carriers; decoding is gated to the digimode band segments.
 //!
-//! Decode quality is a first cut: 47 Hz bins and ~6 samples/symbol are coarse,
-//! so a per-track Costas loop (in [`BpskCore`]) pulls the residual offset. It is
-//! good enough to place spots and read call-outs; the operator clicks a spot to
-//! decode it cleanly in the PSK/RTTY panel.
+//! A bin is a coarse tap (47 Hz wide, ~24 samples per PSK31 symbol) whose
+//! phase also steps with the hop, so a PSK track first takes out the hop's
+//! phase advance and the carrier's place within the bin before its Costas
+//! loop (in [`BpskCore`]) sees it — see [`PskDemod`]. Good enough to place
+//! spots and read call-outs; the operator clicks a spot to decode it cleanly
+//! in the PSK/RTTY panel.
 
 use std::sync::Arc;
 
@@ -23,6 +25,11 @@ const FFT_SIZE: usize = 4096;
 /// Small hop → a high frame rate (~750 Hz), giving ~24 samples/symbol for PSK
 /// and ~16/bit for RTTY — enough for clean symbol timing on the bin filterbank.
 const HOP: usize = 256;
+/// Hops per transform window: a bin-centred tone's phase advances `k` turns
+/// over this many frames, which is what [`PskDemod`]'s hop correction undoes.
+const HOPS_PER_FFT: usize = FFT_SIZE / HOP;
+const _: () =
+    assert!(FFT_SIZE.is_multiple_of(HOP), "hop must divide the window for the phase correction");
 const WARMUP: u32 = 80;
 /// Detection threshold on the *smoothed* spectrum, above the (per-region) mean
 /// noise floor (~7 dB of sustained energy). Smoothing already rejects noise
@@ -42,7 +49,7 @@ const REGION_BINS: usize = 64;
 /// once per `FFT_SIZE / HOP` frames costs a sixteenth as much *and* draws each
 /// estimate from independent samples; [`sdroxide_dsp::noisefloor::stride_alpha`] keeps the
 /// floor's time constant in seconds unchanged.
-const FLOOR_EVERY: u32 = (FFT_SIZE / HOP) as u32;
+const FLOOR_EVERY: u32 = HOPS_PER_FFT as u32;
 /// Envelope key-off ratio, for a track's activity/SNR metering.
 const OFF_RATIO: f32 = 4.0;
 /// Fraction of a carrier's own power a tone `shift` away must reach to count as
@@ -124,8 +131,72 @@ impl RttyDemod {
     }
 }
 
+/// Smoothing of the squared-signal lag product behind [`PskDemod`]'s coarse
+/// AFC, per frame (~40 ms at a 750 Hz frame rate — a symbol and a bit).
+const AFC_SMOOTH: f32 = 1.0 / 32.0;
+
+/// Per-track PSK31 demod over one filterbank bin.
+///
+/// Two offsets stand between a bin's output and a carrier [`BpskCore`] can
+/// lock:
+///
+/// * **The hop.** Frame `m` transforms samples from `m·HOP` on, so a tone at
+///   bin `k`'s centre comes out advanced by `2π·k·HOP/FFT_SIZE` per frame —
+///   `k/16` of a turn here. Left in, that is `(k mod 16)` bin widths of
+///   apparent offset (up to ±375 Hz); only carriers on every 16th bin
+///   decoded. The skimmer takes it out before the sample gets here — see
+///   [`DigiSkimmer::on_frame`].
+/// * **Where in the bin the carrier sits.** Up to half a bin (±23 Hz) off the
+///   centre, the rest is still several times what the Costas loop pulls in:
+///   it derotates *before* its one-symbol matched filter, so a 20 Hz offset
+///   turns most of a cycle across each symbol and the filter nulls the very
+///   signal the loop needs to see. Squaring BPSK strips the ±1 modulation, so
+///   the lag-1 product of the squared stream turns at twice the residual
+///   regardless of the data; an NCO removes that, and the loop is left only
+///   the last fraction of a hertz.
+struct PskDemod {
+    core: BpskCore,
+    /// Previous frame's squared sample.
+    sq_prev: C32,
+    /// Smoothed `sq[m]·conj(sq[m-1])`; half its angle is the residual in
+    /// radians per frame.
+    acf: C32,
+    /// Phase of the NCO that removes the residual.
+    nco: f32,
+}
+
+impl PskDemod {
+    fn new(sps: f32) -> Self {
+        PskDemod {
+            core: BpskCore::new(sps),
+            sq_prev: C32::default(),
+            acf: C32::default(),
+            nco: 0.0,
+        }
+    }
+
+    /// Residual carrier offset from the bin centre, in radians per frame.
+    fn residual(&self) -> f32 {
+        if self.acf.norm_sqr() > 0.0 { self.acf.arg() * 0.5 } else { 0.0 }
+    }
+
+    /// Feed one hop-corrected bin sample.
+    fn push(&mut self, z: C32, out: &mut String) {
+        let sq = z * z;
+        self.acf += (sq * self.sq_prev.conj() - self.acf) * AFC_SMOOTH;
+        self.sq_prev = sq;
+        self.nco -= self.residual();
+        if self.nco < -std::f32::consts::PI {
+            self.nco += std::f32::consts::TAU;
+        } else if self.nco > std::f32::consts::PI {
+            self.nco -= std::f32::consts::TAU;
+        }
+        self.core.push(z * C32::from_polar(1.0, self.nco), out);
+    }
+}
+
 enum Decoder {
-    Psk(BpskCore),
+    Psk(Box<PskDemod>),
     Rtty(RttyDemod),
 }
 
@@ -189,6 +260,9 @@ pub struct DigiSkimmer {
     centers: Vec<i64>,
     frame_ms: f32,
     frames: u32,
+    /// The current frame's index mod [`HOPS_PER_FFT`] — its start sample is
+    /// `index·HOP` into the stream, which sets each bin's phase advance.
+    hop_index: usize,
     now_ms: f64,
     tracks: Vec<Track>,
     next_id: u64,
@@ -239,6 +313,7 @@ impl DigiSkimmer {
             centers: Vec::with_capacity(128),
             frame_ms: (HOP as f64 / skim_rate * 1000.0) as f32,
             frames: 0,
+            hop_index: 0,
             now_ms: 0.0,
             tracks: Vec::new(),
             next_id: 1,
@@ -308,6 +383,7 @@ impl DigiSkimmer {
         self.inbuf.clear();
         self.read_pos = 0;
         self.frames = 0;
+        self.hop_index = 0;
         for p in self.floor.iter_mut() {
             *p = 0.0;
         }
@@ -334,6 +410,7 @@ impl DigiSkimmer {
             self.on_frame();
             self.read_pos += HOP;
             self.frames = self.frames.saturating_add(1);
+            self.hop_index = (self.hop_index + 1) % HOPS_PER_FFT;
             self.now_ms += self.frame_ms as f64;
         }
         if self.read_pos >= FFT_SIZE {
@@ -345,7 +422,7 @@ impl DigiSkimmer {
     fn new_decoder(&self) -> Decoder {
         match self.kind {
             SkimmerKind::Rtty => Decoder::Rtty(RttyDemod::new(self.rtty_bit_len)),
-            _ => Decoder::Psk(BpskCore::new(self.psk_sps)),
+            _ => Decoder::Psk(Box::new(PskDemod::new(self.psk_sps))),
         }
     }
 
@@ -481,9 +558,14 @@ impl DigiSkimmer {
                 t.snr_db = (10.0 * (t.env / floor).log10()).round().clamp(-30.0, 60.0) as i16;
             }
             match &mut t.dec {
-                Decoder::Psk(core) => {
+                Decoder::Psk(demod) => {
+                    // Undo the hop's phase advance, 2π·k·m·HOP/FFT_SIZE — see
+                    // [`PskDemod`]. `k·m` taken mod the hops per window, so it
+                    // stays exact however long the skimmer runs.
+                    let turn = (k * self.hop_index) % HOPS_PER_FFT;
+                    let ang = -std::f32::consts::TAU * turn as f32 / HOPS_PER_FFT as f32;
                     let mut s = String::new();
-                    core.push(self.scratch[k], &mut s);
+                    demod.push(self.scratch[k] * C32::from_polar(1.0, ang), &mut s);
                     append_capped(&mut t.text, &s);
                 }
                 Decoder::Rtty(demod) => {
@@ -522,10 +604,18 @@ impl DigiSkimmer {
                     SkimmerKind::Rtty => RTTY_SHIFT / 2.0,
                     _ => 0.0,
                 };
+                // PSK knows where in its bin the carrier sits (the AFC's
+                // residual), so the spot lands on the carrier, not the bin.
+                let fine_hz = match &t.dec {
+                    Decoder::Psk(d) => {
+                        d.residual() as f64 / std::f64::consts::TAU * (self.skim_rate / HOP as f64)
+                    }
+                    Decoder::Rtty(_) => 0.0,
+                };
                 Some(SkimmerSpot {
                     id: t.id,
                     kind: self.kind,
-                    freq_hz: self.skim_center_hz + t.bin as f64 * bin_hz - pair_offset,
+                    freq_hz: self.skim_center_hz + t.bin as f64 * bin_hz + fine_hz - pair_offset,
                     callsign,
                     text: t.text.clone(),
                     snr_db: t.snr_db,
@@ -703,9 +793,41 @@ mod tests {
         // The confirmation gate must reject noise: a lone carrier yields a small
         // number of spots (ideally one), not a spray of false tracks.
         assert!(spots.len() <= 3, "too many spots (noise not rejected): {}", spots.len());
-        // Coarse filterbank decode is best-effort text; clean copy happens in the
-        // PSK panel after the operator clicks the spot to tune onto it.
-        assert!(!s.text.is_empty(), "spot has no text");
+        // Real copy, not just *some* text: varicode prints letters off noise, so
+        // a non-empty check passed while this decoded garbage (#822).
+        assert!(s.text.contains("AB1CD"), "garbled copy: {:?}", s.text);
+    }
+
+    /// A carrier anywhere decodes: on bins whose index is and isn't a multiple
+    /// of the hops per window (the hop's phase advance, #822), and anywhere
+    /// within a bin (the residual the AFC takes out) — not just on every 16th
+    /// bin centre. The spot also lands on the carrier, not its bin centre.
+    #[test]
+    fn decodes_psk_at_any_offset() {
+        let rate = 192_000.0;
+        let center = 14_070_000.0;
+        let bin_hz = rate / FFT_SIZE as f64;
+        let mut bad = Vec::new();
+        // 1.37 bins apart: walks through every k mod 16 and spread of in-bin
+        // fractions, from a bin centre to half a bin off.
+        for j in 0..13 {
+            let off = 1500.0 + j as f64 * 1.37 * bin_hz;
+            let iq = synth_psk("CQ CQ DE AB1CD AB1CD K ", off, rate);
+            let mut sk = DigiSkimmer::new(SkimmerKind::Psk, rate, center);
+            for chunk in iq.chunks(8192) {
+                sk.process(chunk);
+            }
+            let hit = sk.spots().into_iter().find(|s| s.text.contains("AB1CD"));
+            // Within a few Hz rather than exact: idling PSK31 is two tones
+            // ±15.6 Hz, and a carrier near a bin's edge has them weighted
+            // unequally, pulling the estimate a little toward the bin centre.
+            // Well inside what the panel's own AFC takes up on a click.
+            match hit {
+                Some(s) if (s.freq_hz - (center + off)).abs() < 6.0 => {}
+                other => bad.push((off, other.map(|s| (s.freq_hz - center, s.text)))),
+            }
+        }
+        assert!(bad.is_empty(), "offsets without clean copy at the carrier: {bad:?}");
     }
 
     #[test]

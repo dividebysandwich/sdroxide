@@ -24,6 +24,12 @@ const NBASEGRID: u16 = 180 * 180;
 /// Returned by [`pack_grid`] when there is no grid to send.
 pub const NO_GRID: u16 = (1 << 15) - 1;
 
+/// Where a compound frame's 16-bit field stops meaning a grid and starts
+/// carrying a directed command, `varicode.cpp:211` (`nusergrid`). Ten values
+/// above the last real grid; everything from here up to [`NO_GRID`] is a
+/// command and its number.
+pub const NUSERGRID: u16 = NBASEGRID + 10;
+
 /// Reserved callsign values: groups, and the marker for a callsign whose
 /// compound form has not been heard yet. `varicode.cpp:214`.
 ///
@@ -57,6 +63,37 @@ pub const BASECALLS: &[&str] = &[
     "@CONTROL",
     "@NET",
     "@NTS",
+    // `varicode.cpp:259-280`. These were missing until the group auto-response
+    // work, and it mattered: a frame from JS8Call addressed to @EMCOMM or
+    // @ARES unpacked to "no such callsign" and was dropped, so the busiest
+    // groups on the band could not be heard at all.
+    "@RESERVE/0",
+    "@RESERVE/1",
+    "@RESERVE/2",
+    "@RESERVE/3",
+    "@RESERVE/4",
+    "@APRSIS",
+    "@RAGCHEW",
+    "@JS8",
+    "@EMCOMM",
+    "@ARES",
+    "@MARS",
+    "@AMRRON",
+    "@RACES",
+    "@RAYNET",
+    "@RADAR",
+    "@SKYWARN",
+    "@CQ",
+    "@HB",
+    "@QSO",
+    "@QSOPARTY",
+    "@CONTEST",
+    "@FIELDDAY",
+    "@SOTA",
+    "@IOTA",
+    "@POTA",
+    "@QRP",
+    "@QRO",
 ];
 
 fn idx(c: u8) -> Option<u32> {
@@ -299,6 +336,51 @@ pub fn pack_alphanumeric50(value: &str) -> u64 {
     packed
 }
 
+/// True when `call` has to travel in the 50-bit compound form: it is a valid
+/// compound callsign or custom group that the 28-bit form cannot carry.
+///
+/// Upstream's `isCompoundCallsign` (`varicode.cpp:1292`) with
+/// `isValidCompoundCallsign` (`varicode.cpp:1232`). The checks are:
+/// * Reserved names (`@ALLCALL`, `@JS8NET`…) and ordinary callsigns, `/P`
+///   included, fit 28 bits and are not compound.
+/// * At most nine characters once the slashes are removed.
+/// * It must be a group (`@…`), contain a `/` whose prefix is not a reserved
+///   name, or look like a callsign (a letter beside a digit). The last rule
+///   stops a short word being sent as an address.
+///
+/// It also refuses anything the 50-bit field cannot represent exactly. Upstream
+/// does this with its `compound_callsign_pattern` regex. Here, a value counts as
+/// representable when it unpacks back to itself.
+pub fn needs_compound(call: &str) -> bool {
+    let call = call.trim().to_ascii_uppercase();
+    if call.is_empty() || pack_callsign(&call).is_some() {
+        return false;
+    }
+    if call.chars().filter(|&c| c != '/').count() > 9 {
+        return false;
+    }
+    if !call.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'/' || c == b'@') {
+        return false;
+    }
+    // `@` is only the leading character of a group: the 50-bit alphabet has
+    // room for it in the first position and nowhere else.
+    if call[1..].contains('@') {
+        return false;
+    }
+    let shaped = if let Some(i) = call.find('/') {
+        !BASECALLS.contains(&&call[..i])
+    } else if call.starts_with('@') {
+        call.len() > 1
+    } else {
+        call.len() > 2
+            && call.as_bytes().windows(2).any(|w| {
+                (w[0].is_ascii_digit() && w[1].is_ascii_uppercase())
+                    || (w[0].is_ascii_uppercase() && w[1].is_ascii_digit())
+            })
+    };
+    shaped && unpack_alphanumeric50(pack_alphanumeric50(&call)) == call
+}
+
 /// Inverse of [`pack_alphanumeric50`].
 ///
 /// Note the leading position divides by 39, not 38 — upstream's asymmetry, and
@@ -330,6 +412,23 @@ pub fn unpack_alphanumeric50(mut packed: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_what_28_bits_cannot_carry_needs_the_compound_form() {
+        // Custom groups and slashed calls do.
+        for call in ["@MAGNET", "@TEST/1", "W1AW/4", "KN4CRD/QRP", "VE/KN4CRD"] {
+            assert!(needs_compound(call), "{call}");
+        }
+        // Ordinary calls, /P and the reserved groups (old and new) fit a
+        // directed frame and must keep using one: that is what JS8Call sends.
+        for call in ["KN4CRD", "KN4CRD/P", "@ALLCALL", "@EMCOMM", "@AMRRON", "@QRO"] {
+            assert!(!needs_compound(call), "{call}");
+        }
+        // Not addresses at all: too long, a stray @, a bare word.
+        for call in ["@WAYTOOLONGNAME", "KN@CRD", "", "HELLO"] {
+            assert!(!needs_compound(call), "{call:?}");
+        }
+    }
 
     #[test]
     fn callsigns_round_trip() {

@@ -327,8 +327,15 @@ impl SdroxideApp {
             // ── Right: RX stream (fills) + compose controls (pinned bottom) ──
             if pane.is_none_or(|p| p != 0) {
                 ui.vertical(|ui| {
-                    // Two control rows (To:/message/SEND, then CQ/? /CLEAR) + gaps.
-                    let controls_h = 74.0;
+                    // Two control rows (To:/message/SEND, then CQ/? /CLEAR) + gaps,
+                    // as tall as they came out last frame rather than the 74 pt
+                    // they measure on a desktop: a touched layout's chips are
+                    // taller, and the CQ row went below the window.
+                    // Why: HDZ 2026-11-08 (screenshots, tablet and desktop):
+                    //      "FSQ franst noch und unten fehlt was".
+                    let controls_id = ui.id().with("fsq-controls-h");
+                    let controls_h =
+                        ui.ctx().data(|d| d.get_temp::<f32>(controls_id)).unwrap_or(74.0);
                     let rx_h = (avail_h - controls_h).max(24.0);
                     ui.allocate_ui(egui::vec2(ui.available_width(), rx_h), |ui| {
                         egui::Frame::new()
@@ -366,6 +373,7 @@ impl SdroxideApp {
                                     });
                             });
                     });
+                    let controls_top = ui.cursor().top();
                     ui.add_space(4.0);
                     let tgt = if self.fsq_target.is_empty() {
                         tr!("fsq-allcall").to_string()
@@ -382,7 +390,16 @@ impl SdroxideApp {
                         let resp = crate::chrome::field(
                             ui,
                             egui::TextEdit::singleline(&mut self.text_tx)
-                                .desired_width((ui.available_width() - 62.0).max(60.0))
+                                // Room for SEND as wide as its label comes out
+                                // (SENDEN in German, taller chips on a tablet),
+                                // not the 62 pt of the English one.
+                                .desired_width(
+                                    (ui.available_width()
+                                        - crate::chrome::chip_width(ui, &tr!("fsq-send"), None)
+                                        - ui.spacing().item_spacing.x
+                                        - 4.0)
+                                        .max(60.0),
+                                )
                                 .hint_text(tr!("fsq-message")),
                         );
                         // Return is the same button, so it is shut off with it.
@@ -440,6 +457,11 @@ impl SdroxideApp {
                             cmds.push(Command::DigiAbortTx);
                         }
                     });
+                    let got = ui.cursor().top() - controls_top;
+                    if (got - controls_h).abs() > 0.5 {
+                        ui.ctx().data_mut(|d| d.insert_temp(controls_id, got));
+                        ui.ctx().request_repaint();
+                    }
                 });
             }
         });

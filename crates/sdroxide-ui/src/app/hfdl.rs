@@ -45,7 +45,11 @@ impl SdroxideApp {
         // engine echoes the accepted settings back, so there is no apply step and
         // no way for the two copies to drift.
         let mut cfg = self.state.hfdl;
-        let content_bottom = ui.cursor().top() + panel_h - 4.0;
+        // The panel asks for `panel_h`, but the space the parent actually gave
+        // can be shorter (the split's arithmetic does not see every margin the
+        // frame adds), so the log must end at the rect it was given, not at the
+        // requested height — otherwise its last rows hang below the window.
+        let content_bottom = (ui.cursor().top() + panel_h - 4.0).min(ui.max_rect().bottom() - 4.0);
 
         hfdl_status_strip(ui, self.hfdl_status.as_ref(), self.hfdl_map.len());
         ui.add_space(2.0);
@@ -169,7 +173,7 @@ impl SdroxideApp {
                 ui.allocate_ui_with_layout(
                     egui::vec2(if pane.is_some() { full_w } else { log_w }, avail_h),
                     egui::Layout::top_down(egui::Align::Min),
-                    |ui| self.hfdl_log_pane(ui, avail_h),
+                    |ui| self.hfdl_log_pane(ui),
                 );
             }
             if pane.is_none() {
@@ -196,7 +200,7 @@ impl SdroxideApp {
     }
 
     /// The decode log, newest first, with a filter over it.
-    fn hfdl_log_pane(&mut self, ui: &mut egui::Ui, avail_h: f32) {
+    fn hfdl_log_pane(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             ui.set_min_height(20.0);
             ui.label(
@@ -215,9 +219,12 @@ impl SdroxideApp {
         let filter = self.hfdl_filter.trim().to_ascii_uppercase();
         // The log is carried whole in every status snapshot, oldest *last*.
         let log = self.hfdl_status.as_ref().map(|s| s.log.as_slice()).unwrap_or(&[]);
+        // What is left under the header, measured rather than assumed: the
+        // header's real height is a font and a touch-metric question.
+        let room = ui.available_height().max(48.0);
         egui::ScrollArea::vertical()
             .id_salt("hfdl-log")
-            .max_height((avail_h - 24.0).max(48.0))
+            .max_height(room)
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 let mut shown = 0;
@@ -382,6 +389,11 @@ fn count(n: u64) -> String {
 /// A readout in a slot of fixed width, so a number that grows a digit cannot
 /// re-flow the header.
 fn slot(ui: &mut egui::Ui, w: f32, text: &str, color: egui::Color32) {
+    // At least `w`, so the slots stand still as the counts change, but never
+    // narrower than the text: the widths were measured on English, and
+    // „0 Dekodierungen“ was cut off after „0 Dekodie“ (HDZ 2026-11-08).
+    let font = egui::FontId::monospace(10.5);
+    let w = w.max(crate::chrome::text_width(ui, text, font.clone()) + 4.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 16.0), egui::Sense::hover());
     if !ui.is_rect_visible(rect) {
         return;
@@ -390,7 +402,7 @@ fn slot(ui: &mut egui::Ui, w: f32, text: &str, color: egui::Color32) {
         egui::pos2(rect.left(), rect.center().y),
         egui::Align2::LEFT_CENTER,
         text,
-        egui::FontId::monospace(10.5),
+        font,
         color,
     );
 }

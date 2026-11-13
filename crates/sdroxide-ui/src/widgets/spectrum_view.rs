@@ -127,6 +127,16 @@ pub struct WindowPan {
     /// the gap between them is a refusal the engine would answer sixty times a
     /// second.
     pub limits: (f64, f64),
+    /// Whether another receive range carries on where [`WindowPan::limits`]
+    /// ends, `(below, above)`: the two ranges meet, with no gap between them.
+    ///
+    /// An RX-888 at 64.8 Msps is one: HF runs to Nyquist at 32.4 MHz and VHF
+    /// starts there. The centre still stops at the end of its own range, but a
+    /// drag pressed against that end keeps turning the dial, and a dial taken
+    /// past the crossover is what makes the driver switch front ends. Where
+    /// the ranges leave a gap (the same receiver at 32.4 Msps, HF to 16.2 MHz
+    /// and VHF from 24 MHz), the end is a stop.
+    pub joins: (bool, bool),
     /// The widest window the view may be zoomed out to, `(centre, span)`, when
     /// that is wider than the I/Q the front end is streaming.
     ///
@@ -163,7 +173,34 @@ impl WindowPan {
             .find(|&&(lo, hi)| (lo..=hi).contains(&center_hz))
             .copied()
             .unwrap_or((f64::MIN, f64::MAX));
-        Self { movable: !caps.audio_mode && !caps.center_is_dial, limits, outer: None, known: true }
+        let ranges = &caps.freq_ranges_rx;
+        let joins = (
+            ranges.iter().any(|&(lo, hi)| lo < limits.0 && hi >= limits.0),
+            ranges.iter().any(|&(lo, hi)| hi > limits.1 && lo <= limits.1),
+        );
+        Self {
+            movable: !caps.audio_mode && !caps.center_is_dial,
+            limits,
+            joins,
+            outer: None,
+            known: true,
+        }
+    }
+
+    /// Whether a slide by `hand` that the picture could not follow is pressed
+    /// against an end of [`WindowPan::limits`] that another range continues —
+    /// see [`WindowPan::joins`]. The window's edge or the centre counts as at
+    /// the end within 5 % of the view: the converter stops its centre short of
+    /// Nyquist by half its output, so neither lands on the limit exactly.
+    fn runs_on(&self, hand: f64, view: &ViewState, dev_center: f64) -> bool {
+        let slack = view.span() * 0.05;
+        if hand > 0.0 {
+            self.joins.1 && view.view_hi_hz.max(dev_center) >= self.limits.1 - slack
+        } else if hand < 0.0 {
+            self.joins.0 && view.view_lo_hz.min(dev_center) <= self.limits.0 + slack
+        } else {
+            false
+        }
     }
 
     /// Add the full-band window the view may zoom out into — see
@@ -338,6 +375,55 @@ fn pan_center(
     cmds.push(Command::SetCenter(hz));
 }
 
+/// How far one frame of a slide really moved the picture: hand what the view
+/// could not absorb to the front end's centre ([`pan_center`]), pin the view
+/// into the window it is allowed now, and measure its middle against where it
+/// was before the slide (`mid_before`). The view is what the operator sees,
+/// so this counts exactly that.
+///
+/// At an end stop it is nothing — the view against the edge of the band or of
+/// the full-band lane it is zoomed out into, a centre that can go no further —
+/// and a dial turned by this stays put with the picture. Turned by the whole
+/// gesture instead, it walked through a picture standing still, against the
+/// drag: pulled right, the mark went left.
+///
+/// Except at the end of a range that another one continues
+/// ([`WindowPan::joins`]): there the dial takes the whole of `hand`, the
+/// gesture's own step, so a drag can carry it over the crossover and the
+/// driver switches front ends.
+// Why: HDZ 2026-11-10: "wenn der Kasten angeschlagen ist … dragen macht gar
+//      nichts mehr, nur noch klicken des Cursors".
+//      HDZ 2026-11-10: "wenn im Low-Bereich an die rechte Kante gefahren wird,
+//      schaltet der Treiber ja um, dann ist das Weiterschieben mit unserem
+//      Stopp-Patch behindert … die upper Schwelle bei Zoom-out musst du noch
+//      umschaltaware machen".
+#[allow(clippy::too_many_arguments)]
+fn picture_moved(
+    view: &mut ViewState,
+    mid_before: f64,
+    hand: f64,
+    over: f64,
+    dev_center: &mut f64,
+    dev_span: f64,
+    state: &mut RadioState,
+    pan: WindowPan,
+    cmds: &mut Vec<Command>,
+) -> f64 {
+    // A rig whose window follows its dial has no window to move here: the
+    // dial takes the whole gesture and the window follows the retune (#133).
+    if !pan.movable {
+        return hand;
+    }
+    pan_center(dev_center, state, over, pan, cmds);
+    let (c, s) = pan.view_bounds(*dev_center, dev_span);
+    view.clamp_to(c, s);
+    let moved = (view.view_lo_hz + view.view_hi_hz) / 2.0 - mid_before;
+    if moved.abs() < hand.abs() && pan.runs_on(hand, view, *dev_center) {
+        return hand;
+    }
+    moved
+}
+
 /// Slide the window so `vfo` sits in the middle of it, and report what the
 /// captured span could not absorb — the amount the front end's own centre has
 /// to move for the dial to be centred, which is nothing at all while the view
@@ -420,6 +506,14 @@ pub struct WfTuning {
     /// Whether the waterfall is interpolated between bins and rows — see
     /// [`sdroxide_types::UiSettings::waterfall_smooth`].
     pub smooth: bool,
+    /// The SMOOTH chip: rows averaged lightly over their neighbours in
+    /// time and frequency before they are drawn — see
+    /// [`crate::view::ViewState::waterfall_average`].
+    pub average: bool,
+    /// WELCH's time constant, seconds — see [`crate::view::ViewState::welch_tc`].
+    pub welch_tc: f32,
+    /// The REASSIGN chip — see [`crate::view::ViewState::waterfall_reassign`].
+    pub reassign: bool,
     /// Rows a second the 3D spectrum flows away from the viewer, from the SPEC
     /// popup's **flow** row. Zero while the stream is stalled, which is what
     /// holds the surface still — the same rule that stops the waterfall
@@ -491,10 +585,14 @@ pub struct SpectrumSmooth {
     last_seq: Option<u32>,
     generation: u32,
     alpha: f32,
+    /// WELCH's table and the buffer a new frame is read into, kept between
+    /// frames so a frame allocates nothing.
+    daniell: Daniell,
+    input: Vec<f32>,
 }
 
 impl SpectrumSmooth {
-    fn update(&mut self, f: &SpectrumFrame, alpha: f32) {
+    fn update(&mut self, f: &SpectrumFrame, alpha: f32, welch: bool) {
         if (self.alpha - alpha).abs() > 1e-6 {
             self.alpha = alpha;
             self.generation = self.generation.wrapping_add(1);
@@ -509,17 +607,83 @@ impl SpectrumSmooth {
         // A window that has only moved keeps its average; see [`slide_bins`].
         let mapping_changed = rescaled || (moved && !slide_bins(&mut self.bins, self.center, f));
         self.center = f.center_hz;
+        // WELCH: each bin averaged with its neighbours (¼ ½ ¼) in linear
+        // power before it is folded in — the trace's counterpart of the
+        // waterfall's mean columns.
+        let mut input = std::mem::take(&mut self.input);
+        if welch {
+            self.daniell.run(&f.bins, f.db_ceil - f.db_floor, &mut input);
+        } else {
+            input.clear();
+            input.extend(f.bins.iter().map(|&b| b as f32));
+        }
         if mapping_changed || alpha >= 0.999 {
             self.span = f.span_hz;
-            self.bins = f.bins.iter().map(|&b| b as f32).collect();
+            // The old average becomes next frame's input buffer.
+            self.input = std::mem::replace(&mut self.bins, input);
             if mapping_changed {
                 self.generation = self.generation.wrapping_add(1);
             }
             return;
         }
-        for (s, &b) in self.bins.iter_mut().zip(&f.bins) {
-            *s += alpha * (b as f32 - *s);
+        for (s, &b) in self.bins.iter_mut().zip(&input) {
+            *s += alpha * (b - *s);
         }
+        self.input = input;
+    }
+}
+
+/// How much of each new row goes into WELCH's running average so that it
+/// averages over `tc` seconds at `rows_per_sec`.
+fn welch_row_weight(rows_per_sec: f32, tc: f32) -> f32 {
+    let rps = rows_per_sec.max(1.0);
+    1.0 - (-1.0 / (rps * tc.max(0.01))).exp()
+}
+
+/// A spectrum's bytes with each averaged with its two neighbours (¼ ½ ¼) in
+/// linear power, as byte-scale floats again. `range_db` is the span the 255
+/// steps cover. Averaging neighbouring bins of one periodogram is Daniell's
+/// smoothing; it takes the speckle off the trace the way averaging transforms
+/// over time (Welch) does.
+// Why: HDZ 2026-11-06: "kannst du auch in der Spektrumsdarstellung eine Art
+//      gewichtetes interpoliertes Dämpfungsverhalten reinbekommen, damit das
+//      nicht so grieselig aussieht".
+#[cfg(test)]
+fn daniell(bins: &[u8], range_db: f32) -> Vec<f32> {
+    let mut out = Vec::new();
+    Daniell::default().run(bins, range_db, &mut out);
+    out
+}
+
+/// [`daniell`] with its byte → power table kept across frames: built once
+/// per dB range rather than three `powf` per bin on every frame.
+#[derive(Default)]
+struct Daniell {
+    range_db: f32,
+    lin: Vec<f32>,
+}
+
+impl Daniell {
+    /// Smooth `bins` into `out`, reusing its allocation.
+    fn run(&mut self, bins: &[u8], range_db: f32, out: &mut Vec<f32>) {
+        out.clear();
+        let k = range_db / 255.0 / 10.0;
+        let n = bins.len();
+        if n == 0 || k.is_nan() || k <= 0.0 {
+            out.extend(bins.iter().map(|&b| b as f32));
+            return;
+        }
+        if self.lin.is_empty() || self.range_db != range_db {
+            self.range_db = range_db;
+            self.lin = (0..256).map(|b| 10f32.powf(b as f32 * k)).collect();
+        }
+        let lin = |b: u8| self.lin[b as usize];
+        out.extend((0..n).map(|i| {
+            let p = 0.25 * lin(bins[i.saturating_sub(1)])
+                + 0.5 * lin(bins[i])
+                + 0.25 * lin(bins[(i + 1).min(n - 1)]);
+            (p.log10() / k).clamp(0.0, 255.0)
+        }));
     }
 }
 
@@ -1080,6 +1244,123 @@ pub struct PeakHold {
     generation: u32,
 }
 
+/// The S/N guide's colour, the green of the earlier correlation display.
+pub(crate) const SNR_GUIDE_COLOUR: Color32 = Color32::from_rgb(120, 255, 140);
+
+/// The S/N guide over the spectrum: from its base line (0 dB S/N, the noise
+/// floor) — the strip's bottom edge — up to a quarter of
+/// the strip's height at [`ViewState::snr_guide_top_db`]; below the floor it rests on
+/// the line. A cell nothing has reached breaks the line.
+// Why: HDZ 2026-11-07: "an der Position, wo vorher im Korr-Spektrum die Null
+//      war … Höhe vielleicht 1/4 vom Original".
+fn draw_snr_guide(
+    p: &egui::Painter,
+    view: &ViewState,
+    rect: &Rect,
+    g: Option<&crate::mean_spectrum::Guide>,
+) {
+    let font = egui::FontId::monospace(10.0);
+    let at = rect.left_top() + egui::vec2(6.0, 4.0);
+    let base = rect.bottom() - 1.0;
+    let full = rect.height() / 4.0;
+    let top_db = view
+        .snr_guide_top_db
+        .clamp(*crate::view::SNR_GUIDE_TOP_RANGE.start(), *crate::view::SNR_GUIDE_TOP_RANGE.end());
+    p.hline(rect.x_range(), base, Stroke::new(1.0, SNR_GUIDE_COLOUR.gamma_multiply(0.25)));
+    let Some(g) = g else {
+        p.text(at, egui::Align2::LEFT_TOP, "S/N: collecting", font, Color32::from_gray(170));
+        return;
+    };
+    let mut run: Vec<Pos2> = Vec::new();
+    // The frames behind what is on screen, fewest and most: a grid laid anew
+    // when the dial carried the panadapter along starts the cells that came
+    // into view from nothing, and the caption has to say so.
+    // Why: HDZ 2026-11-07: "die Info über wie viele Frames du gemittelt hast
+    //      beim Reset updaten, wenn der Cursor zum Neuaufbau zwingt".
+    let (mut fewest, mut most) = (u32::MAX, 0u32);
+    for (i, s) in g.snr_db.iter().enumerate() {
+        let hz = g.lo_hz + (i as f64 + 0.5) * g.cell_hz;
+        if s.is_finite() && hz >= view.view_lo_hz && hz <= view.view_hi_hz {
+            let n = g.count.get(i).copied().unwrap_or(0);
+            fewest = fewest.min(n);
+            most = most.max(n);
+        }
+        if !s.is_finite() || hz < view.view_lo_hz || hz > view.view_hi_hz {
+            if run.len() >= 2 {
+                p.add(Shape::line(std::mem::take(&mut run), Stroke::new(1.2, SNR_GUIDE_COLOUR)));
+            }
+            run.clear();
+            continue;
+        }
+        let h = (s / top_db).clamp(0.0, 1.0) * full;
+        run.push(pos2(view.freq_to_x(hz, rect), base - h));
+    }
+    if run.len() >= 2 {
+        p.add(Shape::line(run, Stroke::new(1.2, SNR_GUIDE_COLOUR)));
+    }
+    // The caption names the scale and the frames, nothing else.
+    // Why: HDZ 2026-11-08: "mach mal diese Anzeige für S/N kürzer im Text,
+    //      keinen Roman".
+    p.text(
+        at,
+        egui::Align2::LEFT_TOP,
+        format!(
+            "S/N 0–{top_db:.0} dB · {} frames",
+            if fewest < most { format!("{fewest}–{most}") } else { most.to_string() }
+        ),
+        font,
+        SNR_GUIDE_COLOUR,
+    );
+}
+
+/// The kurtosis line's colour: amber, apart from the S/N green.
+pub(crate) const SK_GUIDE_COLOUR: Color32 = Color32::from_rgb(255, 176, 0);
+
+/// The kurtosis line over the spectrum, on the S/N line's base and in its
+/// quarter of the strip, with a faint rule where the noise reads (1).
+fn draw_sk_guide(
+    p: &egui::Painter,
+    view: &ViewState,
+    rect: &Rect,
+    g: &crate::mean_spectrum::Guide,
+    under_snr: bool,
+) {
+    let base = rect.bottom() - 1.0;
+    let full = rect.height() / 4.0;
+    let top = view
+        .sk_guide_top_db
+        .clamp(*crate::view::SK_GUIDE_TOP_RANGE.start(), *crate::view::SK_GUIDE_TOP_RANGE.end());
+    let bottom = crate::view::SK_GUIDE_BASE_DB;
+    // In dB like the S/N line: 0 dB is the noise, a faint rule there.
+    let frac = |db: f32| ((db - bottom) / (top - bottom)).clamp(0.0, 1.0);
+    let one = base - frac(0.0) * full;
+    p.hline(rect.x_range(), one, Stroke::new(1.0, SK_GUIDE_COLOUR.gamma_multiply(0.3)));
+    let mut run: Vec<Pos2> = Vec::new();
+    for (i, k) in g.sk.iter().enumerate() {
+        let hz = g.lo_hz + (i as f64 + 0.5) * g.cell_hz;
+        if !k.is_finite() || hz < view.view_lo_hz || hz > view.view_hi_hz {
+            if run.len() >= 2 {
+                p.add(Shape::line(std::mem::take(&mut run), Stroke::new(1.2, SK_GUIDE_COLOUR)));
+            }
+            run.clear();
+            continue;
+        }
+        let h = frac(10.0 * k.max(1e-3).log10()) * full;
+        run.push(pos2(view.freq_to_x(hz, rect), base - h));
+    }
+    if run.len() >= 2 {
+        p.add(Shape::line(run, Stroke::new(1.2, SK_GUIDE_COLOUR)));
+    }
+    p.text(
+        // Its caption under the S/N one when that shows, else in its place.
+        rect.left_top() + egui::vec2(6.0, if under_snr { 16.0 } else { 4.0 }),
+        egui::Align2::LEFT_TOP,
+        format!("SK {bottom:.0}–{top:.0} dB · {:.0} s", view.sk_tau_s),
+        egui::FontId::monospace(10.0),
+        SK_GUIDE_COLOUR,
+    );
+}
+
 /// dB-scale u8 units per new spectrum frame (~3.5 dB/s at 30 fps over a
 /// 100 dB range).
 const PEAK_DECAY: f32 = 0.3;
@@ -1337,11 +1618,21 @@ pub fn show_ext(
     // window gets back exactly the split it was left with.
     let waterfall_only = crate::layout::tier(ui.ctx()).waterfall_only();
     let frac = if waterfall_only { 0.0 } else { view.effective_spectrum_fraction() };
-    let usable = rect.height() - scale_h();
-    let spec_h = if frac <= 0.0 { 0.0 } else { (usable * frac).max(40.0).min(usable.max(0.0)) };
+    // Every strip fits inside `rect` however low it is: a digital mode's panel
+    // can be dragged up until the panadapter has no height left, and on the way
+    // there the scale gives up its height last and the waterfall keeps a point
+    // of it while there is one (the GPU callback is handed `wf_rect`, and an
+    // empty or inverted one is not a viewport). From the height of the scale
+    // plus a point up this is the split it always was.
+    let total = rect.height().max(0.0);
+    let scale_hh = scale_h().min(total);
+    let usable = total - scale_hh;
+    let wf_keep = if frac < 1.0 { usable.min(1.0) } else { 0.0 };
+    let spec_h =
+        if frac <= 0.0 { 0.0 } else { (usable * frac).max(40.0).min(usable - wf_keep).max(0.0) };
     let spec_rect = Rect::from_min_size(rect.min, vec2(rect.width(), spec_h));
     let scale_rect =
-        Rect::from_min_size(pos2(rect.left(), spec_rect.bottom()), vec2(rect.width(), scale_h()));
+        Rect::from_min_size(pos2(rect.left(), spec_rect.bottom()), vec2(rect.width(), scale_hh));
     // What the marks that annotate the *current* spectrum are drawn across —
     // the passband wash, the filter edge grips, the tuning lines. The whole
     // strip for the flat trace, and only its front plane for the 3D surface:
@@ -1776,13 +2067,16 @@ pub fn show_ext(
         // already turning the dial, because a window that moves takes the dial
         // with it whether anyone asked or not (issue #133).
         let dhz = -resp.drag_delta().x as f64 * view.span() / rect.width() as f64;
+        let mid = (view.view_lo_hz + view.view_hi_hz) / 2.0;
         let over = pan_view(view, dhz, zoom_center, zoom_span);
         if wheel.drag_tunes {
             // Ahead of the dial: the two move by the same amount, so a window
             // moved first leaves the dial exactly where it was inside it and
-            // the engine's own span guard has nothing to do.
-            pan_center(&mut dev_center, state, over, pan, cmds);
-            let hz = gesture_step(gesture_dial, state.active_freq_hz(), dhz).max(0.0);
+            // the engine's own span guard has nothing to do. The amount is what
+            // the picture did, not what the hand did: nothing at an end stop.
+            let moved =
+                picture_moved(view, mid, dhz, over, &mut dev_center, dev_span, state, pan, cmds);
+            let hz = gesture_step(gesture_dial, state.active_freq_hz(), moved).max(0.0);
             gesture_dial = Some(hz);
             match state.active_vfo {
                 Vfo::A => state.vfo_a_hz = hz, // optimistic echo
@@ -1936,7 +2230,13 @@ pub fn show_ext(
                                     vfo: state.active_vfo,
                                     hz: spot_hz - pitch,
                                 });
-                                cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Cw });
+                                // Only when it is a change: the engine sets a
+                                // mode's default filter whenever a mode is set,
+                                // so re-sending CW threw away the operator's
+                                // own width (#821).
+                                if state.rx[0].mode != Mode::Cw {
+                                    cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Cw });
+                                }
                             }
                             SkimmerKind::Psk | SkimmerKind::Rtty => {
                                 // Put the signal at the mode's own audio offset
@@ -1959,7 +2259,10 @@ pub fn show_ext(
                                     vfo: state.active_vfo,
                                     hz: spot_hz - af,
                                 });
-                                cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
+                                // See the CW arm: re-sending the mode resets the filter.
+                                if state.rx[0].mode != m {
+                                    cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
+                                }
                                 cmds.push(Command::SetDigiAudioFreq(af as f32));
                             }
                         }
@@ -2028,9 +2331,23 @@ pub fn show_ext(
                 // Grab-the-content sense, matching the left-drag: the view slides
                 // with the dial so the VFO marker keeps its place on screen, and
                 // the window follows once the view has run out of room.
+                let mid = (view.view_lo_hz + view.view_hi_hz) / 2.0;
                 let over = pan_view(view, -dhz, zoom_center, zoom_span);
-                pan_center(&mut dev_center, state, over, pan, cmds);
-                let hz = gesture_step(gesture_dial, state.active_freq_hz(), -dhz).max(0.0);
+                let moved = picture_moved(
+                    view,
+                    mid,
+                    -dhz,
+                    over,
+                    &mut dev_center,
+                    dev_span,
+                    state,
+                    pan,
+                    cmds,
+                );
+                if moved == 0.0 {
+                    fling = None; // the picture has run into an end stop
+                }
+                let hz = gesture_step(gesture_dial, state.active_freq_hz(), moved).max(0.0);
                 gesture_dial = Some(hz);
                 match state.active_vfo {
                     Vfo::A => state.vfo_a_hz = hz,
@@ -2182,7 +2499,7 @@ pub fn show_ext(
         // before either display is drawn: the 3D surface remembers these same
         // bins, so the reaction setting steadies it exactly as it steadies the
         // flat trace.
-        smooth.update(f, wf.spectrum_alpha);
+        smooth.update(f, wf.spectrum_alpha, wf.average);
         if view.spectrum_3d {
             // Time has the depth axis instead of being thrown away. The flat
             // grid and the peak hold are both statements about a single line
@@ -2225,6 +2542,22 @@ pub fn show_ext(
                 compute_trace(view, f, Some(&smooth.bins), &spec_rect, wf.row_scale)
             });
             painter.add(Shape::line(pts, Stroke::new(1.0, Color32::from_rgb(120, 220, 255))));
+            // S/N and SK each on their own chip, from the one mean.
+            // Why: HDZ 2026-11-08: "kann ich das SK-Spektrum alleine haben
+            //      ohne S/N, weil du hast die verbunden?"
+            if view.snr_guide || view.sk_guide {
+                let g = ui.ctx().data(|d| {
+                    d.get_temp::<Arc<crate::mean_spectrum::Guide>>(crate::mean_spectrum::guide_id())
+                });
+                if view.snr_guide {
+                    draw_snr_guide(&painter, view, &spec_rect, g.as_deref());
+                }
+                if view.sk_guide
+                    && let Some(g) = g.as_deref()
+                {
+                    draw_sk_guide(&painter, view, &spec_rect, g, view.snr_guide);
+                }
+            }
         }
     }
     draw_scale(&painter, view, &scale_rect);
@@ -2267,6 +2600,21 @@ pub fn show_ext(
             rows_to_write: wf.rows_to_write,
             flip: view.waterfall_flip,
             smooth: wf.smooth,
+            average: wf.average || wf.reassign,
+            // A fifth of a second whatever the scroll rate: the time Welch
+            // averages over, not a number of rows. REASSIGN with the rail at
+            // zero takes each row as it comes.
+            avg_new: if wf.reassign && wf.welch_tc <= 0.0 {
+                1.0
+            } else {
+                welch_row_weight(wf.rows_per_sec, wf.welch_tc)
+            },
+            // WELCH's neighbours, or REASSIGN's lines as computed.
+            kernel: if wf.reassign {
+                crate::waterfall_gpu::REASSIGN_KERNEL.to_vec()
+            } else {
+                crate::waterfall_gpu::WELCH_KERNEL.to_vec()
+            },
             wf_id: wf.wf_id,
             tex_w: wf.tex_w,
         },
@@ -2811,6 +3159,40 @@ pub fn show_ext(
             painter.vline(p.x, wf_rect.y_range(), Stroke::new(1.0, line));
             let text = click_tune_label(view, state, &rect, p.x, cursor);
             label_box(&painter, pos2(p.x + 8.0, p.y - 9.0), &text, Color32::WHITE, rect);
+            // With the S/N guide on, its value under the pointer, from the
+            // guide's memory, in a second box under the frequency.
+            // Why: HDZ 2026-11-07: "am Cursor bei eingeschaltetem S/N eine
+            //      Zusatzinfo … dein S/N-Wert aus dem Speicher, unter der
+            //      Frequenz".
+            if view.snr_guide || view.sk_guide {
+                let g = ui.ctx().data(|d| {
+                    d.get_temp::<Arc<crate::mean_spectrum::Guide>>(crate::mean_spectrum::guide_id())
+                });
+                let hz = view.x_to_freq(p.x, &rect);
+                let step = 11.0 * crate::theme::panadapter_font_scale() + 6.0;
+                let mut below = p.y - 9.0 + step;
+                if view.snr_guide
+                    && let Some(snr) = g.as_deref().and_then(|g| g.snr_at(hz))
+                {
+                    let text = format!("S/N {snr:.1} dB");
+                    label_box(&painter, pos2(p.x + 8.0, below), &text, SNR_GUIDE_COLOUR, rect);
+                    below += step;
+                }
+                // The SK on a line of its own, in the SK line's amber.
+                // Why: HDZ 2026-11-08: "weil die SK-Kurve orange ist, sollte
+                //      der Wert da unter S/N in Orange stehen".
+                if view.sk_guide
+                    && let Some(k) = g.as_deref().and_then(|g| g.sk_at(hz))
+                {
+                    label_box(
+                        &painter,
+                        pos2(p.x + 8.0, below),
+                        &format!("SK {:.1} dB", 10.0 * k.max(1e-3).log10()),
+                        SK_GUIDE_COLOUR,
+                        rect,
+                    );
+                }
+            }
         }
     }
 
@@ -3003,8 +3385,10 @@ fn faded_label(
     );
     let pad = vec2(4.0, 2.0);
     let size = galley.size() + pad * 2.0;
-    let bx = (cx - size.x * 0.5).clamp(rect.left(), rect.right() - size.x);
-    let by = y.clamp(rect.top(), rect.bottom() - size.y);
+    let bx = (cx - size.x * 0.5).min(rect.right() - size.x).max(rect.left());
+    // Not `clamp`: on a strip lower than the box the bounds cross (see
+    // `label_box`).
+    let by = y.min(rect.bottom() - size.y).max(rect.top());
     p.rect_filled(
         Rect::from_min_size(pos2(bx, by), size),
         2.0,
@@ -3086,7 +3470,10 @@ pub(crate) fn label_box(p: &egui::Painter, top_left: Pos2, text: &str, fg: Color
     let pad = vec2(4.0, 2.0);
     let size = galley.size() + pad * 2.0;
     let x = (top_left.x).min(bounds.right() - size.x).max(bounds.left());
-    let y = (top_left.y).clamp(bounds.top(), bounds.bottom() - size.y);
+    // `min` then `max`, as for x, not `clamp`: a panadapter lower than the
+    // box (the curtain on its way up passes through every height) made the
+    // bounds cross, and `f32::clamp` panics on that.
+    let y = (top_left.y).min(bounds.bottom() - size.y).max(bounds.top());
     let bg = Rect::from_min_size(pos2(x, y), size);
     p.rect_filled(bg, 2.0, Color32::from_rgba_unmultiplied(0, 0, 0, 180));
     p.galley(pos2(x + pad.x, y + pad.y), galley, fg);
@@ -3418,6 +3805,20 @@ mod axis_tests {
 
 #[cfg(test)]
 mod tests {
+
+    /// WELCH's trace smoothing leaves an even spectrum as it is and takes
+    /// most of the zigzag out of a speckled one.
+    #[test]
+    fn daniell_calms_a_speckled_trace_and_keeps_an_even_one() {
+        let even = daniell(&[120u8; 32], 100.0);
+        assert!(even.iter().all(|v| (v - 120.0).abs() < 0.5), "{even:?}");
+        let zig: Vec<u8> = (0..32).map(|i| if i % 2 == 0 { 100 } else { 130 }).collect();
+        let out = daniell(&zig, 100.0);
+        let spread = |v: &[f32]| {
+            v.iter().copied().fold(f32::MIN, f32::max) - v.iter().copied().fold(f32::MAX, f32::min)
+        };
+        assert!(spread(&out[2..30]) < 15.0, "{out:?}");
+    }
     use super::*;
 
     /// A frame of `bins` bins over 800 Hz centred on `center`: one bin per
@@ -3475,7 +3876,7 @@ mod tests {
         for seq in 0..40u32 {
             let mut f = frame_at(1000.0, vec![100; 8]);
             f.seq = seq;
-            smooth.update(&f, 0.2);
+            smooth.update(&f, 0.2, false);
         }
         // Now move the window one bin per frame while bin 4 of each frame is
         // wildly off. Smoothed, its excursion has to stay small.
@@ -3485,7 +3886,7 @@ mod tests {
             bins[4] = 250;
             let mut f = frame_at(1000.0 + 100.0 * i as f64, bins);
             f.seq = seq;
-            smooth.update(&f, 0.2);
+            smooth.update(&f, 0.2, false);
             worst = worst.max(smooth.bins[4]);
         }
         assert!(worst < 160.0, "the average was restarted mid-drag: bin reached {worst}");
@@ -3912,6 +4313,148 @@ mod tests {
         assert_eq!(cmds, vec![Command::SetCenter(14_100_000.0)]);
     }
 
+    /// Proves: the dial turns by what the picture did. Free in the middle,
+    /// both move together; at the end of the receive range, where the centre
+    /// can go no further, both stop; zoomed out into a full-band lane, at its
+    /// edge, both stand still — no mark walking against the drag.
+    #[test]
+    fn a_slide_turns_the_dial_only_as_far_as_the_picture_moves() {
+        let span = 2_000_000.0;
+        // Free: 25 kHz in, 25 kHz moved.
+        let pan = movable();
+        let mut dev_center = 14_150_000.0;
+        let mut st = RadioState { center_hz: dev_center, sample_rate: span, ..state() };
+        let mut view = ViewState { view_lo_hz: 14_000_000.0, view_hi_hz: 14_100_000.0, ..def() };
+        let mut cmds = Vec::new();
+        let (zc, zs) = pan.view_bounds(dev_center, span);
+        let mid = (view.view_lo_hz + view.view_hi_hz) / 2.0;
+        let over = pan_view(&mut view, 25_000.0, zc, zs);
+        let moved = picture_moved(
+            &mut view,
+            mid,
+            25_000.0,
+            over,
+            &mut dev_center,
+            span,
+            &mut st,
+            pan,
+            &mut cmds,
+        );
+        assert!((moved - 25_000.0).abs() < 1e-6, "free slide moved {moved}");
+
+        // End of the receive range: the centre at its limit (the limit is on
+        // the centre, see `WindowPan::limits`), the view against the window's
+        // top edge.
+        let caps = sdroxide_types::DeviceCaps {
+            freq_ranges_rx: vec![(0.0, 32_400_000.0)],
+            ..Default::default()
+        };
+        let pan = WindowPan::of(Some(&caps), 32_400_000.0);
+        let mut dev_center = 32_400_000.0;
+        let mut st = RadioState { center_hz: dev_center, sample_rate: span, ..state() };
+        let mut view = ViewState { view_lo_hz: 33_300_000.0, view_hi_hz: 33_400_000.0, ..def() };
+        let mut cmds = Vec::new();
+        let (zc, zs) = pan.view_bounds(dev_center, span);
+        let mid = (view.view_lo_hz + view.view_hi_hz) / 2.0;
+        let over = pan_view(&mut view, 50_000.0, zc, zs);
+        let moved = picture_moved(
+            &mut view,
+            mid,
+            50_000.0,
+            over,
+            &mut dev_center,
+            span,
+            &mut st,
+            pan,
+            &mut cmds,
+        );
+        assert_eq!(moved, 0.0, "a slide pressed against the end moved the picture");
+
+        // Zoomed out into a 0–30 MHz lane, the view the whole lane: no room.
+        let pan = WindowPan { outer: Some((15_000_000.0, 30_000_000.0)), ..movable() };
+        let mut dev_center = 4_940_000.0;
+        let mut st = RadioState { center_hz: dev_center, sample_rate: 12_000.0, ..state() };
+        let mut view = ViewState { view_lo_hz: 0.0, view_hi_hz: 30_000_000.0, ..def() };
+        let mut cmds = Vec::new();
+        let (zc, zs) = pan.view_bounds(dev_center, 12_000.0);
+        let mid = (view.view_lo_hz + view.view_hi_hz) / 2.0;
+        let over = pan_view(&mut view, -40_000.0, zc, zs);
+        let moved = picture_moved(
+            &mut view,
+            mid,
+            -40_000.0,
+            over,
+            &mut dev_center,
+            12_000.0,
+            &mut st,
+            pan,
+            &mut cmds,
+        );
+        assert!(moved.abs() < 1e-6, "the full-band view moved {moved} at its edge");
+    }
+
+    /// Proves: where another range carries on, the end of the own range is a
+    /// crossover, not a stop. An RX-888 at 64.8 Msps, HF up to 32.4 MHz and VHF
+    /// from there: a drag pressed against the top of HF keeps turning the dial
+    /// by the whole hand, so it reaches the crossover and the driver switches;
+    /// back down from VHF the same. The same receiver at 32.4 Msps leaves a gap
+    /// between 16.2 and 24 MHz, and there the end is still a stop.
+    #[test]
+    fn a_slide_at_a_crossover_carries_the_dial_into_the_next_range() {
+        let span = 2_000_000.0;
+        let joined = sdroxide_types::DeviceCaps {
+            freq_ranges_rx: vec![(0.0, 32_400_000.0), (32_400_000.0, 1_766_000_000.0)],
+            ..Default::default()
+        };
+        let slide = |caps: &sdroxide_types::DeviceCaps,
+                     outer: Option<(f64, f64)>,
+                     centre: f64,
+                     view: (f64, f64),
+                     hand: f64| {
+            let pan = WindowPan::of(Some(caps), centre).with_outer(outer, span);
+            let mut dev_center = centre;
+            let mut st = RadioState { center_hz: centre, sample_rate: span, ..state() };
+            let mut view = ViewState { view_lo_hz: view.0, view_hi_hz: view.1, ..def() };
+            let mut cmds = Vec::new();
+            let (zc, zs) = pan.view_bounds(dev_center, span);
+            let mid = (view.view_lo_hz + view.view_hi_hz) / 2.0;
+            let over = pan_view(&mut view, hand, zc, zs);
+            picture_moved(
+                &mut view,
+                mid,
+                hand,
+                over,
+                &mut dev_center,
+                span,
+                &mut st,
+                pan,
+                &mut cmds,
+            )
+        };
+        // Zoomed out into the 0-32.4 MHz strip, the view the whole strip.
+        let lane = Some((16_200_000.0, 32_400_000.0));
+        let up = slide(&joined, lane, 16_200_000.0, (0.0, 32_400_000.0), 200_000.0);
+        assert_eq!(up, 200_000.0, "zoomed out at the top of HF the dial must keep going up");
+        // Zoomed in, the centre at the top of HF, the view at the window's top.
+        let up = slide(&joined, None, 32_400_000.0, (33_300_000.0, 33_400_000.0), 50_000.0);
+        assert_eq!(up, 50_000.0, "at the top of HF the dial must keep going up");
+        // Bottom of VHF, the centre held at the start of its range.
+        let down = slide(&joined, None, 32_400_000.0, (31_400_000.0, 31_500_000.0), -50_000.0);
+        assert_eq!(down, -50_000.0, "at the bottom of VHF the dial must keep going down");
+        // Away from the crossover a stop is still a stop: the bottom of HF,
+        // the centre at 0 Hz and the view at the window's low edge.
+        let floor = slide(&joined, None, 0.0, (-1_000_000.0, -900_000.0), -50_000.0);
+        assert_eq!(floor, 0.0, "below 0 Hz there is nothing to switch to");
+
+        let gap = sdroxide_types::DeviceCaps {
+            freq_ranges_rx: vec![(0.0, 16_200_000.0), (24_000_000.0, 1_766_000_000.0)],
+            ..Default::default()
+        };
+        assert_eq!(WindowPan::of(Some(&gap), 15_000_000.0).joins, (false, false));
+        let stuck = slide(&gap, None, 16_200_000.0, (17_100_000.0, 17_200_000.0), 50_000.0);
+        assert_eq!(stuck, 0.0, "a gap between the ranges is a stop");
+    }
+
     fn def() -> ViewState {
         ViewState::default()
     }
@@ -4169,5 +4712,19 @@ mod tests {
     fn no_outer_window_before_the_passband_is_known() {
         let pan = WindowPan::default().with_outer(Some((1e6, 30e6)), 0.0);
         assert_eq!(pan.outer, None);
+    }
+    /// A readout box on a panadapter lower than the box itself is drawn at
+    /// the top rather than panicking: the curtain passes the strip through
+    /// every height on its way up.
+    #[test]
+    fn a_label_box_on_a_strip_lower_than_itself_does_not_panic() {
+        let ctx = egui::Context::default();
+        ctx.begin_pass(egui::RawInput::default());
+        let p = ctx.layer_painter(egui::LayerId::background());
+        for h in [0.0_f32, 3.0, 10.0, 30.0] {
+            let bounds = Rect::from_min_size(pos2(0.0, 100.0), vec2(400.0, h));
+            label_box(&p, pos2(50.0, 120.0), "S/N 4.2 dB", Color32::WHITE, bounds);
+        }
+        ctx.end_pass().drop_without_applying_deltas();
     }
 }

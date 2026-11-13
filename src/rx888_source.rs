@@ -23,6 +23,7 @@
 //!   achieved centre is reported through [`IqSource::poll_control`] — see
 //!   [`achieved_center_hz`].
 
+use sdroxide_rx888::device::{ad8370_code_in, ad8370_db_for, att_code_for, att_db_for};
 use std::time::Duration;
 
 use sdroxide_radio::{Complex32, ControlUpdate, IqSource, Result};
@@ -98,6 +99,9 @@ pub struct Rx888Source {
     center: f64,
     label: String,
     vga_db: f64,
+    /// The VGA's range as last asked for, reported back as a pseudo-gain so
+    /// the top bar's chip reads what is in force.
+    vga_range: sdroxide_rx888::device::VgaRange,
     att_db: f64,
     bias_tee: bool,
     bias_tee_vhf: bool,
@@ -141,6 +145,7 @@ impl Rx888Source {
             center: center_hz,
             label,
             vga_db: cfg.vga_db,
+            vga_range: Default::default(),
             att_db: cfg.attenuator_db,
             bias_tee: cfg.bias_tee_hf,
             bias_tee_vhf: cfg.bias_tee_vhf,
@@ -230,6 +235,14 @@ impl IqSource for Rx888Source {
         Ok(pairs)
     }
 
+    /// A centre of its own — the downconverter moves for nothing; the driver clamps
+    /// the centre to what its half-spectrum allows, so at the band's ends the
+    /// window comes as far as it can — so the engine may centre the I/Q on a
+    /// resting dial (`Engine::recentre_after_dwell`).
+    fn recentre_on_dwell(&self) -> bool {
+        true
+    }
+
     fn describe(&self) -> String {
         self.label.clone()
     }
@@ -245,6 +258,10 @@ impl IqSource for Rx888Source {
             Rx888Config::VGA_ELEMENT => {
                 self.vga_db = db;
                 self.handle.set_vga_db(db);
+            }
+            Rx888Config::VGA_RANGE_ELEMENT => {
+                self.vga_range = sdroxide_rx888::device::VgaRange::from_code(db);
+                self.handle.set_vga_range(self.vga_range);
             }
             Rx888Config::ATT_ELEMENT => {
                 self.att_db = db;
@@ -272,17 +289,22 @@ impl IqSource for Rx888Source {
 
     fn current_gains(&self) -> Vec<(String, f64)> {
         vec![
-            // Report what the hardware settled on where it has said so, since
-            // both stages quantise: the VGA onto a linear voltage vernier and
-            // the attenuator onto a 0.5 dB grid.
+            // What the hardware is programmed with, since both stages
+            // quantise: the VGA onto a linear voltage vernier — and, with a
+            // range forced, onto that range's span — and the attenuator onto
+            // a 0.5 dB grid. Worked out here from the request rather than
+            // read from the stream thread's report: the engine asks right
+            // after the request, before the thread has applied it, and the
+            // thread never filled that report anyway, so the bar echoed the
+            // request (a VGA forced LOW read 30 dB while running 16.9).
+            // Why: HDZ 2026-11-09: "da stimmt was nicht am Treiber und
+            //      Visual".
             (
                 Rx888Config::VGA_ELEMENT.to_string(),
-                self.handle.effective_vga_db().unwrap_or(self.vga_db),
+                ad8370_db_for(ad8370_code_in(self.vga_db, self.vga_range)),
             ),
-            (
-                Rx888Config::ATT_ELEMENT.to_string(),
-                self.handle.effective_att_db().unwrap_or(self.att_db),
-            ),
+            (Rx888Config::ATT_ELEMENT.to_string(), att_db_for(att_code_for(self.att_db))),
+            (Rx888Config::VGA_RANGE_ELEMENT.to_string(), self.vga_range.code()),
         ]
     }
 

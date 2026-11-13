@@ -10,10 +10,11 @@
 //! drawn.
 //!
 //! The screen itself is a row of *panes* ([`MultiApp::panes`]). One pane is
-//! the ordinary window; the strip's ⊞ toggles give further radios a pane of
-//! their own, splitting the main area into equal columns that each carry
-//! their own copy of the strip — so any pane can be switched to any radio
-//! that isn't already on screen. Exactly one visible radio holds the
+//! the ordinary window; each pane has its own row of tabs
+//! ([`MultiApp::rows`]), and the columns chip at the end of a row opens a
+//! further pane for a radio taken off its row, splitting the main area into
+//! equal columns. "Radio ▼" puts a radio that is on no row onto a pane's
+//! row. Exactly one visible radio holds the
 //! keyboard/MIDI focus; each [`SdroxideApp`] gates its input handling on it,
 //! and clicking a pane moves it there.
 //!
@@ -119,9 +120,20 @@ enum StripAction {
         pane: usize,
         id: u32,
     },
-    /// The ⊞ toggle: give this radio a pane of its own, or close the one it
-    /// has.
-    ToggleSplit(u32),
+    /// "Pick radio ▼": put this radio on this pane's row and show it here,
+    /// taking it off the row it was on.
+    Pick {
+        pane: usize,
+        id: u32,
+    },
+    /// The "−" on a tab: take this radio off this pane's row. It keeps
+    /// running; off is the rings.
+    Unpick {
+        pane: usize,
+        id: u32,
+    },
+    /// The "+" at the end of a row: open another pane.
+    AddPane,
     Mute {
         id: u32,
         muted: bool,
@@ -131,7 +143,11 @@ enum StripAction {
         id: u32,
         on: bool,
     },
+    /// "New radio…" at the foot of the pick menu: the strip's former "+".
     Add,
+    /// A click on the name of the radio a pane shows, where that radio is a
+    /// public receiver: Public SDRs opens on the map, at that receiver.
+    ShowOnMap(u32),
 }
 
 pub struct MultiApp {
@@ -143,6 +159,33 @@ pub struct MultiApp {
     /// would be two views fighting over one engine's spectrum stream — never
     /// empty, and always holding the focused tab ([`Self::sanitize_panes`]).
     panes: Vec<u32>,
+    /// The radios picked onto each pane's row of tabs, by tab id, one row per
+    /// entry of [`Self::panes`] (`rows[k]` belongs to `panes[k]`). Drawn in
+    /// the order of [`Self::tabs`], so the operator's arrangement (#224)
+    /// holds within every row.
+    ///
+    /// A radio is on at most one row, and the one a pane shows is always on
+    /// that pane's row. A radio on no row is not gone: it keeps running, as
+    /// every radio behind the one on screen does, and "Pick radio ▼" brings it
+    /// back. On is the rings, never where a radio is shown.
+    // Why: HDZ 2026-11-04, Panel Exchange (#771) retracted: one radio per
+    //      strip hid the multi-radio model ("die angeschalteten Geräte dudeln
+    //      irgendwo rum, auch wenn sie nicht sichtbar sind") and left the link
+    //      switch in two shapes. "Pick Radio, dann kann an einem Panel oben eine
+    //      Reihe Radios gewählt werden … jedes Radio braucht dann einen Minus-
+    //      Knopf … und das Plus am Ende macht wie bisher ein zweites Panel auf";
+    //      on "−": "dann bleiben wir beim WT-Verhalten" (it keeps running).
+    // Invariant: `rows.len() == panes.len()`; `panes[k]` is in `rows[k]`; no
+    //      id on two rows ([`Self::sanitize_panes`]).
+    rows: Vec<Vec<u32>>,
+    /// Each pane's row of tabs as tall as it drew itself last frame, before
+    /// any padding: what the split view evens the rows out to, so that the
+    /// panes below them start on one line. Measured a frame late, which is
+    /// what keeps a row that wraps from moving under the pointer.
+    // Why: HDZ 2026-11-04 (two panes, five tabs wrapping to two lines on the
+    //      left, one tab on the right): "könnte man wenigstens die roten
+    //      Rahmen ausrichten aneinander".
+    strip_heights: Vec<f32>,
     factory: Option<RadioFactory>,
     /// How a station somewhere else is dialled — Settings → Remote. Present
     /// in every native session, including one that is itself a remote client:
@@ -246,10 +289,15 @@ impl MultiApp {
             t.app.set_focused_flag(i == 0);
         }
         let panes = vec![tabs[0].id];
+        // Every radio on the one pane's row: a session opens looking exactly
+        // as the single strip always did.
+        let rows = vec![tabs.iter().map(|t| t.id).collect()];
         MultiApp {
             tabs,
             focused: 0,
             panes,
+            rows,
+            strip_heights: Vec::new(),
             factory,
             remote,
             wgpu: cc.wgpu_render_state.clone(),
@@ -434,14 +482,53 @@ impl MultiApp {
     /// least one pane, and the focused tab is on screen.
     fn sanitize_panes(&mut self, ctx: &egui::Context) {
         self.focused = self.focused.min(self.tabs.len() - 1);
+        // The rows go with their panes: first drop ids that no longer exist
+        // and any id already on an earlier row, then let a pane whose radio has
+        // gone show the next one left on its row, and only then drop a pane
+        // with nothing left to show — together with its row.
+        self.rows.resize_with(self.panes.len(), Vec::new);
         let mut seen: Vec<u32> = Vec::new();
-        self.panes.retain(|&id| {
-            let keep = !seen.contains(&id) && self.tabs.iter().any(|t| t.id == id);
-            seen.push(id);
-            keep
-        });
+        for row in &mut self.rows {
+            row.retain(|&id| {
+                let keep = !seen.contains(&id) && self.tabs.iter().any(|t| t.id == id);
+                if keep {
+                    seen.push(id);
+                }
+                keep
+            });
+        }
+        let mut shown: Vec<u32> = Vec::new();
+        let mut keep: Vec<bool> = Vec::with_capacity(self.panes.len());
+        for k in 0..self.panes.len() {
+            let id = self.panes[k];
+            let alive = self.tabs.iter().any(|t| t.id == id) && !shown.contains(&id);
+            let next = if alive {
+                Some(id)
+            } else {
+                self.rows[k].iter().copied().find(|r| !shown.contains(r) && !self.panes.contains(r))
+            };
+            match next {
+                Some(id) => {
+                    self.panes[k] = id;
+                    shown.push(id);
+                    // What a pane shows is on its row, and on no other.
+                    for row in &mut self.rows {
+                        row.retain(|&r| r != id);
+                    }
+                    self.rows[k].push(id);
+                    keep.push(true);
+                }
+                None => keep.push(false),
+            }
+        }
+        let mut at = keep.iter();
+        self.panes.retain(|_| *at.next().unwrap_or(&false));
+        let mut at = keep.iter();
+        self.rows.retain(|_| *at.next().unwrap_or(&false));
         if self.panes.is_empty() {
-            self.panes.push(self.tabs[self.focused].id);
+            let id = self.tabs[self.focused].id;
+            self.panes.push(id);
+            self.rows.push(vec![id]);
         }
         if !self.panes.contains(&self.tabs[self.focused].id) {
             let first = self.panes[0];
@@ -465,40 +552,99 @@ impl MultiApp {
         let Some(i) = self.tabs.iter().position(|t| t.id == id) else { return };
         if !self.panes.contains(&id) && pane < self.panes.len() {
             self.panes[pane] = id;
+            self.put_on_row(pane, id);
         }
         self.focus_tab(i, ctx);
     }
 
-    /// The ⊞ toggle: open a pane for radio `id`, or close the one it has.
-    fn toggle_split(&mut self, id: u32, ctx: &egui::Context) {
-        if let Some(k) = self.panes.iter().position(|&p| p == id) {
-            // The last pane is not a split; it stays. Its ⊞ used to do
-            // nothing at all, and that is the button an operator reaches for
-            // first, on the radio already on screen (#763): it opens the split
-            // with the next radio instead.
-            if self.panes.len() == 1 {
-                if let Some(other) = self
-                    .tabs
-                    .iter()
-                    .find(|t| t.id != id && t.attached_to.is_none())
-                    .map(|t| t.id)
-                {
-                    self.panes.push(other);
-                }
-            } else {
-                self.panes.remove(k);
-                // The keyboard must stay on a visible radio: hand it to the
-                // pane that slid into the closed one's place.
-                if !self.panes.contains(&self.tabs[self.focused].id) {
-                    let next = self.panes[k.min(self.panes.len() - 1)];
-                    if let Some(i) = self.tabs.iter().position(|t| t.id == next) {
-                        self.focus_tab(i, ctx);
-                    }
-                }
-            }
-        } else if self.tabs.iter().any(|t| t.id == id) {
-            self.panes.push(id);
+    /// Put radio `id` on pane `pane`'s row, and on no other.
+    fn put_on_row(&mut self, pane: usize, id: u32) {
+        for row in &mut self.rows {
+            row.retain(|&r| r != id);
         }
+        if let Some(row) = self.rows.get_mut(pane) {
+            row.push(id);
+        }
+    }
+
+    /// "Pick radio ▼": radio `id` onto pane `pane`'s row, shown there and
+    /// handed the keyboard. A radio another pane is showing leaves that pane,
+    /// which shows the next radio on its row, or closes when its row is empty.
+    fn pick(&mut self, pane: usize, id: u32, ctx: &egui::Context) {
+        if pane >= self.panes.len() || !self.tabs.iter().any(|t| t.id == id) {
+            return;
+        }
+        if let Some(k) = self.panes.iter().position(|&p| p == id)
+            && k != pane
+        {
+            self.panes[k] = u32::MAX;
+        }
+        self.put_on_row(pane, id);
+        self.panes[pane] = id;
+        // `u32::MAX` is no tab: the next line finds the pane it was put on
+        // the next radio on its row, or closes it.
+        self.sanitize_panes(ctx);
+        if let Some(i) = self.tabs.iter().position(|t| t.id == id) {
+            self.focus_tab(i, ctx);
+        }
+    }
+
+    /// The "−" on a tab: radio `id` off pane `pane`'s row. It keeps running —
+    /// the same as the wildtype, where a radio behind the one on screen goes
+    /// on receiving — and "Pick radio ▼" brings it back. Where it was the one
+    /// shown, the pane shows the next radio on its row, or closes; the last
+    /// tab of the last pane offers no "−".
+    fn unpick(&mut self, pane: usize, id: u32, ctx: &egui::Context) {
+        let Some(row) = self.rows.get_mut(pane) else { return };
+        row.retain(|&r| r != id);
+        if self.panes[pane] == id {
+            match self.rows[pane].first().copied() {
+                Some(next) => self.panes[pane] = next,
+                None if self.panes.len() > 1 => {
+                    self.panes.remove(pane);
+                    self.rows.remove(pane);
+                }
+                // Refused by the strip, which draws no "−" there; put back.
+                None => self.rows[pane].push(id),
+            }
+        }
+        self.sanitize_panes(ctx);
+    }
+
+    /// The columns chip at the end of a row: another pane, showing the first
+    /// radio that is on no row. Nothing when every radio is placed (the strip
+    /// does not draw the chip then).
+    fn add_pane(&mut self, ctx: &egui::Context) {
+        let Some(id) = self.next_unshown() else { return };
+        self.panes.push(id);
+        self.rows.push(Vec::new());
+        self.put_on_row(self.panes.len() - 1, id);
+        if let Some(i) = self.tabs.iter().position(|t| t.id == id) {
+            self.focus_tab(i, ctx);
+        }
+    }
+
+    /// The first radio, in strip order, that is on no row: one the operator
+    /// took off a row with "−". Never one lent out as a panadapter, which is
+    /// reached through Settings → Radio.
+    fn next_unshown(&self) -> Option<u32> {
+        self.loose().first().copied()
+    }
+
+    /// The radios on no row, in strip order: what "Pick radio ▼" and the
+    /// columns chip have to offer. While it is empty every radio is placed,
+    /// and neither is drawn.
+    // Why: HDZ 2026-11-04: "wenn alle Radios platziert sind, dann wird Popdown
+    //      und Spalten-Eumel ausgeblendet, nur wenn ich irgendwo ein Radio vom
+    //      Panel löse, kann ich eine neue Spalte oder einen neuen Selektor
+    //      machen".
+    fn loose(&self) -> Vec<u32> {
+        self.tabs
+            .iter()
+            .filter(|t| t.attached_to.is_none())
+            .filter(|t| !self.rows.iter().any(|r| r.contains(&t.id)))
+            .map(|t| t.id)
+            .collect()
     }
 
     /// Act on the radio-management requests the visible tabs' settings
@@ -519,7 +665,28 @@ impl MultiApp {
                         self.tabs[i].app.open_radio_settings();
                     }
                 }
-                RadioTabRequest::Add { station, preset } => self.add_radio(&station, preset, ctx),
+                // Added exactly as before, then named: the radio that was not
+                // here a moment ago is the one this request made.
+                // Why: HDZ 2026-11-04: "dabei wäre … der Sendername aus dem
+                //      Katalog zu übernehmen". Naming after the fact keeps
+                //      `add_radio`/`add_tab` and the strip's own "+" as they
+                //      are, so this works with the original tab strip and with
+                //      Panel Exchange alike ("es sollte ein Fallback-Verhalten
+                //      auf die Ausgangsversion geben").
+                // Pitfall: a radio added at a station is not here yet — it
+                //          arrives when the station announces it, and is named
+                //          there — so only this machine's radios get the name.
+                RadioTabRequest::Add { station, preset, name } => {
+                    let before: Vec<u32> = self.tabs.iter().map(|t| t.id).collect();
+                    let here = station.is_empty();
+                    self.add_radio(&station, preset, ctx);
+                    if let Some(name) = name.filter(|n| here && !n.is_empty()) {
+                        let new = self.tabs.iter().map(|t| t.id).find(|id| !before.contains(id));
+                        if let Some(id) = new {
+                            self.rename_tab(id, &name);
+                        }
+                    }
+                }
                 #[cfg(not(target_arch = "wasm32"))]
                 RadioTabRequest::Connect { url, name } => self.connect_tab(&url, name, ctx),
                 RadioTabRequest::Close(id) => {
@@ -538,34 +705,43 @@ impl MultiApp {
                         t.app.reopen_source();
                     }
                 }
-                RadioTabRequest::Rename { id, name } => {
-                    if let Some(t) = self.tabs.iter_mut().find(|t| t.id == id) {
-                        t.name = name.clone();
-                        // A radio at the far end of a connection is named in
-                        // the roster where it lives, so the name goes there —
-                        // otherwise it would last exactly as long as this
-                        // connection, and nobody else on that station would
-                        // ever see it. A station that does not take roster
-                        // edits keeps the name here and nowhere else, which is
-                        // what it has always done.
-                        if t.remote {
-                            if t.app.station_roster_editable() {
-                                let station_id = t.app.station_radio_id();
-                                t.app.rename_station_radio(station_id, &name);
-                            }
-                            continue;
-                        }
-                        // In the browser there is no roster to record it in at
-                        // all: every tab there is somebody else's radio.
-                        #[cfg(not(target_arch = "wasm32"))]
-                        if let Err(e) = sdroxide_config::rename_radio(id, &name) {
-                            eprintln!("sdroxide: renaming radio {id}: {e}");
-                        }
-                    }
-                }
+                RadioTabRequest::Rename { id, name } => self.rename_tab(id, &name),
                 RadioTabRequest::RemoveFromStation(id) => self.remove_at_station(id),
                 RadioTabRequest::Reorder(ids) => self.reorder_tabs(&ids),
             }
+        }
+    }
+
+    /// Give radio `id` the name `name`, here and where the radio is kept.
+    ///
+    /// In: the tab id and the new name. Effect: the tab shows it at once; a
+    /// radio of this machine has it written to the roster on disk, a radio at
+    /// a station has it sent to that station's roster where the station takes
+    /// edits. Fails: a roster that cannot be written is reported on stderr and
+    /// the name lasts for this session.
+    // Why: one routine for the RENAME request and for a radio added from
+    //      "Public SDRs" with its directory name (`RadioTabRequest::Add`), so the second is
+    //      stored exactly like the first.
+    fn rename_tab(&mut self, id: u32, name: &str) {
+        let Some(t) = self.tabs.iter_mut().find(|t| t.id == id) else { return };
+        t.name = name.to_string();
+        // A radio at the far end of a connection is named in the roster where
+        // it lives, so the name goes there — otherwise it would last exactly as
+        // long as this connection, and nobody else on that station would ever
+        // see it. A station that does not take roster edits keeps the name
+        // here and nowhere else, which is what it has always done.
+        if t.remote {
+            if t.app.station_roster_editable() {
+                let station_id = t.app.station_radio_id();
+                t.app.rename_station_radio(station_id, name);
+            }
+            return;
+        }
+        // In the browser there is no roster to record it in at all: every tab
+        // there is somebody else's radio.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Err(e) = sdroxide_config::rename_radio(id, name) {
+            eprintln!("sdroxide: renaming radio {id}: {e}");
         }
     }
 
@@ -575,7 +751,9 @@ impl MultiApp {
         for act in actions {
             match act {
                 StripAction::Show { pane, id } => self.show_in_pane(pane, id, ctx),
-                StripAction::ToggleSplit(id) => self.toggle_split(id, ctx),
+                StripAction::Pick { pane, id } => self.pick(pane, id, ctx),
+                StripAction::Unpick { pane, id } => self.unpick(pane, id, ctx),
+                StripAction::AddPane => self.add_pane(ctx),
                 StripAction::Mute { id, muted } => {
                     // To the engine, not latched here: the chip and the MUTE
                     // button both read the engine's answer back, so they
@@ -585,6 +763,11 @@ impl MultiApp {
                     }
                 }
                 StripAction::Power { id, on } => self.set_power(id, on),
+                StripAction::ShowOnMap(id) => {
+                    if let Some(t) = self.tabs.iter_mut().find(|t| t.id == id) {
+                        t.app.show_self_on_public_map();
+                    }
+                }
                 // The main window's strip only ever offers this machine's own
                 // roster — it is drawn on every pane and a menu there would be
                 // in the way. Adding a radio at a station is one screen away,
@@ -643,49 +826,75 @@ impl MultiApp {
         }
     }
 
-    /// One strip: every radio's controls in a box of their own, then the "+"
-    /// chip. `pane` is the split column the strip sits on (0 in the single
-    /// view), so a name click knows which pane it re-assigns. Closing a radio
-    /// is deliberately absent — that lives in Settings → Radio, behind a
-    /// dialog, not one stray click away on the main window.
+    /// One pane's row: the radios picked onto it, each a tab with its own
+    /// controls (the rings, mute, "−"), then "Pick radio ▼" and the "+" that
+    /// opens another pane. `pane` is the column the row sits on (0 in the
+    /// single view). Closing a radio is deliberately absent — that lives in
+    /// Settings → Radio, behind a dialog, not one stray click away on the main
+    /// window; "−" only takes a radio off this row.
+    // Why: HDZ 2026-11-04 (see [`MultiApp::rows`]); the link switch on a tab
+    //      wears the rings the frequency box's switch wears, so one switch
+    //      has one shape wherever it stands ("zwei verschiedene Knöpfe machen
+    //      das gleiche … einmal das Ringe-Symbol und einmal der andere Knopf").
+    // Invariant: a tab is drawn for exactly the radios on `rows[pane]`, in
+    //      the order of `tabs`.
     fn strip_row(&self, ui: &mut egui::Ui, pane: usize, actions: &mut Vec<StripAction>) {
+        let row: &[u32] = self.rows.get(pane).map_or(&[], Vec::as_slice);
+        let last_tab_standing = self.panes.len() == 1 && row.len() == 1;
         crate::chrome::tab_bar(ui, |ui, bar| {
             for (i, tab) in self.tabs.iter().enumerate() {
-                // A radio lent out as somebody's panadapter receiver is not one
-                // of the radios on this station's strip — unless it is the one
-                // being looked at, which is how it is reached from Settings →
-                // Radio and how the operator gets back off it.
-                if tab.attached_to.is_some() && !self.panes.contains(&tab.id) {
+                if !row.contains(&tab.id) {
                     continue;
                 }
                 let id = tab.id;
                 let here = self.panes.get(pane) == Some(&id);
-                let elsewhere = !here && self.panes.contains(&id);
-                let split_on = self.panes.len() > 1 && self.panes.contains(&id);
                 // In a split the accent marks the pane holding the keyboard.
-                let accent = if here && split_on && i == self.focused {
+                let accent = if here && self.panes.len() > 1 && i == self.focused {
                     crate::theme::PINK()
                 } else {
                     crate::theme::CYAN()
                 };
-                // A real tab, not a chip: this strip decides which radio the
+                // A real tab, not a chip: this row decides which radio the
                 // page below belongs to, which is the one thing a row of
-                // buttons cannot say. The mute and split toggles ride inside
-                // their own tab the way a close box rides in a browser's.
+                // buttons cannot say. Its own controls ride inside it the way
+                // a close box rides in a browser's.
                 let body = bar.tab_body_accent(ui, here, accent, |ui| {
                     let mut label = RichText::new(Self::display_name(tab)).size(12.5);
                     if here {
                         label = label.strong().color(crate::theme::TEXT_STRONG());
-                    } else if elsewhere {
-                        label = label.weak();
                     }
-                    // A radio nobody has switched on is a radio the strip is
+                    // A radio nobody has switched on is a radio the row is
                     // only carrying so that it can be switched on: it says its
                     // name and no more.
                     if !tab.enabled {
                         label = label.weak();
                     }
-                    ui.label(label);
+                    // The name of the radio this pane shows is a link to the
+                    // map, where that radio is a public receiver: underlined
+                    // while the pointer is on it, as a link reads. Anywhere
+                    // else a click on the tab is what it always was.
+                    // Why: HDZ 2026-11-04: "wenn du linken kannst, kannst du den
+                    //      Link auch ohne Symbol an den Namen heften"; only on
+                    //      the tab already shown, because a click on any other
+                    //      tab shows that radio.
+                    if here && tab.app.on_public_sdr(ui.input(|i| i.time)) {
+                        let name = Self::tab_name(ui, label, egui::Sense::click());
+                        let name = if name.hovered() {
+                            ui.painter().hline(
+                                name.rect.x_range(),
+                                name.rect.bottom() - 1.0,
+                                egui::Stroke::new(1.0, crate::theme::CYAN()),
+                            );
+                            name.on_hover_cursor(egui::CursorIcon::PointingHand)
+                        } else {
+                            name
+                        };
+                        if name.on_hover_text(tr!("multi-show-on-map")).clicked() {
+                            actions.push(StripAction::ShowOnMap(id));
+                        }
+                    } else {
+                        Self::tab_name(ui, label, egui::Sense::hover());
+                    }
                     // On the air: the one thing worth seeing from any tab.
                     if tab.app.tab_tx_on() {
                         ui.label(
@@ -694,23 +903,13 @@ impl MultiApp {
                     } else if tab.app.tab_error() && tab.enabled {
                         ui.label(RichText::new("⚠").size(11.0).color(crate::theme::ALERT()));
                     }
-                    // The switch. A radio at the far end of a connection has
-                    // one too — the request goes to the station, which is where
-                    // such a radio has always been opened and closed.
-                    //
-                    // Lit while the link is open, like every other chip in the
-                    // program: a chip wears the accent when what it names is in
-                    // force. Lighting it for OFF read as the opposite (issue
-                    // #253), and reading "ON" at all read as the *radio's* own
-                    // switch however the hover text argued — so it names the
-                    // link now, and on/off is left to PWR, which really does
-                    // throw the set's own switch.
+                    // The switch, as the rings: lit while the link is open
+                    // (issue #253), and the same request the frequency box's
+                    // rings send, so the two can never disagree.
                     if Self::switchable(tab) && tab.attached_to.is_none() {
-                        let power = crate::chrome::chip(
-                            ui,
-                            tab.enabled,
-                            RichText::new(tr!("multi-link")).size(11.0),
-                        );
+                        let h = crate::chrome::chip_height(ui, Some(11.0));
+                        let power =
+                            crate::chrome::chip_link(ui, tab.enabled, egui::vec2(1.8 * h, h));
                         let tip = if tab.enabled {
                             crate::chrome::LINK_CLOSE_TIP
                         } else {
@@ -722,9 +921,7 @@ impl MultiApp {
                     }
                     // No mute on a radio that is off: there is nothing coming
                     // out of it to silence. Whether it *was* muted is kept, and
-                    // the button comes back with it when the radio does. The
-                    // split toggle stays either way — a pane showing a radio
-                    // that has just been switched off still has to be closable.
+                    // the button comes back with it when the radio does.
                     if tab.enabled {
                         let muted = tab.app.tab_muted();
                         let mute = crate::chrome::chip(
@@ -736,48 +933,122 @@ impl MultiApp {
                             actions.push(StripAction::Mute { id, muted: !muted });
                         }
                     }
-                    let split = crate::chrome::chip(ui, split_on, RichText::new("⊞").size(11.0));
-                    let tip = if split_on {
-                        tr!("multi-close-radio-s-split-view")
-                    } else {
-                        tr!("multi-open-radio-split-view-own")
-                    };
-                    if split.on_hover_text(tip).clicked() {
-                        actions.push(StripAction::ToggleSplit(id));
+                    // Off this row. Not offered on the last tab of the last
+                    // pane: a window shows a radio, always.
+                    if !last_tab_standing {
+                        let minus = crate::chrome::chip(ui, false, RichText::new("−").size(11.0));
+                        if minus.on_hover_text(tr!("multi-take-radio-off-row")).clicked() {
+                            actions.push(StripAction::Unpick { pane, id });
+                        }
                     }
                 });
                 // The tab itself switches the pane — anywhere on it that is not
                 // one of its own buttons, which keep their clicks.
-                let body = if elsewhere {
-                    body.response.on_hover_text(tr!("multi-already-open-another-split-view"))
-                } else if here {
+                let body = if here {
                     body.response
                 } else {
                     body.response.on_hover_text(tr!("multi-show-radio-here"))
                 };
-                if body.clicked() && !here && !elsewhere {
+                if body.clicked() && !here {
                     actions.push(StripAction::Show { pane, id });
                 }
             }
+            bar.end_tabs(ui);
+            // Only while a radio is loose — on no row — is there anything to
+            // pick or to open a pane for; with every radio placed the row ends
+            // at its last tab. A new radio is then added in Settings → Radio.
+            if self.loose().is_empty() {
+                return;
+            }
+            self.pick_menu(ui, pane, actions);
+            // Another pane, with the first loose radio. Drawn as columns, not
+            // "+": "+" adds a radio everywhere else.
+            let h = crate::chrome::chip_height(ui, Some(13.0));
+            if crate::chrome::chip_columns(ui, egui::vec2(1.6 * h, h))
+                .on_hover_text(tr!("multi-open-pane"))
+                .clicked()
+            {
+                actions.push(StripAction::AddPane);
+            }
+        });
+    }
+
+    /// A tab's name, centred in the height of the chips beside it.
+    ///
+    /// In: the name as it is to be drawn, and what it should sense. Out: the
+    /// name's response. The name gets a box as tall as a chip and sits in its
+    /// middle, so it stands at the same height in every tab.
+    // Why: HDZ 2026-11-04 (strip in two rows): "der Name des Funkgeräts ist
+    //      oft mittenzentriert in der Höhe, aber nicht immer konsistent". The
+    //      first tab of each row had its name at the top: egui centres an item
+    //      in the height the row has reached so far, and for a row's first
+    //      item that is still the line height, before the taller rings chip
+    //      beside it has been laid out.
+    fn tab_name(ui: &mut egui::Ui, name: RichText, sense: egui::Sense) -> egui::Response {
+        let h = crate::chrome::chip_height(ui, Some(11.0));
+        let galley = egui::WidgetText::from(name.clone()).into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            f32::INFINITY,
+            egui::TextStyle::Button,
+        );
+        let size = egui::vec2(galley.size().x, h.max(galley.size().y));
+        ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.add(egui::Label::new(name).sense(sense))
+        })
+        .inner
+    }
+
+    /// "Pick radio ▼": the radios on no row, each marked with the rings while
+    /// its link is open and dimmed while it is off — the same marks the tabs
+    /// wear. Drawn only while there is one ([`MultiApp::loose`]). Picking puts
+    /// it on this row and shows it here. At the foot, "New radio…", which is
+    /// what the single strip's "+" used to do.
+    fn pick_menu(&self, ui: &mut egui::Ui, pane: usize, actions: &mut Vec<StripAction>) {
+        let btn = crate::chrome::chip(ui, false, RichText::new(tr!("multi-pick-radio")).size(12.0))
+            .on_hover_text(tr!("multi-pick-radio-tip"));
+        crate::chrome::menu_popup(ui, &btn, |ui| {
+            let loose = self.loose();
+            for tab in self.tabs.iter().filter(|t| loose.contains(&t.id)) {
+                let mut label = RichText::new(Self::display_name(tab));
+                if !tab.enabled {
+                    label = label.weak();
+                }
+                let picked = ui
+                    .horizontal(|ui| {
+                        // The rings, painted: the symbol is not in the text
+                        // font (see [`crate::chrome::chip_link`]).
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(18.0, 12.0), egui::Sense::hover());
+                        if tab.enabled && ui.is_rect_visible(rect) {
+                            let r = rect.height() * 0.32;
+                            let c = rect.center();
+                            let stroke = egui::Stroke::new(1.4, crate::theme::CYAN());
+                            for dx in [-0.55, 0.55] {
+                                ui.painter().circle_stroke(
+                                    egui::pos2(c.x + dx * r, c.y),
+                                    r,
+                                    stroke,
+                                );
+                            }
+                        }
+                        ui.add(egui::Button::new(label).frame(false)).clicked()
+                    })
+                    .inner;
+                if picked {
+                    actions.push(StripAction::Pick { pane, id: tab.id });
+                    ui.close();
+                }
+            }
             if self.factory.is_some() {
-                bar.end_tabs(ui);
-                // Always this machine's own roster. A strip is drawn on every
-                // pane and a menu here would be in the way; where a radio could
-                // also go on a station at the far end of a connection, that
-                // choice is one screen away in Settings → Radio, where the two
-                // rosters are already side by side. The tooltip says so as soon
-                // as there is a second roster to confuse it with.
+                ui.separator();
                 let tip = match self.tabs.iter().any(|t| t.remote) {
-                    true => {
-                        tr!("multi-add-radio-computer-settings-radio")
-                    }
+                    true => tr!("multi-add-radio-computer-settings-radio"),
                     false => tr!("multi-add-radio"),
                 };
-                if crate::chrome::chip(ui, false, RichText::new("+").size(13.0))
-                    .on_hover_text(tip)
-                    .clicked()
-                {
+                if ui.button(tr!("multi-new-radio")).on_hover_text(tip).clicked() {
                     actions.push(StripAction::Add);
+                    ui.close();
                 }
             }
         });
@@ -1089,6 +1360,10 @@ impl MultiApp {
             attached_to: None,
             enabled: r.enabled,
         });
+        // On the row of the pane the operator is working in, so the radio they
+        // asked for — or the next of a station's arriving — is one click away.
+        let pane = self.active_pane();
+        self.put_on_row(pane, r.id);
         for tab in &mut self.tabs {
             tab.app.set_shared_log(true);
         }
@@ -1319,6 +1594,12 @@ impl eframe::App for MultiApp {
             let n = pane_tabs.len() as f32;
             let gap = 6.0;
             let col_w = ((avail.width() - gap * (n - 1.0)) / n).max(50.0);
+            // Every row as tall as the tallest: the shorter ones get the
+            // difference as room above their tabs, so the tabs still sit on
+            // the page they switch.
+            let tallest =
+                self.strip_heights.iter().take(pane_tabs.len()).fold(0.0_f32, |a, &b| a.max(b));
+            let mut heights: Vec<f32> = Vec::with_capacity(pane_tabs.len());
             for (k, &ti) in pane_tabs.iter().enumerate() {
                 let left = avail.left() + k as f32 * (col_w + gap);
                 let col = egui::Rect::from_min_max(
@@ -1334,13 +1615,17 @@ impl eframe::App for MultiApp {
                 );
                 pane_ui.shrink_clip_rect(col);
                 // This pane's strip — switches what the pane shows.
-                egui::Frame::new()
+                let pad =
+                    (tallest - self.strip_heights.get(k).copied().unwrap_or(tallest)).max(0.0);
+                let drawn = egui::Frame::new()
                     .fill(crate::theme::BG_DEEP())
                     .inner_margin(egui::Margin { left: 8, right: 8, top: 3, bottom: 0 })
                     .show(&mut pane_ui, |ui| {
                         ui.set_min_width(ui.available_width());
+                        ui.add_space(pad);
                         self.strip_row(ui, k, &mut actions);
                     });
+                heights.push(drawn.response.rect.height() - pad);
                 self.tabs[ti].app.set_radio_roster(roster.clone());
                 eframe::App::ui(&mut self.tabs[ti].app, &mut pane_ui, frame);
                 reqs.append(&mut self.tabs[ti].app.take_radio_tab_requests());
@@ -1351,6 +1636,11 @@ impl eframe::App for MultiApp {
                         egui::Stroke::new(1.0, crate::theme::PANEL()),
                     );
                 }
+            }
+            if heights != self.strip_heights {
+                // A row wrapped or unwrapped: even the rows out next frame.
+                ctx.request_repaint();
+                self.strip_heights = heights;
             }
             ui.allocate_rect(avail, egui::Sense::hover());
             // A press on a pane's background hands it the keyboard. Floating

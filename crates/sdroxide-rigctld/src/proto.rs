@@ -14,8 +14,8 @@
 use sdroxide_types::{Command, Direction, NrLevel, NrStrength, RigctldConfig, RxId, Vfo};
 
 use crate::state::{
-    RigState, agc_from_hamlib, agc_to_hamlib, filter_for, from_hamlib_mode, nr_engine_for,
-    nr_on_level, nr_strength_for, nr_to_hamlib, squelch_db_for, to_hamlib_mode,
+    RigState, agc_from_hamlib, agc_to_hamlib, centred_on, filter_for, from_hamlib_mode,
+    nr_engine_for, nr_on_level, nr_strength_for, nr_to_hamlib, squelch_db_for, to_hamlib_mode,
 };
 
 /// Hamlib error codes (`rig.h`), returned negated in `RPRT`.
@@ -719,10 +719,25 @@ fn dispatch(
 /// Only where the name round-trips to the mode actually running (USB, LSB,
 /// CW, AM ...), never a `PKT` name, so a digital session still ignores
 /// WSJT-X's periodic write whatever width it carries.
+/// The filter a mode and a requested width ask for.
+///
+/// Every mode but CW takes `filter_for` as it comes. CW is centred on the
+/// operator's sidetone instead: that is the rule the whole receiver follows,
+/// and a width placed against the mode's default low edge lands beside the tone
+/// the operator is listening to as soon as the pitch or the width is not the
+/// default (review of #451).
+fn mode_filter(mode: sdroxide_types::Mode, w: i32, st: &RigState) -> (f32, f32) {
+    let (lo, hi) = filter_for(mode, w);
+    if mode == sdroxide_types::Mode::Cw { centred_on(st.cw_pitch_hz, lo, hi) } else { (lo, hi) }
+}
+
 fn set_mode(args: &[&str], st: &RigState, cmds: &mut Vec<Command>, out: Out) -> Reply {
     let Some(name) = args.first() else { return out.finish(EINVAL, false) };
     let Some(mode) = from_hamlib_mode(name) else { return out.finish(EINVAL, false) };
     if name.eq_ignore_ascii_case(to_hamlib_mode(st.mode)) {
+        // The width compared is the one that would be APPLIED — clamped to
+        // the mode's range — so a client asking past the maximum does not
+        // send the same filter again on every write.
         if mode == st.mode
             && !name.to_ascii_uppercase().starts_with("PKT")
             && let Some(w) = args.get(1).and_then(|s| s.parse::<i32>().ok())
@@ -730,7 +745,7 @@ fn set_mode(args: &[&str], st: &RigState, cmds: &mut Vec<Command>, out: Out) -> 
         {
             // Compared as applied: `filter_for` clamps, so a client re-sending
             // a width out of range would otherwise re-set the filter each time.
-            let (lo, hi) = filter_for(mode, w);
+            let (lo, hi) = mode_filter(mode, w, st);
             if (hi - lo).round() as i32 != st.passband_hz() {
                 cmds.push(Command::SetFilter { rx: RxId::Main, lo, hi });
             }
@@ -743,7 +758,7 @@ fn set_mode(args: &[&str], st: &RigState, cmds: &mut Vec<Command>, out: Out) -> 
     if let Some(w) = args.get(1).and_then(|s| s.parse::<i32>().ok())
         && w > 0
     {
-        let (lo, hi) = filter_for(mode, w);
+        let (lo, hi) = mode_filter(mode, w, st);
         cmds.push(Command::SetFilter { rx: RxId::Main, lo, hi });
     }
     out.finish(OK, false)
@@ -974,11 +989,52 @@ mod tests {
         assert_eq!(cmds, vec![Command::SetFilter { rx: RxId::Main, lo: 150.0, hi: 2550.0 }]);
     }
 
+    /// A width in CW is centred on the operator's pitch, not on the mode's
+    /// default low edge: with a 700 Hz pitch `M CW 200` used to leave the
+    /// passband at 450–650 and the tone outside it (review of #451).
+    #[test]
+    fn a_cw_width_is_centred_on_the_pitch() {
+        let cfg = RigctldConfig::default();
+        let s = RigState { mode: Mode::Cw, cw_pitch_hz: 700.0, ..st() };
+        assert_eq!(
+            run_with("M CW 200", &s, &cfg).1,
+            vec![Command::SetFilter { rx: RxId::Main, lo: 600.0, hi: 800.0 }]
+        );
+        // A different pitch moves it with the tone, and the width is kept.
+        let s = RigState { mode: Mode::Cw, cw_pitch_hz: 900.0, ..st() };
+        assert_eq!(
+            run_with("M CW 200", &s, &cfg).1,
+            vec![Command::SetFilter { rx: RxId::Main, lo: 800.0, hi: 1000.0 }]
+        );
+        // Switching *into* CW centres it too, not only a width in the mode.
+        let s = RigState { mode: Mode::Usb, cw_pitch_hz: 900.0, ..st() };
+        let cmds = run_with("M CW 200", &s, &cfg).1;
+        assert_eq!(cmds[0], Command::SetMode { rx: RxId::Main, mode: Mode::Cw });
+        assert_eq!(cmds[1], Command::SetFilter { rx: RxId::Main, lo: 800.0, hi: 1000.0 });
+        // Other modes are untouched.
+        let s = RigState { mode: Mode::Usb, cw_pitch_hz: 900.0, ..st() };
+        assert_eq!(
+            run_with("M USB 2400", &s, &cfg).1,
+            vec![Command::SetFilter { rx: RxId::Main, lo: 150.0, hi: 2550.0 }]
+        );
+    }
+
     /// The width already set, re-sent with the mode, still changes nothing.
     #[test]
     fn the_same_mode_and_width_change_nothing() {
         assert!(run("M USB 2700").1.is_empty());
         assert!(run("M USB 0").1.is_empty());
+    }
+
+    /// A width past the mode's maximum is clamped; once the filter is at that
+    /// maximum, asking again changes nothing.
+    #[test]
+    fn a_width_past_the_maximum_is_sent_once() {
+        let max = Mode::Usb.max_filter_hz();
+        let (_, cmds) = run("M USB 999999");
+        assert_eq!(cmds, vec![Command::SetFilter { rx: RxId::Main, lo: 150.0, hi: 150.0 + max }]);
+        let at_max = RigState { filter_lo: 150.0, filter_hi: 150.0 + max, ..st() };
+        assert!(run_with("M USB 999999", &at_max, &RigctldConfig::default()).1.is_empty());
     }
 
     /// Width 0 is how a client says "mode only, leave my filter alone".
@@ -1319,6 +1375,38 @@ mod tests {
         ] {
             assert!(d.contains(key), "missing {key}");
         }
+    }
+
+    /// The level masks are what a Hamlib client offers controls from, so they
+    /// are pinned by Hamlib's own bit values (`rig.h`), not by this crate's
+    /// constants: a wrong constant would otherwise pass its own test.
+    #[test]
+    fn dump_state_advertises_the_levels_clients_see() {
+        const SQL: u64 = 0x20;
+        const NR: u64 = 0x100;
+        const AGC: u64 = 0x2_0000;
+        const RF: u64 = 0x10;
+        const STRENGTH: u64 = 0x4000_0000;
+        let masks = |s: &RigState| {
+            let d = run_with("\\dump_state", s, &RigctldConfig::default()).0;
+            let after_filters = d.split("0 0\n").last().unwrap().to_string();
+            let hex = |l: &str| u64::from_str_radix(l.trim_start_matches("0x"), 16).unwrap();
+            let lines: Vec<&str> = after_filters.lines().collect();
+            (hex(lines[8]), hex(lines[9]))
+        };
+
+        let (get, set) = masks(&st());
+        for (name, bit) in [("SQL", SQL), ("NR", NR), ("AGC", AGC)] {
+            assert_ne!(get & bit, 0, "{name} not readable");
+            assert_ne!(set & bit, 0, "{name} not settable");
+        }
+        assert_ne!(get & STRENGTH, 0, "STRENGTH not readable");
+        assert_eq!(set & STRENGTH, 0, "STRENGTH is a meter, never settable");
+        assert_eq!((get & RF, set & RF), (0, 0), "RF without a gain stage");
+
+        let (get, set) = masks(&with_gain());
+        assert_ne!(get & RF, 0, "RF not readable with a gain stage");
+        assert_ne!(set & RF, 0, "RF not settable with a gain stage");
     }
 
     #[test]

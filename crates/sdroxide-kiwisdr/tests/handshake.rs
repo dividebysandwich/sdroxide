@@ -134,3 +134,34 @@ fn prompt_upgrade_still_connects() {
     drop(handle);
     server.join().expect("server thread");
 }
+
+/// The project's reverse proxy answers the upgrade on port 80 with a `307` to
+/// the same path on 8073, and the public directory lists those receivers on
+/// 80. A client that does not follow it opens none of them (nearly half of the
+/// list): `WebSocket handshake failed: HTTP error: 307 Temporary Redirect`.
+#[test]
+fn a_redirect_on_the_upgrade_is_followed() {
+    let (Some(front), Some(back)) = (bind(8175), bind(8176)) else { return };
+    let redirector = std::thread::spawn(move || {
+        use std::io::{Read, Write};
+        let (mut s, _) = front.accept().expect("accept");
+        let mut buf = [0u8; 2048];
+        let n = s.read(&mut buf).expect("request");
+        let request = String::from_utf8_lossy(&buf[..n]).to_string();
+        // The path the client asked for is the path it is sent on to.
+        let path = request.split_whitespace().nth(1).unwrap_or("/").to_string();
+        let answer = format!(
+            "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://127.0.0.1:8176{path}\r\n\
+             Content-Length: 0\r\n\r\n"
+        );
+        s.write_all(answer.as_bytes()).expect("answer");
+    });
+    let server = std::thread::spawn(move || serve(&back, Duration::ZERO));
+
+    let handle = KiwiHandle::connect(&config(8175), "sdroxide", 14_074_000.0)
+        .expect("the redirect is followed");
+    assert!(handle.is_alive());
+    drop(handle);
+    redirector.join().expect("redirector thread");
+    server.join().expect("server thread");
+}

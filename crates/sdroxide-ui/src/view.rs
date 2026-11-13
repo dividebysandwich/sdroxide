@@ -2,6 +2,116 @@
 
 use serde::{Deserialize, Serialize};
 
+/// One of the SK filter's three presets in the NR menu: everything the SK row
+/// sets except whether the filter is on.
+// Why: HDZ 2026-11-10: "mach drei Presets, das wäre einer, weitere zwei folgen".
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SkPreset {
+    pub tau_s: f32,
+    pub open_s: f32,
+    pub close_s: f32,
+    pub width: u8,
+    pub after_nr: bool,
+}
+
+impl SkPreset {
+    /// The filter's starting values (recipe A).
+    pub const A: SkPreset = SkPreset {
+        tau_s: sdroxide_types::SK_FILTER_DEFAULT_TAU_S,
+        open_s: sdroxide_types::SK_FILTER_DEFAULT_OPEN_S,
+        close_s: sdroxide_types::SK_FILTER_DEFAULT_CLOSE_S,
+        width: sdroxide_types::SK_FILTER_DEFAULT_WIDTH,
+        after_nr: false,
+    };
+    /// HDZ's first: "mit dem NR und SAM klingt diese Variante top" — NR2 Med
+    /// ahead of it, in SAM.
+    pub const B: SkPreset =
+        SkPreset { tau_s: 0.20, open_s: 0.056, close_s: 0.10, width: 6, after_nr: true };
+    /// HDZ's second, behind DFNR Low.
+    pub const C: SkPreset =
+        SkPreset { tau_s: 0.05, open_s: 0.100, close_s: 0.25, width: 6, after_nr: true };
+    /// HDZ's third, behind the spectral NR at Low, in SSB.
+    pub const D: SkPreset =
+        SkPreset { tau_s: 0.50, open_s: 0.010, close_s: 0.18, width: 5, after_nr: true };
+    /// HDZ's fourth, for SSB behind RNN at Low.
+    pub const E: SkPreset =
+        SkPreset { tau_s: 0.10, open_s: 0.050, close_s: 0.25, width: 5, after_nr: true };
+
+    pub fn of(rx: &sdroxide_types::RxState) -> Self {
+        SkPreset {
+            tau_s: rx.sk_filter_tau_s,
+            open_s: rx.sk_filter_open_s,
+            close_s: rx.sk_filter_close_s,
+            width: rx.sk_filter_width,
+            after_nr: rx.sk_filter_after_nr,
+        }
+    }
+
+    pub fn apply(&self, rx: &mut sdroxide_types::RxState) {
+        rx.sk_filter_tau_s = self.tau_s;
+        rx.sk_filter_open_s = self.open_s;
+        rx.sk_filter_close_s = self.close_s;
+        rx.sk_filter_width = self.width;
+        rx.sk_filter_after_nr = self.after_nr;
+    }
+}
+
+/// How many presets the SK row offers.
+pub const SK_PRESETS: usize = 4;
+
+/// A list rather than an array, so a view saved with fewer slots still loads;
+/// [`ViewState::sk_preset`] fills what is missing from these.
+fn sk_presets_default() -> Vec<SkPreset> {
+    vec![SkPreset::B, SkPreset::C, SkPreset::D, SkPreset::E]
+}
+
+impl ViewState {
+    /// Preset `slot`, from the saved list or, past its end, the defaults.
+    pub fn sk_preset(&self, slot: usize) -> SkPreset {
+        self.sk_presets
+            .get(slot)
+            .copied()
+            .unwrap_or_else(|| sk_presets_default().get(slot).copied().unwrap_or(SkPreset::A))
+    }
+
+    /// Store `p` in `slot`, filling any gap before it from the defaults.
+    pub fn set_sk_preset(&mut self, slot: usize, p: SkPreset) {
+        while self.sk_presets.len() < SK_PRESETS.max(slot + 1) {
+            let n = self.sk_presets.len();
+            self.sk_presets.push(self.sk_preset(n));
+        }
+        self.sk_presets[slot] = p;
+    }
+}
+
+#[cfg(test)]
+mod sk_preset_tests {
+    use super::SkPreset;
+
+    /// Proves: a preset carries all five settings of the SK row both ways,
+    /// and slot 1 starts as HDZ's recipe.
+    #[test]
+    fn a_preset_round_trips_the_sk_row() {
+        let mut rx = sdroxide_types::RxState::with_mode(sdroxide_types::Mode::Sam);
+        SkPreset::B.apply(&mut rx);
+        assert_eq!(SkPreset::of(&rx), SkPreset::B);
+        assert!(rx.sk_filter_after_nr && rx.sk_filter_width == 6);
+        SkPreset::A.apply(&mut rx);
+        assert_eq!(SkPreset::of(&rx), SkPreset::A);
+        assert_eq!(super::sk_presets_default()[0], SkPreset::B);
+        assert_eq!(super::sk_presets_default()[1], SkPreset::C);
+        assert_eq!(super::sk_presets_default()[2], SkPreset::D);
+        assert_eq!(super::sk_presets_default()[3], SkPreset::E);
+        // A view saved with fewer slots is filled from the defaults.
+        let mut v = super::ViewState { sk_presets: vec![SkPreset::A], ..Default::default() };
+        assert_eq!(v.sk_preset(0), SkPreset::A);
+        assert_eq!(v.sk_preset(3), SkPreset::E);
+        v.set_sk_preset(3, SkPreset::B);
+        assert_eq!(v.sk_preset(3), SkPreset::B);
+        assert_eq!(v.sk_presets.len(), super::SK_PRESETS);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ViewState {
@@ -43,11 +153,122 @@ pub struct ViewState {
     /// them switches it off, which is also what the FIT chip now shows.
     #[serde(default = "auto_fit_default")]
     pub auto_fit: bool,
+    /// How far the operator has moved the floor and the ceiling away from
+    /// where FIT itself puts them, in dB. While FIT is on, the FLOOR and CEIL
+    /// rails move this rather than switching FIT off: FIT keeps following the
+    /// band, and the picture keeps the operator's taste on top of it ("a little
+    /// darker than FIT"). Kept across band changes and restarts; switching FIT
+    /// on starts it over at zero.
+    /// Why: HDZ 2026-11-12: "wenn FIT aktiv ist, soll er auf die Schieberegler
+    ///      Boden und Decke direkt einwirken … verknödeln, dass die auto
+    ///      adjusten"; the shift "kann darüber hinaus gelten".
+    #[serde(default)]
+    pub fit_shift_db: (f32, f32),
+    /// [`Self::fit_shift_db`] for WELCH and for REASSIGN: each way of drawing
+    /// the waterfall is a FIT program of its own, with its own shift, so a
+    /// taste set under one does not carry over into another
+    /// (`fit_shift_db` is PEAK's).
+    // Why: HDZ 2026-11-12: "müssen die unterschiedliche fit targets bekommen,
+    //      quasi als eigene Programme".
+    #[serde(default)]
+    pub fit_shift_welch_db: (f32, f32),
+    #[serde(default)]
+    pub fit_shift_reassign_db: (f32, f32),
+    /// Set by a hand move of FLOOR or CEIL while FIT is on, taken by the next
+    /// FIT tick: it stops a glide in flight and re-anchors the shift on FIT's
+    /// own measurement, so the level stays where the hand left it.
+    #[serde(skip)]
+    pub fit_hand_moved: bool,
+    /// The SMOOTH chip: the waterfall as mean power (Welch) in the engine and
+    /// lightly averaged over neighbouring rows and columns here, instead of
+    /// the peak. See [`sdroxide_types::SpectrumConfig::smooth`].
+    #[serde(default)]
+    pub waterfall_average: bool,
+    /// WELCH's time constant in seconds, for the waterfall's rows and the
+    /// trace alike: the rail under the chip, 0–2.5 s, zero being off.
+    #[serde(default = "welch_tc_default")]
+    pub welch_tc: f32,
+    /// The REASSIGN chip, the alternative to WELCH: waterfall rows as the
+    /// reassigned spectrogram — see
+    /// [`sdroxide_types::SpectrumConfig::reassign`]. Never on with
+    /// [`Self::waterfall_average`].
+    #[serde(default)]
+    pub waterfall_reassign: bool,
+    /// REASSIGN's background, dB darker: the cells left in place.
+    #[serde(default = "reassign_dim_default")]
+    pub reassign_dim_db: f32,
     pub fft_size: u32,
     /// Fraction of the panadapter height used by the spectrum line (rest = waterfall).
     pub spectrum_fraction: f32,
     /// Draw a decaying peak-hold trace over the spectrum.
     pub peak_hold: bool,
+    /// The SK filter's presets (see [`SkPreset`]): slots 1–3 start as HDZ's
+    /// recipes (behind NR2 Med in SAM, DFNR Low, the spectral NR Low in SSB),
+    /// 4 as his SSB one behind RNN Low; a right-click stores the row in any
+    /// of them, and the reset beside them goes back to the starting values.
+    #[serde(default = "sk_presets_default")]
+    pub sk_presets: Vec<SkPreset>,
+    /// Draw the S/N guide over the spectrum: everything seen since it was
+    /// switched on, accumulated into one mean per frequency and drawn as its
+    /// height over the noise floor ([`crate::mean_spectrum`]).
+    // Why: HDZ 2026-11-07: "ein S/N-bereinigtes akkumulatives Signal … als
+    //      Guide im gleichen Grün".
+    #[serde(default)]
+    pub snr_guide: bool,
+    /// With the S/N guide, its spectral kurtosis per frequency as a second
+    /// line: noise 1, a steady carrier 0, modulation above 1.
+    // Why: HDZ 2026-11-08: "manche Kanäle senden einen einfachen Träger ohne
+    //      Modulation … ein Spectral-Kurtosis-Spektrum ähnlich wie S/N bauen
+    //      und tunen, das kann man dann evtl. beides kombinieren".
+    #[serde(default)]
+    pub sk_guide: bool,
+    /// Spectral kurtosis at the SK line's full height.
+    // Why: HDZ 2026-11-08: "den Wertebereich des SK wählbar machen".
+    /// The SK line's full height, dB (10·log10 SK; noise 0 dB).
+    // Why: HDZ 2026-11-08: "wäre für SK auch im 1D-Spektrum eine
+    //      Log-Darstellung besser? S/N ist doch mit dB log".
+    #[serde(default = "sk_guide_top_default")]
+    pub sk_guide_top_db: f32,
+    /// Time constant of the SK guide's rolling moments, s.
+    // Why: HDZ 2026-11-08: "im Augenblick ist das Spektrum nicht langlebig
+    //      genug".
+    #[serde(default = "sk_tau_default")]
+    pub sk_tau_s: f32,
+    /// While the S/N guide runs, label a spot only where the guide sees a
+    /// signal at its frequency.
+    // Why: HDZ 2026-11-07: "wenn da nichts ist, sollte auch kein Label hin …
+    //      use S/N for label visibility".
+    /// Spot labels on the waterfall at all (the FFT popup's LABELS chip);
+    /// which kinds are shown stays the SPOTS window's choice.
+    #[serde(default = "spot_labels_default")]
+    pub spot_labels: bool,
+    #[serde(default)]
+    pub snr_label_filter: bool,
+    /// Under [`Self::snr_label_filter`], a label also needs a peak of its own:
+    /// its S/N at least 3 dB over the median of the ring 0.6–2 kHz around it.
+    // Why: HDZ 2026-11-11, strong QRM: "sind die Label in der Lage, einen Peak
+    //      im S/N zu sehen?".
+    #[serde(default)]
+    pub snr_label_peak: bool,
+    /// Under [`Self::snr_label_filter`], a station 15 dB or more over the noise
+    /// keeps other labels off its flanks (±10 kHz).
+    // Why: HDZ 2026-11-11: "Flanke bitte doch an/aus, Schwelle 15 dB".
+    #[serde(default)]
+    pub snr_label_flanks: bool,
+    /// The S/N, dB over the noise floor, a spot needs under
+    /// [`Self::snr_label_filter`] for its label; set on the S/N rail.
+    #[serde(default = "snr_label_min_default")]
+    pub snr_label_min_db: f32,
+    /// The S/N, dB, at which the S/N guide reaches its full height (a quarter
+    /// of the strip); set on the S/N TOP rail.
+    // Why: HDZ 2026-11-08: "einen Schieberegler, der die Toppinggrenze des
+    //      S/N-Spektrums eingrenzt in der Höhe, Default wie derzeit 12 dB,
+    //      max 30 dB".
+    #[serde(default = "snr_guide_top_default")]
+    pub snr_guide_top_db: f32,
+    /// The SPOTS window lists only the spots the S/N guide sees a signal at.
+    #[serde(default)]
+    pub spots_snr_only: bool,
     /// Draw the spectrum strip as a receding 3D surface instead of a flat
     /// line: the newest spectrum across the front, the ones before it flowing
     /// away from the viewer. See [`crate::widgets::spectrum3d`].
@@ -160,6 +381,19 @@ pub struct ViewState {
     /// SPOTS window and this array have to stay in lockstep.
     #[serde(default = "spot_kinds_default")]
     pub spot_kinds_shown: [bool; SPOT_KINDS],
+    /// The SPOTS window shows its spots on a world map instead of as a list.
+    #[serde(default)]
+    pub spots_map: bool,
+    /// The SPOTS window's map without names beside its dots. Off as the
+    /// stored flag, so the derived default is names shown, as on the Public
+    /// SDRs map.
+    #[serde(default)]
+    pub spots_map_names_off: bool,
+    /// The SPOTS window's map without cities, whatever the shared setting says.
+    // Why: HDZ 2026-11-07: "auf der Karte noch Städtenamen togglen lassen wie
+    //      auf der SDR-Map".
+    #[serde(default)]
+    pub spots_map_cities_off: bool,
     /// Fraction of the FT8/FT4 layout height used by the operating panel (the
     /// decode list + QSO area); the rest is the waterfall. User-draggable.
     pub digi_panel_fraction: f32,
@@ -198,6 +432,29 @@ pub struct ViewState {
     /// Desktop only: the map is the first thing a compact layout gives up, so
     /// there is nothing for this to divide there.
     pub digi_map_fraction: f32,
+    /// The FT8/FT4 world map in a window of its own, floating over the main
+    /// window, instead of in the QSO area: as big as the operator drags it,
+    /// and there on a compact layout too, which has no room for it in the
+    /// column.
+    // Why: HDZ 2026-11-06: "ich kann die Karte nicht groß machen oder
+    //      rauspoppen"; "wir haben doch unsere Karte und auch das Info-Menü als
+    //      rausgelöste Fenster geöffnet, wo ist denn das Problem?"
+    #[serde(default)]
+    pub digi_map_window: bool,
+    /// Draw on the FT8/FT4 map who is talking to whom: a line between the two
+    /// stations of every exchange heard in the last ten minutes.
+    #[serde(default)]
+    pub digi_map_links: bool,
+    /// Callsigns beside the station dots on the FT8/FT4 map.
+    #[serde(default)]
+    pub digi_map_labels: bool,
+    /// Cities on the FT8/FT4 map, this map alone; the other maps keep to the
+    /// setting (Settings → UI).
+    // Why: HDZ 2026-11-06: "ich glaube, die Städte werden auf der SDR-Karte
+    //      mit dem Toggle mit ausgeblendet?" — they were: the chip switched
+    //      the shared setting.
+    #[serde(default = "digi_map_cities_default")]
+    pub digi_map_cities: bool,
     /// Which of the digital panel's views a phone is showing, as an index into
     /// the mode's own list (see `panels::panel_tabs`) — the panes differ by
     /// mode, and the waterfall is always the last of them. They do not fit
@@ -552,9 +809,29 @@ impl Default for ViewState {
             db_floor: -120.0,
             db_ceil: -20.0,
             auto_fit: auto_fit_default(),
+            fit_shift_db: (0.0, 0.0),
+            fit_shift_welch_db: (0.0, 0.0),
+            fit_shift_reassign_db: (0.0, 0.0),
+            fit_hand_moved: false,
+            waterfall_average: false,
+            welch_tc: welch_tc_default(),
+            waterfall_reassign: false,
+            reassign_dim_db: reassign_dim_default(),
             fft_size: 4096,
             spectrum_fraction: 0.35,
             peak_hold: false,
+            sk_presets: sk_presets_default(),
+            snr_guide: false,
+            sk_guide: false,
+            sk_guide_top_db: sk_guide_top_default(),
+            sk_tau_s: sk_tau_default(),
+            spot_labels: spot_labels_default(),
+            snr_label_filter: false,
+            snr_label_peak: false,
+            snr_label_flanks: false,
+            snr_label_min_db: snr_label_min_default(),
+            snr_guide_top_db: snr_guide_top_default(),
+            spots_snr_only: false,
             spectrum_3d: false,
             spectrum_3d_solid: spectrum_3d_solid_default(),
             center_on_vfo: center_on_vfo_default(),
@@ -568,6 +845,9 @@ impl Default for ViewState {
             prop_map_band: prop_map_band_default(),
             map_night: false,
             spot_kinds_shown: spot_kinds_default(),
+            spots_map: false,
+            spots_map_names_off: false,
+            spots_map_cities_off: false,
             digi_panel_fraction: 0.46,
             digi_split_fraction: 0.52,
             js8_split_fraction: js8_split_default(),
@@ -577,6 +857,10 @@ impl Default for ViewState {
             ais_card_fraction: ais_card_default(),
             hfdl_split_fraction: hfdl_split_default(),
             digi_map_fraction: 0.6,
+            digi_map_window: false,
+            digi_map_links: false,
+            digi_map_labels: false,
+            digi_map_cities: digi_map_cities_default(),
             digi_pane: 0,
             sstv_tx_fraction: 0.38,
             sstv_gallery_fraction: 0.4,
@@ -588,13 +872,61 @@ impl Default for ViewState {
 }
 
 impl ViewState {
-    /// Set the floor and ceiling by hand. That is a request to keep them, so
-    /// FIT goes off: left on, it glided them straight back the next time they
-    /// drifted 3 dB from its own target (#642).
+    /// Set the floor and ceiling by hand.
+    ///
+    /// With FIT off they simply stay where they are put. With FIT on, the move
+    /// goes into [`ViewState::fit_shift_db`] as well, by exactly as much as
+    /// the level moved, so FIT's next step aims where the operator put it and
+    /// keeps that distance from its own measurement on every band after. FIT
+    /// used to go off here instead — left on as it was, it glided the level
+    /// straight back the next time it drifted 3 dB from its own target (#642).
     pub fn set_levels_by_hand(&mut self, floor: f32, ceil: f32) {
-        self.db_floor = floor.clamp(-160.0, ceil - 5.0);
-        self.db_ceil = ceil.clamp(self.db_floor + 5.0, 40.0);
-        self.auto_fit = false;
+        let had = (self.db_floor, self.db_ceil);
+        (self.db_floor, self.db_ceil) = clamp_levels(floor, ceil);
+        if self.auto_fit {
+            let (now, s) = ((self.db_floor, self.db_ceil), self.fit_shift_mut());
+            let shift = |s: f32, now: f32, was: f32| {
+                (s + now - was).clamp(-FIT_SHIFT_MAX_DB, FIT_SHIFT_MAX_DB)
+            };
+            *s = (shift(s.0, now.0, had.0), shift(s.1, now.1, had.1));
+            self.fit_hand_moved = true;
+        }
+    }
+
+    /// Which way the waterfall is drawn — and so which FIT program is in force.
+    pub fn look(&self) -> WaterfallLook {
+        if self.waterfall_reassign {
+            WaterfallLook::Reassign
+        } else if self.waterfall_average {
+            WaterfallLook::Welch
+        } else {
+            WaterfallLook::Peak
+        }
+    }
+
+    /// The shift of the FIT program in force (see [`Self::fit_shift_db`]).
+    pub fn fit_shift(&self) -> (f32, f32) {
+        match self.look() {
+            WaterfallLook::Peak => self.fit_shift_db,
+            WaterfallLook::Welch => self.fit_shift_welch_db,
+            WaterfallLook::Reassign => self.fit_shift_reassign_db,
+        }
+    }
+
+    /// The shift of the FIT program in force, to change.
+    pub fn fit_shift_mut(&mut self) -> &mut (f32, f32) {
+        match self.look() {
+            WaterfallLook::Peak => &mut self.fit_shift_db,
+            WaterfallLook::Welch => &mut self.fit_shift_welch_db,
+            WaterfallLook::Reassign => &mut self.fit_shift_reassign_db,
+        }
+    }
+
+    /// Where the levels go when FIT measures `fit`: the measurement moved by
+    /// the operator's shift for the look in force, within the rails' limits.
+    pub fn fit_shifted(&self, fit: (f32, f32)) -> (f32, f32) {
+        let s = self.fit_shift();
+        clamp_levels(fit.0 + s.0, fit.1 + s.1)
     }
 
     /// Whether the spectrum line is drawn.
@@ -720,6 +1052,57 @@ fn spectrum_3d_solid_default() -> bool {
     true
 }
 
+/// The three ways the waterfall is drawn (the FFT popup's PEAK, WELCH and
+/// REASSIGN), each a FIT program of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WaterfallLook {
+    Peak,
+    Welch,
+    Reassign,
+}
+
+/// The furthest [`ViewState::fit_shift_db`] moves either level from FIT's own:
+/// the floor rail's whole travel, so a shift is never what stops a rail.
+pub const FIT_SHIFT_MAX_DB: f32 = 120.0;
+
+/// A floor and ceiling kept inside the rails and at least 5 dB apart — the
+/// floor gives way first, the ceiling then makes room above it.
+fn clamp_levels(floor: f32, ceil: f32) -> (f32, f32) {
+    let floor = floor.clamp(-160.0, ceil - 5.0);
+    (floor, ceil.clamp(floor + 5.0, 40.0))
+}
+
+/// WELCH's time constant to start from, in seconds — REASSIGN's too: both
+/// start from 0.1 s whenever they are switched on.
+// Why: HDZ 2026-11-06: "bei Firedragons sehen 1 s gut aus, manchmal sind 0,4
+//      besser"; 2026-11-12: "lass uns erst mal die defaults anbieten. welch
+//      und reassign tau 0.1 sek, dim 10 db".
+pub const WELCH_TC_DEFAULT: f32 = 0.1;
+
+/// The longest time constant the WELCH/REASSIGN rail offers, in seconds; a
+/// longer one stored before is used as this.
+// Why: HDZ 2026-11-07: "tau bei Welch und Reassign max Value auf 1,0, weiter
+//      ist zu glatt".
+pub const WELCH_TC_MAX: f32 = 1.0;
+
+fn welch_tc_default() -> f32 {
+    WELCH_TC_DEFAULT
+}
+
+/// REASSIGN's background to start from: 10 dB down, the lines on a darker
+/// ground as in a reassigned spectrogram.
+// Why: HDZ 2026-11-07: "REASSIGN default tau 0,1 s, dim 10 dB".
+pub const REASSIGN_DIM_DEFAULT: f32 = 10.0;
+
+/// REASSIGN's time constant to start from, seconds: short, so the lines stay
+/// crisp; WELCH starts from [`WELCH_TC_DEFAULT`] on the same rail.
+// Why: HDZ 2026-11-07: "REASSIGN default tau 0,1 s, dim 10 dB".
+pub const REASSIGN_TC_DEFAULT: f32 = 0.1;
+
+fn reassign_dim_default() -> f32 {
+    REASSIGN_DIM_DEFAULT
+}
+
 /// Default for [`ViewState::auto_fit`] — on, so the waterfall reads on the
 /// first band it is pointed at without anyone having to click FIT.
 fn auto_fit_default() -> bool {
@@ -746,6 +1129,56 @@ fn center_on_vfo_default() -> bool {
 /// a feed is enough to see its spots.
 fn spot_kinds_default() -> [bool; SPOT_KINDS] {
     [true; SPOT_KINDS]
+}
+
+fn spot_labels_default() -> bool {
+    true
+}
+
+/// The S/N rail's starting point, dB: what a weak steady carrier stands at once
+/// the guide has averaged it (Shannon VOLMET on 5505 kHz, 2 dB).
+pub const SNR_LABEL_MIN_DEFAULT: f32 = 2.0;
+/// The S/N rail's range, dB.
+pub const SNR_LABEL_MIN_RANGE: std::ops::RangeInclusive<f32> = 0.0..=6.0;
+
+fn snr_label_min_default() -> f32 {
+    SNR_LABEL_MIN_DEFAULT
+}
+
+/// The S/N guide's full-height S/N to start with, dB: what it was fixed at.
+pub const SNR_GUIDE_TOP_DEFAULT: f32 = 12.0;
+/// The S/N TOP rail's range, dB.
+pub const SNR_GUIDE_TOP_RANGE: std::ops::RangeInclusive<f32> = 12.0..=30.0;
+
+fn snr_guide_top_default() -> f32 {
+    SNR_GUIDE_TOP_DEFAULT
+}
+
+/// The SK line's full height to start with. Sporadic overs read about 2/d,
+/// d the share of the time a channel is on air: a CB round with long pauses
+/// read 40–50 (HDZ 2026-11-08), so the line has to reach that far.
+pub const SK_GUIDE_TOP_DEFAULT: f32 = 20.0;
+/// The SK TOP rail's range.
+pub const SK_GUIDE_TOP_RANGE: std::ops::RangeInclusive<f32> = 3.0..=30.0;
+/// Where the SK line's base sits, dB: a carrier reads far below the noise's
+/// 0 dB, and this much of that is shown.
+pub const SK_GUIDE_BASE_DB: f32 = -10.0;
+
+fn sk_guide_top_default() -> f32 {
+    SK_GUIDE_TOP_DEFAULT
+}
+
+/// The SK moments' time constant to start with, s (see
+/// `mean_spectrum::SK_TAU_S`).
+pub const SK_TAU_DEFAULT_S: f32 = 10.0;
+/// The SK τ rail's range, s.
+// Why: HDZ 2026-11-08: "die Zeitkonstante zwischen 0,1 s … das ist ja wie ein
+//      Speicher, vielleicht 10 Sekunden, dann ist es ja fast eine Minute
+//      sichtbar" — a 30 dB over stays about 8 τ, a 10 dB one about 4.6 τ.
+pub const SK_TAU_RANGE: std::ops::RangeInclusive<f32> = 0.1..=20.0;
+
+fn sk_tau_default() -> f32 {
+    SK_TAU_DEFAULT_S
 }
 
 /// Default for [`ViewState::prop_map_mode`] — every band at once, which reads
@@ -808,16 +1241,69 @@ fn wefax_gallery_default() -> f32 {
 mod tests {
     use super::*;
 
-    /// Issue #642: a floor moved by hand sprang back, because FIT stayed on.
+    /// With FIT off, a level set by hand is simply kept.
     #[test]
-    fn moving_the_floor_by_hand_switches_fit_off() {
-        let mut v = ViewState::default();
-        assert!(v.auto_fit, "FIT is on by default");
+    fn a_level_set_by_hand_with_fit_off_stays_put() {
+        let mut v = ViewState { auto_fit: false, ..ViewState::default() };
         let ceil = v.db_ceil;
         v.set_levels_by_hand(-140.0, ceil);
         assert!(!v.auto_fit);
-        assert_eq!(v.db_floor, -140.0);
-        assert_eq!(v.db_ceil, ceil);
+        assert_eq!((v.db_floor, v.db_ceil), (-140.0, ceil));
+        assert_eq!(v.fit_shift_db, (0.0, 0.0), "no shift is kept with FIT off");
+    }
+
+    /// With FIT on, the rail keeps FIT on and moves its target instead: the
+    /// level lands where it was put, and the next band's fit is shifted by the
+    /// same amount (HDZ 2026-11-12). Issue #642 stays fixed — FIT aims where
+    /// the hand left it, so nothing springs back.
+    #[test]
+    fn a_level_set_by_hand_with_fit_on_shifts_fit() {
+        let mut v = ViewState::default();
+        assert!(v.auto_fit, "FIT is on by default");
+        (v.db_floor, v.db_ceil) = (-110.0, -60.0);
+        v.set_levels_by_hand(-104.0, -60.0);
+        assert!(v.auto_fit, "FIT stays on");
+        assert_eq!((v.db_floor, v.db_ceil), (-104.0, -60.0));
+        assert_eq!(v.fit_shift_db, (6.0, 0.0), "only the rail that moved shifts");
+        // FIT's own measurement of the next band, moved by the shift.
+        assert_eq!(v.fit_shifted((-125.0, -80.0)), (-119.0, -80.0));
+        // Where the hand left this band, FIT's aim is the hand's level.
+        assert_eq!(v.fit_shifted((-110.0, -60.0)), (v.db_floor, v.db_ceil));
+        // Two moves add up.
+        v.set_levels_by_hand(-104.0, -66.0);
+        assert_eq!(v.fit_shift_db, (6.0, -6.0));
+    }
+
+    /// Each look keeps its own shift: a rail moved under WELCH leaves PEAK's
+    /// and REASSIGN's as they were, and switching back finds PEAK's again.
+    #[test]
+    fn each_look_keeps_its_own_fit_shift() {
+        let mut v = ViewState::default();
+        (v.db_floor, v.db_ceil) = (-110.0, -60.0);
+        v.set_levels_by_hand(-106.0, -60.0);
+        assert_eq!(v.fit_shift(), (4.0, 0.0), "PEAK");
+        v.waterfall_average = true;
+        assert_eq!(v.look(), WaterfallLook::Welch);
+        assert_eq!(v.fit_shift(), (0.0, 0.0), "WELCH starts from its own");
+        v.set_levels_by_hand(-108.0, -60.0);
+        assert_eq!(v.fit_shift(), (-2.0, 0.0));
+        v.waterfall_reassign = true;
+        assert_eq!(v.look(), WaterfallLook::Reassign, "REASSIGN wins over WELCH");
+        assert_eq!(v.fit_shift(), (0.0, 0.0));
+        v.waterfall_average = false;
+        v.waterfall_reassign = false;
+        assert_eq!(v.fit_shift(), (4.0, 0.0), "PEAK's shift is still there");
+        assert_eq!(v.fit_shift_welch_db, (-2.0, 0.0));
+    }
+
+    /// A shift never lets FIT's aim leave the rails or close the 5 dB gap.
+    #[test]
+    fn a_shifted_fit_stays_inside_the_rails() {
+        let v = ViewState { fit_shift_db: (30.0, -30.0), ..ViewState::default() };
+        let (f, c) = v.fit_shifted((-60.0, -40.0));
+        assert!(c - f >= 5.0 && f >= -160.0 && c <= 40.0, "{f} {c}");
+        let v = ViewState { fit_shift_db: (-120.0, 0.0), ..ViewState::default() };
+        assert_eq!(v.fit_shifted((-100.0, -40.0)).0, -160.0);
     }
 
     /// The operating panel's propagation settings must not live in
@@ -872,6 +1358,8 @@ mod tests {
         // the chip rather than the wireframe a bare `default` would give.
         assert!(!v.spectrum_3d, "upgrading switched the 3D surface on by itself");
         assert!(v.spectrum_3d_solid, "the 3D surface would have come up as a wireframe");
+        // The S/N line's height: an upgrade keeps the 12 dB it was fixed at.
+        assert_eq!(v.snr_guide_top_db, SNR_GUIDE_TOP_DEFAULT, "upgrading changed the S/N scale");
     }
 
     /// The other direction of the same trap: a blob written by a build that
@@ -886,6 +1374,17 @@ mod tests {
                       spectrum_fraction:0.17981522,peak_hold:false,smeter_style:Trace)";
         let v: ViewState = ron::from_str(stored).expect("a view with the old face must parse");
         assert_eq!(v.fft_size, 32_768, "the rest of the view survived the field moving out");
+    }
+
+    /// A view saved while REASSIGN's line width and gate were rails carries
+    /// `reassign_line` and `reassign_floor_db`; it loads with the rest of the
+    /// view intact.
+    #[test]
+    fn a_view_that_still_carries_the_reassign_line_width_loads() {
+        let stored = "(view_lo_hz:7226000.0,view_hi_hz:7274000.0,fft_size:4096,\
+                      waterfall_reassign:true,reassign_floor_db:13.0,reassign_line:3)";
+        let v: ViewState = ron::from_str(stored).expect("a view with the old rail must parse");
+        assert!(v.waterfall_reassign && v.fft_size == 4096, "the rest survived");
     }
 
     /// The same trap as the spot filters above, one layer down: a propagation
@@ -1012,4 +1511,8 @@ mod driver_tests {
         assert!(!v.adopt_driver("spyserver"));
         assert!(v.is_unset());
     }
+}
+
+fn digi_map_cities_default() -> bool {
+    true
 }

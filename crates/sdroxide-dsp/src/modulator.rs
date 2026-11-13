@@ -53,12 +53,17 @@ pub fn make_modulator(mode: Mode, rate: f64, passband: (f32, f32)) -> Option<Box
         | Mode::Navtex
         | Mode::Olivia
         | Mode::Thor
+        | Mode::Contestia
+        | Mode::DominoEx
+        | Mode::Mfsk
+        | Mode::Mt63
         | Mode::Fsq
         | Mode::Hell
         | Mode::RfPaint
         // HF packet is 300 baud AFSK audio on a sideband, like RTTY.
         | Mode::PacketHf
-        | Mode::VaraHf
+        | Mode::Mercury
+        | Mode::Data2g
         // AtChat COFDM rides the same USB path as the keyboard modes.
         | Mode::AtChat
         | Mode::Rade

@@ -179,7 +179,7 @@ pub(in crate::app) struct AutoFit {
 /// the dial, every nudge of the knob would then be a refit, and tuning across a
 /// band would keep re-contrasting the waterfall underneath the operator. What
 /// such a retune really changes is the levels, and drift already answers that.
-type FitKey = (f64, f64, u32, u32, f64, sdroxide_types::Band);
+type FitKey = (f64, f64, u32, u32, f64, sdroxide_types::Band, crate::view::WaterfallLook);
 
 /// Whether a new automatic fit may start: the interval since the last one began
 /// has elapsed, and the view has held still long enough that the frames in hand
@@ -236,6 +236,174 @@ fn slack_viewport(center_hz: f64, full_span: f64, (view_lo, view_hi): (f64, f64)
     let center = (view_lo + view_hi) / 2.0;
     let lo = (center - slack / 2.0).clamp(dev_lo, (dev_hi - slack).max(dev_lo));
     (lo, lo + slack)
+}
+
+/// How far either side of a spot's frequency the S/N filter looks: a
+/// broadcast carrier's sidebands and a dial a little off the listed frequency.
+const SNR_LABEL_REACH_HZ: f64 = 2_000.0;
+/// The S/N a spot needs for its label is the S/N rail's
+/// ([`crate::view::ViewState::snr_label_min_db`]); a shown label goes only
+/// under that less this margin, and between the two it stays as it was. Half
+/// the threshold under 3 dB, so a threshold of 0 dB has no margin below zero.
+// Why: HDZ 2026-11-07: "S/N mit 6 ist viel zu streng, Shannon hat hier 2 …
+//      du kannst unter SPEC einen Schieberegler machen für S/N, Default 2,
+//      Range 0..6".
+fn snr_label_off_db(on: f32) -> f32 {
+    on - (on / 2.0).clamp(0.0, 1.5)
+}
+/// How often the labels are decided anew, seconds.
+const SNR_LABEL_RECHECK_S: f32 = 2.0;
+/// How long a label takes to fade in or out, seconds.
+const SNR_LABEL_FADE_S: f32 = 1.0;
+/// Frames a cell's mean needs before the filter judges it: at the guide's
+/// frame rate a few seconds of band.
+const SNR_LABEL_MIN_FRAMES: u32 = 60;
+
+/// The highest S/N `g` has within [`SNR_LABEL_REACH_HZ`] of `hz`, or `None`
+/// where it cannot say yet: no cell there, or the cells there have fewer than
+/// [`SNR_LABEL_MIN_FRAMES`] frames in their mean. A cell not reached counts as
+/// no signal once its neighbours are judged.
+fn guide_max(g: &crate::mean_spectrum::Guide, hz: f64) -> Option<f32> {
+    guide_peak(g, hz - SNR_LABEL_REACH_HZ, hz + SNR_LABEL_REACH_HZ).map(|(v, _)| v)
+}
+
+/// The strongest cell of `g` between `lo_hz` and `hi_hz`: its S/N and the
+/// frequency of its middle. `None` as for [`guide_max`].
+fn guide_peak(g: &crate::mean_spectrum::Guide, lo_hz: f64, hi_hz: f64) -> Option<(f32, f64)> {
+    if g.cell_hz <= 0.0 || g.snr_db.is_empty() || hi_hz < g.lo_hz {
+        return None;
+    }
+    let first = ((lo_hz - g.lo_hz) / g.cell_hz).floor().max(0.0) as usize;
+    let last = (((hi_hz - g.lo_hz) / g.cell_hz).ceil().max(0.0) as usize).min(g.snr_db.len() - 1);
+    if first > last {
+        return None;
+    }
+    let frames = g.count.get(first..=last)?.iter().copied().max().unwrap_or(0);
+    if frames < SNR_LABEL_MIN_FRAMES {
+        return None;
+    }
+    let (i, v) = g.snr_db[first..=last]
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| v.is_finite())
+        .fold((0, f32::NEG_INFINITY), |a, (i, &v)| if v > a.1 { (i, v) } else { a });
+    Some((v, g.lo_hz + (first + i) as f64 * g.cell_hz + g.cell_hz / 2.0))
+}
+
+/// What LABELS BY S/N asks of one label: the switches in force and the S/N
+/// MIN hysteresis (`on` to show, under `off` to hide).
+#[derive(Clone, Copy)]
+struct LabelChecks {
+    flanks: bool,
+    peak: bool,
+    on: f32,
+    off: f32,
+}
+
+/// Whether a label is wanted, given the guide and its last decision (`None`
+/// for a label not judged yet). Off a strong station's flank, with a peak of
+/// its own where that is asked, and its S/N over MIN. Where the guide cannot
+/// say — no cell there, or too few frames yet, as just after a pan — a label
+/// already judged keeps its decision and a new one stays hidden until the
+/// guide can judge it: with the filter on, a label is shown on evidence.
+// Why: HDZ 2026-11-12: labels below S/N MIN and on a flank "gehorchen" the
+//      filter nowhere they slip through; a label the guide cannot read used to
+//      be shown unjudged.
+fn label_wanted(
+    g: &crate::mean_spectrum::Guide,
+    hz: f64,
+    c: LabelChecks,
+    last: Option<bool>,
+) -> bool {
+    if (c.flanks && on_a_flank(g, hz, SNR_FLANK_DB)) || (c.peak && has_a_peak(g, hz) == Some(false))
+    {
+        return false;
+    }
+    match guide_max(g, hz) {
+        None => last.unwrap_or(false),
+        Some(v) if v >= c.on => true,
+        Some(v) if v < c.off => false,
+        Some(_) => last.unwrap_or(false),
+    }
+}
+
+/// PEAK: how far a label's S/N must stand over its surroundings, dB.
+const PEAK_PROMINENCE_DB: f32 = 3.0;
+/// The ring a label's peak is measured against, Hz from its frequency: past a
+/// carrier's own cells, inside its sidebands.
+// Why: HDZ 2026-11-07, picture 7.305 MHz: catalogue guesses on the sideband of
+//      the strong carrier 5 kHz away — a modulated sideband stands S/N MIN over
+//      the noise as a broad hump; a station of its own stands out of its
+//      surroundings as a peak. 2026-11-11 the same for interference.
+const PEAK_RING_HZ: (f64, f64) = (600.0, 2_000.0);
+
+/// Whether a label at `hz` has a peak of its own: its S/N within
+/// [`SNR_LABEL_REACH_HZ`] at least [`PEAK_PROMINENCE_DB`] over the median of
+/// the cells [`PEAK_RING_HZ`] from it. A broad hump — interference over part of
+/// the band, a strong station's sideband — lifts the ring with it and so has
+/// none. `None` where the guide cannot tell, as [`guide_max`].
+fn has_a_peak(g: &crate::mean_spectrum::Guide, hz: f64) -> Option<bool> {
+    let top = guide_max(g, hz)?;
+    let (near, far) = PEAK_RING_HZ;
+    let lo = (((hz - far - g.lo_hz) / g.cell_hz).floor().max(0.0) as usize).min(g.snr_db.len());
+    let hi = (((hz + far - g.lo_hz) / g.cell_hz).ceil().max(0.0) as usize).min(g.snr_db.len());
+    let mut ring: Vec<f32> = g.snr_db[lo..hi.max(lo)]
+        .iter()
+        .enumerate()
+        .map(|(i, v)| (i + lo, v))
+        .filter(|(i, v)| {
+            let d = (g.lo_hz + (*i as f64 + 0.5) * g.cell_hz - hz).abs();
+            v.is_finite() && (near..=far).contains(&d)
+        })
+        .map(|(_, v)| *v)
+        .collect();
+    if ring.is_empty() {
+        return None;
+    }
+    ring.sort_by(f32::total_cmp);
+    Some(top - ring[ring.len() / 2] >= PEAK_PROMINENCE_DB)
+}
+
+/// How far either side of a strong station other labels are kept away: its
+/// sidebands and splatter, about a cursor's width in all. The FLANKS switch.
+// Why: HDZ 2026-11-11: "es werden noch zu viele Sender insbesondere in den
+//      Seitenbändern erlaubt … die Umgebung in typischer Cursorbreite,
+//      vielleicht 20 kHz, blacklisten"; then "Flanke bitte doch an/aus,
+//      Schwelle 15 dB".
+const SNR_FLANK_REACH_HZ: f64 = 10_000.0;
+/// How far under its strong neighbour a label's own S/N must stay for it to
+/// count as that neighbour's flank rather than a station of its own.
+const SNR_FLANK_MARGIN_DB: f32 = 6.0;
+/// From this S/N, dB, a station keeps other labels off its flanks.
+const SNR_FLANK_DB: f32 = 15.0;
+
+/// Whether a label at `hz` stands on a strong station's flank: within
+/// [`SNR_FLANK_REACH_HZ`] a cell reaches `flank_db`, it lies outside the label's
+/// own [`SNR_LABEL_REACH_HZ`], and the label's own S/N there is
+/// [`SNR_FLANK_MARGIN_DB`] or more under it. The strong station keeps its own
+/// label.
+fn on_a_flank(g: &crate::mean_spectrum::Guide, hz: f64, flank_db: f32) -> bool {
+    let (Some(own), Some((strong, at))) =
+        (guide_max(g, hz), guide_peak(g, hz - SNR_FLANK_REACH_HZ, hz + SNR_FLANK_REACH_HZ))
+    else {
+        return false;
+    };
+    strong >= flank_db
+        && (at - hz).abs() > SNR_LABEL_REACH_HZ
+        && own <= strong - SNR_FLANK_MARGIN_DB
+}
+
+/// LABELS BY S/N: per spot id, whether its label is wanted and its present
+/// opacity; when the last decision and the last frame were.
+#[derive(Default)]
+pub(in crate::app) struct SnrLabels {
+    shown: std::collections::HashMap<u64, (bool, f32)>,
+    /// Catalogue candidates (whole EiBi, Aoki): held to the PEAK test whether
+    /// or not PEAK is on — a listed transmission is a guess until a peak of its
+    /// own shows it is there. Only modes with a carrier can show one (AM, CW).
+    pub(in crate::app) strict: std::collections::HashSet<u64>,
+    checked: Option<std::time::Instant>,
+    last: Option<std::time::Instant>,
 }
 
 impl SdroxideApp {
@@ -356,6 +524,16 @@ impl SdroxideApp {
         DetailReport { chosen: self.bins_for_detail(detail), ceiling, reason }
     }
 
+    /// Whether the panadapter shows a hole: see [`view_shows_a_hole`].
+    pub(in crate::app) fn view_uncovered(&self) -> bool {
+        !self.view.is_unset()
+            && view_shows_a_hole(
+                (self.view.view_lo_hz, self.view.view_hi_hz),
+                self.state.center_hz,
+                self.state.sample_rate,
+            )
+    }
+
     pub(in crate::app) fn desired_spectrum_cfg(&self) -> SpectrumConfig {
         let full_span = self.state.sample_rate;
         // The window the *view* lives in, which past the passband is the
@@ -443,6 +621,12 @@ impl SdroxideApp {
             // per the spectrum-speed setting (decoupled from the waterfall).
             fps: self.ui_settings.fps().min(255) as u8,
             avg_tc: 0.0,
+            smooth: self.view.waterfall_average,
+            reassign: self.view.waterfall_reassign,
+            // REASSIGN's gate, fixed at the engine's 10 dB over the median.
+            // Why: HDZ 2026-11-07: "Gate ohne Regler fix auf 10".
+            reassign_floor_db: sdroxide_types::reassign_floor_db_default(),
+            reassign_dim_db: self.view.reassign_dim_db,
         }
     }
 
@@ -494,7 +678,15 @@ impl SdroxideApp {
         // Spectrum-line smoothing: convert the time constant to a per-frame EMA
         // coefficient using the frame rate, so the reaction time is the same at
         // any fps (0 tc = no smoothing = raw frames).
-        let tc = self.ui_settings.spectrum_avg_tc();
+        // The rail's time constant, a longer one stored before held to the
+        // rail's end.
+        let rail_tc = self.view.welch_tc.min(crate::view::WELCH_TC_MAX);
+        let tc = trace_tc(
+            self.ui_settings.spectrum_avg_tc(),
+            self.view.waterfall_average,
+            self.view.waterfall_reassign,
+            rail_tc,
+        );
         let fps = self.ui_settings.fps().max(1) as f32;
         let spectrum_alpha = if tc <= 0.0 { 1.0 } else { 1.0 - (-(1.0 / fps) / tc).exp() };
         let s = &self.ui_settings;
@@ -522,6 +714,9 @@ impl SdroxideApp {
             spectrum_alpha,
             palette: s.waterfall_palette,
             smooth: s.waterfall_smooth,
+            average: self.view.waterfall_average,
+            welch_tc: rail_tc,
+            reassign: self.view.waterfall_reassign,
             gradient,
             wf_id: u64::from(self.radio_id),
         }
@@ -539,6 +734,10 @@ impl SdroxideApp {
             || sent.db_ceil != ideal.db_ceil
             || sent.fps != ideal.fps
             || sent.avg_tc != ideal.avg_tc
+            || sent.smooth != ideal.smooth
+            || sent.reassign != ideal.reassign
+            || sent.reassign_floor_db != ideal.reassign_floor_db
+            || sent.reassign_dim_db != ideal.reassign_dim_db
         {
             return false;
         }
@@ -594,7 +793,8 @@ impl SdroxideApp {
     pub(in crate::app) fn ft8_overlay(&self) -> (Vec<SkimmerSpot>, Vec<f32>) {
         let mut spots = Vec::new();
         let mut alpha = Vec::new();
-        if !self.view.decode_labels {
+        // LABELS off is every label off, the decoded calls included.
+        if !self.view.decode_labels || !self.view.spot_labels {
             return (spots, alpha);
         }
         let Some(latest) = self.digi_decodes.first().map(|d| d.slot_utc) else {
@@ -693,12 +893,99 @@ impl SdroxideApp {
             .collect()
     }
 
+    /// Whether a spot at `hz` gets its label under the S/N filter: always
+    /// while the filter or the guide is off; otherwise only where the guide
+    /// has a cell within [`SNR_LABEL_REACH_HZ`] of it at least the S/N rail's
+    /// threshold over the noise floor. A cell the guide has not reached counts
+    /// as nothing there.
+    /// The label's opacity under LABELS BY S/N, 0 to 1; 1 while the filter or
+    /// the guide is off. Decided every [`SNR_LABEL_RECHECK_S`] rather than every
+    /// frame, with hysteresis (on at the rail's threshold, off under
+    /// [`snr_label_off_db`] of it), and faded over [`SNR_LABEL_FADE_S`], so labels
+    /// come and go like the world in a game drawn as it is reached instead of
+    /// flickering at the threshold. Where the guide has fewer than
+    /// [`SNR_LABEL_MIN_FRAMES`] frames the label stays: too early to judge.
+    // Why: HDZ 2026-11-07: "das kann dynamisch ab und an nachfragen, der Toggle
+    //      sollte warten, bis S/N genug Spektren akkumuliert hat, um nicht
+    //      durchzudrehen … wie bei einem MMO, wo die Welt dynamisch gezeichnet
+    //      würde".
+    /// Whether the S/N guide sees a signal at `s`: at least the S/N rail's
+    /// threshold within [`SNR_LABEL_REACH_HZ`] of its frequency. `false` where
+    /// the guide cannot tell (off, outside the panadapter, too few frames): the
+    /// S/N chip in SPOTS keeps what is shown to be there, not what might be.
+    pub(in crate::app) fn snr_matches(&self, s: &sdroxide_types::Spot) -> bool {
+        let Some(g) = self.snr_last.as_deref().filter(|_| self.snr_mean_wanted()) else {
+            return false;
+        };
+        guide_max(g, s.freq_hz).is_some_and(|v| v >= self.view.snr_label_min_db)
+    }
+
+    /// `carrier`: the label is of a mode with a carrier (AM, CW), the only
+    /// kind PEAK can judge — SSB, DRM, FAX or FT8 spread over their channel
+    /// and have no peak of their own.
+    fn snr_label_alpha(&self, id: u64, hz: f64, carrier: bool, recheck: bool, step: f32) -> f32 {
+        let Some(g) = self.snr_last.as_deref().filter(|_| self.view.snr_label_filter) else {
+            return 1.0;
+        };
+        let on = self.view.snr_label_min_db;
+        let off = snr_label_off_db(on);
+        let peak = self.view.snr_label_peak || self.snr_labels.borrow().strict.contains(&id);
+        let mut st = self.snr_labels.borrow_mut();
+        let fresh = !st.shown.contains_key(&id);
+        let entry = st.shown.entry(id).or_insert((false, 0.0));
+        if recheck {
+            let checks =
+                LabelChecks { flanks: self.view.snr_label_flanks, peak: peak && carrier, on, off };
+            entry.0 = label_wanted(g, hz, checks, (!fresh).then_some(entry.0));
+        }
+        let target = if entry.0 { 1.0 } else { 0.0 };
+        let d = step / SNR_LABEL_FADE_S;
+        entry.1 =
+            if entry.1 < target { (entry.1 + d).min(target) } else { (entry.1 - d).max(target) };
+        entry.1
+    }
+
+    /// Once a frame before the labels are decided: the time since the last
+    /// frame, for the fades, and whether a new decision is due. Clears the
+    /// decisions while the S/N guide is off, so switching it on starts fresh.
+    fn snr_label_tick(&self) -> (bool, f32) {
+        let mut st = self.snr_labels.borrow_mut();
+        // Kept while the guide runs, so a label's fade and decision carry
+        // over a moment with the filter off.
+        if !self.snr_judging() {
+            *st = SnrLabels::default();
+            return (false, 0.0);
+        }
+        let now = std::time::Instant::now();
+        let step = st.last.map_or(0.0, |t| now.duration_since(t).as_secs_f32().min(0.5));
+        st.last = Some(now);
+        let due =
+            st.checked.is_none_or(|t| now.duration_since(t).as_secs_f32() >= SNR_LABEL_RECHECK_S);
+        if due {
+            st.checked = Some(now);
+            // Spots gone from the feeds take their decisions with them.
+            let ids: std::collections::HashSet<u64> = self.all_spots().map(|s| s.id).collect();
+            st.shown.retain(|id, _| ids.contains(id));
+        }
+        (due, step)
+    }
+
     pub(in crate::app) fn net_overlay(&self, now_utc: i64) -> (Vec<Spot>, Vec<f32>) {
+        let (recheck, step) = self.snr_label_tick();
         let max_age = self.net_cfg_edit.spot_max_age_secs.max(60) as i64;
         let mut spots = Vec::new();
         let mut alpha = Vec::new();
+        // LABELS off: no spot label on the waterfall at all.
+        if !self.view.spot_labels {
+            return (spots, alpha);
+        }
         for s in self.all_spots() {
             if !self.spot_visible(s) {
+                continue;
+            }
+            let carrier = ["AM", "CW"].iter().any(|m| s.mode.eq_ignore_ascii_case(m));
+            let snr_alpha = self.snr_label_alpha(s.id, s.freq_hz, carrier, recheck, step);
+            if snr_alpha < 0.15 {
                 continue;
             }
             // A scheduled broadcast station has no age: the fade and the
@@ -716,6 +1003,9 @@ impl SdroxideApp {
                     1.0
                 }
             };
+            // Faded by the S/N filter; under the 0.15 every label keeps, it
+            // is not drawn at all (the cut above).
+            let a = a * snr_alpha;
             spots.push(s.clone());
             alpha.push(a.clamp(0.15, 1.0));
         }
@@ -739,7 +1029,21 @@ impl SdroxideApp {
         let i_lo = (to_idx(self.view.view_lo_hz).floor().max(0.0) as usize).min(n);
         let i_hi = (to_idx(self.view.view_hi_hz).ceil().max(0.0) as usize).min(n);
         let slice = if i_hi > i_lo { &f.bins[i_lo..i_hi] } else { &f.bins[..] };
-        pick_levels(slice, f.db_floor, f.db_ceil)
+        let look = self.view.look();
+        let (floor, ceil) = pick_levels(slice, f.db_floor, f.db_ceil)?;
+        // REASSIGN draws the cells it leaves in place `reassign_dim_db` darker,
+        // and with the gate at ten times the median that is nearly all of the
+        // noise: the waterfall's ground lies about that much under the frame
+        // measured here. The floor follows it down; the lines keep their level,
+        // so the ceiling stays.
+        // Why: HDZ 2026-11-07: "der Fitwert liegt mir insbesondere bei
+        //      REASSIGN etwas dunkel".
+        let floor = if look == crate::view::WaterfallLook::Reassign {
+            (floor - self.view.reassign_dim_db).max(-160.0)
+        } else {
+            floor
+        };
+        Some((floor, ceil))
     }
 
     /// Fit the floor/ceiling now, on the operator's say-so (the FIT chip): it
@@ -756,6 +1060,9 @@ impl SdroxideApp {
             self.fit.started_at = None;
             return;
         };
+        // A fit asked for is FIT from scratch: the operator's shift starts
+        // over at zero, and the levels land on the measurement itself.
+        *self.view.fit_shift_mut() = (0.0, 0.0);
         (self.view.db_floor, self.view.db_ceil) = want;
         // Where the automatic side would have got to, so it has no correction
         // of its own to make on top of the one just clicked for.
@@ -792,6 +1099,9 @@ impl SdroxideApp {
             self.panadapter_bins(),
             self.state.sample_rate,
             sdroxide_types::Band::containing(self.state.active_freq_hz()),
+            // Another look is another FIT program: switching PEAK, WELCH or
+            // REASSIGN refits as a band change does.
+            self.view.look(),
         );
         if self.fit.key != Some(key) {
             self.fit.key = Some(key);
@@ -808,7 +1118,21 @@ impl SdroxideApp {
         if !self.view.auto_fit {
             self.fit.pending = false;
             self.fit.gliding = false;
+            self.view.fit_hand_moved = false;
             return;
+        }
+        // A hand move wins over a glide in flight: stop it, and take the
+        // shift as the distance from FIT's own measurement to where the hand
+        // left the level, so the next refit lands there and not past it.
+        if std::mem::take(&mut self.view.fit_hand_moved) {
+            self.fit.gliding = false;
+            self.fit.pending = false;
+            if let Some(avg) = self.fit.avg {
+                let m = crate::view::FIT_SHIFT_MAX_DB;
+                let have = (self.view.db_floor, self.view.db_ceil);
+                *self.view.fit_shift_mut() =
+                    ((have.0 - avg.0).clamp(-m, m), (have.1 - avg.1).clamp(-m, m));
+            }
         }
         // Measuring costs a sort of every visible bin, and a step that landed
         // sooner than the config debounce would never reach the engine — so
@@ -818,8 +1142,11 @@ impl SdroxideApp {
         }
         let Some(want) = self.wanted_levels() else { return };
         self.fit.stepped_at = now;
-        let target = average_in(self.fit.avg, want);
-        self.fit.avg = Some(target);
+        let measured = average_in(self.fit.avg, want);
+        self.fit.avg = Some(measured);
+        // The operator's shift rides on top of the measurement, so a level
+        // set by hand while FIT is on is where FIT aims from then on.
+        let target = self.view.fit_shifted(measured);
         let have = (self.view.db_floor, self.view.db_ceil);
         if !self.fit.gliding {
             if !fit_due(&self.fit, now) || !(self.fit.pending || levels_drifted(target, have)) {
@@ -976,6 +1303,17 @@ const MAX_FFT_WINDOW_S: f64 = 0.1;
 /// operator chose by zooming in.
 const MAX_FFT: u32 = 131_072;
 
+/// The spectrum line's time constant: the spectrum speed's own, or WELCH's
+/// rail where that is longer — under WELCH and, the rail being shared, under
+/// REASSIGN too, so the trace calms with the waterfall under both. Only in
+/// time: WELCH's averaging over neighbours stays WELCH's alone.
+// Why: HDZ 2026-11-07: "bei REASSIGN wirkt sich die Zeitkonstante derzeit nur
+//      auf den Wasserfall aus, und das Spektrum zappelt hochfrequent, das wirkt
+//      inkonsistent".
+fn trace_tc(speed_tc: f32, welch: bool, reassign: bool, rail_tc: f32) -> f32 {
+    if welch || reassign { speed_tc.max(rail_tc) } else { speed_tc }
+}
+
 /// The operator's FFT size, reduced to what `rate_hz` can deliver inside
 /// [`MAX_FFT_WINDOW_S`] — the largest power of two that fits, never below the
 /// 1024 floor the chip row starts at, and unchanged when the rate is unknown.
@@ -1054,12 +1392,131 @@ fn focus_hz(mode: Mode, dial_hz: f64, audio_hz: f32, cw_qrg: bool) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    /// The S/N filter's reading of the guide: a carrier 6 dB up 1 kHz off the
+    /// spot is found, plain noise reads 0 dB, and a guide with too few frames
+    /// gives no verdict yet.
+    #[test]
+    fn the_guide_is_read_only_once_it_has_frames() {
+        let mut snr = vec![0.0f32; 1000];
+        snr[510] = 6.0;
+        let g = |frames: u32| crate::mean_spectrum::Guide {
+            lo_hz: 9_600_000.0,
+            cell_hz: 100.0,
+            snr_db: snr.clone(),
+            count: vec![frames; 1000],
+            frames,
+            sk: Vec::new(),
+        };
+        assert_eq!(super::guide_max(&g(100), 9_650_000.0), Some(6.0));
+        assert_eq!(super::guide_max(&g(100), 9_620_000.0), Some(0.0));
+        assert_eq!(super::guide_max(&g(10), 9_650_000.0), None, "too early to judge");
+    }
+
+    /// A label the guide cannot read yet — too few frames, or no cell there —
+    /// is shown only once it has been judged: a new one stays hidden, one
+    /// already judged keeps its decision.
+    #[test]
+    fn a_label_the_guide_cannot_read_is_not_shown_unjudged() {
+        let g = |frames: u32| crate::mean_spectrum::Guide {
+            lo_hz: 9_600_000.0,
+            cell_hz: 100.0,
+            snr_db: vec![0.0f32; 1000],
+            count: vec![frames; 1000],
+            frames,
+            sk: Vec::new(),
+        };
+        let c = super::LabelChecks { flanks: true, peak: false, on: 6.0, off: 4.5 };
+        // Too early to judge.
+        assert!(!super::label_wanted(&g(10), 9_650_000.0, c, None), "new: hidden");
+        assert!(super::label_wanted(&g(10), 9_650_000.0, c, Some(true)), "judged: kept");
+        // Off the guide altogether.
+        assert!(!super::label_wanted(&g(100), 12_000_000.0, c, None), "no cell: hidden");
+        // Judged on evidence once there is some: plain noise under MIN.
+        assert!(!super::label_wanted(&g(100), 9_650_000.0, c, Some(true)), "0 dB < MIN");
+    }
+
+    /// PEAK (HDZ 2026-11-11, strong QRM): interference lifts 30 kHz of the band
+    /// 8 dB over the floor. Every label in it passes S/N MIN by height alone;
+    /// with PEAK none does, except a carrier standing 6 dB out of the hump. A
+    /// broadcast carrier on quiet band keeps its peak, and the sideband hump of
+    /// the 7.305 MHz picture has none.
+    #[test]
+    fn a_label_needs_a_peak_of_its_own() {
+        let mut snr = vec![0.0f32; 1000];
+        for v in snr.iter_mut().take(650).skip(350) {
+            *v = 8.0;
+        }
+        snr[400] = 14.0; // a carrier standing out of the hump
+        snr[800] = 12.0; // a carrier on quiet band
+        for v in snr.iter_mut().take(880).skip(850) {
+            *v = 6.0; // a sideband hump, 3 kHz wide
+        }
+        let g = crate::mean_spectrum::Guide {
+            lo_hz: 7_000_000.0,
+            cell_hz: 100.0,
+            snr_db: snr,
+            count: vec![100; 1000],
+            frames: 100,
+            sk: Vec::new(),
+        };
+        let at = |cell: f64| 7_000_000.0 + cell * 100.0 + 50.0;
+        assert_eq!(super::guide_max(&g, at(500.0)), Some(8.0), "the hump passes by height");
+        assert_eq!(super::has_a_peak(&g, at(500.0)), Some(false), "a label in the QRM kept");
+        assert_eq!(super::has_a_peak(&g, at(400.0)), Some(true), "the carrier in the QRM lost");
+        assert_eq!(super::has_a_peak(&g, at(800.0)), Some(true), "a carrier on quiet band lost");
+        assert_eq!(super::has_a_peak(&g, at(865.0)), Some(false), "the sideband hump kept");
+    }
+
+    /// FLANKS (HDZ's picture on 7.305 MHz, 2026-11-11): a broadcast carrier
+    /// 25 dB up with sidebands 10 dB up for 5 kHz either side. A label 6 kHz off
+    /// it stands on the flank and goes; the strong station keeps its own; one
+    /// 15 kHz off is beyond the flank; a carrier under the threshold blocks
+    /// nothing; a second station of its own 4 kHz off, 20 dB up, is no flank.
+    #[test]
+    fn a_strong_station_keeps_labels_off_its_flanks() {
+        let mut snr = vec![0.0f32; 1000];
+        for (i, v) in snr.iter_mut().enumerate().take(550).skip(450) {
+            *v = if i == 500 { 25.0 } else { 10.0 };
+        }
+        let g = crate::mean_spectrum::Guide {
+            lo_hz: 7_255_000.0,
+            cell_hz: 100.0,
+            snr_db: snr.clone(),
+            count: vec![100; 1000],
+            frames: 100,
+            sk: Vec::new(),
+        };
+        let carrier = 7_255_000.0 + 500.0 * 100.0 + 50.0;
+        assert!(super::on_a_flank(&g, carrier + 6_000.0, 15.0), "sideband label kept");
+        assert!(!super::on_a_flank(&g, carrier, 15.0), "the station lost its own label");
+        assert!(!super::on_a_flank(&g, carrier + 15_000.0, 15.0), "blocked past the flank");
+        // Counter-check on the threshold: a carrier under it blocks nothing.
+        assert!(
+            !super::on_a_flank(&g, carrier + 6_000.0, 26.0),
+            "a carrier under the threshold blocked"
+        );
+        let mut two = snr;
+        two[540] = 20.0;
+        let g2 = crate::mean_spectrum::Guide { snr_db: two, ..g };
+        assert!(!super::on_a_flank(&g2, carrier + 4_000.0, 15.0), "a station of its own blocked");
+    }
+
     use super::WIDER_THAN_PASSBAND;
     use super::{
         AutoFit, FIT_ARRIVED_DB, FIT_MIN_GAP_S, FIT_SETTLE_S, FIT_STEP_S, average_in,
         base_fft_for_rate, fit_due, glide_step, levels_drifted, pick_levels,
-        refit_on_window_growth, slack_viewport,
+        refit_on_window_growth, slack_viewport, trace_tc,
     };
+
+    /// Proves: the rail's time constant reaches the spectrum line under
+    /// REASSIGN as under WELCH, and only there.
+    #[test]
+    fn the_rail_calms_the_trace_under_reassign_as_under_welch() {
+        assert_eq!(trace_tc(0.1, true, false, 0.8), 0.8, "WELCH");
+        assert_eq!(trace_tc(0.1, false, true, 0.8), 0.8, "REASSIGN");
+        assert_eq!(trace_tc(0.1, false, false, 0.8), 0.1, "neither: the speed's own");
+        assert_eq!(trace_tc(1.5, false, true, 0.8), 1.5, "a slower speed stays");
+    }
 
     /// The six sample rates one KiwiSDR reported across six connections. A view
     /// fitted to any of them must still read as "the whole passband" against
@@ -1440,5 +1897,44 @@ mod focus_tests {
     fn carrier_centred_rtty_stays_on_its_carrier() {
         let dial = 145_500_000.0;
         assert_eq!(focus_hz(Mode::RttyFm, dial, sdroxide_types::RTTY_CENTER_HZ, false), dial);
+    }
+}
+
+/// Whether a view `(lo, hi)` shows a stretch outside the I/Q window
+/// `centre ± span / 2` while it is drawn from the I/Q — black, nothing there.
+/// A view wider than the window is drawn from the full-band lane instead
+/// (see [`WIDER_THAN_PASSBAND`]) and has no hole; a view inside the window has
+/// none either. A thousandth of the view's span of overhang is not a hole: it
+/// is rounding, well under a column.
+// Why: HDZ 2026-11-10 (picture, RX-888 at 10.73 MHz with the left of the view
+//      black): "Autodwell sollte nur ausgelöst werden, wenn auf dem Screen ein
+//      leerer Bereich wirklich da ist, sonst so lassen".
+pub(in crate::app) fn view_shows_a_hole(view: (f64, f64), centre_hz: f64, span_hz: f64) -> bool {
+    let (lo, hi) = view;
+    let width = hi - lo;
+    if span_hz <= 0.0 || width <= 0.0 || width > span_hz * WIDER_THAN_PASSBAND {
+        return false;
+    }
+    let tol = width / 1000.0;
+    lo < centre_hz - span_hz / 2.0 - tol || hi > centre_hz + span_hz / 2.0 + tol
+}
+
+#[cfg(test)]
+mod hole_tests {
+    use super::view_shows_a_hole;
+
+    /// Proves: the hole is what the picture has — a view running off the I/Q
+    /// window (the RX-888 case: 2.025 MHz at 11.35, view 9.98–10.78) has one,
+    /// a view inside the window has none however far the dial is off centre,
+    /// and a view wider than the window (drawn from the full-band lane) has
+    /// none.
+    #[test]
+    fn a_hole_is_a_stretch_of_view_outside_the_window() {
+        let (c, s) = (11_350_000.0, 2_025_000.0);
+        assert!(view_shows_a_hole((9_980_000.0, 10_780_000.0), c, s));
+        assert!(!view_shows_a_hole((10_400_000.0, 11_200_000.0), c, s));
+        assert!(!view_shows_a_hole((0.0, 32_400_000.0), c, s));
+        // Right on the edge, within rounding: no hole.
+        assert!(!view_shows_a_hole((c - s / 2.0 - 1.0, c - s / 2.0 + 800_000.0), c, s));
     }
 }

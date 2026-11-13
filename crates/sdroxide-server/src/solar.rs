@@ -329,18 +329,32 @@ fn feed_tle_cmds(cfg: &sdroxide_types::SatConfig) -> [FeedCmd; 2] {
     ]
 }
 
-pub async fn ws_route(State(station): State<Arc<Station>>, upgrade: WebSocketUpgrade) -> Response {
+pub async fn ws_route(
+    State(station): State<Arc<Station>>,
+    headers: axum::http::HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
     // The feed and the door, not a radio: this endpoint shows the sky over the
     // station, which is the same sky however many radios stand under it.
     let (hub, auth) = (station.solar.clone(), station.auth.clone());
-    upgrade.on_upgrade(|socket| session(socket, hub, auth))
+    // The sky is its own connection and asks for a password like any other, so
+    // it has to honour the cookie too — otherwise the operator has been told
+    // "you are signed in for the day" and then gets asked again for the tab
+    // with the planets in it.
+    let signed = crate::session_cookie::from_headers(&headers, &station.auth);
+    upgrade.on_upgrade(move |socket| session(socket, hub, auth, signed))
 }
 
 fn msg(m: &SolarServerMsg) -> Message {
     Message::Binary(encode(m).expect("encode").into())
 }
 
-async fn session(mut socket: WebSocket, hub: Arc<SolarHub>, auth: Arc<crate::auth::AuthGate>) {
+async fn session(
+    mut socket: WebSocket,
+    hub: Arc<SolarHub>,
+    auth: Arc<crate::auth::AuthGate>,
+    signed: Option<String>,
+) {
     // Subscribe *before* the snapshot, so an update that lands between the two
     // is queued rather than missed.
     let mut rx = hub.tx.subscribe();
@@ -382,6 +396,7 @@ async fn session(mut socket: WebSocket, hub: Arc<SolarHub>, auth: Arc<crate::aut
                 _ => None,
             },
         },
+        signed.is_some(),
     )
     .await;
     if !signed_in {

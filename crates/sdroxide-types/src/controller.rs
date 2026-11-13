@@ -343,6 +343,13 @@ pub enum RadioEvent {
     /// this to a remote/WASM client would mean a matching variant in
     /// `sdroxide_proto::ServerMsg` — not done yet.
     HfdlStatus(crate::HfdlStatus),
+    /// The weather-satellite decoder's state and the picture lines (APT) or
+    /// rows (LRPT) new since the last one. Bridged to remote and web clients as
+    /// `ServerMsg::WxsatStatus`.
+    WxsatStatus(Box<crate::WxsatStatus>),
+    /// The radiosonde decoder's level and the sondes it has heard, with their
+    /// tracks. Bridged to remote and web clients as `ServerMsg::SondeStatus`.
+    SondeStatus(Box<crate::SondeStatus>),
     /// Everything the VDL Mode 2 decoder has: the message log, the station
     /// table, and what every channel of the plan is doing. A whole snapshot, a
     /// couple of times a second.
@@ -418,6 +425,12 @@ pub enum RadioEvent {
     ///
     /// Appended last, for the usual reason.
     AmpStatus(Box<crate::AmpStatus>),
+    /// The answer to a [`crate::Command::ListRecordings`]: the files in the
+    /// station's recordings directory. The engine's, so it rides
+    /// `ServerMsg::Recordings` to a remote client.
+    ///
+    /// Appended last, for the usual reason.
+    Recordings(crate::RecordingListing),
 }
 
 /// Snapshot of the frontend's switchable sound devices (native clients).

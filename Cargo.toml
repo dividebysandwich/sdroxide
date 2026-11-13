@@ -5,7 +5,7 @@ default-members = [".", "crates/sdroxide-types", "crates/sdroxide-proto", "crate
 # The vendored crates are reached through `[patch.crates-io]`, not as members:
 # they are upstream's code under upstream's licences, not ours to lint or
 # version with the rest.
-exclude = ["vendor/soapysdr", "vendor/ewebsock", "vendor/xng", "vendor/xara"]
+exclude = ["vendor/soapysdr", "vendor/ewebsock", "vendor/xng"]
 
 [patch.crates-io]
 
@@ -26,7 +26,7 @@ ewebsock = { path = "vendor/ewebsock" }
 soapysdr = { path = "vendor/soapysdr" }
 
 [workspace.package]
-version = "1.7.0"
+version = "1.7.2"
 edition = "2024"
 # The native binary links mfsk-core (GPL-3.0-only) for FT8/FT4 and the
 # DeepCW model (AGPL-3.0-only) for CW, so the built binary carries both. AGPL is
@@ -50,6 +50,16 @@ opt-level = 2
 # 0.14.0, which has not been tried at 3 on aarch64.
 [profile.release.package.mfsk-core]
 opt-level = 2
+
+# A release build of sdroxide-ui does not reproduce when it is split into
+# several codegen units: recompiling it from identical inputs (identical
+# rmeta) leaves a few of its object files different, with drop glue and
+# closure shims landing in other units, both natively and for wasm32 on Rust
+# 1.98.1. That breaks bit-for-bit rebuilds of the -compat binaries and the web
+# client (see .github/workflows/reproducible.yml). One unit makes it stable,
+# for about half a minute more build time.
+[profile.release.package.sdroxide-ui]
+codegen-units = 1
 
 [profile.dev.package.sdroxide-dsp]
 opt-level = 2
@@ -145,7 +155,9 @@ sdroxide-kiwisdr = { path = "crates/sdroxide-kiwisdr" }
 sdroxide-net = { path = "crates/sdroxide-net" }
 sdroxide-winlink = { path = "crates/sdroxide-winlink" }
 sdroxide-ax25 = { path = "crates/sdroxide-ax25" }
-sdroxide-vara = { path = "crates/sdroxide-vara" }
+sdroxide-tnc = { path = "crates/sdroxide-tnc" }
+sdroxide-mercury = { path = "crates/sdroxide-mercury" }
+sdroxide-data2g = { path = "crates/sdroxide-data2g" }
 sdroxide-kiss = { path = "crates/sdroxide-kiss" }
 sdroxide-deepcw = { path = "crates/sdroxide-deepcw" }
 sdroxide-ism = { path = "crates/sdroxide-ism" }
@@ -184,12 +196,8 @@ rtrb = "0.4"
 # instead: `cargo fmt -p sdroxide-radio -p sdroxide-ui …`, or check with
 # `cargo fmt --all --check` and read past the `vendor/xng` lines.
 xng-mode-hfdl = { path = "vendor/xng/crates/xng-mode-hfdl" }
-# VARA HF modem core from x0rro/xara (MIT), copied in at a pinned commit rather
-# than a submodule — see `vendor/xara/PROVENANCE.md` for what was taken and
-# changed. Reached by path like xng, so the same `cargo fmt -p` note applies.
-xara-phy = { path = "vendor/xara/xara-phy" }
-xara-arq = { path = "vendor/xara/xara-arq" }
-xara-host = { path = "vendor/xara/xara-host" }
+# Radiosonde (Vaisala RS41) decode core, same vendored tree and same rules.
+xng-mode-sonde = { path = "vendor/xng/crates/xng-mode-sonde" }
 # Pure-Rust USB — the RTL-SDR backend's only dependency. No libusb, so it needs
 # no system library on any target and ships in every build variant.
 nusb = "0.2.7"

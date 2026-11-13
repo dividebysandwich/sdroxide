@@ -155,9 +155,15 @@ pub(in crate::app) fn detached_geometry(
     let size =
         crate::layout::fit_inner_size(monitor, want + chrome, want, egui::vec2(360.0, 240.0))
             .unwrap_or(want);
+    // The window's whole outer rect has to clear the right and bottom edges,
+    // and the bottom clears the taskbar allowance too: a window seeded low on
+    // the screen with its height still hangs under the taskbar otherwise
+    // (the decode log of a window placed like that lost its newest rows,
+    // reported as issue #816). Sized from the same chrome guess as `size`.
+    let outer = size + chrome;
     let pos = seed.and_then(|s| s.pos).map(|[x, y]| {
-        let max_x = (monitor.x - 80.0).max(0.0);
-        let max_y = (monitor.y - 60.0).max(0.0);
+        let max_x = (monitor.x - outer.x).max(0.0);
+        let max_y = (monitor.y - crate::layout::DESKTOP_CHROME_H - outer.y).max(0.0);
         egui::pos2(x.min(max_x), y.min(max_y))
     });
     (size, pos)
@@ -482,6 +488,8 @@ impl SdroxideApp {
         self.handle_detached_outcome(ctx, module, spec, outcome);
         if let Some(spot) = clicked_spot {
             self.prefill_from_spot(&spot);
+            // The SPOTS window's map marks it too: where it is sent from.
+            self.pick_spot_on_map(&spot);
         }
     }
 
@@ -1393,7 +1401,23 @@ fn tool_window_egui<R>(
         crate::chrome::window_body_bg(ui);
         #[cfg(not(target_arch = "wasm32"))]
         {
-            body_top = ui.min_rect().min.y;
+            // The body's top, clamped to where it starts unscrolled: in a
+            // window with `vscroll`, the content is laid out from where the
+            // scroll has carried it, so scrolled down its top lies above the
+            // window. Measured from there, the title bar came out short (down
+            // to the 18 pt clamp), the button moved right by the difference
+            // and covered egui's close button: a scrolled Settings window
+            // could not be closed with its ✕. egui hands the window's inner
+            // margin to the scroll area as `content_margin`, inside the clip,
+            // so the unscrolled top is the clip's top plus that margin; the
+            // clip's top alone let the button shrink and slide right over the
+            // first 11 pt of scrolling.
+            // Why: HDZ 2026-11-08: "wenn man bei einigen Fenstern runterscrollt,
+            //      geht das Schließfeld aus dem Fenster weg … BÄNDER hat das
+            //      nicht, aber Einstellungen macht es"; "auf dem ersten
+            //      Zentimeter Bewegung rückt er leicht nach rechts".
+            let margin_top = f32::from(crate::chrome::window_frame().inner_margin.top);
+            body_top = ui.min_rect().min.y.max(ui.clip_rect().min.y + margin_top);
         }
         out = Some(body(ui));
     });
@@ -1486,6 +1510,44 @@ impl SdroxideApp {
 mod tests {
     use super::*;
 
+    /// The title button keeps its place and size while a `vscroll` window is
+    /// scrolled, from the first point on: it is sized from the title bar,
+    /// and the title bar does not change when the body scrolls under it.
+    #[test]
+    fn the_title_button_stays_put_while_the_body_scrolls() {
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx);
+        let mut state = ToolWindowState { undocked: false, window: None };
+        let btn = crate::layout::salted_id(&ctx, "scroll-test").with("title-btn");
+        let mut rects = Vec::new();
+        for i in 0..24 {
+            ctx.begin_pass(egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::pos2(0.0, 0.0),
+                    egui::vec2(1400.0, 900.0),
+                )),
+                ..Default::default()
+            });
+            let mut open = true;
+            let tool = ToolWindow::new("scroll-test", "SETTINGS", [500.0, 400.0]).vscroll();
+            tool_window_egui(&ctx, &tool, &mut state, &mut open, |ui| {
+                // A point or two a frame through the first margin's worth,
+                // then on down the page.
+                if i >= 2 {
+                    ui.scroll_with_delta(egui::vec2(0.0, -2.0));
+                }
+                for k in 0..80 {
+                    ui.label(format!("row {k}"));
+                }
+            });
+            ctx.end_pass().drop_without_applying_deltas();
+            if i >= 1 {
+                rects.push(ctx.memory(|m| m.area_rect(btn)).expect("the title button is shown"));
+            }
+        }
+        assert!(rects.iter().all(|r| *r == rects[0]), "the title button moved: {rects:?}");
+    }
+
     #[test]
     fn the_detached_readout_trims_to_the_dial() {
         assert_eq!(readout_text(27_265_000.0), "27.265 MHz");
@@ -1507,6 +1569,26 @@ mod tests {
         assert!(pos.x <= 1920.0 - 80.0 && pos.y <= 1080.0 - 60.0, "still off screen: {pos:?}");
         let (_, pos) = detached_geometry(monitor, seed(-1500.0, 100.0), [960.0, 540.0]);
         assert_eq!(pos, Some(egui::pos2(-1500.0, 100.0)), "a monitor to the left was undone");
+    }
+
+    /// A window saved low on the screen comes back up far enough that its whole
+    /// height, plus the taskbar allowance, is on the monitor (issue #816: the
+    /// bottom of the decode log hid under the taskbar).
+    #[test]
+    fn a_window_saved_low_on_the_screen_clears_the_taskbar() {
+        let monitor = egui::vec2(1920.0, 1080.0);
+        let seed = Some(sdroxide_types::DetachedWindow {
+            size: [800.0, 600.0],
+            pos: Some([100.0, 1000.0]),
+        });
+        let (size, pos) = detached_geometry(Some(monitor), seed, [960.0, 540.0]);
+        let pos = pos.unwrap();
+        let bottom = pos.y + size.y + 40.0;
+        assert!(
+            bottom <= monitor.y - crate::layout::DESKTOP_CHROME_H,
+            "bottom {bottom} runs under the taskbar"
+        );
+        assert_eq!(pos.x, 100.0, "a window that already fits sideways keeps its x");
     }
 
     /// A tool's OS window carries `sdroxide-tool-<id>`, lower case and with no

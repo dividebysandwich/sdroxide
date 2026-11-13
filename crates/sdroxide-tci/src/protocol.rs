@@ -327,10 +327,15 @@ pub fn mode_to_tci(mode: Mode) -> &'static str {
         | Mode::Rtty
         | Mode::Olivia
         | Mode::Thor
+        | Mode::Contestia
+        | Mode::DominoEx
+        | Mode::Mfsk
+        | Mode::Mt63
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf
-        | Mode::VaraHf
+        | Mode::Mercury
+        | Mode::Data2g
         | Mode::AtChat
         | Mode::Jtty
         | Mode::Rade => "digu",

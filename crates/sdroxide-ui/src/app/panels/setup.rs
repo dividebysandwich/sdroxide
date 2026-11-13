@@ -27,6 +27,241 @@ fn is_grid6(g: &str) -> bool {
         && (b'A'..=b'X').contains(&b[5])
 }
 
+/// The groups this station is in, edited as one line: "@EMCOMM @ARES".
+///
+/// The typed text is kept in egui's memory while the field has focus. Turning
+/// every keystroke straight into the list would eat a half-typed "@" or a
+/// trailing space. Returns whether the list changed.
+fn js8_groups_field(ui: &mut egui::Ui, groups: &mut Vec<String>) -> bool {
+    let id = ui.id().with("js8-groups-text");
+    let mut text: String = ui.data(|d| d.get_temp(id)).unwrap_or_else(|| groups.join(" "));
+    let mut changed = false;
+    ui.vertical(|ui| {
+        let resp = crate::chrome::field(
+            ui,
+            egui::TextEdit::singleline(&mut text).hint_text("@EMCOMM @ARES"),
+        )
+        .on_hover_text(tr!("setup-js8-groups-hint"));
+        let parsed: Vec<String> = text
+            .split(|c: char| c.is_whitespace() || c == ',')
+            .map(sdroxide_types::js8_group_normalize)
+            .filter(|g| !g.is_empty())
+            .collect();
+        let (good, bad): (Vec<String>, Vec<String>) =
+            parsed.into_iter().partition(|g| sdroxide_types::js8_group_valid(g));
+        let mut good_unique = Vec::new();
+        for g in good {
+            if !good_unique.contains(&g) {
+                good_unique.push(g);
+            }
+        }
+        if resp.changed() && good_unique != *groups {
+            *groups = good_unique;
+            changed = true;
+        }
+        if !bad.is_empty() {
+            ui.label(
+                RichText::new(tr!("setup-js8-not-a-group-name", names = bad.join(" ")))
+                    .size(10.5)
+                    .color(crate::theme::ALERT()),
+            );
+        }
+        if resp.has_focus() {
+            ui.data_mut(|d| d.insert_temp(id, text));
+        } else {
+            ui.data_mut(|d| d.remove::<String>(id));
+        }
+    });
+    changed
+}
+
+/// The group auto-response rules: the master switch, then one card per rule.
+/// Adds its own grid rows. Returns whether anything changed.
+fn js8_auto_rules_editor(ui: &mut egui::Ui, cfg: &mut sdroxide_types::DigiConfig) -> bool {
+    use sdroxide_types::{JS8_AUTO_REPEAT_MAX, JS8_AUTO_RULES_MAX, Js8AutoReplyTo, Js8AutoRule};
+    let mut changed = false;
+    ui.label(tr!("setup-js8-auto-response"));
+    changed |= ui
+        .checkbox(&mut cfg.js8_auto_rules_on, tr!("setup-js8-auto-response-on"))
+        .on_hover_text(tr!("setup-js8-auto-response-on-hint"))
+        .changed();
+    ui.end_row();
+
+    enum Act {
+        Up(usize),
+        Delete(usize),
+    }
+    let mut act = None;
+    let (my_call, my_grid) = (
+        if cfg.js8_call.is_empty() { cfg.my_call.clone() } else { cfg.js8_call.clone() },
+        cfg.my_grid.clone(),
+    );
+    let n = cfg.js8_auto_rules.len();
+    for (i, rule) in cfg.js8_auto_rules.iter_mut().enumerate() {
+        ui.label("");
+        ui.push_id(("js8-rule", i), |ui| {
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    changed |= ui
+                        .checkbox(&mut rule.enabled, "")
+                        .on_hover_text(tr!("setup-js8-rule-on"))
+                        .changed();
+                    changed |= crate::chrome::field_sized(
+                        ui,
+                        [150.0, 18.0],
+                        egui::TextEdit::singleline(&mut rule.name)
+                            .hint_text(tr!("setup-js8-rule-name")),
+                    )
+                    .changed();
+                    if i > 0
+                        && crate::chrome::chip(ui, false, "↑")
+                            .on_hover_text(tr!("setup-js8-rule-move-up"))
+                            .clicked()
+                    {
+                        act = Some(Act::Up(i));
+                    }
+                    if crate::chrome::chip(ui, false, "✕")
+                        .on_hover_text(tr!("setup-js8-rule-delete"))
+                        .clicked()
+                    {
+                        act = Some(Act::Delete(i));
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label(tr!("setup-js8-rule-when"));
+                    if crate::chrome::field_sized(
+                        ui,
+                        [90.0, 18.0],
+                        egui::TextEdit::singleline(&mut rule.group).hint_text("@GROUP"),
+                    )
+                    .on_hover_text(tr!("setup-js8-rule-group-hint"))
+                    .changed()
+                    {
+                        rule.group = rule.group.trim().to_ascii_uppercase();
+                        changed = true;
+                    }
+                    ui.label(tr!("setup-js8-rule-hears"));
+                    changed |= crate::chrome::field_sized(
+                        ui,
+                        [140.0, 18.0],
+                        egui::TextEdit::singleline(&mut rule.contains)
+                            .hint_text(tr!("setup-js8-rule-any-message")),
+                    )
+                    .on_hover_text(tr!("setup-js8-rule-phrase-hint"))
+                    .changed();
+                });
+                ui.horizontal(|ui| {
+                    ui.label(tr!("setup-js8-rule-reply"));
+                    changed |= crate::chrome::field_sized(
+                        ui,
+                        [280.0, 18.0],
+                        egui::TextEdit::singleline(&mut rule.reply).hint_text("QRV @MYGRID"),
+                    )
+                    .on_hover_text(tr!("setup-js8-rule-reply-hint"))
+                    .changed();
+                });
+                ui.horizontal(|ui| {
+                    ui.label(tr!("setup-js8-rule-to"));
+                    for to in Js8AutoReplyTo::ALL {
+                        if crate::chrome::chip(ui, rule.reply_to == to, to.tr())
+                            .on_hover_text(match to {
+                                Js8AutoReplyTo::Sender => tr!("setup-js8-reply-to-sender-hint"),
+                                Js8AutoReplyTo::Group => tr!("setup-js8-reply-to-group-hint"),
+                                Js8AutoReplyTo::AsWritten => {
+                                    tr!("setup-js8-reply-to-as-written-hint")
+                                }
+                            })
+                            .clicked()
+                            && rule.reply_to != to
+                        {
+                            rule.reply_to = to;
+                            changed = true;
+                        }
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label(tr!("setup-js8-rule-send"));
+                    changed |= ui
+                        .add(egui::DragValue::new(&mut rule.repeat).range(1..=JS8_AUTO_REPEAT_MAX))
+                        .changed();
+                    ui.label(tr!("setup-js8-rule-times-every"));
+                    changed |= ui
+                        .add_enabled(
+                            rule.repeat > 1,
+                            egui::DragValue::new(&mut rule.gap_min)
+                                .range(1..=60)
+                                .suffix(tr!("setup-js8-rule-min-suffix")),
+                        )
+                        .changed();
+                });
+                // Its own row: beside the repeat controls it made the card
+                // wider than the dialog's 420 px.
+                ui.horizontal(|ui| {
+                    ui.label(tr!("setup-js8-rule-cooldown"));
+                    changed |= ui
+                        .add(
+                            egui::DragValue::new(&mut rule.cooldown_min)
+                                .range(1..=240)
+                                .suffix(tr!("setup-js8-rule-min-suffix")),
+                        )
+                        .on_hover_text(tr!("setup-js8-rule-cooldown-hint"))
+                        .changed();
+                });
+                let group = sdroxide_types::js8_group_normalize(&rule.group);
+                let preview = rule.render_for("KN4CRD", &my_call, &my_grid);
+                ui.label(
+                    RichText::new(match &preview {
+                        Some(t) => tr!("setup-js8-rule-preview", text = t),
+                        None => tr!("setup-js8-rule-preview-empty"),
+                    })
+                    .monospace()
+                    .size(10.5)
+                    .weak(),
+                )
+                .on_hover_text(tr!("setup-js8-rule-preview-hint", call = "KN4CRD"));
+                let warn = |ui: &mut egui::Ui, text: &str| {
+                    ui.label(RichText::new(text).size(10.5).color(crate::theme::ALERT()));
+                };
+                if group.is_empty() {
+                    warn(ui, &tr!("setup-js8-rule-no-group"));
+                } else if !sdroxide_types::js8_group_valid(&group) {
+                    warn(ui, &tr!("setup-js8-rule-bad-group", group = group.as_str()));
+                }
+                if rule.self_retriggers() {
+                    warn(ui, &tr!("setup-js8-rule-self-retriggers"));
+                }
+            });
+        });
+        ui.end_row();
+    }
+    match act {
+        Some(Act::Up(i)) if i > 0 && i < n => {
+            cfg.js8_auto_rules.swap(i, i - 1);
+            changed = true;
+        }
+        Some(Act::Delete(i)) if i < n => {
+            cfg.js8_auto_rules.remove(i);
+            changed = true;
+        }
+        _ => {}
+    }
+    ui.label("");
+    if crate::chrome::chip_enabled(ui, n < JS8_AUTO_RULES_MAX, false, &tr!("setup-js8-add-rule"))
+        .clicked()
+        && n < JS8_AUTO_RULES_MAX
+    {
+        let group = cfg.js8_groups.first().cloned().unwrap_or_default();
+        cfg.js8_auto_rules.push(Js8AutoRule {
+            group,
+            reply: "QRV @MYGRID".into(),
+            ..Default::default()
+        });
+        changed = true;
+    }
+    ui.end_row();
+    changed
+}
+
 impl SdroxideApp {
     /// Own-call / grid / message-template editor (and RTTY parameters).
     pub(in crate::app) fn digi_settings_window(
@@ -46,8 +281,8 @@ impl SdroxideApp {
             (tr!("setup-aprs-setup"), "APRS Setup".to_string())
         } else if mode.is_packet() {
             (tr!("setup-packet-setup"), "Packet Setup".to_string())
-        } else if mode.is_vara() {
-            (tr!("setup-vara-setup"), "VARA HF Setup".to_string())
+        } else if mode.is_tnc_modem() {
+            (tr!("setup-mode-setup", mode = mode.label()), format!("{} Setup", mode.label()))
         } else if mode.is_text_modem() || mode.is_hell() || mode.is_js8() {
             (tr!("setup-mode-setup", mode = mode.label()), format!("{} Setup", mode.label()))
         } else {
@@ -231,61 +466,46 @@ impl SdroxideApp {
                         ui.end_row();
                     }
 
-                    if mode.is_vara() {
+                    if mode.is_tnc_modem() {
                         ui.label(tr!("setup-station-call"));
                         if crate::chrome::field(
                             ui,
-                            egui::TextEdit::singleline(&mut cfg.vara_mycall)
+                            egui::TextEdit::singleline(&mut cfg.tnc_mycall)
                                 .hint_text(cfg.my_call.clone()),
                         )
-                        .on_hover_text(tr!("setup-vara-call-hint"))
+                        .on_hover_text(tr!("setup-tnc-call-hint"))
                         .changed()
                         {
-                            cfg.vara_mycall = cfg.vara_mycall.to_uppercase();
+                            cfg.tnc_mycall = cfg.tnc_mycall.to_uppercase();
                             changed = true;
                         }
                         ui.end_row();
 
-                        ui.label(tr!("setup-vara-bandwidth"));
+                        ui.label(tr!("setup-tnc-bandwidth"));
                         ui.horizontal(|ui| {
-                            for bw in sdroxide_types::VaraBw::ALL {
-                                changed |=
-                                    ui.selectable_value(&mut cfg.vara_bw, bw, bw.label()).changed();
+                            let bw = if mode == sdroxide_types::Mode::Data2g {
+                                &mut cfg.data2g_bw
+                            } else {
+                                &mut cfg.mercury_bw
+                            };
+                            for b in sdroxide_types::TncBw::offered(mode) {
+                                changed |= ui.selectable_value(bw, *b, b.label()).changed();
                             }
                         });
                         ui.end_row();
 
-                        ui.label(tr!("setup-vara-registered"));
-                        changed |= ui
-                            .checkbox(&mut cfg.vara_registered, tr!("setup-vara-registered-check"))
-                            .on_hover_text(tr!("setup-vara-registered-hint"))
-                            .changed();
-                        ui.end_row();
-
-                        ui.label(tr!("setup-vara-retries"));
-                        changed |= ui
-                            .add(egui::DragValue::new(&mut cfg.vara_retries).range(1..=30))
-                            .on_hover_text(tr!("setup-vara-retries-hint"))
-                            .changed();
-                        ui.end_row();
-
-                        ui.label(tr!("setup-vara-cwid"));
-                        changed |=
-                            ui.checkbox(&mut cfg.vara_cwid, tr!("setup-vara-cwid-check")).changed();
-                        ui.end_row();
-
-                        ui.label(tr!("setup-vara-latency"));
+                        ui.label(tr!("setup-tnc-lead"));
                         ui.horizontal(|ui| {
-                            let mut auto = cfg.vara_tx_latency_ms.is_none();
+                            let mut auto = cfg.tnc_ptt_lead_ms.is_none();
                             if ui
-                                .checkbox(&mut auto, tr!("setup-vara-latency-auto"))
-                                .on_hover_text(tr!("setup-vara-latency-hint"))
+                                .checkbox(&mut auto, tr!("setup-tnc-lead-auto"))
+                                .on_hover_text(tr!("setup-tnc-lead-hint"))
                                 .changed()
                             {
-                                cfg.vara_tx_latency_ms = if auto { None } else { Some(120) };
+                                cfg.tnc_ptt_lead_ms = if auto { None } else { Some(150) };
                                 changed = true;
                             }
-                            if let Some(ms) = cfg.vara_tx_latency_ms.as_mut() {
+                            if let Some(ms) = cfg.tnc_ptt_lead_ms.as_mut() {
                                 changed |= ui
                                     .add(egui::DragValue::new(ms).range(0..=1000).suffix(" ms"))
                                     .changed();
@@ -293,27 +513,38 @@ impl SdroxideApp {
                         });
                         ui.end_row();
 
-                        ui.label(tr!("setup-vara-listen"));
+                        ui.label(tr!("setup-tnc-listen"));
                         changed |= ui
-                            .checkbox(&mut cfg.vara_listen, tr!("setup-vara-listen-check"))
-                            .on_hover_text(tr!("setup-vara-listen-hint"))
+                            .checkbox(&mut cfg.tnc_listen, tr!("setup-tnc-listen-check"))
+                            .on_hover_text(tr!("setup-tnc-listen-hint"))
                             .changed();
                         ui.end_row();
 
-                        ui.label(tr!("setup-vara-host"));
+                        ui.label(tr!("setup-tnc-host"));
                         ui.horizontal(|ui| {
                             changed |= ui
-                                .checkbox(&mut cfg.vara_host_server, tr!("setup-serve"))
-                                .on_hover_text(tr!("setup-vara-host-hint"))
+                                .checkbox(&mut cfg.tnc_host_server, tr!("setup-serve"))
+                                .on_hover_text(tr!("setup-tnc-host-hint"))
                                 .changed();
                             changed |= ui
                                 .add(
-                                    egui::DragValue::new(&mut cfg.vara_host_port)
+                                    egui::DragValue::new(&mut cfg.tnc_host_port)
                                         .range(1024..=65534),
                                 )
                                 .changed();
                         });
                         ui.end_row();
+
+                        if mode == sdroxide_types::Mode::Mercury {
+                            ui.label(tr!("setup-mercury-port"));
+                            changed |= ui
+                                .add(
+                                    egui::DragValue::new(&mut cfg.mercury_port).range(1024..=65533),
+                                )
+                                .on_hover_text(tr!("setup-mercury-port-hint"))
+                                .changed();
+                            ui.end_row();
+                        }
                     }
 
                     if mode.is_aprs() {
@@ -670,6 +901,32 @@ impl SdroxideApp {
                         )
                         .changed();
                         ui.end_row();
+                        ui.label(tr!("setup-js8-station-info"));
+                        changed |= crate::chrome::field(
+                            ui,
+                            egui::TextEdit::singleline(&mut cfg.js8_info)
+                                .hint_text(tr!("setup-js8-station-info-example")),
+                        )
+                        .on_hover_text(tr!("setup-js8-station-info-hint"))
+                        .changed();
+                        ui.end_row();
+                        ui.label(tr!("setup-js8-callsign"));
+                        let hint = tr!("setup-js8-callsign-same", call = cfg.my_call.as_str());
+                        if crate::chrome::field(
+                            ui,
+                            egui::TextEdit::singleline(&mut cfg.js8_call).hint_text(hint),
+                        )
+                        .on_hover_text(tr!("setup-js8-callsign-hint"))
+                        .changed()
+                        {
+                            cfg.js8_call = cfg.js8_call.trim().to_ascii_uppercase();
+                            changed = true;
+                        }
+                        ui.end_row();
+                        ui.label(tr!("setup-js8-groups"));
+                        changed |= js8_groups_field(ui, &mut cfg.js8_groups);
+                        ui.end_row();
+                        changed |= js8_auto_rules_editor(ui, cfg);
                     }
                     // Everything from here down belongs to the QSO modes: a
                     // transmit period, a sequencer, a watchdog and the message
@@ -683,20 +940,24 @@ impl SdroxideApp {
                     // every setting the operator typed is discarded the moment
                     // the window closes — which is what happened when this
                     // was written the other way (issue #150).
-                    if !mode.is_aprs() && !mode.is_vara() {
-                        ui.label(tr!("setup-tx-period"));
-                        ui.horizontal(|ui| {
-                            changed |= ui
-                                .selectable_value(&mut cfg.tx_even, true, tr!("setup-even"))
-                                .changed();
-                            changed |= ui
-                                .selectable_value(&mut cfg.tx_even, false, tr!("setup-odd"))
-                                .changed();
-                        });
-                        ui.end_row();
-                        ui.label(tr!("setup-auto-sequence"));
-                        changed |= crate::chrome::checkbox(ui, &mut cfg.auto_seq, "").changed();
-                        ui.end_row();
+                    if !mode.is_aprs() && !mode.is_tnc_modem() {
+                        // JS8 has no even/odd period and no sequencer: a
+                        // station transmits when it has something to say.
+                        if !mode.is_js8() {
+                            ui.label(tr!("setup-tx-period"));
+                            ui.horizontal(|ui| {
+                                changed |= ui
+                                    .selectable_value(&mut cfg.tx_even, true, tr!("setup-even"))
+                                    .changed();
+                                changed |= ui
+                                    .selectable_value(&mut cfg.tx_even, false, tr!("setup-odd"))
+                                    .changed();
+                            });
+                            ui.end_row();
+                            ui.label(tr!("setup-auto-sequence"));
+                            changed |= crate::chrome::checkbox(ui, &mut cfg.auto_seq, "").changed();
+                            ui.end_row();
+                        }
                         if mode == sdroxide_types::Mode::Ft8 {
                             ui.label(tr!("setup-decode-depth"));
                             let row = ui.horizontal(|ui| {
@@ -897,7 +1158,7 @@ impl SdroxideApp {
                     });
                     ui.end_row();
                 });
-                if !mode.is_aprs() && !mode.is_vara() {
+                if !mode.is_aprs() && !mode.is_tnc_modem() {
                     ui.separator();
                     ui.label(
                         RichText::new("Message templates  {MYCALL} {MYGRID} {DX} {REPORT}")

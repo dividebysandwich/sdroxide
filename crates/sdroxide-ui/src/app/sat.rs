@@ -580,7 +580,7 @@ fn mode_for_link(l: &sdroxide_types::SatLink) -> Mode {
         Mode::SstvFm
     } else if m.contains("AFSK") {
         Mode::Aprs
-    } else if m.contains("FM") || m.contains("APT") {
+    } else if m.contains("FM") || m.contains("APT") || m.contains("LRPT") {
         Mode::Nfm
     } else if m.contains("SSB") || m.contains("BPSK") || m.contains("GMSK") || m.contains("AX.25") {
         Mode::Usb
@@ -683,6 +683,18 @@ impl SdroxideApp {
                     self.sat_tab = tab;
                 }
             }
+            // The weather-satellite picture is a window of its own (it wants
+            // the room), opened from here because this is where the 137 MHz
+            // birds are. Lit while its decoder runs, like the tabs' dots.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let on = self.wxsat.show || self.state.wxsat.enabled;
+                if crate::chrome::chip(ui, on, tr!("sat-wxsat"))
+                    .on_hover_text(tr!("sat-wxsat-hint"))
+                    .clicked()
+                {
+                    self.wxsat.show = !self.wxsat.show;
+                }
+            });
         });
         // No separator: the strip's own baseline is the line between the tabs
         // and the page they open.
@@ -1321,7 +1333,9 @@ impl SdroxideApp {
         }
         ui.add_space(6.0);
 
-        ui.horizontal(|ui| {
+        // Wrapped: with PICTURE beside TUNE and LOCK the row is wider than a
+        // phone in German.
+        ui.horizontal_wrapped(|ui| {
             if crate::chrome::chip(ui, false, tr!("sat-tune"))
                 .on_hover_text(tr!("sat-set-dial-mode-link-no"))
                 .clicked()
@@ -1366,6 +1380,16 @@ impl SdroxideApp {
                 });
                 cmds.push(Command::SetSatLock(Some(Box::new(cfg.clone()))));
                 win.sent = Some(cfg);
+            }
+            // A NOAA APT or Meteor LRPT downlink: the picture, not the audio,
+            // is what it carries.
+            if let (Some(kind), Some(pb)) = (crate::app::wxsat::kind_for_link(link), link.downlink)
+                && crate::chrome::chip(ui, false, tr!("sat-picture"))
+                    .on_hover_text(tr!("sat-picture-hint"))
+                    .clicked()
+            {
+                let hz = (pb.lo_mhz + pb.hi_mhz) / 2.0 * 1e6;
+                self.wxsat_open_on(kind, hz, cmds);
             }
         });
     }

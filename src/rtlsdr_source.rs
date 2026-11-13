@@ -14,8 +14,8 @@ use std::time::Duration;
 
 use sdroxide_dsp::IqCorrect;
 use sdroxide_radio::{Complex32, DC_BLOCK_HZ, IqSource, Result};
-use sdroxide_rtlsdr::RtlSdrHandle;
 use sdroxide_rtlsdr::tcp::proto::RspCmd;
+use sdroxide_rtlsdr::{RtlSdrHandle, Stage, stage_db};
 use sdroxide_types::{RtlSdrAgc, RtlSdrConfig, RtlSdrHfMode, RtlTcpConfig};
 
 /// How long the dongle may deliver nothing before the connection counts as
@@ -35,6 +35,9 @@ pub struct RtlSdrSource {
     label: String,
     /// Last gain the operator asked for, and what the hardware snapped it to.
     gain_db: f64,
+    /// LNA and mixer in dB, the IF VGA in steps, as last set — one by one
+    /// or, for LNA and mixer, through the combined ladder.
+    stages: [f64; 3],
     agc: RtlSdrAgc,
     bias_tee: bool,
     /// How long a silence has to last before this source asks to be reopened.
@@ -98,6 +101,11 @@ impl RtlSdrSource {
             center: center_hz,
             label,
             gain_db: s.gain_db,
+            stages: {
+                let (l, m) = sdroxide_rtlsdr::ladder_indices(s.gain_db);
+                // The VGA's code under manual gain until it is set: 0x08.
+                [stage_db(Stage::Lna, l), stage_db(Stage::Mixer, m), 8.0]
+            },
             agc: s.agc,
             bias_tee: s.bias_tee,
             silence: s.silence,
@@ -189,6 +197,12 @@ impl IqSource for RtlSdrSource {
         Ok(pairs)
     }
 
+    /// A centre of its own — the tuner's LO — so the engine may centre the I/Q on a
+    /// resting dial (`Engine::recentre_after_dwell`).
+    fn recentre_on_dwell(&self) -> bool {
+        true
+    }
+
     fn describe(&self) -> String {
         self.label.clone()
     }
@@ -204,6 +218,23 @@ impl IqSource for RtlSdrSource {
             RtlSdrConfig::TUNER_GAIN_ELEMENT => {
                 self.gain_db = db;
                 self.handle.set_gain_db(db);
+                // The ladder moves LNA and mixer together; their rails follow.
+                let (l, m) = sdroxide_rtlsdr::ladder_indices(db);
+                self.stages[0] = stage_db(Stage::Lna, l);
+                self.stages[1] = stage_db(Stage::Mixer, m);
+            }
+            RtlSdrConfig::LNA_GAIN_ELEMENT
+            | RtlSdrConfig::MIX_GAIN_ELEMENT
+            | RtlSdrConfig::IF_GAIN_ELEMENT => {
+                let (i, stage) = match name {
+                    RtlSdrConfig::LNA_GAIN_ELEMENT => (0, Stage::Lna),
+                    RtlSdrConfig::MIX_GAIN_ELEMENT => (1, Stage::Mixer),
+                    _ => (2, Stage::Vga),
+                };
+                // Reported at the step the tuner will take, so the rail
+                // settles somewhere real.
+                self.stages[i] = stage_db(stage, sdroxide_rtlsdr::stage_index_for(stage, db));
+                self.handle.set_stage(stage, db);
             }
             RtlSdrConfig::AGC_ELEMENT => {
                 self.agc = RtlSdrAgc::from_code(db.round().clamp(0.0, 3.0) as u8);
@@ -271,6 +302,9 @@ impl IqSource for RtlSdrSource {
     fn current_gains(&self) -> Vec<(String, f64)> {
         vec![
             (RtlSdrConfig::TUNER_GAIN_ELEMENT.to_string(), self.gain_db),
+            (RtlSdrConfig::LNA_GAIN_ELEMENT.to_string(), self.stages[0]),
+            (RtlSdrConfig::MIX_GAIN_ELEMENT.to_string(), self.stages[1]),
+            (RtlSdrConfig::IF_GAIN_ELEMENT.to_string(), self.stages[2]),
             (RtlSdrConfig::AGC_ELEMENT.to_string(), self.agc.code() as f64),
         ]
     }

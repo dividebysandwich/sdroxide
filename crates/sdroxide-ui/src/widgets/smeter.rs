@@ -241,14 +241,172 @@ pub fn hover_text(meters: Option<&Meters>) -> String {
 
 /// Draw the S-meter in the selected style, filling the box's full interior.
 /// Returns the (clickable) response so the caller can cycle the style.
-pub fn show(ui: &mut Ui, meters: Option<&Meters>, style: SmeterStyle) -> Response {
+/// `trace` is how the trace face scrolls; the other faces ignore it. `snr` is
+/// the S/N face's reading, `None` while the S/N guide is off.
+pub fn show(
+    ui: &mut Ui,
+    meters: Option<&Meters>,
+    style: SmeterStyle,
+    trace: TraceOpts,
+    snr: Option<&SnrReading>,
+) -> Response {
     // Fill whatever the (zero-padding) box hands us.
     let size = ui.available_size();
     match style {
         SmeterStyle::Needle => show_needle(ui, meters, size),
         SmeterStyle::Bar => show_bar(ui, meters, size),
-        SmeterStyle::Trace => show_trace(ui, meters, size),
+        SmeterStyle::Trace => show_trace(ui, meters, size, trace),
+        // On transmit every face turns into the transmit meter; S/N has
+        // nothing to say there, so the bar face's transmit rows stand in.
+        SmeterStyle::Snr if meters.is_some_and(|m| m.tx.is_some()) => show_bar(ui, meters, size),
+        SmeterStyle::Snr => show_snr(ui, size, snr),
     }
+}
+
+/// Stops on the S scale the trace's range rail snaps to: S0…S9, then S9+10 …
+/// S9+60 in 10 dB steps.
+pub const STOPS: u8 = 16;
+
+/// A stored S range made safe: `lo < hi ≤ STOPS - 1`, whatever a hand-edited
+/// config holds.
+pub fn s_range_clamped(lo: u8, hi: u8) -> (u8, u8) {
+    let hi = hi.clamp(1, STOPS - 1);
+    (lo.min(hi - 1), hi)
+}
+
+/// The level of stop `i` in dBm: S-units of 6 dB up to S9, then 10 dB a stop.
+pub fn stop_dbm(i: u8) -> f32 {
+    let i = i.min(STOPS - 1);
+    if i <= 9 { DBM_LO + 6.0 * f32::from(i) } else { S9_DBM + 10.0 * f32::from(i - 9) }
+}
+
+/// The stop's name on the rail: `S3`, `S9`, `+20`.
+pub fn stop_label(i: u8) -> String {
+    let i = i.min(STOPS - 1);
+    if i <= 9 { format!("S{i}") } else { format!("+{}", 10 * (i - 9)) }
+}
+
+/// What the S/N face shows: the passband's S/N (mean over the cursor's
+/// width) and the strongest cell at its middle, both in dB over the guide's
+/// noise floor, the passband's width and how many frames the guide has
+/// averaged.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SnrReading {
+    pub db: f32,
+    pub mid_db: f32,
+    pub width_hz: f64,
+    pub frames: u32,
+}
+
+/// S/N over the passband `f_lo..f_hi` from the guide's cells (`lo_hz` and
+/// `cell_hz` lay them out, `snr_db` is each cell's mean over the floor):
+/// the passband's power over the noise the same width would carry — the mean
+/// of the cells in linear power, back in dB — and the strongest cell at the
+/// passband's middle, within a tenth of its width either side
+/// ([`MID_FRACTION`]; at least the cell the middle falls in). `None` where
+/// no cell in the passband has been measured.
+///
+/// The mean is (S+N)/N like the S/N line itself: an empty passband reads
+/// about 0 dB, a carrier in a 2.4 kHz filter reads its power against
+/// 2.4 kHz of noise. The middle value is a tuning aid: a signal tuned into
+/// the centre of the filter shows there, one at the filter's edge does not.
+// Why: HDZ 2026-11-09: "das S/N-Meter soll sich im Max auf Mitte und im Mean
+//      auf die Breite des Cursors beziehen".
+pub fn passband_snr(
+    lo_hz: f64,
+    cell_hz: f64,
+    snr_db: &[f32],
+    f_lo: f64,
+    f_hi: f64,
+) -> Option<(f32, f32)> {
+    if !(cell_hz > 0.0) || f_hi <= f_lo {
+        return None;
+    }
+    let first = ((f_lo - lo_hz) / cell_hz).floor().max(0.0) as usize;
+    let last = (((f_hi - lo_hz) / cell_hz).ceil().max(0.0) as usize).min(snr_db.len());
+    let (mut sum, mut n) = (0.0f64, 0usize);
+    for v in snr_db.get(first..last).unwrap_or(&[]).iter().filter(|v| v.is_finite()) {
+        sum += 10f64.powf(f64::from(*v) / 10.0);
+        n += 1;
+    }
+    let half = MID_FRACTION * (f_hi - f_lo);
+    let mid = 0.5 * (f_lo + f_hi);
+    let m_first = ((mid - half - lo_hz) / cell_hz).floor().max(0.0) as usize;
+    let m_last = ((((mid + half - lo_hz) / cell_hz).ceil().max(0.0)) as usize)
+        .max(m_first + 1)
+        .min(snr_db.len());
+    let mid_max = snr_db
+        .get(m_first..m_last)
+        .unwrap_or(&[])
+        .iter()
+        .filter(|v| v.is_finite())
+        .fold(f32::NEG_INFINITY, |a, v| a.max(*v));
+    // Nothing measured at the middle: the marker is left off rather than
+    // standing at the passband's edge.
+    let mid_max = if mid_max.is_finite() { mid_max } else { f32::NAN };
+    (n > 0).then(|| ((10.0 * (sum / n as f64).log10()) as f32, mid_max))
+}
+
+/// How far either side of the passband's middle the S/N face's middle
+/// value looks, as a share of the passband's width.
+pub const MID_FRACTION: f64 = 0.1;
+
+/// How the trace face scrolls: samples a second, and which edge the newest
+/// one sits at. Read from the screen's `[ui]` settings.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TraceOpts {
+    pub hz: f64,
+    pub newest_left: bool,
+    /// The plot's bottom and top as stops on the S scale
+    /// ([`stop_dbm`]); receive only.
+    pub lo: u8,
+    pub hi: u8,
+}
+
+impl TraceOpts {
+    pub fn of(ui: &sdroxide_types::UiSettings) -> Self {
+        let (lo, hi) = s_range_clamped(ui.smeter_trace_lo, ui.smeter_trace_hi);
+        TraceOpts { hz: ui.smeter_trace_hz(), newest_left: ui.smeter_trace_newest_left, lo, hi }
+    }
+
+    /// The range as fractions of the full S scale, bottom below top.
+    fn s_range(self) -> (f32, f32) {
+        let (lo, hi) = (self.lo.min(self.hi), self.hi.max(self.lo));
+        let hi = if hi == lo { lo + 1 } else { hi };
+        (frac_of(stop_dbm(lo)), frac_of(stop_dbm(hi)))
+    }
+
+    /// Whether the range is narrower than the whole scale.
+    fn spread(self) -> bool {
+        self.s_range() != (0.0, 1.0)
+    }
+}
+
+impl Default for TraceOpts {
+    fn default() -> Self {
+        TraceOpts { hz: TRACE_HZ, newest_left: false, lo: 0, hi: STOPS - 1 }
+    }
+}
+
+/// The S-scale gridlines for a spread trace: one per stop inside the range,
+/// thinned to every second, third … so at most five are drawn, labelled as
+/// the rail names them less the "S" (`3`, `9`, `+20`). Positions are
+/// fractions of the spread range.
+fn spread_grid(opts: TraceOpts) -> Vec<Grid> {
+    let (lo, hi) = (opts.lo.min(opts.hi), opts.hi.max(opts.lo));
+    let (f0, f1) = opts.s_range();
+    let inner: Vec<u8> = (lo + 1..hi).collect();
+    let step = inner.len().div_ceil(5).max(1);
+    inner
+        .iter()
+        .rev()
+        .step_by(step)
+        .map(|&i| {
+            let f = frac_of(stop_dbm(i));
+            let label = stop_label(i).trim_start_matches('S').to_string();
+            grid_at((f - f0) / (f1 - f0), &label, i > 9)
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -526,6 +684,7 @@ enum ScaleKind {
     Swr,
     Alc,
     Po,
+    Snr,
 }
 
 /// A meter scale: its graduations, its gridlines, and the ramp along its rail.
@@ -639,6 +798,97 @@ fn po_scale() -> Scale {
     let grid =
         vec![grid_at(0.25, "25", false), grid_at(0.5, "50", false), grid_at(0.75, "75", false)];
     Scale { kind: ScaleKind::Po, ticks, grid, stops: po_stops() }
+}
+
+/// The S/N face's scale: 0…40 dB over the noise floor, graduated every 5 dB
+/// and numbered every 10, in the green of the S/N line.
+const SNR_FULL_DB: f32 = 40.0;
+fn snr_scale() -> Scale {
+    let ticks = (0..=8)
+        .map(|i| {
+            let db = i as f32 * 5.0;
+            let major = i % 2 == 0;
+            Tick {
+                f: db / SNR_FULL_DB,
+                major,
+                label: major.then(|| format!("{db:.0}")),
+                hot: false,
+            }
+        })
+        .collect();
+    let grid =
+        vec![grid_at(0.25, "10", false), grid_at(0.5, "20", false), grid_at(0.75, "30", false)];
+    let g = Color32::from_rgb(120, 255, 140);
+    let stops = vec![(0.0, g.linear_multiply(0.25)), (0.3, g.linear_multiply(0.6)), (1.0, g)];
+    Scale { kind: ScaleKind::Snr, ticks, grid, stops }
+}
+
+/// The S/N face's chip: the bar's mean, then the marker's value (the strongest
+/// cell at the middle) where there is one — the chip is where the eye goes,
+/// and the fine line's figure was otherwise only in the header.
+// Why: HDZ 2026-11-10: "ergänze den Wert links noch um den Cursor-Wert … das
+//      Maximum, den Wert, der zur feinen Linie passt".
+fn snr_chip(s: &SnrReading) -> String {
+    if s.mid_db.is_finite() {
+        format!("S/N {:.1} · {:.1} dB", s.db, s.mid_db)
+    } else {
+        format!("S/N {:.1} dB", s.db)
+    }
+}
+
+/// The S/N face: the passband's S/N as a bar, the strongest cell at its
+/// middle as the marker on it, and in the header the figure, the filter's width and the
+/// frames behind it. Says so when the S/N guide is off.
+fn show_snr(ui: &mut Ui, size: Vec2, snr: Option<&SnrReading>) -> Response {
+    let (rect, resp) = face(ui, size, false);
+    let p = ui.painter_at(rect);
+    let k = (rect.height() / 72.0).clamp(0.55, 2.0);
+    let frac = |db: f32| (db / SNR_FULL_DB).clamp(0.0, 1.0);
+    let r = match snr {
+        Some(s) => Reading {
+            scale: snr_scale(),
+            frac: frac(s.db),
+            chip: snr_chip(s),
+            accent: Color32::from_rgb(120, 255, 140),
+            right: tr!(
+                "smeter-snr-right",
+                mid = if s.mid_db.is_finite() {
+                    format!("{:.0}", s.mid_db)
+                } else {
+                    "—".to_string()
+                },
+                khz = format!("{:.1}", s.width_hz / 1000.0),
+                frames = s.frames
+            )
+            .to_string(),
+            right_strong: false,
+            right_alert: false,
+        },
+        None => Reading {
+            scale: snr_scale(),
+            frac: 0.0,
+            chip: "S/N —".to_string(),
+            accent: SUBDUED(),
+            right: tr!("smeter-snr-off").to_string(),
+            right_strong: false,
+            right_alert: false,
+        },
+    };
+    header(&p, rect, &r, k);
+    let left = rect.left() + 6.0 * k;
+    let right = rect.right() - 6.0 * k;
+    let bar_rect =
+        Rect::from_min_max(pos2(left, rect.top() + 21.0 * k), pos2(right, rect.top() + 45.0 * k));
+    bar_row(
+        &p,
+        bar_rect,
+        &r.scale,
+        r.frac,
+        snr.filter(|s| s.mid_db.is_finite()).map(|s| frac(s.mid_db)),
+    );
+    bar_ticks(&p, bar_rect, rect, &r.scale, k, bar_rect.bottom() + 8.0 * k);
+    border(ui, rect);
+    resp
 }
 
 /// What the instrument is currently displaying: the scale to draw, where the
@@ -1248,8 +1498,10 @@ fn show_needle(ui: &mut Ui, meters: Option<&Meters>, size: Vec2) -> Response {
 // Trace style
 // ---------------------------------------------------------------------------
 
-/// Samples the trace keeps and the rate it takes them at: 240 at 16 Hz is a
-/// fifteen-second window, and roughly one sample per pixel at the meter's size.
+/// Samples the trace keeps and the rate it takes them at by default: 240 at
+/// 16 Hz is a fifteen-second window, and roughly one sample per pixel at the
+/// meter's size. The rate follows the operator's speed step
+/// ([`TraceOpts::hz`]); the count stays, so a slower step is a longer window.
 const TRACE_LEN: usize = 240;
 const TRACE_HZ: f64 = 16.0;
 
@@ -1261,18 +1513,22 @@ struct Trace {
     kind: ScaleKind,
     /// Wall-clock time the next sample is due.
     next: f64,
+    /// The rate the samples were taken at; a change starts a fresh plot, as
+    /// samples of two rates on one time axis would lie about when.
+    hz: f64,
 }
 
 /// Append to the rolling history and hand back the whole window.
-fn trace_history(ui: &Ui, id: Id, frac: f32, kind: ScaleKind) -> Vec<f32> {
+fn trace_history(ui: &Ui, id: Id, frac: f32, kind: ScaleKind, hz: f64) -> Vec<f32> {
     let now = ui.input(|i| i.time);
     animate(ui); // the plot scrolls on the clock, with or without fresh readings
+    let hz = hz.max(0.1);
     ui.data_mut(|d| {
-        let fresh = || Trace { vals: vec![frac; TRACE_LEN], kind, next: now };
+        let fresh = || Trace { vals: vec![frac; TRACE_LEN], kind, next: now, hz };
         let t = d.get_temp_mut_or_insert_with(id, fresh);
         // Receive ↔ transmit changes what is being plotted; start over rather
         // than splice two different quantities into one line.
-        if t.kind != kind {
+        if t.kind != kind || t.hz != hz {
             *t = fresh();
         }
         // Advance in whole steps so the scroll follows the clock rather than the
@@ -1282,23 +1538,35 @@ fn trace_history(ui: &Ui, id: Id, frac: f32, kind: ScaleKind) -> Vec<f32> {
         while now >= t.next && steps < TRACE_LEN {
             t.vals.rotate_left(1);
             t.vals[TRACE_LEN - 1] = frac;
-            t.next += 1.0 / TRACE_HZ;
+            t.next += 1.0 / hz;
             steps += 1;
         }
         if steps == TRACE_LEN {
-            t.next = now + 1.0 / TRACE_HZ;
+            t.next = now + 1.0 / hz;
         }
         t.vals.clone()
     })
 }
 
-fn show_trace(ui: &mut Ui, meters: Option<&Meters>, size: Vec2) -> Response {
+fn show_trace(ui: &mut Ui, meters: Option<&Meters>, size: Vec2, opts: TraceOpts) -> Response {
     let tx = meters.is_some_and(|m| m.tx.is_some());
     let (rect, resp) = face(ui, size, tx);
     let p = ui.painter_at(rect);
     let k = (rect.height() / 72.0).clamp(0.55, 2.0);
-    let r = reading(meters);
-    let hist = trace_history(ui, resp.id, r.frac, r.scale.kind);
+    let mut r = reading(meters);
+    let raw = trace_history(ui, resp.id, r.frac, r.scale.kind, opts.hz);
+    // Spread to the operator's S range on receive: the plot's height is the
+    // range, levels outside it ride the bottom or top edge. Colours stay
+    // those of the full scale, so S9 is S9's colour wherever it is drawn.
+    let spread = r.scale.kind == ScaleKind::S && opts.spread();
+    let (f0, f1) = if spread { opts.s_range() } else { (0.0, 1.0) };
+    let z = |f: f32| ((f - f0) / (f1 - f0)).clamp(0.0, 1.0);
+    let hist: Vec<(f32, f32)> = raw.iter().map(|&f| (z(f), f)).collect();
+    let live = r.frac;
+    r.frac = z(live);
+    if spread {
+        r.scale.grid = spread_grid(opts);
+    }
     let col = |f: f32| ramp(&r.scale.stops, f);
 
     // A gutter on the right carries the level axis, so the newest sample sits
@@ -1308,16 +1576,32 @@ fn show_trace(ui: &mut Ui, meters: Option<&Meters>, size: Vec2) -> Response {
         pos2(rect.right() - 24.0 * k, rect.bottom() - 1.0),
     );
     let y_of = |f: f32| plot.bottom() - plot.height() * f.clamp(0.0, 1.0);
+    // Where a point `age` (0 = now … 1 = the oldest sample) lies across the
+    // plot: now at the right edge, or at the left when the trace runs the
+    // other way.
+    let x_of = |age: f32| {
+        if opts.newest_left {
+            plot.left() + plot.width() * age
+        } else {
+            plot.right() - plot.width() * age
+        }
+    };
+    let now_x = x_of(0.0);
     // Where the header ends; nothing that would be drawn behind it is drawn.
     let head_bottom = header_h(&p, rect, k);
 
-    // Time gridlines every five seconds, anchored to "now" at the right edge.
-    let span_s = TRACE_LEN as f32 / TRACE_HZ as f32;
-    let mut secs = 5.0;
+    // Time gridlines anchored to "now", two to six of them whatever the speed:
+    // every five seconds over the stock quarter-minute, wider on slower steps.
+    let span_s = (TRACE_LEN as f64 / opts.hz.max(0.1)) as f32;
+    let every = [1.0f32, 2.0, 5.0, 10.0, 30.0, 60.0]
+        .into_iter()
+        .find(|e| span_s / e <= 6.0)
+        .unwrap_or(120.0);
+    let mut secs = every;
     while secs < span_s {
-        let x = plot.right() - plot.width() * secs / span_s;
+        let x = x_of(secs / span_s);
         p.vline(x, Rangef::new(plot.top(), plot.bottom()), Stroke::new(1.0, GRID_LINE()[0]));
-        secs += 5.0;
+        secs += every;
     }
 
     // Level gridlines, labelled out in the gutter.
@@ -1344,10 +1628,12 @@ fn show_trace(ui: &mut Ui, meters: Option<&Meters>, size: Vec2) -> Response {
     // staircase. `feather` fades the last pixel of it out and smooths it away.
     let mut feather = Mesh::default();
     let mut ridge = Vec::with_capacity(TRACE_LEN);
-    for (i, &v) in hist.iter().enumerate() {
-        let x = plot.left() + plot.width() * i as f32 / (TRACE_LEN - 1) as f32;
+    for (i, &(v, full)) in hist.iter().enumerate() {
+        // `hist` runs oldest to newest; `v` is the height in the (spread)
+        // plot, `full` the level on the whole scale, which picks the colour.
+        let x = x_of(1.0 - i as f32 / (TRACE_LEN - 1) as f32);
         let y = y_of(v);
-        let c = col(v);
+        let c = col(full);
         push_quad(
             &mut fill,
             pos2(x, y),
@@ -1374,16 +1660,15 @@ fn show_trace(ui: &mut Ui, meters: Option<&Meters>, size: Vec2) -> Response {
     p.hline(
         Rangef::new(plot.left(), plot.right()),
         y,
-        Stroke::new(1.0, col(r.frac).linear_multiply(0.30)),
+        Stroke::new(1.0, col(live).linear_multiply(0.30)),
     );
-    glow(&p, pos2(plot.right() - 1.0, y), 9.0 * k, col(r.frac).linear_multiply(0.35));
+    // The cap sits on the edge the newest sample is drawn at.
+    let inward = if opts.newest_left { 1.0 } else { -1.0 };
+    glow(&p, pos2(now_x + inward, y), 9.0 * k, col(live).linear_multiply(0.35));
     p.rect_filled(
-        Rect::from_min_max(
-            pos2(plot.right() - 4.0 * k, y - 1.5 * k),
-            pos2(plot.right(), y + 1.5 * k),
-        ),
+        Rect::from_two_pos(pos2(now_x + inward * 4.0 * k, y - 1.5 * k), pos2(now_x, y + 1.5 * k)),
         0.0,
-        lift(col(r.frac), 0.4),
+        lift(col(live), 0.4),
     );
 
     // The trace runs full-bleed, so the header needs a scrim under it.
@@ -1404,6 +1689,17 @@ fn show_trace(ui: &mut Ui, meters: Option<&Meters>, size: Vec2) -> Response {
 mod tests {
     use super::SmeterStyle;
 
+    /// Proves: the S/N chip names the mean and, after it, the marker's value;
+    /// without a marker value only the mean.
+    #[test]
+    fn the_snr_chip_names_mean_and_marker() {
+        use super::{SnrReading, snr_chip};
+        let r = SnrReading { db: 26.5, mid_db: 31.04, width_hz: 48_000.0, frames: 4122 };
+        assert_eq!(snr_chip(&r), "S/N 26.5 · 31.0 dB");
+        let r = SnrReading { mid_db: f32::NAN, ..r };
+        assert_eq!(snr_chip(&r), "S/N 26.5 dB");
+    }
+
     #[test]
     fn the_compact_cycle_visits_every_face_it_can_show_and_no_others() {
         let mut seen = Vec::new();
@@ -1416,20 +1712,117 @@ mod tests {
                 seen.push(shown);
             }
         }
-        assert_eq!(seen.len(), 2, "the cycle should reach both compact faces: {seen:?}");
+        assert_eq!(seen.len(), 3, "the cycle should reach every compact face: {seen:?}");
+    }
+
+    /// The trace's speed steps keep the waterfall's proportions, and `Fast`
+    /// is the quarter-minute the trace always showed.
+    #[test]
+    fn the_trace_runs_on_the_waterfall_steps() {
+        use sdroxide_types::{Speed, UiSettings};
+        let hz = |s: Speed| {
+            UiSettings { smeter_trace_speed: s, ..UiSettings::default() }.smeter_trace_hz()
+        };
+        assert_eq!(UiSettings::default().smeter_trace_speed, Speed::Fast);
+        assert!((hz(Speed::Fast) - super::TRACE_HZ).abs() < 1e-9);
+        assert!((hz(Speed::Medium) - 8.0).abs() < 1e-9);
+        assert!((hz(Speed::Fastest) - 64.0).abs() < 1e-9);
+        // 240 samples: Slow holds 168 s.
+        assert!((super::TRACE_LEN as f64 / hz(Speed::Slow) - 168.0).abs() < 1e-6);
+        let mut prev = 0.0;
+        for s in Speed::WATERFALL {
+            assert!(hz(s) > prev, "{s:?} is not faster than the step before");
+            prev = hz(s);
+        }
+    }
+
+    /// The range rail's stops: S3–S9 spreads −109…−73 dBm over the plot,
+    /// its gridlines sit inside it with S-unit labels, and the full rail is
+    /// no spread at all.
+    #[test]
+    fn the_trace_spreads_to_its_s_range() {
+        use super::TraceOpts;
+        assert_eq!(super::stop_dbm(3), -109.0);
+        assert_eq!(super::stop_dbm(9), -73.0);
+        assert_eq!(super::stop_dbm(11), -53.0);
+        assert_eq!(super::stop_label(11), "+20");
+        assert!(!TraceOpts::default().spread());
+        let o = TraceOpts { lo: 3, hi: 9, ..TraceOpts::default() };
+        assert!(o.spread());
+        let (f0, f1) = o.s_range();
+        assert!(
+            (f0 - super::frac_of(-109.0)).abs() < 1e-6 && (f1 - super::frac_of(-73.0)).abs() < 1e-6
+        );
+        let g = super::spread_grid(o);
+        assert!(!g.is_empty() && g.len() <= 5, "{} lines", g.len());
+        assert!(g.iter().all(|l| l.f > 0.0 && l.f < 1.0));
+        assert!(g.iter().any(|l| l.label == "6"), "S6 is labelled");
+        // S6–S9: S7 and S8 inside.
+        let g = super::spread_grid(TraceOpts { lo: 6, hi: 9, ..TraceOpts::default() });
+        assert_eq!(g.iter().map(|l| l.label.as_str()).collect::<Vec<_>>(), ["8", "7"]);
+    }
+
+    /// Without S/N the cycle passes the S/N face by, on desktop and phone.
+    #[test]
+    fn the_snr_face_is_skipped_without_snr() {
+        let mut s = SmeterStyle::default();
+        for _ in 0..8 {
+            s = s.next_with(false);
+            assert_ne!(s, SmeterStyle::Snr);
+        }
+        for _ in 0..8 {
+            s = s.next_compact_with(false);
+            assert_ne!(s, SmeterStyle::Snr);
+        }
+        assert_eq!(SmeterStyle::Trace.next_with(true), SmeterStyle::Snr);
+        assert_eq!(SmeterStyle::Trace.next_with(false), SmeterStyle::Needle);
+    }
+
+    /// The passband reading: noise reads 0 dB; one 20 dB cell among nine
+    /// measured lifts the mean to 10·log10((100 + 8)/9) and, at the middle,
+    /// is the middle value; cells outside the filter and unmeasured ones do
+    /// not count. A stronger cell at the filter's edge raises the mean but
+    /// not the middle value.
+    #[test]
+    fn the_passband_snr_is_the_mean_power_over_the_noise() {
+        // 100 Hz cells from 7.000 MHz; the filter covers cells 10..20.
+        let mut cells = vec![0.0f32; 40];
+        cells[15] = 20.0;
+        cells[30] = 35.0; // outside the passband
+        cells[11] = f32::NAN; // not yet measured
+        let (db, peak) =
+            super::passband_snr(7_000_000.0, 100.0, &cells, 7_001_000.0, 7_002_000.0).unwrap();
+        let want = (10.0 * ((100.0f64 + 8.0) / 9.0).log10()) as f32;
+        assert!((db - want).abs() < 1e-3, "{db} vs {want}");
+        assert_eq!(peak, 20.0);
+        // The same filter with the 20 dB cell moved to its edge (cell 10)
+        // and 6 dB in the middle (cell 15): the middle reads 6.
+        let mut edge = vec![0.0f32; 40];
+        edge[10] = 20.0;
+        edge[15] = 6.0;
+        let (_, mid) =
+            super::passband_snr(7_000_000.0, 100.0, &edge, 7_001_000.0, 7_002_000.0).unwrap();
+        assert_eq!(mid, 6.0);
+        let flat = vec![0.0f32; 40];
+        let (db0, _) =
+            super::passband_snr(7_000_000.0, 100.0, &flat, 7_001_000.0, 7_002_000.0).unwrap();
+        assert!(db0.abs() < 1e-6);
+        assert!(
+            super::passband_snr(7_000_000.0, 100.0, &cells, 8_000_000.0, 8_001_000.0).is_none()
+        );
     }
 
     #[test]
-    fn the_full_cycle_still_visits_all_three() {
+    fn the_full_cycle_still_visits_all_four() {
         let mut seen = Vec::new();
         let mut s = SmeterStyle::default();
-        for _ in 0..3 {
+        for _ in 0..4 {
             if !seen.contains(&s) {
                 seen.push(s);
             }
             s = s.next();
         }
-        assert_eq!(seen.len(), 3, "the desktop cycle lost a face: {seen:?}");
+        assert_eq!(seen.len(), 4, "the desktop cycle lost a face: {seen:?}");
         assert_eq!(s, SmeterStyle::default(), "the cycle should come back round");
     }
 }

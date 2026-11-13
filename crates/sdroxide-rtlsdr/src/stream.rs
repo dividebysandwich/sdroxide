@@ -331,8 +331,12 @@ fn apply(dev: &mut Device, p: &Pending, odd_carry: &mut Option<u8>) -> Result<()
     }
     if let Some(db) = p.gain {
         // A gain request while the tuner's own loop is running would be
-        // overwritten by it; ignore rather than fight.
+        // overwritten by it; `set_gain_db` remembers it and writes nothing.
         dev.set_gain_db(db)?;
+    }
+    // After the combined gain, so a pass carrying both ends on the stages.
+    for (stage, v) in &p.stages {
+        dev.set_stage(*stage, *v)?;
     }
     if let Some(on) = p.bias_tee {
         dev.set_bias_tee(on)?;

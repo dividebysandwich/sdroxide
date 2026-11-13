@@ -51,6 +51,7 @@ pub mod net;
 pub mod protocol;
 pub mod sim;
 pub mod trace;
+mod udp_rx;
 
 use std::time::Duration;
 

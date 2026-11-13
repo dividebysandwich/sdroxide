@@ -21,11 +21,19 @@ mod fsq_image;
 pub mod g3ruh;
 mod hell;
 mod hell_font;
+/// fldigi's FelHell glyphs, for the corpus tests: our own font was authored
+/// here, so a recording made by fldigi cannot be scored against it.
+#[cfg(test)]
+mod hell_ref_font;
+mod hum;
+pub mod ifk;
 mod interp;
 mod iqcorrect;
 pub mod jtty;
 mod mfsk;
+pub mod mfsk_rx;
 mod modulator;
+pub mod mt63;
 mod navtex;
 mod nb;
 mod nco;
@@ -42,6 +50,7 @@ mod resample;
 pub mod rifp;
 mod rtty;
 mod sbnr;
+mod sk;
 #[macro_use]
 mod simd;
 mod spectrum;
@@ -72,7 +81,7 @@ pub use demod::{
 pub use dfnr::DeepFilterNr;
 pub use diversity::{Diversity, DiversityMode};
 pub use eq::ParametricEq;
-pub use fec::{ConvCode, viterbi_soft};
+pub use fec::{ConvCode, ConvEncoder, ViterbiStream, viterbi_soft};
 pub use fir::{ComplexFir, RealFir, bandpass_taps};
 pub use fsk441::{
     DEFAULT_DFTOL as FSK441_DFTOL, FSK441_BAUD, FSK441_CHARSET, FSK441_NSPD, FSK441_RATE,
@@ -101,6 +110,7 @@ pub mod navtex_test {
     pub use crate::navtex::{encode_bits, synth};
 }
 pub use acars::{AcarsEvent, AcarsRx, CENTER_HZ as ACARS_CENTER_HZ};
+pub use hum::HumFilter;
 pub use nb::NoiseBlanker;
 pub use nco::Nco;
 pub use nnr::NeuralNr;
@@ -109,12 +119,15 @@ pub use nr::SpectralNr;
 pub use nr2::Nr2;
 pub use olivia::{OliviaRx, OliviaTx};
 pub use predistort::{MAX_CORRECTION as PS_MAX_CORRECTION, PureSignal};
-pub use psk::{BpskCore, PskRx, PskTx, VaricodeRx};
+pub use psk::{
+    BpskCore, Psk8Tx, PskCarrierBank, PskMultiRx, PskRx, PskTx, PskrRx, PskrTx, VaricodeRx,
+};
 pub use rds::{RDS_MIN_RATE, RdsRx};
 pub use resample::{ComplexResampler, MonoResampler, StereoResampler};
 pub use rifp::{RifpFrame, RifpRx, RifpTx, Tlv as RifpTlv};
 pub use rtty::{BaudotRx, RttyRx, RttyTx};
 pub use sbnr::SpecBleachNr;
+pub use sk::SkFilter;
 pub use spectrum::SpectrumAnalyzer;
 pub use spectrum_paint::{
     BAND_HI_HZ as RF_PAINT_BAND_HI, BAND_LO_HZ as RF_PAINT_BAND_LO, CENTER_HZ as RF_PAINT_CENTER,

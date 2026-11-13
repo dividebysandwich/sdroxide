@@ -23,6 +23,7 @@ pub(in crate::app) mod alerts;
 mod amp;
 pub(in crate::app) mod awards;
 pub(in crate::app) mod bands;
+pub(in crate::app) mod checkup;
 pub(in crate::app) mod drm;
 mod duo_power;
 pub(in crate::app) mod frame;
@@ -31,10 +32,13 @@ pub(in crate::app) mod hd;
 pub(in crate::app) mod hfdl;
 pub(in crate::app) mod ism;
 pub(in crate::app) mod logbook;
+pub(in crate::app) mod mean;
 pub(in crate::app) mod morse;
 pub(in crate::app) mod net;
+pub(in crate::app) mod palette;
 pub(in crate::app) mod panels;
 pub(crate) mod persist;
+pub(in crate::app) mod playback;
 pub(in crate::app) mod publicsdr;
 pub(in crate::app) mod qo100;
 pub(in crate::app) mod rds;
@@ -43,6 +47,8 @@ pub(in crate::app) mod save_text;
 pub(in crate::app) mod scanner;
 pub(in crate::app) mod settings;
 pub(in crate::app) mod solar;
+pub(in crate::app) mod sonde;
+pub(in crate::app) mod sonde_card;
 pub(in crate::app) mod spectrum;
 pub(in crate::app) mod speech;
 pub(in crate::app) mod spots;
@@ -50,8 +56,13 @@ pub(in crate::app) mod top_bar;
 pub(in crate::app) mod tx_audio;
 pub(in crate::app) mod undocked;
 pub(crate) mod util;
+pub(in crate::app) mod welcome;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod window_fit_tests;
 pub(in crate::app) mod windows;
 pub(in crate::app) mod winlink;
+pub(in crate::app) mod workplaces;
+pub(in crate::app) mod wxsat;
 
 use crate::i18n::tr;
 use std::sync::{Arc, Mutex};
@@ -128,10 +139,28 @@ pub struct SdroxideApp {
     /// Latest spectrum frame, shared with the GPU waterfall callback — the Arc
     /// makes the per-repaint handoff a refcount bump instead of a bins clone.
     frame: Option<std::sync::Arc<SpectrumFrame>>,
+    /// The S/N guide's accumulated mean, while it is on.
+    snr_grid: Option<crate::mean_spectrum::MeanGrid>,
+    /// The S/N guide as last computed, for the spectrum widget.
+    snr_last: Option<std::sync::Arc<crate::mean_spectrum::Guide>>,
+    /// LABELS BY S/N: each spot's label decision and fade, see
+    /// [`crate::app::spectrum::SnrLabels`].
+    snr_labels: std::cell::RefCell<crate::app::spectrum::SnrLabels>,
+    /// The catalogues LABELS BY S/N offers beyond the broadcast list, read
+    /// once when it first needs them: the whole EiBi schedule, and Aoki's
+    /// list (`Err` says why there is none: not imported, unreadable).
+    catalog_schedule: Option<std::sync::Arc<Vec<sdroxide_types::BroadcastStation>>>,
+    catalog_aoki: Option<Result<std::sync::Arc<Vec<crate::catalogs::AokiEntry>>, String>>,
+    /// [`crate::catalogs::imports`] when Aoki's list was last read.
+    catalog_imports: u64,
     /// Latest full-band frame, from a direct-sampling front end that can see far
     /// more than the IQ it delivers. `None` on every other backend, which is
     /// also how the UI decides whether to offer the strip at all.
     wide_frame: Option<std::sync::Arc<SpectrumFrame>>,
+    /// The S/N and SK means over the full-band strip, kept while either line
+    /// is on (see `wide_guide_note_frame`).
+    wide_grid: Option<crate::mean_spectrum::MeanGrid>,
+    wide_guide: Option<std::sync::Arc<crate::mean_spectrum::Guide>>,
     /// Scrolling history behind the full-band strip.
     wide_wf: crate::widgets::wide_spectrum::WideWaterfall,
     meters: Option<Meters>,
@@ -183,6 +212,9 @@ pub struct SdroxideApp {
     /// The startup version check still in flight, if there is one.
     update_fetch: Option<std::sync::mpsc::Receiver<String>>,
     sent_cfg: Option<SpectrumConfig>,
+    /// What the engine was last told about a hole in the picture
+    /// ([`Command::SetViewUncovered`]); `None` until the first frame.
+    sent_uncovered: Option<bool>,
     desired_cfg: Option<SpectrumConfig>,
     desired_at: f64,
     /// What this machine's renderer will carry, gathered once when the window
@@ -310,6 +342,11 @@ pub struct SdroxideApp {
     /// second tab holding the setting from before the change does not switch
     /// the whole window back.
     applied_language: sdroxide_types::UiLanguage,
+    /// The waterfall interpolation this tab last agreed with the other tabs
+    /// on (`theme::waterfall_smooth`). A copy that differs from it was changed
+    /// here, by the UI tab or the FFT popup; a shared value that differs was
+    /// changed in another tab.
+    applied_smooth: bool,
     /// Spoken announcements: the state machine that decides what to say, and
     /// the synthesizer that says it. Always present — switched off, it holds a
     /// null sink and costs a comparison per event.
@@ -393,15 +430,13 @@ pub struct SdroxideApp {
     /// Take a SpyServer in its VFO+FFT shape rather than wideband. No effect on
     /// a KiwiSDR, which has only one shape.
     public_sdr_low_bw: bool,
-    /// The receiver whose **USE** is waiting to be confirmed.
-    ///
-    /// USE replaces the radio the operator is on, and a radio is a station's
-    /// worth of setting up — issue #254 is somebody losing an IC-9700 to a
-    /// SpyServer on one click, with the tab still carrying the Icom's name
-    /// afterwards. So the row's button arms this instead of acting, and the
-    /// window puts the choice, and the way out of it, in front of the list.
-    /// `None` is the ordinary state.
-    public_sdr_confirm: Option<Box<sdroxide_types::PublicSdrEntry>>,
+    /// The window shows the map rather than the list.
+    // Why: HDZ 2026-11-04: "eine Karte für die SDR-Stationen dran machen".
+    public_sdr_map: bool,
+    /// The map's view and the receivers a click on it picked.
+    public_sdr_map_state: crate::publicsdr_map::PublicSdrMapState,
+    /// When `on_public_sdr` last asked the controller, and its answer.
+    on_public_sdr_cache: std::cell::Cell<(f64, bool)>,
     /// FlexRadios found by the last SmartSDR "Discover" listen.
     smartsdr_devices: Vec<sdroxide_types::SmartSdrDevice>,
     /// Result of the last SmartSDR "Test connection".
@@ -569,6 +604,10 @@ pub struct SdroxideApp {
     /// it, so widening the window again brings it back.
     band_docked: bool,
     band_dock_visible: bool,
+    /// The ZULETZT rows of the band menu, newest first, and the place being
+    /// worked now (see `workplaces`).
+    workplaces: Vec<sdroxide_types::BandStackEntry>,
+    workplace_track: workplaces::WorkplaceTrack,
     /// AUX SP's own view of the spectrum — its zoom, pan and layers — swapped
     /// in for `view` while its window draws, so the two spectra do not mirror
     /// each other (see `undocked::show_detached_module`).
@@ -587,6 +626,18 @@ pub struct SdroxideApp {
     /// so a tiling compositor cannot lose it. See
     /// `undocked::floating_panel_window`. Session-only.
     panel_floating: bool,
+    /// When the operating panel started rising over the panadapter, as a
+    /// curtain, on entering a digital mode; `None` once it is up.
+    curtain_rise_at: Option<f64>,
+    /// The curtain's last partial position (`digi_panel_fraction`), for a
+    /// double-click on the handle to go back to from all the way up.
+    digi_curtain_prev: f32,
+    /// The curtain falling on leaving a digital mode: when it started, from
+    /// where, and the mode to switch to once it is down.
+    curtain_fall: Option<(f64, f32, Mode)>,
+    /// The last mode drawn without a digital panel, to go back to when the lit
+    /// digital mode is clicked again. USB until one has been seen.
+    last_voice_mode: Mode,
     /// The floating panel rolled up to its title bar.
     panel_rolled: bool,
     /// Whether the **module windows** list is open — the ▣ chip's list, also
@@ -604,6 +655,13 @@ pub struct SdroxideApp {
     /// from this app's own column, before the top bar draws the chip that
     /// shows and hides it.
     band_dock_room: Option<f32>,
+    /// The height the CW panel needs to show its fixed rows and a receive pane
+    /// of its minimum height, measured as it was laid out last frame. The CW
+    /// split gives the panel at least this; see `cw_panel`.
+    cw_panel_floor: f32,
+    /// The height of the CW panel's rows under its receive pane (transmit box,
+    /// buttons, message row) as they were laid out last frame.
+    cw_rows_below: f32,
     /// The layout in force last frame, so a change can re-apply the style
     /// metrics (chip padding, text sizes) exactly once instead of every frame.
     tier: crate::layout::Tier,
@@ -647,6 +705,12 @@ pub struct SdroxideApp {
     /// the logbook list does not re-sort and re-group the whole log on every
     /// frame it is open. See `logbook::LogView`.
     log_view: crate::app::logbook::LogView,
+    /// The command palette (Ctrl+K). See [`palette`].
+    palette: crate::app::palette::Palette,
+    /// The station check window is open. See [`checkup`].
+    show_check: bool,
+    /// The welcome walkthrough. See [`welcome`].
+    welcome: crate::app::welcome::Welcome,
     /// QSOs worked since this run started, which is what the FT8 panel's
     /// "Session" readout counts. Deliberately not derived from the logbook: the
     /// log is persisted and grows for ever, so counting it would report every
@@ -714,10 +778,10 @@ pub struct SdroxideApp {
     fsq_rx_images: Vec<egui::TextureHandle>,
     /// Picked-image inbox for FSQ image transmit (raw file bytes).
     fsq_img_inbox: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
-    /// VARA HF: who the panel's CONNECT button calls.
-    vara_target: String,
-    /// VARA HF: the line being typed to the connected station.
-    vara_draft: String,
+    /// Mercury / Data2G: who the panel's CONNECT button calls.
+    tnc_target: String,
+    /// Mercury / Data2G: the line being typed to the connected station.
+    tnc_draft: String,
     /// Packet: who the terminal's CONNECT button calls.
     packet_target: String,
     /// Packet: the digipeater path typed beside it.
@@ -831,6 +895,10 @@ pub struct SdroxideApp {
     /// The last decode the user clicked (not REPLY): its call and map
     /// location, shown as a faint preview marker distinct from the active DX.
     digi_preview: Option<(String, (f64, f64))>,
+    /// Height the station card under the FT8/FT4 map took last frame, taken
+    /// off the map's height this frame so the two together keep to the map's
+    /// budget.
+    digi_map_card_h: f32,
     /// Animated centre/zoom of the FT8 world map (eased toward the fit target).
     map_view: crate::widgets::worldmap::MapView,
     /// Which decoded stations are currently up, and how brightly. Shared with
@@ -862,6 +930,14 @@ pub struct SdroxideApp {
     daylight_at: f64,
     /// The BANDS window.
     show_bands: bool,
+    /// The PLAYBACK window's state — see [`playback::PlaybackUi`].
+    pub(in crate::app) playback: playback::PlaybackUi,
+    /// The WEATHER SATELLITES window and the picture it shows — see
+    /// [`wxsat::WxsatUi`].
+    wxsat: wxsat::WxsatUi,
+    /// The RADIOSONDES window, its map and the SondeHub layer — see
+    /// [`sonde::SondeUi`].
+    sonde: sonde::SondeUi,
     /// The propagation field rendered to pixels, rebuilt only when it moves.
     prop_heat: crate::prop_map::PropHeat,
     /// The grey-line (night/twilight) overlay rendered to pixels, rebuilt at
@@ -911,6 +987,15 @@ pub struct SdroxideApp {
     show_spots: bool,
     /// Show only spots that fall inside the current panadapter view span.
     spot_in_view_only: bool,
+    /// The SPOTS window's map: its view, and the spot it marks — picked in
+    /// the list or by its label on the waterfall.
+    spots_map_view: crate::widgets::worldmap::MapView,
+    spots_map_pick: Vec<Spot>,
+    /// The SPOTS map's placed spots, kept while the shown list is unchanged.
+    spots_map_cache: spots::SpotsMapCache,
+    /// The next LIST frame scrolls the first pick into view: set by a pick
+    /// on the map or the waterfall, cleared once the list has shown it.
+    spots_list_focus: bool,
     /// Fuzzy search query for the spot list. Narrows the list in the SPOTS
     /// window only — the waterfall labels are positioned by frequency, so
     /// reordering them by match quality would mean nothing.
@@ -1308,9 +1393,15 @@ pub(crate) enum RadioTabRequest {
     /// pointed at the receiver that was picked, rather than arriving blank with
     /// its settings page open for an address to be typed into. `None` is the
     /// plain "+" chip, which does exactly that.
+    ///
+    /// `name` is the name the new radio is given; `None` leaves it to be named
+    /// after its interface, as before. "Public SDRs" gives the receiver's
+    /// directory name (HDZ 2026-11-04). Only for a radio on this machine: a
+    /// radio added at a station is named there.
     Add {
         station: String,
         preset: Option<Box<sdroxide_types::RadioConfig>>,
+        name: Option<String>,
     },
     /// Open somebody else's station as a tab of its own: dial this WebSocket
     /// URL and, if it answers, show it under `name`. Queued by the **Remote**
@@ -1407,9 +1498,11 @@ impl SdroxideApp {
             ui_settings.waterfall_font_size,
             ui_settings.menu_font_size,
         );
+        crate::widgets::channels::set_country(ui_settings.country);
         crate::theme::set_spot_colors(&ui_settings.spot_colors);
         crate::theme::set_bandplan_colors(&ui_settings.bandplan_colors);
         crate::theme::set_map_cities(ui_settings.map_cities);
+        crate::theme::set_waterfall_smooth(ui_settings.waterfall_smooth);
         crate::theme::set_ui_zoom(ui_settings.ui_zoom);
         crate::i18n::set_language(ui_settings.language);
         crate::theme::apply(egui_ctx);
@@ -1451,7 +1544,15 @@ impl SdroxideApp {
             caps: None,
             state: RadioState::default(),
             frame: None,
+            snr_grid: None,
+            snr_last: None,
+            snr_labels: Default::default(),
+            catalog_schedule: None,
+            catalog_aoki: None,
+            catalog_imports: 0,
             wide_frame: None,
+            wide_grid: None,
+            wide_guide: None,
             wide_wf: Default::default(),
             meters: None,
             last_swr: None,
@@ -1467,6 +1568,7 @@ impl SdroxideApp {
             cert_hold: false,
             radio_notice: None,
             sent_cfg: None,
+            sent_uncovered: None,
             desired_cfg: None,
             desired_at: 0.0,
             sent_skim_view: None,
@@ -1504,6 +1606,7 @@ impl SdroxideApp {
             applied_look: (ui_settings.theme, ui_settings.button_style, ui_settings.window_style),
             applied_ui_font: ui_settings.menu_font_size,
             applied_language: ui_settings.language,
+            applied_smooth: ui_settings.waterfall_smooth,
             speech: speech::SpeechRuntime::new(load_speech_settings(storage)),
             speech_voices: Vec::new(),
             alerts: alerts::AlertRuntime::station(load_alerts_settings(storage)),
@@ -1541,7 +1644,9 @@ impl SdroxideApp {
             public_sdr_free_only: true,
             public_sdr_in_band: false,
             public_sdr_low_bw: false,
-            public_sdr_confirm: None,
+            public_sdr_map: false,
+            public_sdr_map_state: Default::default(),
+            on_public_sdr_cache: std::cell::Cell::new((f64::NEG_INFINITY, false)),
             smartsdr_devices: Vec::new(),
             smartsdr_test_result: None,
             pluto_devices: Vec::new(),
@@ -1601,6 +1706,8 @@ impl SdroxideApp {
             // room for it this frame. (SWL users group, via sdroxide-brown.)
             band_docked: band_dock.contains_key(&radio_id),
             band_dock_visible: band_dock.get(&radio_id).copied().unwrap_or(false),
+            workplaces: persist::load_workplaces(),
+            workplace_track: Default::default(),
             aux_view: ViewState::default(),
             panel_window_pane: 0,
             // Where each tool window was left last time — in its own window or
@@ -1610,11 +1717,17 @@ impl SdroxideApp {
                 .map(|(id, s)| (id, s.into()))
                 .collect(),
             panel_floating: false,
+            curtain_rise_at: None,
+            digi_curtain_prev: 0.5,
+            curtain_fall: None,
+            last_voice_mode: Mode::Usb,
             panel_rolled: false,
             show_windows: false,
             workspaces: persist::load_workspaces(),
             workspace_name: String::new(),
             band_dock_room: None,
+            cw_panel_floor: 0.0,
+            cw_rows_below: 0.0,
             // Corrected on the first frame, once the viewport size is known.
             tier: crate::layout::Tier::Desktop,
             ptt: Default::default(),
@@ -1633,6 +1746,9 @@ impl SdroxideApp {
             text_tx: String::new(),
             qso_log: load_qso_log(storage),
             log_view: Default::default(),
+            palette: Default::default(),
+            show_check: false,
+            welcome: Default::default(),
             session_qsos: 0,
             show_digi_settings: false,
             digi_cfg_edit: sdroxide_types::DigiConfig::default(),
@@ -1672,8 +1788,8 @@ impl SdroxideApp {
             vdl2_sort_desc: true,
             aprs_target: String::new(),
             aprs_draft: String::new(),
-            vara_target: String::new(),
-            vara_draft: String::new(),
+            tnc_target: String::new(),
+            tnc_draft: String::new(),
             packet_target: String::new(),
             packet_via: String::new(),
             packet_draft: String::new(),
@@ -1698,6 +1814,7 @@ impl SdroxideApp {
             cw_key_down: false,
             digi_tx_hz_edit: String::new(),
             digi_preview: None,
+            digi_map_card_h: 0.0,
             map_view: Default::default(),
             band_conditions: None,
             band_conditions_fetch: None,
@@ -1705,6 +1822,9 @@ impl SdroxideApp {
             daylight: true,
             daylight_at: f64::NEG_INFINITY,
             show_bands: false,
+            playback: playback::PlaybackUi::default(),
+            wxsat: wxsat::WxsatUi::default(),
+            sonde: sonde::SondeUi::default(),
             digi_stations: Default::default(),
             prop: Default::default(),
             prop_heat: Default::default(),
@@ -1724,6 +1844,10 @@ impl SdroxideApp {
             adopted_spots_gen: None,
             show_spots: false,
             spot_in_view_only: false,
+            spots_map_view: Default::default(),
+            spots_map_pick: Vec::new(),
+            spots_map_cache: Default::default(),
+            spots_list_focus: false,
             spot_search: String::new(),
             broadcast: load_broadcast_stations(),
             broadcast_spots: Vec::new(),
@@ -2022,9 +2146,19 @@ impl SdroxideApp {
     /// Read from the shell's roster either way, so a radio of this machine's
     /// own and one at a station are answered the same: the shell is what knows
     /// which of the two this tab is, and it has already asked the station.
+    ///
+    /// Also `None` while the shell draws a row of tabs, which carry the rings
+    /// themselves: the switch then has one place, on the radio's tab. The
+    /// test is the shell's own for drawing the row (`MultiApp::strip_wanted`):
+    /// more than one radio that is not lent out. A one-radio session has no
+    /// row, and keeps the switch here.
+    // Why: HDZ 2026-11-04: "im Wildtyp sind die Ringe eigentlich gar nicht da
+    //      im Hauptpanel, so würde ich unseren Patch auch machen, die Ringe nur
+    //      oben in den Tabs".
     pub(crate) fn own_link_state(&self) -> Option<bool> {
         let chip = self.radio_roster.iter().find(|c| c.id == self.radio_id)?;
-        (chip.switchable && chip.attached_to.is_none()).then_some(chip.enabled)
+        let tabs_shown = self.radio_roster.iter().filter(|c| c.attached_to.is_none()).count() > 1;
+        (chip.switchable && chip.attached_to.is_none() && !tabs_shown).then_some(chip.enabled)
     }
 
     /// The other radios of the station this tab is connected to, and the
@@ -2181,10 +2315,13 @@ impl SdroxideApp {
         self.cert_hold = false;
         self.frame = None;
         self.wide_frame = None;
+        self.wide_grid = None;
+        self.wide_guide = None;
         // The new session starts on the engine's own spectrum config, not the
         // one the old session was told. Forgetting what was sent is what makes
         // this frame's debounce push it again.
         self.sent_cfg = None;
+        self.sent_uncovered = None;
         self.desired_cfg = None;
         if let Err(e) = self.ctrl.reconnect() {
             // Threw before the socket was even opened, so nothing is going to

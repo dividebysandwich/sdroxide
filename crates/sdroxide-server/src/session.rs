@@ -21,9 +21,14 @@ use crate::{SessionTx, Shared, Station};
 /// `/ws` — the station's first radio, which is the whole of what a station
 /// with one radio has. Every client that predates the roster arrives here, so
 /// this address must never mean anything else.
-pub async fn ws_route(State(station): State<Arc<Station>>, upgrade: WebSocketUpgrade) -> Response {
+pub async fn ws_route(
+    State(station): State<Arc<Station>>,
+    headers: axum::http::HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
     let shared = station.first();
-    upgrade.on_upgrade(|socket| session(socket, shared, station))
+    let signed = crate::session_cookie::from_headers(&headers, &station.auth);
+    upgrade.on_upgrade(move |socket| session(socket, shared, station, signed))
 }
 
 /// `/ws/<id>` — one named radio out of the station's roster. Unknown ids are
@@ -32,10 +37,12 @@ pub async fn ws_route(State(station): State<Arc<Station>>, upgrade: WebSocketUpg
 pub async fn ws_route_for(
     State(station): State<Arc<Station>>,
     Path(id): Path<u32>,
+    headers: axum::http::HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Response {
+    let signed = crate::session_cookie::from_headers(&headers, &station.auth);
     match station.radio(id) {
-        Some(shared) => upgrade.on_upgrade(|socket| session(socket, shared, station)),
+        Some(shared) => upgrade.on_upgrade(move |socket| session(socket, shared, station, signed)),
         None => {
             let known: Vec<String> = station.list().iter().map(|r| r.id.to_string()).collect();
             (
@@ -51,12 +58,17 @@ fn msg(m: &ServerMsg) -> Message {
     Message::Binary(encode(m).expect("encode").into())
 }
 
-async fn session(mut socket: WebSocket, shared: Arc<Shared>, station: Arc<Station>) {
+async fn session(
+    mut socket: WebSocket,
+    shared: Arc<Shared>,
+    station: Arc<Station>,
+    signed: Option<String>,
+) {
     // Hello and the sign-in first, and only then the single-client slot. The
     // order matters: claiming the slot before knowing who this is would let
     // anyone who can open a socket lock the operator out of their own radio
     // without ever proving they may touch it.
-    let Some(audio_caps) = handshake(&mut socket, &shared).await else {
+    let Some(audio_caps) = handshake(&mut socket, &shared, signed).await else {
         let _ = socket.close().await;
         return;
     };
@@ -88,7 +100,11 @@ async fn session(mut socket: WebSocket, shared: Arc<Shared>, station: Arc<Statio
 /// The version check comes first so a client on the wrong protocol is told
 /// exactly that, rather than being asked to sign in to a server it could not
 /// have talked to anyway.
-async fn handshake(socket: &mut WebSocket, shared: &Arc<Shared>) -> Option<AudioCaps> {
+async fn handshake(
+    socket: &mut WebSocket,
+    shared: &Arc<Shared>,
+    signed: Option<String>,
+) -> Option<AudioCaps> {
     // --- Hello (5 s budget) -------------------------------------------
     let hello = tokio::time::timeout(Duration::from_secs(5), socket.recv()).await;
     let audio_caps = match hello {
@@ -123,6 +139,7 @@ async fn handshake(socket: &mut WebSocket, shared: &Arc<Shared>) -> Option<Audio
                 _ => None,
             },
         },
+        signed.is_some(),
     )
     .await;
     signed_in.then_some(audio_caps)
@@ -186,6 +203,7 @@ async fn run_session(
         adsb_status,
         vdl2_status,
         ais_status,
+        sonde_status,
         drm,
         hd,
         relay,
@@ -213,6 +231,7 @@ async fn run_session(
             latest.adsb_status.clone(),
             latest.vdl2_status.clone(),
             latest.ais_status.clone(),
+            latest.sonde_status.clone(),
             latest.drm.clone(),
             latest.hd.clone(),
             latest.relay.clone(),
@@ -286,6 +305,11 @@ async fn run_session(
     if let Some(st) = ais_status {
         let _ = socket.send(msg(&ServerMsg::AisStatus(st))).await;
     }
+    // ...and the radiosondes heard, with their tracks: a sonde that has landed
+    // sends nothing more, so a client attaching later would never see it.
+    if let Some(st) = sonde_status {
+        let _ = socket.send(msg(&ServerMsg::SondeStatus(st))).await;
+    }
     // And the transmit-image presets, for the same reason. The received
     // galleries are not replayed: a panel lists its store when it opens, which
     // is both authoritative and the only view that can be paged.
@@ -352,7 +376,19 @@ async fn run_session(
             tokio::select! {
                 biased;
                 m = aud_rx.recv() => {
-                    let Some(m) = m else { break };
+                    let Some(m) = m else {
+                        // Both lanes close together, when the session handle
+                        // is dropped (a radio closed from a client does that
+                        // right after queueing the roster that tells this one
+                        // it is gone). This branch is polled first, so without
+                        // this it would end the loop with that message still
+                        // sitting in the reliable lane, and the client would
+                        // never hear why it was let go.
+                        while let Ok(m) = rel_rx.try_recv() {
+                            if ws_tx.send(msg(&m)).await.is_err() { break; }
+                        }
+                        break;
+                    };
                     if ws_tx.send(msg(&m)).await.is_err() { break; }
                 }
                 m = rel_rx.recv() => {

@@ -10,3 +10,9 @@
 [submodule "vendor/xng"]
 	path = vendor/xng
 	url = https://github.com/airframesio/xng.git
+[submodule "vendor/mercury"]
+	path = vendor/mercury
+	url = https://github.com/Rhizomatica/mercury
+[submodule "vendor/data2g"]
+	path = vendor/data2g
+	url = https://github.com/arodland/Data2G

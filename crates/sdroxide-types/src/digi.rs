@@ -568,10 +568,10 @@ pub struct DigiStatus {
     /// after `tx_refused` for the same positional reason.
     #[serde(default)]
     pub jtty: Option<crate::JttyStatus>,
-    /// VARA HF: the link, the speed and the transcript. `None` in every other
-    /// mode. Appended after `jtty` for the same positional reason.
+    /// Mercury and Data2G: the link, the speed and the transcript. `None` in
+    /// every other mode. Appended after `jtty` for the same positional reason.
     #[serde(default)]
-    pub vara: Option<crate::VaraStatus>,
+    pub tnc: Option<crate::TncStatus>,
 }
 
 /// The running detail of the contact in progress: when it started and what has
@@ -1086,7 +1086,7 @@ impl DigiStatus {
             navtex: None,
             acars: None,
             jtty: None,
-            vara: None,
+            tnc: None,
             aprs: None,
             js8: None,
             atchat: None,
@@ -1237,6 +1237,672 @@ pub fn worked_before(
 }
 
 /// Operator configuration for digital-mode operation. Persisted engine-side,
+/// BPSK or 8PSK, on top of [`PskSpeed`].
+///
+/// Two axes rather than one enum of twelve: the speed is a rate and the
+/// modulation is a constellation, and the operator picks them separately in the
+/// panel just as they are separate in the mode's name.
+///
+/// **QPSK is not here.** sdroxide-brown carries a QPSK path in the modem, but
+/// its receiver's carrier loop is decision-directed BPSK and cannot track four
+/// phases, so it reads neither fldigi's recordings nor its own transmitter. When
+/// it does, it is an appended variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum PskModulation {
+    #[default]
+    Bpsk,
+    /// Eight-phase differential PSK: three bits per symbol to the same MFSK
+    /// varicode, on the same baud rates and the same front end.
+    ///
+    /// **Proven against our own transmitter, not against a recording.** fldigi's
+    /// 8PSK recordings in sdroxide-brown's corpus still read nothing through this
+    /// receiver, so interoperability is unproven.
+    Psk8,
+}
+
+impl PskModulation {
+    pub const ALL: [PskModulation; 2] = [PskModulation::Bpsk, PskModulation::Psk8];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PskModulation::Bpsk => "BPSK",
+            PskModulation::Psk8 => "8PSK",
+        }
+    }
+}
+
+/// Which member of fldigi's **coded** PSK families is selected.
+///
+/// `Mode::Psk` on its own is PSK31's family: one differential carrier at six
+/// speeds and two constellations, with **no** forward error correction. fldigi's
+/// other PSK modes are different waveforms that share the modulator's front end
+/// and nothing else — a convolutional code, a bit interleaver, several carriers,
+/// or all three — so the operator has to say which one is on the air, exactly as
+/// they have to for MFSK.
+///
+/// The table is fldigi 4.2.13's `src/psk/psk.cxx`: `symbollen`, `idepth`,
+/// `numcarriers` and `_pskr`. Three facts it settles, each of which was once
+/// guessed wrong here:
+///
+/// * **The code is not the standard K = 7 one.** `PSKR_POLY1`/`POLY2` are `0x6d`
+///   and `0x4f`, and the interleaver is `2 × 2 × idepth` — which **BPSK63F alone
+///   skips**, so it is a coded mode with no interleave.
+/// * **The `C` family has no FEC at all** and uses PSK31's varicode; the `R` and
+///   `RC` families use the MFSK varicode. `C` and `RC` are easy to confuse and
+///   are not the same thing.
+/// * **Carriers are `1.4 × baud` apart**, so a bank is `1.4 × baud × (n − 1)`
+///   wide before its own bandwidth.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum PskCoded {
+    /// PSK31's own family — the six speeds and two constellations above.
+    #[default]
+    Off,
+    /// BPSK63F: the robust code, a single carrier, and **no interleaver**.
+    Bpsk63F,
+    Psk125R,
+    Psk250R,
+    Psk500R,
+    Psk1000R,
+    Psk125C12,
+    Psk250C6,
+    Psk500C2,
+    Psk500C4,
+    Psk800C2,
+    Psk1000C2,
+    Psk63Rc4,
+    Psk63Rc5,
+    Psk63Rc10,
+    Psk63Rc20,
+    Psk63Rc32,
+    Psk125Rc4,
+    Psk125Rc5,
+    Psk125Rc10,
+    Psk125Rc12,
+    Psk125Rc16,
+    Psk250Rc2,
+    Psk250Rc3,
+    Psk250Rc5,
+    Psk250Rc6,
+    Psk250Rc7,
+    Psk500Rc2,
+    Psk500Rc3,
+    Psk500Rc4,
+    Psk800Rc2,
+    Psk1000Rc2,
+}
+
+/// The family a [`PskCoded`] belongs to, which is what the panel groups by: 32
+/// chips in one row is a menu, not a control.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PskFamily {
+    /// PSK31's own speeds and constellations.
+    Plain,
+    /// The one coded mode with no interleaver.
+    Bpsk63F,
+    /// Single carrier, coded.
+    Robust,
+    /// Several carriers, no code.
+    MultiCarrier,
+    /// Several carriers and the code.
+    RobustMulti,
+}
+
+impl PskFamily {
+    pub const ALL: [PskFamily; 5] = [
+        PskFamily::Plain,
+        PskFamily::Bpsk63F,
+        PskFamily::Robust,
+        PskFamily::MultiCarrier,
+        PskFamily::RobustMulti,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PskFamily::Plain => "PLAIN",
+            PskFamily::Bpsk63F => "BPSK63F",
+            PskFamily::Robust => "R",
+            PskFamily::MultiCarrier => "C",
+            PskFamily::RobustMulti => "RC",
+        }
+    }
+
+    /// The variant this family's first chip is, so picking a family lands on
+    /// something that decodes rather than on an empty row.
+    pub fn first(self) -> PskCoded {
+        match self {
+            PskFamily::Plain => PskCoded::Off,
+            PskFamily::Bpsk63F => PskCoded::Bpsk63F,
+            PskFamily::Robust => PskCoded::Psk125R,
+            PskFamily::MultiCarrier => PskCoded::Psk250C6,
+            PskFamily::RobustMulti => PskCoded::Psk63Rc4,
+        }
+    }
+}
+
+impl PskCoded {
+    pub const ALL: [PskCoded; 32] = [
+        PskCoded::Off,
+        PskCoded::Bpsk63F,
+        PskCoded::Psk125R,
+        PskCoded::Psk250R,
+        PskCoded::Psk500R,
+        PskCoded::Psk1000R,
+        PskCoded::Psk125C12,
+        PskCoded::Psk250C6,
+        PskCoded::Psk500C2,
+        PskCoded::Psk500C4,
+        PskCoded::Psk800C2,
+        PskCoded::Psk1000C2,
+        PskCoded::Psk63Rc4,
+        PskCoded::Psk63Rc5,
+        PskCoded::Psk63Rc10,
+        PskCoded::Psk63Rc20,
+        PskCoded::Psk63Rc32,
+        PskCoded::Psk125Rc4,
+        PskCoded::Psk125Rc5,
+        PskCoded::Psk125Rc10,
+        PskCoded::Psk125Rc12,
+        PskCoded::Psk125Rc16,
+        PskCoded::Psk250Rc2,
+        PskCoded::Psk250Rc3,
+        PskCoded::Psk250Rc5,
+        PskCoded::Psk250Rc6,
+        PskCoded::Psk250Rc7,
+        PskCoded::Psk500Rc2,
+        PskCoded::Psk500Rc3,
+        PskCoded::Psk500Rc4,
+        PskCoded::Psk800Rc2,
+        PskCoded::Psk1000Rc2,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PskCoded::Off => "PLAIN",
+            PskCoded::Bpsk63F => "BPSK63F",
+            PskCoded::Psk125R => "PSK125R",
+            PskCoded::Psk250R => "PSK250R",
+            PskCoded::Psk500R => "PSK500R",
+            PskCoded::Psk1000R => "PSK1000R",
+            PskCoded::Psk125C12 => "PSK125C12",
+            PskCoded::Psk250C6 => "PSK250C6",
+            PskCoded::Psk500C2 => "PSK500C2",
+            PskCoded::Psk500C4 => "PSK500C4",
+            PskCoded::Psk800C2 => "PSK800C2",
+            PskCoded::Psk1000C2 => "PSK1000C2",
+            PskCoded::Psk63Rc4 => "PSK63RC4",
+            PskCoded::Psk63Rc5 => "PSK63RC5",
+            PskCoded::Psk63Rc10 => "PSK63RC10",
+            PskCoded::Psk63Rc20 => "PSK63RC20",
+            PskCoded::Psk63Rc32 => "PSK63RC32",
+            PskCoded::Psk125Rc4 => "PSK125RC4",
+            PskCoded::Psk125Rc5 => "PSK125RC5",
+            PskCoded::Psk125Rc10 => "PSK125RC10",
+            PskCoded::Psk125Rc12 => "PSK125RC12",
+            PskCoded::Psk125Rc16 => "PSK125RC16",
+            PskCoded::Psk250Rc2 => "PSK250RC2",
+            PskCoded::Psk250Rc3 => "PSK250RC3",
+            PskCoded::Psk250Rc5 => "PSK250RC5",
+            PskCoded::Psk250Rc6 => "PSK250RC6",
+            PskCoded::Psk250Rc7 => "PSK250RC7",
+            PskCoded::Psk500Rc2 => "PSK500RC2",
+            PskCoded::Psk500Rc3 => "PSK500RC3",
+            PskCoded::Psk500Rc4 => "PSK500RC4",
+            PskCoded::Psk800Rc2 => "PSK800RC2",
+            PskCoded::Psk1000Rc2 => "PSK1000RC2",
+        }
+    }
+
+    pub fn baud(self) -> f64 {
+        match self {
+            PskCoded::Off | PskCoded::Bpsk63F => 62.5,
+            PskCoded::Psk125R
+            | PskCoded::Psk125C12
+            | PskCoded::Psk125Rc4
+            | PskCoded::Psk125Rc5
+            | PskCoded::Psk125Rc10
+            | PskCoded::Psk125Rc12
+            | PskCoded::Psk125Rc16 => 125.0,
+            PskCoded::Psk250R
+            | PskCoded::Psk250C6
+            | PskCoded::Psk250Rc2
+            | PskCoded::Psk250Rc3
+            | PskCoded::Psk250Rc5
+            | PskCoded::Psk250Rc6
+            | PskCoded::Psk250Rc7 => 250.0,
+            PskCoded::Psk500R
+            | PskCoded::Psk500C2
+            | PskCoded::Psk500C4
+            | PskCoded::Psk500Rc2
+            | PskCoded::Psk500Rc3
+            | PskCoded::Psk500Rc4 => 500.0,
+            PskCoded::Psk800C2 | PskCoded::Psk800Rc2 => 800.0,
+            PskCoded::Psk1000R | PskCoded::Psk1000C2 | PskCoded::Psk1000Rc2 => 1000.0,
+            PskCoded::Psk63Rc4
+            | PskCoded::Psk63Rc5
+            | PskCoded::Psk63Rc10
+            | PskCoded::Psk63Rc20
+            | PskCoded::Psk63Rc32 => 62.5,
+        }
+    }
+
+    /// How many carriers the bank has. One for PSK31's family and the `R` set,
+    /// `numcarriers` for the rest.
+    pub fn carriers(self) -> usize {
+        match self {
+            PskCoded::Off | PskCoded::Bpsk63F => 1,
+            PskCoded::Psk125R
+            | PskCoded::Psk250R
+            | PskCoded::Psk500R
+            | PskCoded::Psk1000R
+            | PskCoded::Psk500C2
+            | PskCoded::Psk800C2
+            | PskCoded::Psk1000C2
+            | PskCoded::Psk250Rc2
+            | PskCoded::Psk500Rc2
+            | PskCoded::Psk800Rc2
+            | PskCoded::Psk1000Rc2 => {
+                if matches!(
+                    self,
+                    PskCoded::Psk125R | PskCoded::Psk250R | PskCoded::Psk500R | PskCoded::Psk1000R
+                ) {
+                    1
+                } else {
+                    2
+                }
+            }
+            PskCoded::Psk250Rc3 | PskCoded::Psk500Rc3 => 3,
+            PskCoded::Psk500C4 | PskCoded::Psk63Rc4 | PskCoded::Psk125Rc4 => 4,
+            PskCoded::Psk63Rc5
+            | PskCoded::Psk125Rc5
+            | PskCoded::Psk250Rc5
+            | PskCoded::Psk500Rc4 => 5,
+            PskCoded::Psk250C6 | PskCoded::Psk250Rc6 => 6,
+            PskCoded::Psk250Rc7 => 7,
+            PskCoded::Psk63Rc10 | PskCoded::Psk125Rc10 => 10,
+            PskCoded::Psk125C12 | PskCoded::Psk125Rc12 => 12,
+            PskCoded::Psk125Rc16 => 16,
+            PskCoded::Psk63Rc20 => 20,
+            PskCoded::Psk63Rc32 => 32,
+        }
+    }
+
+    /// The `2 × 2 × idepth` interleaver's depth, or `None` where the mode does not
+    /// interleave — which is the `C` family (no code at all) and BPSK63F.
+    pub fn depth(self) -> Option<usize> {
+        match self {
+            PskCoded::Off | PskCoded::Bpsk63F => None,
+            PskCoded::Psk125R => Some(40),
+            PskCoded::Psk250R => Some(80),
+            PskCoded::Psk500R | PskCoded::Psk1000R => Some(160),
+            PskCoded::Psk125C12
+            | PskCoded::Psk250C6
+            | PskCoded::Psk500C2
+            | PskCoded::Psk500C4
+            | PskCoded::Psk800C2
+            | PskCoded::Psk1000C2 => None,
+            PskCoded::Psk63Rc4 | PskCoded::Psk125Rc4 => Some(80),
+            PskCoded::Psk63Rc5 => Some(260),
+            _ => Some(160),
+        }
+    }
+
+    /// Whether the mode carries the convolutional code. `C` alone does not.
+    pub fn fec(self) -> bool {
+        !matches!(
+            self,
+            PskCoded::Psk125C12
+                | PskCoded::Psk250C6
+                | PskCoded::Psk500C2
+                | PskCoded::Psk500C4
+                | PskCoded::Psk800C2
+                | PskCoded::Psk1000C2
+        )
+    }
+
+    pub fn family(self) -> PskFamily {
+        match self {
+            PskCoded::Off => PskFamily::Plain,
+            PskCoded::Bpsk63F => PskFamily::Bpsk63F,
+            PskCoded::Psk125R | PskCoded::Psk250R | PskCoded::Psk500R | PskCoded::Psk1000R => {
+                PskFamily::Robust
+            }
+            PskCoded::Psk125C12
+            | PskCoded::Psk250C6
+            | PskCoded::Psk500C2
+            | PskCoded::Psk500C4
+            | PskCoded::Psk800C2
+            | PskCoded::Psk1000C2 => PskFamily::MultiCarrier,
+            _ => PskFamily::RobustMulti,
+        }
+    }
+
+    /// The variants in one family the panel offers, in the order it shows them.
+    pub fn in_family(family: PskFamily) -> Vec<PskCoded> {
+        PskCoded::ALL.iter().copied().filter(|c| c.family() == family && c.offered()).collect()
+    }
+
+    /// False for the four widest multi-carrier banks, which are **parked**:
+    /// they read nothing — not even our own transmission — because the
+    /// multi-carrier front end decimates before it separates the carriers, and
+    /// theirs sit too close for that. Every narrower bank reads fldigi's
+    /// recording of it. They stay in the enum, so offering them once the front
+    /// end is rebuilt is a one-line change, but the panel does not show them.
+    /// False for the three widest coded banks we offer: they **receive**
+    /// (fldigi's recordings of PSK125RC12 and PSK125RC16 read whole, PSK63RC32
+    /// most of it), but our own transmission of them does not read back
+    /// through the same receiver, so it is not put on the air. Every other
+    /// offered variant reads its own transmission back.
+    pub fn transmits(self) -> bool {
+        self.offered()
+            && !matches!(self, PskCoded::Psk63Rc32 | PskCoded::Psk125Rc12 | PskCoded::Psk125Rc16)
+    }
+
+    pub fn offered(self) -> bool {
+        !matches!(
+            self,
+            PskCoded::Psk125C12 | PskCoded::Psk500C4 | PskCoded::Psk500Rc4 | PskCoded::Psk1000C2
+        )
+    }
+
+    /// The band the signal occupies, `1.4 × baud` between carriers plus one
+    /// carrier's own width — used by the panadapter and the transmit lockout.
+    pub fn bandwidth_hz(self) -> f64 {
+        1.4 * self.baud() * (self.carriers() as f64 - 1.0) + self.baud()
+    }
+}
+
+/// PSK31's speed.
+///
+/// The family is one modulation — differential BPSK — at six symbol rates, and
+/// nothing else changes between them: the Varicode, the differential encoding
+/// and the idle reversals are the same at 31 baud and at 1000.
+///
+/// QPSK is deliberately *not* here. It is not a fourth speed but a different
+/// mode: the PSK31-family QPSK carries a rate-1/2 convolutional code, so it
+/// needs a Viterbi decoder and the interleaver before a constellation alone
+/// would mean anything. The wide spectrum modes (`QPSK` in the corpus) are
+/// therefore still not tunable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum PskSpeed {
+    #[default]
+    Bps31,
+    Bps63,
+    Bps125,
+    Bps250,
+    /// BPSK500 — the same modem at 500 baud, which the corpus reads whole. Not a
+    /// fifth "PSK31 speed" in any conventional sense, but the same waveform at a
+    /// rate fldigi sends, and its own chip because a decoder tuned to the wrong
+    /// rate hears nothing.
+    Bps500,
+    /// BPSK1000 — 1000 baud, a kilohertz wide. The corpus reads its **second
+    /// half**: the receiver takes about a second to lock and at this rate that is
+    /// a third of the message, so what arrives late reads and what arrives early
+    /// is lost. Offered because a listener hearing one of these has no other way
+    /// in, and the chip says what it does.
+    Bps1000,
+}
+
+impl PskSpeed {
+    pub const ALL: [PskSpeed; 6] = [
+        PskSpeed::Bps31,
+        PskSpeed::Bps63,
+        PskSpeed::Bps125,
+        PskSpeed::Bps250,
+        PskSpeed::Bps500,
+        PskSpeed::Bps1000,
+    ];
+
+    pub fn baud(self) -> f64 {
+        match self {
+            PskSpeed::Bps31 => 31.25,
+            PskSpeed::Bps63 => 62.5,
+            PskSpeed::Bps125 => 125.0,
+            PskSpeed::Bps250 => 250.0,
+            PskSpeed::Bps500 => 500.0,
+            PskSpeed::Bps1000 => 1000.0,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PskSpeed::Bps31 => "BPSK31",
+            PskSpeed::Bps63 => "BPSK63",
+            PskSpeed::Bps125 => "BPSK125",
+            PskSpeed::Bps250 => "BPSK250",
+            PskSpeed::Bps500 => "BPSK500",
+            PskSpeed::Bps1000 => "BPSK1000",
+        }
+    }
+}
+
+/// DominoEX submode: nine variants of the IFK+ family, one modem at different
+/// symbol rates.
+///
+/// The numbers behind each (symbol length, tone spacing, sample rate) are
+/// protocol constants and live beside the decoder in `sdroxide_dsp::ifk::IfkVariant`;
+/// this enum is the part that rides [`DigiConfig`], and the two are tied by
+/// **label**, so there is only ever one table. The names are fldigi's, which is
+/// also the decoder's key — a spelling change here would silently retune the
+/// receiver, and `the_domino_mode_labels_are_the_decoders` pins it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum DominoMode {
+    Dom4,
+    Dom5,
+    Dom8,
+    #[default]
+    Dom11,
+    Dom16,
+    Dom22,
+    Micro,
+    Dom44,
+    Dom88,
+}
+
+impl DominoMode {
+    pub const ALL: [DominoMode; 9] = [
+        DominoMode::Dom4,
+        DominoMode::Dom5,
+        DominoMode::Dom8,
+        DominoMode::Dom11,
+        DominoMode::Dom16,
+        DominoMode::Dom22,
+        DominoMode::Micro,
+        DominoMode::Dom44,
+        DominoMode::Dom88,
+    ];
+
+    /// The decoder's own key (`IfkVariant::name`), which is fldigi's spelling.
+    pub fn label(self) -> &'static str {
+        match self {
+            DominoMode::Dom4 => "DOMEX4",
+            DominoMode::Dom5 => "DOMEX5",
+            DominoMode::Dom8 => "DOMEX8",
+            DominoMode::Dom11 => "DOMEX11",
+            DominoMode::Dom16 => "DOMEX16",
+            DominoMode::Dom22 => "DOMEX22",
+            DominoMode::Micro => "DOMEXM",
+            DominoMode::Dom44 => "DOMEX44",
+            DominoMode::Dom88 => "DOMEX88",
+        }
+    }
+
+    /// What the chip says: DominoEX's own name for it.
+    pub fn name(self) -> &'static str {
+        match self {
+            DominoMode::Dom4 => "DOMINOEX 4",
+            DominoMode::Dom5 => "DOMINOEX 5",
+            DominoMode::Dom8 => "DOMINOEX 8",
+            DominoMode::Dom11 => "DOMINOEX 11",
+            DominoMode::Dom16 => "DOMINOEX 16",
+            DominoMode::Dom22 => "DOMINOEX 22",
+            DominoMode::Micro => "DOMINOEX MICRO",
+            DominoMode::Dom44 => "DOMINOEX 44",
+            DominoMode::Dom88 => "DOMINOEX 88",
+        }
+    }
+
+    /// Nominal symbol rate, for the chip's hover.
+    pub fn baud(self) -> f32 {
+        match self {
+            DominoMode::Dom4 => 3.90625,
+            DominoMode::Dom5 => 5.383,
+            DominoMode::Dom8 => 7.8125,
+            DominoMode::Dom11 => 10.766,
+            DominoMode::Dom16 => 15.625,
+            DominoMode::Dom22 => 21.53,
+            DominoMode::Micro => 2.0,
+            DominoMode::Dom44 => 43.07,
+            DominoMode::Dom88 => 86.13,
+        }
+    }
+
+    /// The occupied width: eighteen tones, a symbol rate apart — two apart on
+    /// the double-spaced speeds (4, 5, 8 and 44), as in fldigi's table.
+    pub fn bandwidth_hz(self) -> f32 {
+        let ds = match self {
+            DominoMode::Dom4 | DominoMode::Dom5 | DominoMode::Dom8 | DominoMode::Dom44 => 2.0,
+            _ => 1.0,
+        };
+        18.0 * self.baud() * ds
+    }
+}
+
+/// MFSK submode — fldigi's IZ8BLY family: one of eleven symbol rates and tone
+/// counts, sharing one modem.
+///
+/// The numbers that describe each variant (symbol length, tone spacing, tone
+/// count, interleave depth) are protocol constants and live beside the decoder
+/// in `sdroxide_dsp::MfskVariant`; this enum is the part that rides
+/// [`DigiConfig`], and the two are tied together by label so there is only ever
+/// one table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum MfskMode {
+    Mfsk4,
+    Mfsk8,
+    Mfsk11,
+    #[default]
+    Mfsk16,
+    Mfsk22,
+    Mfsk31,
+    Mfsk32,
+    Mfsk64,
+    Mfsk64L,
+    Mfsk128,
+    Mfsk128L,
+}
+
+impl MfskMode {
+    pub const ALL: [MfskMode; 11] = [
+        MfskMode::Mfsk4,
+        MfskMode::Mfsk8,
+        MfskMode::Mfsk11,
+        MfskMode::Mfsk16,
+        MfskMode::Mfsk22,
+        MfskMode::Mfsk31,
+        MfskMode::Mfsk32,
+        MfskMode::Mfsk64,
+        MfskMode::Mfsk64L,
+        MfskMode::Mfsk128,
+        MfskMode::Mfsk128L,
+    ];
+
+    /// The name fldigi spells it, which is also the decoder's key — `MfskVariant`
+    /// is looked up by this string, so a spelling change here would silently
+    /// detune the receiver.
+    pub fn label(self) -> &'static str {
+        match self {
+            MfskMode::Mfsk4 => "MFSK4",
+            MfskMode::Mfsk8 => "MFSK8",
+            MfskMode::Mfsk11 => "MFSK11",
+            MfskMode::Mfsk16 => "MFSK16",
+            MfskMode::Mfsk22 => "MFSK22",
+            MfskMode::Mfsk31 => "MFSK31",
+            MfskMode::Mfsk32 => "MFSK32",
+            MfskMode::Mfsk64 => "MFSK64",
+            MfskMode::Mfsk64L => "MFSK64L",
+            MfskMode::Mfsk128 => "MFSK128",
+            MfskMode::Mfsk128L => "MFSK128L",
+        }
+    }
+
+    /// Tones the variant carries each symbol.
+    pub fn tones(self) -> u8 {
+        match self {
+            MfskMode::Mfsk4 | MfskMode::Mfsk8 => 32,
+            MfskMode::Mfsk31 => 8,
+            _ => 16,
+        }
+    }
+
+    /// Symbol rate, tones per second.
+    ///
+    /// The same numbers the decoder's own table carries, pinned together by
+    /// `the_mfsk_mode_table_matches_the_decoder` in `sdroxide-dsp`: the panel's
+    /// hover text and the panadapter's tone-bank edges read from here, and the
+    /// bank reads from there, so a drift would draw the signal's width wrong.
+    pub fn baud(self) -> f32 {
+        match self {
+            MfskMode::Mfsk4 => 3.90625,
+            MfskMode::Mfsk8 => 7.8125,
+            MfskMode::Mfsk11 => 10.766,
+            MfskMode::Mfsk16 => 15.625,
+            MfskMode::Mfsk22 => 21.533,
+            MfskMode::Mfsk31 | MfskMode::Mfsk32 => 31.25,
+            MfskMode::Mfsk64 | MfskMode::Mfsk64L => 62.5,
+            MfskMode::Mfsk128 | MfskMode::Mfsk128L => 125.0,
+        }
+    }
+
+    /// The occupied width: every tone but the first is one spacing above it.
+    pub fn bandwidth_hz(self) -> f32 {
+        (self.tones() - 1) as f32 * self.baud()
+    }
+}
+
+/// MT63 submode — the bandwidth and the interleave depth.
+///
+/// Three of fldigi's six are offered: both 2000 Hz variants and MT63-500 with
+/// the short interleave. The others (1K and 500 long) read their own
+/// transmission back, but the live receiver's lock only searches the operator's
+/// dial and does not find them reliably on a real signal yet; they are named in
+/// `sdroxide_dsp::mt63::Mt63Variant` so that offering them later is an appended
+/// variant rather than a new field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Mt63Mode {
+    #[default]
+    Mt632KS,
+    Mt632KL,
+    /// 500 Hz, short interleave. The narrowest band the mode has, and it reads
+    /// fldigi's recording of it whole through the live receiver.
+    Mt6500S,
+}
+
+impl Mt63Mode {
+    pub const ALL: [Mt63Mode; 3] = [Mt63Mode::Mt632KS, Mt63Mode::Mt632KL, Mt63Mode::Mt6500S];
+
+    /// The name fldigi gives the mode, after its `MT63-` prefix.
+    pub fn label(self) -> &'static str {
+        match self {
+            Mt63Mode::Mt632KS => "2KS",
+            Mt63Mode::Mt632KL => "2KL",
+            Mt63Mode::Mt6500S => "500S",
+        }
+    }
+
+    /// The long interleave: twice the depth, which spreads a burst further for
+    /// a slower decode.
+    pub fn long(self) -> bool {
+        matches!(self, Mt63Mode::Mt632KL)
+    }
+
+    pub fn bandwidth_hz(self) -> u32 {
+        match self {
+            Mt63Mode::Mt6500S => 500,
+            _ => 2000,
+        }
+    }
+}
+
 /// THOR (DominoEX-family) submode: sets the symbol rate. All use 18 tones with
 /// incremental frequency keying (IFK+) and convolutional FEC.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1303,8 +1969,24 @@ pub enum HellVariant {
 }
 
 impl HellVariant {
-    /// Dot rows scanned per character column.
+    /// Dot rows the receiver paints per column. Every variant is *displayed* at
+    /// this height; some transmit fewer and are doubled on the way to the eye.
     pub const ROWS: usize = 14;
+
+    /// Dot rows actually **transmitted** per column.
+    ///
+    /// Feld Hell and its near relatives send fourteen: the font is a 7-pixel
+    /// cell with every pixel sent twice, which is what the original machine did
+    /// to smooth diagonals on paper tape. Hell 80 sends seven — F6CTE's own
+    /// note says the column is "displayed vertically twice but transmitted
+    /// once" — and the recording agrees: its column rate measures 34.4/s, and
+    /// 34.4 x 14 would be 481 elements where the mode carries 245.
+    pub fn rows(self) -> usize {
+        match self {
+            HellVariant::Hell80 => 7,
+            _ => Self::ROWS,
+        }
+    }
     /// Columns per character cell; the last is the inter-character gap.
     pub const CELL_COLS: usize = 7;
 
@@ -1343,9 +2025,10 @@ impl HellVariant {
         }
     }
 
-    /// Dots (transmitted pixels) per second — 14 rows in every column.
+    /// Dots (transmitted pixels) per second: the column rate times the rows a
+    /// variant actually sends, which is not the same for all of them.
     pub fn pixel_rate(self) -> f64 {
-        self.column_rate() * Self::ROWS as f64
+        self.column_rate() * self.rows() as f64
     }
 
     /// Characters per second — 2.5 for classic Feld Hell.
@@ -1777,6 +2460,23 @@ pub struct DigiConfig {
     /// as addressed to us.
     #[serde(default)]
     pub js8_groups: Vec<String>,
+    /// JS8: free-text station information, sent in reply to ` INFO?`. For
+    /// example, the rig, antenna and power.
+    #[serde(default)]
+    pub js8_info: String,
+    /// JS8: master switch for the group auto-responses in
+    /// [`js8_auto_rules`](Self::js8_auto_rules).
+    ///
+    /// Off by default. A rule transmits in reply to traffic nobody addressed
+    /// to this station personally, possibly several times over. That is an
+    /// on-air behaviour the operator has to choose, separately from
+    /// answering direct questions.
+    #[serde(default)]
+    pub js8_auto_rules_on: bool,
+    /// JS8: canned replies to messages sent to a group. See
+    /// [`Js8AutoRule`](crate::Js8AutoRule).
+    #[serde(default)]
+    pub js8_auto_rules: Vec<crate::Js8AutoRule>,
     /// Hellschreiber variant (Feld Hell / Slow / X5 / X9 / the FSK variants).
     pub hell_variant: HellVariant,
     /// Hellschreiber receive AGC speed: 0 = off (an absolute scale, meaningful
@@ -2226,48 +2926,84 @@ pub struct DigiConfig {
     #[serde(default)]
     pub wavelog_station_id: u32,
 
-    // ── VARA HF ── appended, postcard numbers fields by position.
-    /// The callsign the VARA modem answers to, with an optional SSID. Empty
-    /// falls back to the logbook callsign. A host program (Pat, VarAC) sets its
-    /// own with `MYCALL` and that wins for its session.
+    // ── TNC modems (Mercury, Data2G) ── appended, postcard numbers fields by
+    // position.
+    /// The callsign the modem answers to, with an optional SSID. Empty falls
+    /// back to the logbook callsign. A host program (Pat, VarAC) sets its own
+    /// with `MYCALL` and that wins for its session.
     #[serde(default)]
-    pub vara_mycall: String,
-    /// The width the modem runs at. Most RMS gateways run 2300.
+    pub tnc_mycall: String,
+    /// The width Mercury runs at: 500 or 2300.
     #[serde(default)]
-    pub vara_bw: crate::VaraBw,
-    /// Unlock the speed levels above 4, as a registered copy of VARA does.
-    /// For operators who own a VARA licence; an unregistered station caps a
-    /// link at level 4 whatever the path would carry.
+    pub mercury_bw: crate::TncBw,
+    /// The width Data2G runs at: 500, 1200 or 2300 (its 2400 Hz band).
     #[serde(default)]
-    pub vara_registered: bool,
-    /// Identify in CW at the end of a link, as VARA does when asked.
+    pub data2g_bw: crate::TncBw,
+    /// Silence before each burst while the transmitter settles, milliseconds.
+    /// `None` picks from the radio: a little on an IQ SDR, more on a CAT rig
+    /// whose relay and sound card take time. Mercury reads it when it starts.
     #[serde(default)]
-    pub vara_cwid: bool,
-    /// Connect attempts before giving up on a call.
-    #[serde(default = "default_vara_retries")]
-    pub vara_retries: u32,
-    /// How long the transmit path takes from key-up to the first sample on
-    /// the air, in milliseconds. `None` asks the engine to pick from the
-    /// radio: a few milliseconds on an IQ SDR, about 200 on a CAT rig.
-    #[serde(default)]
-    pub vara_tx_latency_ms: Option<u16>,
-    /// Offer the modem on VARA's TCP host ports, for Pat, Winlink Express or
+    pub tnc_ptt_lead_ms: Option<u16>,
+    /// Offer the modem on the TCP host ports, for Pat, Winlink Express, BPQ or
     /// VarAC.
     #[serde(default)]
-    pub vara_host_server: bool,
-    /// The command port; data is on the next one. 8300 is VARA HF's own.
-    #[serde(default = "default_vara_host_port")]
-    pub vara_host_port: u16,
+    pub tnc_host_server: bool,
+    /// The command port; data is on the next one. 8300 is what HF ARQ
+    /// clients expect.
+    #[serde(default = "default_tnc_host_port")]
+    pub tnc_host_port: u16,
     /// Answer calls from the panel when no host program is attached.
     #[serde(default)]
-    pub vara_listen: bool,
+    pub tnc_listen: bool,
+    /// Mercury's own command port on 127.0.0.1 (data on the next, broadcast on
+    /// the one after). Internal: sdroxide carries the host ports' lines to it.
+    /// Read when Mercury starts, once per run.
+    #[serde(default = "default_mercury_port")]
+    pub mercury_port: u16,
+    /// MT63: which bandwidth and interleave — see [`Mt63Mode`].
+    #[serde(default)]
+    pub mt63_mode: Mt63Mode,
+    /// MFSK: which of fldigi's variants. Tone count and symbol rate move
+    /// together in fldigi's table, so this is one choice rather than the two
+    /// Olivia needs; nothing in the signal says which is in use.
+    #[serde(default)]
+    pub mfsk_mode: MfskMode,
+    /// MFSK: invert the tone order. A station received on the opposite
+    /// sideband to the one it was sent on arrives mirrored about its centre and
+    /// reads as noise until this is set.
+    #[serde(default)]
+    pub mfsk_reverse: bool,
+    /// DominoEX: which of its nine variants. One modem at different symbol
+    /// rates, so the rate moves with the tone spacing in fldigi's table and
+    /// this is one choice rather than two.
+    #[serde(default)]
+    pub domino_mode: DominoMode,
+    /// DominoEX: mirror the tones, receive and transmit. IFK+ carries its data
+    /// in the step between tones, so a station on the opposite sideband has
+    /// every step negative and reads as noise until this is set.
+    #[serde(default)]
+    pub domino_reverse: bool,
+    /// PSK: the symbol rate of PSK31's own family. Nothing in the signal says
+    /// which, and a decoder at the wrong rate hears nothing at all.
+    #[serde(default)]
+    pub psk_speed: PskSpeed,
+    /// PSK: the constellation. QPSK is a different demodulator *and* a
+    /// convolutionally coded one, so it is its own axis rather than more
+    /// speeds.
+    #[serde(default)]
+    pub psk_modulation: PskModulation,
+    /// PSK: which of fldigi's **coded** families, if any. `Off` is PSK31's own
+    /// speeds and constellations; anything else is a different waveform that
+    /// shares the front end and adds a code, an interleaver or more carriers.
+    #[serde(default)]
+    pub psk_coded: PskCoded,
 }
 
-fn default_vara_retries() -> u32 {
-    15
-}
-fn default_vara_host_port() -> u16 {
+fn default_tnc_host_port() -> u16 {
     8300
+}
+fn default_mercury_port() -> u16 {
+    18300
 }
 
 fn cw_default_tx_idle_s() -> f32 {
@@ -2448,6 +3184,9 @@ impl Default for DigiConfig {
             js8_call: String::new(),
             js8_status: String::new(),
             js8_groups: Vec::new(),
+            js8_info: String::new(),
+            js8_auto_rules_on: false,
+            js8_auto_rules: Vec::new(),
             hell_variant: HellVariant::Feld,
             hell_rx_agc: 0.35,
             rifp_profile: RifpProfile::default(),
@@ -2512,15 +3251,22 @@ impl Default for DigiConfig {
             fsk441_period: crate::Fsk441Period::P30,
             ft8_depth: Ft8Depth::default(),
             wavelog_station_id: 0,
-            vara_mycall: String::new(),
-            vara_bw: crate::VaraBw::default(),
-            vara_registered: false,
-            vara_cwid: false,
-            vara_retries: default_vara_retries(),
-            vara_tx_latency_ms: None,
-            vara_host_server: false,
-            vara_host_port: default_vara_host_port(),
-            vara_listen: false,
+            tnc_mycall: String::new(),
+            mercury_bw: crate::TncBw::default(),
+            data2g_bw: crate::TncBw::default(),
+            tnc_ptt_lead_ms: None,
+            tnc_host_server: false,
+            tnc_host_port: default_tnc_host_port(),
+            tnc_listen: false,
+            mercury_port: default_mercury_port(),
+            mt63_mode: Mt63Mode::default(),
+            mfsk_mode: MfskMode::default(),
+            mfsk_reverse: false,
+            domino_mode: DominoMode::default(),
+            domino_reverse: false,
+            psk_speed: PskSpeed::default(),
+            psk_modulation: PskModulation::default(),
+            psk_coded: PskCoded::default(),
         }
     }
 }

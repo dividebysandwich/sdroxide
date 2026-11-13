@@ -1792,6 +1792,27 @@ pub fn map_cities() -> bool {
     MAP_CITIES.load(Ordering::Relaxed)
 }
 
+/// Whether the waterfall is drawn interpolated — see
+/// [`sdroxide_types::UiSettings::waterfall_smooth`].
+///
+/// Shared between the radio tabs, because the setting has two switches now
+/// (the UI tab and the FFT popup) and every tab holds its own copy of the
+/// settings: the tab that changed it stores it here, the others take it from
+/// here on their next frame, so a later save from a tab cannot write the old
+/// value back.
+static WATERFALL_SMOOTH: AtomicBool = AtomicBool::new(true);
+
+/// Store the waterfall's interpolation for every radio tab.
+pub fn set_waterfall_smooth(on: bool) {
+    WATERFALL_SMOOTH.store(on, Ordering::Relaxed);
+}
+
+/// The waterfall's interpolation as last set in any radio tab.
+#[inline]
+pub fn waterfall_smooth() -> bool {
+    WATERFALL_SMOOTH.load(Ordering::Relaxed)
+}
+
 /// Put the current [`ui_scale`] into `ctx` as its zoom factor.
 ///
 /// Called at startup and whenever the setting changes, never unconditionally
@@ -1932,6 +1953,34 @@ pub fn continent_color(code: &str) -> Color32 {
         "OC" => Color32::from_rgb(0x3f, 0xe0, 0xd8),
         "AN" => Color32::from_rgb(0xd0, 0xe4, 0xf4),
         _ => Color32::from_gray(110),
+    }
+}
+
+/// The operator's tooltip timing ([`sdroxide_types::UiSettings::tooltip_delay_s`],
+/// [`sdroxide_types::UiSettings::tooltip_grace_s`]) into the context style. Cheap
+/// to call every frame: it writes only when a value differs.
+pub fn apply_tooltip_timing(ctx: &egui::Context, ui: &sdroxide_types::UiSettings) {
+    // A hand-edited `nan` would pass `clamp` and rewrite every style each frame.
+    let fit = |v: f32, d: f32, r: &std::ops::RangeInclusive<f32>| {
+        if v.is_finite() { v.clamp(*r.start(), *r.end()) } else { d }
+    };
+    let delay = fit(
+        ui.tooltip_delay_s,
+        sdroxide_types::TOOLTIP_DELAY_DEFAULT_S,
+        &sdroxide_types::TOOLTIP_DELAY_RANGE_S,
+    );
+    let grace = fit(
+        ui.tooltip_grace_s,
+        sdroxide_types::TOOLTIP_GRACE_DEFAULT_S,
+        &sdroxide_types::TOOLTIP_GRACE_RANGE_S,
+    );
+    let style = ctx.style_of(ctx.theme());
+    let i = &style.interaction;
+    if i.tooltip_delay != delay || i.tooltip_grace_time != grace {
+        ctx.all_styles_mut(|s| {
+            s.interaction.tooltip_delay = delay;
+            s.interaction.tooltip_grace_time = grace;
+        });
     }
 }
 

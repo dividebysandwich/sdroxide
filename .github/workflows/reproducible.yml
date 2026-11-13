@@ -1,0 +1,302 @@
+name: Reproducibility
+
+# Rebuilds a published release from its tag and checks that the binaries come
+# out byte for byte the same as the ones inside its downloads: the
+# linux-x86_64-compat, linux-aarch64-compat, macos-aarch64, macos-x86_64 and
+# windows-x86_64 standard builds, and the web client they all embed. Those are
+# the builds with a pinned environment — a fixed compiler, and a fixed image
+# and apt snapshot (Linux), runner label and Xcode (macOS) or MSYS2 snapshot
+# (Windows) — so anyone can make them again and get the same bytes.
+#
+# release.yml runs this once the release is up. Anyone can also run it by hand,
+# from this repository or a fork of it (Actions → Reproducibility → Run
+# workflow): it builds the *upstream* tagged source on the fork's own runners,
+# and compares with the upstream release. docs/reproducible-builds.md has that
+# and the ways to do it without GitHub at all.
+#
+# The rebuild differs from the release's build in everything a user's would:
+# the directory the source is checked out to, the time zone, the locale and
+# the machine. What is compared is the binary, not the .tar.gz or .zip around
+# it (packaging/verify-release.sh opens them). When a binary differs,
+# diffoscope's report of where is on the run page.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+      repo:
+        type: string
+        required: false
+        default: ''
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to rebuild and compare, e.g. v1.8.0
+        type: string
+        required: true
+      repo:
+        description: >-
+          Repository the release is published in (OWNER/NAME). Empty means
+          this one, or in a fork the repository it was forked from.
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+
+jobs:
+  # Which release, and how it was built. The compiler, the Xcode and the
+  # platform table (runner label, container image) are read out of the tag's
+  # own release.yml — the one that built the release — rather than written
+  # here, so this always rebuilds the way that release was built.
+  pins:
+    runs-on: ubuntu-latest
+    outputs:
+      repo: ${{ steps.repo.outputs.repo }}
+      tag: ${{ inputs.tag }}
+      toolchain: ${{ steps.read.outputs.toolchain }}
+      xcode: ${{ steps.read.outputs.xcode }}
+      platforms: ${{ steps.read.outputs.platforms }}
+    steps:
+      - id: repo
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_REPO: ${{ inputs.repo }}
+        run: |
+          repo=$INPUT_REPO
+          if [[ -z "$repo" ]]; then
+            repo=$(gh api "repos/$GITHUB_REPOSITORY" --jq '.parent.full_name // .full_name')
+          fi
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "rebuilding $repo ${{ inputs.tag }}" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.repo.outputs.repo }}
+          ref: ${{ inputs.tag }}
+          sparse-checkout: .github
+      - id: read
+        run: |
+          rel=.github/workflows/release.yml
+          toolchain=$(sed -n 's/^  RUST_TOOLCHAIN: "\(.*\)"$/\1/p' "$rel")
+          xcode=$(sed -n 's/^  MACOS_XCODE: "\(.*\)"$/\1/p' "$rel")
+          wanted='["linux-x86_64-compat", "linux-aarch64-compat", "macos-aarch64", "macos-x86_64", "windows-x86_64"]'
+          # The platform table's entries, one JSON object per line.
+          platforms=$(sed -n 's/^ *\({"label":.*}\),\{0,1\}$/\1/p' "$rel" \
+            | jq -cs --argjson wanted "$wanted" \
+                '{include: [ .[] | select(.label as $l | $wanted | index($l)) ]}')
+          if [[ -z "$toolchain" || -z "$xcode" ]] \
+             || [[ $(jq '.include | length' <<< "$platforms") != 5 ]]; then
+            echo "::error::$rel at this tag pins no RUST_TOOLCHAIN, MACOS_XCODE and platform table to rebuild with; it predates reproducible builds"
+            exit 1
+          fi
+          {
+            echo "toolchain=$toolchain"
+            echo "xcode=$xcode"
+            echo "platforms=$platforms"
+          } >> "$GITHUB_OUTPUT"
+          echo "toolchain $toolchain, Xcode $xcode"
+          jq . <<< "$platforms"
+
+  # As release.yml's `web` job, but checked out somewhere else, in another time
+  # zone and locale. Built once, on Linux like the release's, and embedded by
+  # every rebuild below.
+  web:
+    name: web client
+    needs: pins
+    runs-on: ubuntu-latest
+    env:
+      TZ: Pacific/Kiritimati
+      LC_ALL: C
+    defaults:
+      run:
+        shell: bash
+        working-directory: elsewhere/rebuild
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ needs.pins.outputs.repo }}
+          ref: ${{ needs.pins.outputs.tag }}
+          submodules: recursive
+          path: elsewhere/rebuild
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ needs.pins.outputs.toolchain }}
+          targets: wasm32-unknown-unknown
+      - run: packaging/reproducible-env.sh >> "$GITHUB_ENV"
+      # The version the tag's release.yml installs.
+      - name: Install trunk
+        run: |
+          trunk=$(grep -o 'trunk/releases/download/v[0-9.]*' .github/workflows/release.yml | head -n1 | sed 's|.*/v||')
+          mkdir -p "$HOME/.local/bin"
+          curl -sSfL "https://github.com/trunk-rs/trunk/releases/download/v$trunk/trunk-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar -xzf - -C "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Build web client
+        working-directory: elsewhere/rebuild/crates/sdroxide-web
+        run: trunk build --release
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web
+          path: elsewhere/rebuild/crates/sdroxide-web/dist
+          if-no-files-found: error
+          retention-days: 14
+
+  # As release.yml's `build` job for each platform's standard build, through
+  # packaging/rebuild-release.sh, then compared with the release. No
+  # rust-cache: the rebuild has to compile everything itself.
+  #
+  # Windows gets a short checkout directory, because the CMake and autotools
+  # builds under target/ already come close to its 260-character path limit,
+  # and its time zone spelled the POSIX way, which both the MSVC runtime and
+  # MSYS2 read (`Pacific/Kiritimati` means nothing to MSVC).
+  rebuild:
+    name: ${{ matrix.label }}
+    needs: [pins, web]
+    runs-on: ${{ matrix.os }}
+    # Empty for every entry but -compat, which means "no container".
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.pins.outputs.platforms) }}
+    env:
+      TZ: ${{ startsWith(matrix.os, 'windows') && 'LINT-14' || 'Pacific/Kiritimati' }}
+      LC_ALL: C
+      DIR: ${{ startsWith(matrix.os, 'windows') && 'rb' || 'elsewhere/rebuild' }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ startsWith(matrix.os, 'windows') && 'rb' || 'elsewhere/rebuild' }}
+    steps:
+      # Before checkout, for the reason given in release.yml — and from the
+      # workspace root, since the checkout directory does not exist yet.
+      - name: Install git (compat container)
+        if: matrix.container
+        working-directory: .
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            git ca-certificates
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ needs.pins.outputs.repo }}
+          ref: ${{ needs.pins.outputs.tag }}
+          submodules: recursive
+          path: ${{ env.DIR }}
+      - name: Install build environment (compat container)
+        if: matrix.container
+        run: packaging/linux/install-compat-deps.sh cat
+      - name: Set up build environment (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          packaging/macos/setup-build-env.sh "${{ needs.pins.outputs.xcode }}" cat
+          echo "runner image ${ImageOS:-?} ${ImageVersion:-?}; the release's .buildinfo names the one it was built on"
+      # A local action is found relative to the workspace, not to the checkout
+      # above; so .github gets a checkout of its own at a fixed place. Same
+      # repository and tag, same action.
+      - name: Check out the setup action (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ needs.pins.outputs.repo }}
+          ref: ${{ needs.pins.outputs.tag }}
+          sparse-checkout: .github
+          path: ci
+      - name: Set up build environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ./ci/.github/actions/setup-windows-build
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ needs.pins.outputs.toolchain }}
+          targets: ${{ runner.os == 'Windows' && 'x86_64-pc-windows-gnu' || '' }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: web
+          path: ${{ env.DIR }}/crates/sdroxide-web/dist
+      - name: Rebuild
+        run: packaging/rebuild-release.sh --no-web
+      - name: Compare with the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bin=$(ls target/rebuild)
+          mkdir -p "$GITHUB_WORKSPACE/cmp/rebuilt/${{ matrix.label }}"
+          cp "target/rebuild/$bin" "$GITHUB_WORKSPACE/cmp/rebuilt/${{ matrix.label }}/"
+          packaging/verify-release.sh --repo "${{ needs.pins.outputs.repo }}" \
+            --keep "$GITHUB_WORKSPACE/cmp/released" \
+            "${{ needs.pins.outputs.tag }}" "${{ matrix.label }}=target/rebuild/$bin" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      # Both binaries, for `report` to explain a difference with.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: cmp-${{ matrix.label }}
+          path: cmp
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # The web client, the verdict, and an explanation of whatever differed.
+  report:
+    needs: [pins, web, rebuild]
+    if: always() && needs.pins.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ needs.pins.outputs.repo }}
+          ref: ${{ needs.pins.outputs.tag }}
+          sparse-checkout: packaging
+      - uses: actions/download-artifact@v8
+        if: needs.web.result == 'success'
+        with:
+          name: web
+          path: rebuilt-web
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: cmp-*
+          path: cmp
+          merge-multiple: true
+      - name: Compare
+        id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          status=0
+          if [[ -d rebuilt-web ]]; then
+            packaging/verify-release.sh --repo "${{ needs.pins.outputs.repo }}" \
+              --keep cmp/released "${{ needs.pins.outputs.tag }}" web=rebuilt-web \
+              | tee -a "$GITHUB_STEP_SUMMARY" || status=1
+            mkdir -p cmp/rebuilt/web && cp -R rebuilt-web/. cmp/rebuilt/web/
+          fi
+          if [[ "${{ needs.web.result }}" != success || "${{ needs.rebuild.result }}" != success ]]; then
+            echo "::error::a rebuild failed or differs from the release; its job says which"
+            status=1
+          fi
+          exit $status
+      - name: Explain the difference
+        if: failure() && steps.compare.outcome == 'failure'
+        run: |
+          sudo apt-get update
+          # llvm for diffoscope's Mach-O support; binutils reads the .exe.
+          sudo apt-get install -y --no-install-recommends diffoscope-minimal binutils llvm
+          cd cmp
+          for d in released/*; do
+            what=${d#released/}
+            [[ -d "rebuilt/$what" ]] || continue
+            diff -rq "released/$what" "rebuilt/$what" > /dev/null && continue
+            # Exits non-zero precisely because there are differences.
+            diffoscope --html "../diffoscope-$what.html" --text "../diffoscope-$what.txt" \
+              "released/$what" "rebuilt/$what" || true
+            head -n 400 "../diffoscope-$what.txt"
+          done
+      - uses: actions/upload-artifact@v7
+        if: failure() && steps.compare.outcome == 'failure'
+        with:
+          name: diffoscope
+          path: diffoscope-*
+          if-no-files-found: ignore

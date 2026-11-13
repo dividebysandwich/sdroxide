@@ -72,7 +72,10 @@ i18n-embed-fl = "0.10.1"
 # For `FluentValue`, the type a message's arguments are passed as. The version
 # i18n-embed itself uses.
 fluent = "0.17.0"
-rust-embed = { version = "8.12.0", features = ["debug-embed"] }
+# `deterministic-timestamps` for the reason given in sdroxide-server: without it
+# each file's checkout mtime is baked in, and the browser build — which has no
+# sdroxide-server in its graph to turn the feature on — differs per checkout.
+rust-embed = { version = "8.12.0", features = ["debug-embed", "deterministic-timestamps"] }
 # The operating system's language list — or the browser's, with `js` — for an
 # operator who has not picked one.
 sys-locale = { version = "0.3.2", features = ["js"] }
@@ -83,6 +86,10 @@ remote = ["dep:ewebsock", "dep:sdroxide-proto"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rfd = "0.17.2"
+# SondeHub's sonde list and a sonde's flight (`sonde_online.rs`), asked
+# directly when no station stands in between, and of the station otherwise.
+# Already in the tree through sdroxide-config, at this version.
+ureq = "3.4"
 # TLS for the native remote client, unified with the entry above rather than
 # replacing it: a `wss://` server — one behind a reverse proxy terminating
 # HTTPS, which is how a station on port 443 is usually reached — is refused
@@ -129,7 +136,10 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 rfd = "0.17.2"
 js-sys = "0.3"
-web-sys = { version = "0.3", features = ["Blob", "BlobPropertyBag", "Url", "Document", "Window", "HtmlAnchorElement", "HtmlElement", "Storage", "File", "FileList", "FileReader", "HtmlInputElement"] }
+# `Request`, `RequestInit` and `RequestMode` are the sign-in cookie: the only
+# `fetch` this client makes, and the reason it exists — the station has to be
+# asked over plain HTTP before a socket upgrade can be given a `Set-Cookie`.
+web-sys = { version = "0.3", features = ["Blob", "BlobPropertyBag", "Url", "Document", "Window", "HtmlAnchorElement", "HtmlElement", "Storage", "File", "FileList", "FileReader", "HtmlInputElement", "Request", "RequestInit", "RequestMode", "Headers", "Response"] }
 
 # The far end of the `wss://` loopback test in `remote_tls.rs`: a WebSocket
 # server behind a self-signed certificate. The tungstenite ewebsock already

@@ -631,3 +631,49 @@ fn the_station_survives_being_fed_one_sample_at_a_time() {
     assert_eq!(data.pi, Some(PI));
     assert_eq!(data.ps.as_deref(), Some("SDROXIDE"));
 }
+
+/// Run `iq` through `demod` and keep the last snapshot it produced.
+fn run_on(demod: &mut Box<dyn sdroxide_dsp::Demodulator>, iq: &[C32]) -> Option<RdsData> {
+    let mut audio = Vec::new();
+    let mut latest = None;
+    for chunk in iq.chunks(4_096) {
+        audio.clear();
+        demod.process(chunk, &mut audio);
+        if let Some(d) = demod.take_rds() {
+            latest = Some(d);
+        }
+    }
+    latest
+}
+
+/// Six seconds of an empty dial: receiver noise and nothing else.
+fn dead_air(rate: f64) -> Vec<C32> {
+    let mut rng = Rng(7);
+    (0..(rate * 6.0) as usize).map(|_| C32::new(rng.next_f32(), rng.next_f32())).collect()
+}
+
+#[test]
+fn a_retune_from_empty_dial_still_decodes_a_medium_station() {
+    // The field report: a medium station showed NO SYNC, 99.5 % of blocks bad
+    // and nearly all of the rest "corrected", until the operator tuned to a
+    // strong station and came back. The hunt had taken a block with a bit error
+    // for the wrong offset word and locked one block out of step, which the
+    // corrector then never let fail. Whether it happens depends on where the
+    // station's bits fall when the hunt starts, so the station is tried at eight
+    // bit phases; on the old decoder one of them read 99.7 % bad with no name.
+    let rate = 240_000.0;
+    let medium = broadcast(rate, 8.0, &programme(), &Station { noise: 0.10, ..Default::default() });
+    let symbol = rate / 1_187.5;
+    for eighth in 0..8 {
+        let skip = (eighth as f64 * symbol / 8.0) as usize;
+        let mut demod = make_demod(Mode::Wfm, rate).expect("WFM has a demodulator");
+        run_on(&mut demod, &dead_air(rate));
+        demod.reset_rds();
+        let data = run_on(&mut demod, &medium[skip..]).expect("a snapshot from a real station");
+        let ber = data.stats.block_error_rate();
+        assert!(data.sync, "no sync at bit phase {eighth}/8: {ber:.3} of blocks bad");
+        assert_eq!(data.pi, Some(PI), "wrong identity at bit phase {eighth}/8");
+        assert_eq!(data.ps.as_deref(), Some("SDROXIDE"), "no name at bit phase {eighth}/8");
+        assert!(ber < 0.1, "{ber:.3} of blocks bad at bit phase {eighth}/8");
+    }
+}

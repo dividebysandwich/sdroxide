@@ -66,8 +66,9 @@ One binary, three ways to run it:
   the two sidebands are two different transmissions, one to each ear), DIGU/DIGL, a
   spectrum-only mode, **FT8/FT4/FT2**, **JS8** (all four speeds, with directed
   messaging, heartbeats and multi-frame free text), the keyboard modes
-  **PSK31**, **RTTY**,
-  **Olivia**, **THOR** and **FSQ** (with directed messaging + images),
+  **PSK31** (with fldigi's faster speeds, 8PSK and the coded BPSK63F/R/C/RC
+  families), **RTTY**,
+  **Olivia**, **Contestia**, **THOR**, **DominoEX**, **MT63**, **MFSK** and **FSQ** (with directed messaging + images),
   **WSPR** (transmit and receive, with WSPRnet reporting and optional band
   hopping), receive-only **PI4** (the "Next Generation Beacon" propagation
   mode — 4-FSK, decoded from a rate-1/2 K=32 Fano search across every beacon
@@ -109,8 +110,14 @@ One binary, three ways to run it:
   email network, speaking B2F/FBB, LZHUF and the secure login natively (no Pat,
   no external modem). Mailbox with inbox / outbox / sent / archive, compose and
   reply, attachments, and the session transcript when something goes wrong.
-  Over the internet CMS today; AX.25 packet and ARDOP are the planned radio
-  transports.
+  Over the internet CMS, AX.25 packet to the RMS Packet gateways, or an HF ARQ
+  link on **Mercury** or **Data2G**; ARDOP is still to come.
+- **HF ARQ data modems** — **Mercury** (Rhizomatica's codec2-OFDM modem, the one
+  HERMES stations run) and **Data2G** (an OFDM modem with LDPC/polar codes and
+  hybrid ARQ), linked in from their own releases. Each has a panel with a
+  keyboard terminal, carries Winlink sessions, and can be offered on the usual
+  TNC command/data ports (8300/8301) so Pat, Winlink Express, BPQ or VarAC can
+  use the radio as their modem. Experimental: not yet tested on the air.
 - **Bandplan overlay** — a colour-coded strip along the bottom of the waterfall
   that labels allocations (ham bands, broadcast, CB, AM); it shows coarse bands
   when zoomed out and CW/digital/SSB sub-segments when zoomed into a ham band.
@@ -162,6 +169,14 @@ One binary, three ways to run it:
   filter bank or a transverter selector on a PlutoSDR, a LibreSDR, or any other
   front end without HPSDR's own seven-pin bus. See "T/R switch" in the user
   manual for what this cannot do.
+- **Station check** — one page (Settings → General → **STATION CHECK**) that
+  says what is and is not in order — callsign, radio link, receiver, input
+  level, audio, clock, lookups — with a button on each line that goes to where
+  it is fixed. A first start with no callsign is met by a **welcome
+  walkthrough**: callsign and grid, the radio (with the pitfalls of that kind of
+  radio, and live status), what to know before transmitting, the online
+  services, a tour of the features, and the check — reopened any time from
+  Settings → General → **WELCOME TOUR**.
 - **Persistence** — device, rates, gains, memories, band stacks, the FT8/FT4/FT2
   operator profile, network/QSL credentials, control bindings, and the logbook
   are all stored under `~/.config/sdroxide/`.
@@ -357,8 +372,16 @@ PSK/RTTY; the submode is chosen on each mode's setup page:
 
 - **Olivia** — a very robust MFSK chat mode with Walsh/Hadamard coding. Pick the
   tone count (2–64) and bandwidth (125–2000 Hz); 32/1000 and 16/500 are common.
+- **Contestia** — Olivia's engine with six-bit characters: twice the text
+  rate, the same tones and bandwidths.
 - **THOR** — DominoEX-family 18-tone incremental-FSK with convolutional FEC.
   Pick a submode (THOR4 … THOR32; THOR16 is the usual default).
+- **DominoEX** — THOR's 18-tone incremental-FSK without the FEC: one to three
+  nibbles of its own alphabet per character, nine speeds (4 … 88 and MICRO).
+- **MT63** — fldigi's 64-carrier Walsh-coded OFDM mode, wide and very robust
+  (2KS, 2KL and 500S).
+- **MFSK** — fldigi's IZ8BLY family, MFSK4 to MFSK128 with the two long
+  interleaves: one tone per symbol, a K=7 code and an interleaver.
 - **FSQ** — 33-tone incremental-FSK (speeds FSQ-2/3/4.5/6) with a dedicated panel
   for the **directed (FSQCALL)** layer: a **heard list**, a persistent **contacts**
   book, directed `CALL:message` sends, ALLCALL broadcast, an automatic reply to
@@ -1130,8 +1153,8 @@ standard library as a separate package, but the usual symptom is that the native
 build works fine and the web client build fails on the missing target. Migrating
 to rustup is the shortest way out.
 
-The RADE digital-voice codec and the rtl_433 ISM decoders are vendored as git
-submodules, so clone with:
+The RADE digital-voice codec, the rtl_433 ISM decoders and the Mercury and
+Data2G data modems are vendored as git submodules, so clone with:
 
 ```sh
 git clone --recurse-submodules https://github.com/dividebysandwich/sdroxide
@@ -1143,7 +1166,12 @@ Both are built from source by `build.rs`, so a default build needs a C compiler
 and CMake — already in the package lists below. If you would rather not build
 rtl_433, `--no-default-features` leaves it out and SDRoxide falls back to its own
 ISM decoders; see [`crates/sdroxide-ism/PROVENANCE.md`](crates/sdroxide-ism/PROVENANCE.md)
-for what it is and what licence it carries.
+for what it is and what licence it carries. Mercury (GPL-3.0-or-later, with a
+codec2 subset under LGPL-2.1) and Data2G (Artistic-2.0, with Apache-2.0 parts)
+are always built; Data2G needs a C++20 compiler and CMake 3.24 or newer, and
+Mercury is left out of Windows builds made with MSVC. See
+[`crates/sdroxide-mercury/PROVENANCE.md`](crates/sdroxide-mercury/PROVENANCE.md)
+and [`crates/sdroxide-data2g/PROVENANCE.md`](crates/sdroxide-data2g/PROVENANCE.md).
 
 ### What depends on what
 
@@ -1672,7 +1700,7 @@ way.
 | `--freq <HZ>` | Center frequency in Hz (default: where the last session was left; `14200000` on a first run). |
 | `--rate <HZ>` | Sample rate in Hz (default: from config). |
 | `--gain <DB>` | Overall RX gain in dB (default: hardware AGC / moderate). |
-| `--mode <MODE>` | Initial mode, case-insensitive: `LSB USB CW AM SAM NFM WFM DRM ADS-B VDL2 AIS DIGU DIGL DSB ISB SPEC FT8 FT4 FT2 JS8 WSPR PI4 MSK144 JT65 JT9 FST4 Q65 FSK441 PSK RTTY RTTY-FM PACKET PACKET-HF APRS SSTV SSTV-FM RIFP WEFAX NAVTEX ACARS OLIVIA THOR FSQ ATCHAT HELL RFPAINT RADE HFDL`, and `"HD RADIO"` (the one name with a space in it, so it needs the quotes). Default: the mode the last session was left in. |
+| `--mode <MODE>` | Initial mode, case-insensitive: `LSB USB CW AM SAM NFM WFM DRM ADS-B VDL2 AIS DIGU DIGL DSB ISB SPEC FT8 FT4 FT2 JS8 WSPR PI4 MSK144 JT65 JT9 FST4 Q65 FSK441 PSK RTTY RTTY-FM PACKET PACKET-HF APRS SSTV SSTV-FM RIFP WEFAX NAVTEX ACARS OLIVIA THOR MT63 MFSK DOMINOEX CONTESTIA FSQ ATCHAT HELL RFPAINT RADE HFDL`, and `"HD RADIO"` (the one name with a space in it, so it needs the quotes). Default: the mode the last session was left in. |
 | `--antenna <NAME>` | RX antenna port, as the device names it (`LNAH`, `TX/RX`; see `--probe`). Default: the port the last session was left on. |
 | `--tx-antenna <NAME>` | TX antenna port, likewise (`BAND1`, `BAND2`). |
 | `--server` | Run as a server: HTTP web client + WebSocket streaming backend. |
@@ -1700,6 +1728,7 @@ them, plus PTT, band, mode, filter and much else, are rebindable on the
 | `M` | Toggle mute |
 | `N` | Toggle the noise blanker |
 | `F` | Fit the panadapter to the full device passband |
+| `Ctrl+K` / `⌘K` | Go to anything by name: a mode, band, window, settings page, switch, memory, or a typed frequency |
 
 ## Mouse operation
 
@@ -1761,7 +1790,3 @@ none of it.
 The grey-line shade, the IBP beacon schedule, the meteor-shower calendar and the
 Kp history are adapted from ideas in
 [OpenHamClock](https://github.com/accius/openhamclock) (MIT).
-
-VARA HF runs on [xara](https://github.com/x0rro/xara) (MIT), an open
-implementation of the VARA protocol, vendored under `vendor/xara`. See its
-`PROVENANCE.md` for what was taken and changed.

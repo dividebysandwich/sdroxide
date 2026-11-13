@@ -109,6 +109,112 @@ pub struct RxState {
     /// and read from the main receiver alone — the sub receiver *is* the other
     /// ear, and claims it whenever it is running.
     pub binaural: bool,
+    /// Hum filter on the listener audio: a high-pass that takes 50/60 Hz mains
+    /// hum and its first harmonics (`sdroxide_dsp::HumFilter`). Appended for
+    /// the usual reason — postcard numbers fields by position.
+    #[serde(default)]
+    pub hum_filter: bool,
+    /// SK filter on the listener audio: each FFT bin's gain from its spectral
+    /// kurtosis, so steady noise is cut and what comes and goes is kept
+    /// (`sdroxide_dsp::SkFilter`). Appended for the same reason.
+    #[serde(default)]
+    pub sk_filter: bool,
+    /// The SK filter's time constant, in seconds: long, a curve that settles
+    /// into the channel; short (0.1 s), a gate on the syllables as well.
+    #[serde(default = "sk_filter_default_tau")]
+    pub sk_filter_tau_s: f32,
+    /// How fast an SK bin opens when it becomes active, and how fast it closes
+    /// once it is not, in seconds. A long close leaves each syllable a tail in
+    /// the bins it used — HDZ: "wie in der Tropfsteinhöhle".
+    #[serde(default = "sk_filter_default_open")]
+    pub sk_filter_open_s: f32,
+    #[serde(default = "sk_filter_default_close")]
+    pub sk_filter_close_s: f32,
+    /// Bins either side the SK mask is smoothed over (1 to start with).
+    #[serde(default = "sk_filter_default_width")]
+    pub sk_filter_width: u8,
+    /// Run the SK filter behind the NR engine instead of ahead of the AGC:
+    /// HDZ heard it as a post-processor that lifts the formants RNN and DFNR
+    /// leave ("Variante B, Reihung gedreht"). On to start with: all four
+    /// presets were tuned behind NR.
+    // Why: HDZ 2026-11-11: "in NR der SK-Filter sollte 'nach NR' als Default
+    //      haben".
+    #[serde(default = "sk_filter_default_after_nr")]
+    pub sk_filter_after_nr: bool,
+    /// NFM "FM-Decrackle": the click eliminator that takes out the 2π phase
+    /// slips a weak FM signal turns into crackle, ~1 ms look-ahead. Ignored
+    /// outside NFM.
+    #[serde(default = "fm_decrackle_default_on")]
+    pub fm_decrackle: bool,
+    /// NFM de-emphasis, 6 dB per octave above 300 Hz. Ignored outside NFM.
+    #[serde(default = "fm_decrackle_default_on")]
+    pub fm_deemph: bool,
+    /// How deep the magnitude must dip, as a share of its mean over ±1 ms, for
+    /// a phase jump to count as a slip. Higher repairs more.
+    #[serde(default = "fm_decrackle_default_dip")]
+    pub fm_decrackle_dip: f32,
+}
+
+/// FM-Decrackle sensitivity: the bench optimum, and the range the NR menu
+/// offers. The share is a window's minimum magnitude against its mean, so from
+/// about 1 the test holds everywhere and only the phase jump is left. On the
+/// bench (NFM, 5.4 kHz filter, ±2 kHz deviation) a clean signal is left
+/// untouched up to 0.7 and loses 22 → 15 dB SINAD at 0.8 (fast modulation
+/// taken for slips); the top sits one step short of that.
+//
+// Why: HDZ 2026-11-10: "am festen Träger könnte noch ne Schippe mehr drauf"
+//      (0.3 → 0.5); 2026-11-11: "0.5 habe ich selber gehört und es war gut",
+//      top at 0.6.
+pub const FM_DECRACKLE_DEFAULT_DIP: f32 = 0.2;
+pub const FM_DECRACKLE_DIP_RANGE: (f32, f32) = (0.1, 0.6);
+
+fn fm_decrackle_default_on() -> bool {
+    true
+}
+
+fn fm_decrackle_default_dip() -> f32 {
+    FM_DECRACKLE_DEFAULT_DIP
+}
+
+/// Whether the SK filter runs behind the NR engine to start with.
+pub const SK_FILTER_DEFAULT_AFTER_NR: bool = true;
+
+fn sk_filter_default_after_nr() -> bool {
+    SK_FILTER_DEFAULT_AFTER_NR
+}
+
+/// The SK filter's time constant to start with, in seconds (HDZ 2026-11-10:
+/// "tau einstellbar, 0.1 ist gut").
+pub const SK_FILTER_DEFAULT_TAU_S: f32 = 0.1;
+/// The time constants the NR menu offers, in seconds.
+pub const SK_FILTER_TAU_RANGE_S: (f32, f32) = (0.05, 10.0);
+
+fn sk_filter_default_tau() -> f32 {
+    SK_FILTER_DEFAULT_TAU_S
+}
+
+/// The SK filter's open and close times to start with, in seconds, and their
+/// ranges in the NR menu. Close starts long, so the filter sounds as it did
+/// before it had the control.
+pub const SK_FILTER_DEFAULT_OPEN_S: f32 = 0.01;
+pub const SK_FILTER_DEFAULT_CLOSE_S: f32 = 1.0;
+pub const SK_FILTER_OPEN_RANGE_S: (f32, f32) = (0.005, 1.0);
+pub const SK_FILTER_CLOSE_RANGE_S: (f32, f32) = (0.01, 5.0);
+
+fn sk_filter_default_open() -> f32 {
+    SK_FILTER_DEFAULT_OPEN_S
+}
+
+fn sk_filter_default_close() -> f32 {
+    SK_FILTER_DEFAULT_CLOSE_S
+}
+
+/// The SK mask's smoothing width to start with, and the most the menu offers.
+pub const SK_FILTER_DEFAULT_WIDTH: u8 = 1;
+pub const SK_FILTER_MAX_WIDTH: u8 = 16;
+
+fn sk_filter_default_width() -> u8 {
+    SK_FILTER_DEFAULT_WIDTH
 }
 
 impl RxState {
@@ -129,6 +235,16 @@ impl RxState {
             wfm_stereo: true,
             tone_sql: None,
             binaural: false,
+            hum_filter: false,
+            sk_filter: false,
+            sk_filter_tau_s: SK_FILTER_DEFAULT_TAU_S,
+            sk_filter_open_s: SK_FILTER_DEFAULT_OPEN_S,
+            sk_filter_close_s: SK_FILTER_DEFAULT_CLOSE_S,
+            sk_filter_width: SK_FILTER_DEFAULT_WIDTH,
+            sk_filter_after_nr: SK_FILTER_DEFAULT_AFTER_NR,
+            fm_decrackle: true,
+            fm_deemph: true,
+            fm_decrackle_dip: FM_DECRACKLE_DEFAULT_DIP,
         }
     }
 }
@@ -519,6 +635,24 @@ pub struct RadioState {
     /// one. Appended last: postcard numbers fields by position.
     #[serde(default)]
     pub atu: AtuState,
+    /// A recording being played back into the decoders, and where it is — or
+    /// `None` when the radio is live. Here rather than in an event of its own
+    /// because it changes what every other field means: while it is `Some`,
+    /// the dial is the one the recording was made on and nothing is being
+    /// received. Appended last: postcard numbers fields by position.
+    #[serde(default)]
+    pub playback: Option<crate::PlaybackStatus>,
+    /// The weather-satellite (NOAA APT / Meteor LRPT) decoder: whether it runs,
+    /// which signal and which channel. The picture is [`crate::WxsatStatus`],
+    /// sent separately. Appended last: postcard numbers fields by position.
+    #[serde(default)]
+    pub wxsat: crate::WxsatSettings,
+    /// The radiosonde decoder: whether it runs, which channel it listens on,
+    /// and whether it scans the window instead. Live status (level, sondes
+    /// heard) is [`crate::SondeStatus`], sent separately. Appended last:
+    /// postcard numbers fields by position.
+    #[serde(default)]
+    pub sonde: crate::SondeSettings,
 }
 
 /// Where a radio's built-in antenna tuner stands, as the radio reports it.
@@ -626,6 +760,9 @@ impl Default for RadioState {
             hd_radio_unavailable: None,
             hfdl: crate::HfdlSettings::default(),
             atu: AtuState::default(),
+            playback: None,
+            wxsat: crate::WxsatSettings::default(),
+            sonde: crate::SondeSettings::default(),
         }
     }
 }
@@ -708,5 +845,23 @@ mod zoom_lane_tests {
         // is the only thing that can resolve it, so let the client have it.
         assert_eq!(panadapter_fft_ceiling(2_000_000.0, 800_000.0, 2048), None);
         assert_eq!(panadapter_fft_ceiling(2_000_000.0, 500_000.0, 0), None);
+    }
+}
+
+#[cfg(test)]
+mod sk_filter_tests {
+    use super::{Mode, RxState};
+
+    /// The SK filter runs behind the NR engine to start with — for a fresh
+    /// receiver and for one stored before the switch existed, so an upgraded
+    /// station starts where the four presets were tuned.
+    #[test]
+    fn the_sk_filter_runs_after_nr_to_start_with() {
+        let fresh = RxState::with_mode(Mode::Usb);
+        assert!(fresh.sk_filter_after_nr);
+        let mut stored = serde_json::to_value(fresh).unwrap();
+        stored.as_object_mut().unwrap().remove("sk_filter_after_nr");
+        let read: RxState = serde_json::from_value(stored).unwrap();
+        assert!(read.sk_filter_after_nr, "a stored state without the field");
     }
 }

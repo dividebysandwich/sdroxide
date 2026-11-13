@@ -1255,7 +1255,7 @@ fn open_converted_source(
     // mean the dial rather than the I.F.
     let caps = sdroxide_radio::plan_caps(caps, &plan, &radio.freq_ranges_rx, &radio.freq_ranges_tx);
     log_stated_ranges(radio, &caps);
-    Ok((Box::new(ConvertedSource::with_plan(source, plan)), caps))
+    Ok((Box::new(ConvertedSource::with_plan_at_dial(source, plan, cli.center_hz())), caps))
 }
 
 /// What is in front of this radio, band by band: the transverter table first,
@@ -1731,7 +1731,7 @@ fn hpsdr_caps(board: &str, sample_rate: f64, protocol: u8, has_lna: bool, ddc: u
         audio_mode: false,
         freq_ranges_rx: vec![(0.0, nyquist)],
         freq_ranges_tx: if tx_channels > 0 {
-            vec![(1_800_000.0, if hermes_lite { 30_000_000.0 } else { 54_000_000.0 })]
+            vec![(1_800_000.0, if hermes_lite { nyquist } else { 54_000_000.0 })]
         } else {
             Vec::new()
         },
@@ -2501,19 +2501,38 @@ fn rtlsdr_caps(src: &rtlsdr_source::RtlSdrSource, driver: &str) -> DeviceCaps {
         audio_mode: false,
         freq_ranges_rx,
         sample_rates: sdroxide_types::RtlSdrConfig::SAMPLE_RATES.to_vec(),
-        gains: vec![
-            // The hardware only has 29 discrete steps; a request is snapped to
-            // the nearest and reported back, so a fine slider is honest enough.
-            sdroxide_types::GainElement::db(
-                sdroxide_types::RtlSdrConfig::TUNER_GAIN_ELEMENT,
-                sdroxide_types::Direction::Rx,
-                0.0,
-                sdroxide_types::RtlSdrConfig::GAIN_MAX_DB,
-                0.1,
-            ),
-        ],
+        gains: rtlsdr_gains(driver),
         ..DeviceCaps::default()
     }
+}
+
+/// An RTL-SDR's gain stages. Over USB the tuner's three, one by one — LNA
+/// and mixer on their measured ladders, the IF VGA in steps for want of a
+/// measured table — while the combined ladder stays in Settings → Radio;
+/// `rtl_tcp` has no opcode for the R82xx's stages, so a network dongle keeps
+/// the one combined rail.
+// Why: HDZ 2026-11-09: "beim RTL-SDR … LNA Gain (RF Gain) … IF Gain"; three
+//      rails fit the strip ("bringen wir drei unter?", measured).
+fn rtlsdr_gains(driver: &str) -> Vec<sdroxide_types::GainElement> {
+    use sdroxide_rtlsdr::{STAGE_MAX_INDEX, Stage, stage_db};
+    use sdroxide_types::{Direction, GainElement, RtlSdrConfig as R};
+    if driver != "rtlsdr" {
+        // The hardware only has 29 discrete steps; a request is snapped to
+        // the nearest and reported back, so a fine slider is honest enough.
+        return vec![GainElement::db(
+            R::TUNER_GAIN_ELEMENT,
+            Direction::Rx,
+            0.0,
+            R::GAIN_MAX_DB,
+            0.1,
+        )];
+    }
+    let top = |s: Stage| (0..=STAGE_MAX_INDEX).map(|i| stage_db(s, i)).fold(0.0, f64::max);
+    vec![
+        GainElement::db(R::LNA_GAIN_ELEMENT, Direction::Rx, 0.0, top(Stage::Lna), 0.1),
+        GainElement::db(R::MIX_GAIN_ELEMENT, Direction::Rx, 0.0, top(Stage::Mixer), 0.1),
+        GainElement::steps(R::IF_GAIN_ELEMENT, Direction::Rx, 0.0, f64::from(STAGE_MAX_INDEX), 1.0),
+    ]
 }
 
 /// Build the wideband SpyServer source from radio.json.
@@ -2938,6 +2957,29 @@ mod tests {
         // Already unlocked in the config: the flag changes nothing either way.
         assert!(!cli(false).tx_ham_only(&open));
         assert!(!cli(true).tx_ham_only(&open));
+    }
+
+    #[test]
+    fn hl2_transverter_tx_uses_the_hardware_bandwidth_not_the_ten_meter_band_edge() {
+        use sdroxide_radio::{ConverterPlan, ConverterStep, plan_caps};
+
+        let caps = hpsdr_caps("Hermes-Lite 2", 192_000.0, 1, true, 0);
+        assert!(caps.may_tx_hz(30_220_000.0));
+        assert!(caps.may_tx_hz(38_400_000.0));
+        assert!(!caps.may_tx_hz(38_400_001.0));
+        let plan = ConverterPlan::from_steps([ConverterStep {
+            band: Some((144_000_000.0, 148_000_000.0)),
+            rx_offset_hz: -116_000_000.0,
+            tx_offset_hz: Some(-116_000_000.0),
+            tx_drive: Some(0.02),
+        }]);
+        let converted = plan_caps(caps, &plan, &[], &[]);
+        assert!(converted.may_tx_hz(146_820_000.0 - 600_000.0));
+        assert!(converted.may_tx_hz(148_000_000.0));
+        assert!(!converted.may_tx_hz(148_000_001.0));
+        let secondary = hpsdr_caps("Hermes-Lite 2", 192_000.0, 1, true, 1);
+        assert_eq!(secondary.tx_channels, 0);
+        assert!(secondary.freq_ranges_tx.is_empty());
     }
 
     /// The flag is opt-in on the command line and nowhere else.

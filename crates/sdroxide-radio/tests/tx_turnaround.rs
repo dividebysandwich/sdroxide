@@ -424,16 +424,17 @@ fn idle_rx_tick(mode: Mode) -> f64 {
     median(&mut gaps)
 }
 
-/// VARA HF asks for short reads (`DigiEngine::low_latency_rx`): the far end
-/// answers the instant an over ends, and a 341 ms read is 341 ms deaf. The
-/// controller-level simulation (`sdroxide-digi/tests/vara_link.rs`) shows a
-/// handshake failing outright at that block size; this shows the engine
-/// actually honours the request.
+/// The TNC modems ask for short reads (`DigiEngine::low_latency_rx`): the far
+/// end answers the instant an over ends, and a 341 ms read is 341 ms deaf. The
+/// controller-level simulation (`sdroxide-digi/tests/tnc_link.rs`) runs its
+/// links at that small block size; this shows the engine actually honours the
+/// request. Data2G stands for both: Mercury is one engine per process, and
+/// would hold its ports for the rest of this test binary.
 #[test]
-fn vara_reads_the_source_in_small_blocks() {
+fn tnc_modems_read_the_source_in_small_blocks() {
     let usb = idle_rx_tick(Mode::Usb);
-    let vara = idle_rx_tick(Mode::VaraHf);
-    println!("idle rx tick: USB {usb:.1} ms, VARA HF {vara:.1} ms");
+    let d2g = idle_rx_tick(Mode::Data2g);
+    println!("idle rx tick: USB {usb:.1} ms, Data2G {d2g:.1} ms");
     assert!(usb > 250.0, "the baseline should read whole 16384-sample blocks, got {usb:.1} ms");
-    assert!(vara < 40.0, "VARA HF should read ~20 ms blocks, got {vara:.1} ms");
+    assert!(d2g < 40.0, "Data2G should read ~20 ms blocks, got {d2g:.1} ms");
 }

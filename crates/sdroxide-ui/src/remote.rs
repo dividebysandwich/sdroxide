@@ -388,6 +388,17 @@ impl RemoteController {
             ServerMsg::Scanner(c) => self.pending.push_back(RadioEvent::Scanner(c)),
             ServerMsg::Profiles(p) => self.pending.push_back(RadioEvent::Profiles(p)),
             ServerMsg::PictureUpload(st) => self.pending.push_back(RadioEvent::PictureUpload(st)),
+            // The station's connection check, as the station's own engine
+            // reports it: the same two events a local check raises, so the
+            // Test row shows how it went and the location list fills in.
+            ServerMsg::WavelogProbe(p) => {
+                self.pending.push_back(RadioEvent::LoginTest(sdroxide_types::LoginTestResult {
+                    target: sdroxide_types::LoginTarget::Wavelog,
+                    ok: p.ok,
+                    message: p.message.clone(),
+                }));
+                self.pending.push_back(RadioEvent::WavelogProbe(p));
+            }
             // Dropped rather than decoded while another tab holds the page's
             // single output: the work saved is the point on a browser tab
             // holding several radios.
@@ -522,6 +533,9 @@ impl RemoteController {
                 .push_back(RadioEvent::RotatorStatus { connected, az_deg, el_deg, error }),
             ServerMsg::RelayStatus(st) => self.pending.push_back(RadioEvent::RelayStatus(st)),
             ServerMsg::AmpStatus(st) => self.pending.push_back(RadioEvent::AmpStatus(st)),
+            ServerMsg::Recordings(l) => self.pending.push_back(RadioEvent::Recordings(l)),
+            ServerMsg::WxsatStatus(s) => self.pending.push_back(RadioEvent::WxsatStatus(s)),
+            ServerMsg::SondeStatus(s) => self.pending.push_back(RadioEvent::SondeStatus(s)),
             ServerMsg::RadioConfig(c) => {
                 // Adopted only when nothing of ours is waiting to go out. This
                 // message is usually the echo of our own write, but it can
@@ -991,6 +1005,10 @@ mod tests {
             db_floor: -120.0,
             db_ceil: -20.0,
             viewport: Some((14_584_000.0, 14_968_000.0)),
+            smooth: false,
+            reassign: false,
+            reassign_floor_db: 6.0,
+            reassign_dim_db: 0.0,
         }))
     }
 

@@ -222,6 +222,31 @@ impl Directed {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_compound_directed_frame_carries_its_addressee_and_command() {
+        use super::{Compound, Js8FrameType, cmd_code};
+        for (to, cmd, num) in [
+            ("@MAGNET", " ", None),
+            ("W1AW/4", " GRID?", None),
+            ("@MAGNET", " SNR", Some(-10)),
+            ("N0JDS", " HEARTBEAT SNR", Some(5)),
+        ] {
+            let code = cmd_code(cmd).expect("known command");
+            let f = Compound::directed(to, code, num).pack().expect("packs");
+            let back = Compound::unpack(&f).expect("unpacks");
+            assert_eq!(back.kind, Js8FrameType::CompoundDirected, "{to}{cmd}");
+            assert_eq!(back.call, to);
+            assert_eq!(back.command(), Some((code, num)), "{to}{cmd}");
+            assert_eq!(back.grid(), None, "a command is not a grid");
+        }
+        // The identifying frame carries a grid and no command.
+        let id =
+            Compound::unpack(&Compound::ident("KN4CRD/QRP", Some("EM73")).pack().unwrap()).unwrap();
+        assert_eq!(id.kind, Js8FrameType::Compound);
+        assert_eq!(id.grid().as_deref(), Some("EM73"));
+        assert_eq!(id.command(), None);
+    }
+
     use super::*;
 
     fn directed(from: &str, to: &str, cmd: &str) -> Directed {
@@ -425,6 +450,77 @@ impl Compound {
         varicode::unpack_grid(self.num & 0x7fff)
     }
 
+    /// The frame that opens a message whose sender or addressee does not fit
+    /// a directed frame: who is speaking, and from where.
+    ///
+    /// `packCompoundMessage` with a grid (`varicode.cpp:1394`), as
+    /// `buildMessageFrames` sends it ahead of a [`Compound::directed`]
+    /// (`varicode.cpp:2126`).
+    pub fn ident(call: &str, grid: Option<&str>) -> Self {
+        Compound {
+            kind: Js8FrameType::Compound,
+            call: call.to_string(),
+            num: grid.map_or(varicode::NO_GRID, varicode::pack_grid),
+            sub: 0,
+        }
+    }
+
+    /// The addressee and command of such a message: `FrameCompoundDirected`.
+    ///
+    /// The addressee is the frame's 50-bit callsign. That is what lets it be
+    /// a custom group like `@EMCOMM` or a call like `W1AW/4`, neither of which
+    /// fits a directed frame's 28 bits. The command rides above
+    /// [`varicode::NUSERGRID`] in the grid field (`varicode.cpp:1425`).
+    pub fn directed(to: &str, cmd: i8, num: Option<i32>) -> Self {
+        Compound {
+            kind: Js8FrameType::CompoundDirected,
+            call: to.to_string(),
+            num: varicode::NUSERGRID + u16::from(pack_cmd(cmd, num)),
+            sub: 0,
+        }
+    }
+
+    /// The command and number a compound-directed frame carries.
+    pub fn command(&self) -> Option<(i8, Option<i32>)> {
+        if self.kind != Js8FrameType::CompoundDirected
+            || !(varicode::NUSERGRID..varicode::NO_GRID).contains(&self.num)
+        {
+            return None;
+        }
+        let value = u8::try_from(self.num - varicode::NUSERGRID).ok()?;
+        let (cmd, num) = unpack_cmd(value);
+        cmd_text(cmd).map(|_| (cmd, num))
+    }
+}
+
+/// A command and its number in eight bits, `packCmd` (`varicode.cpp:1166`).
+///
+/// The report commands set the top bit and put the report in the low six,
+/// with bit 6 telling ` HEARTBEAT SNR` from ` SNR`. Every other command is
+/// its code alone.
+fn pack_cmd(cmd: i8, num: Option<i32>) -> u8 {
+    if SNR_CMDS.contains(&cmd) {
+        let hb = u8::from(cmd == 29);
+        // Upstream packs an absent number as zero, which reads back as none.
+        let n = num.map_or(0, varicode::pack_num);
+        (((1 << 1) | hb) << 6) + (n & 0x3f)
+    } else {
+        (cmd as u8) & 0x7f
+    }
+}
+
+/// Inverse of [`pack_cmd`], `unpackCmd` (`varicode.cpp:1188`).
+fn unpack_cmd(value: u8) -> (i8, Option<i32>) {
+    if value & 0x80 != 0 {
+        let cmd = if value & 0x40 != 0 { 29 } else { 25 };
+        let n = value & 0x3f;
+        (cmd, (n != 0).then(|| varicode::unpack_num(n)))
+    } else {
+        ((value & 0x7f) as i8, None)
+    }
+}
+
+impl Compound {
     pub fn pack(&self) -> Option<Js8Payload> {
         // Directed and data frames have their own layouts and cannot ride here.
         if matches!(self.kind, Js8FrameType::Directed | Js8FrameType::Data) {

@@ -187,6 +187,14 @@ fn choose_config(
         if range.channels() <= 2 {
             score += 1; // avoid the 64-channel "default" ALSA device
         }
+        // Ties go to the deeper format: an IC-7300's codec lists U8 beside
+        // S16, and whichever came first won, so TX went out in 8 bits (#809).
+        let score = score * 4
+            + match fmt {
+                SampleFormat::F32 | SampleFormat::I32 => 3,
+                SampleFormat::I16 | SampleFormat::U16 => 2,
+                _ => 0,
+            };
         if best.as_ref().map(|(s, _, _)| score > *s).unwrap_or(true) {
             best = Some((score, cfg, fmt));
         }
@@ -1374,6 +1382,18 @@ mod tests {
         stable_tokens,
     };
     use std::time::{Duration, Instant};
+
+    /// #809: a card listing U8 before S16 at the same rate opens in 16 bits.
+    #[test]
+    fn a_tie_goes_to_the_deeper_sample_format() {
+        use cpal::{SampleFormat, SupportedBufferSize, SupportedStreamConfigRange};
+        let range = |fmt| {
+            SupportedStreamConfigRange::new(2, 48_000, 48_000, SupportedBufferSize::Unknown, fmt)
+        };
+        let ranges = vec![range(SampleFormat::U8), range(SampleFormat::I16)];
+        let (_, fmt) = super::choose_config(ranges.into_iter(), 48_000, 2).unwrap();
+        assert_eq!(fmt, SampleFormat::I16);
+    }
 
     /// The reason the period is computed rather than left to the driver: what
     /// has to stay constant as the operator moves an I/Q card up the rates is

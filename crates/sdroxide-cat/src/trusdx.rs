@@ -34,7 +34,8 @@
 //! firmware's own `UA` extension:
 //!
 //! * `UA1;` turns streaming on with the speaker, `UA2;` with the speaker off,
-//!   `UA0;` off. The reply is `UA1;` immediately followed by `US`.
+//!   `UA0;` off. The reply is `UA1;` immediately followed by `US`. sdroxide
+//!   pauses with `;RX;` instead (#724), which has no reply.
 //! * `US` is **not** terminated. Receive audio runs until a CAT command
 //!   arrives, at which point the firmware writes a `;`, the reply, and then
 //!   `US` again to resume. The host therefore sees
@@ -200,10 +201,15 @@ fn mode_digit(m: Mode) -> char {
         | Mode::Rtty
         | Mode::Olivia
         | Mode::Thor
+        | Mode::Contestia
+        | Mode::DominoEx
+        | Mode::Mfsk
+        | Mode::Mt63
         | Mode::Fsq
         | Mode::Hell
         | Mode::PacketHf
-        | Mode::VaraHf
+        | Mode::Mercury
+        | Mode::Data2g
         | Mode::AtChat
         | Mode::Jtty
         | Mode::Rade => '2',
@@ -252,9 +258,9 @@ impl Protocol for TrUsdx {
         // (olgierd/trusdx-audio, ilikehamradio's Linux driver). On a sound
         // card the audio arrives at the mic/line input, so `TX;` it stays.
         match (on, self.one_cable) {
-            (true, true) => b"TX0;".to_vec(),
-            (true, false) => b"TX;".to_vec(),
-            (false, _) => b"RX;".to_vec(),
+            (true, true) => b";TX0;".to_vec(),
+            (true, false) => b";TX;".to_vec(),
+            (false, _) => b";RX;".to_vec(),
         }
     }
 
@@ -294,7 +300,7 @@ impl Protocol for TrUsdx {
     /// only accepts a CAT frame with the stream stopped, and only resumes when
     /// it is asked to.
     fn stream_pause(&self) -> Vec<u8> {
-        b"UA0;".to_vec()
+        b";RX;".to_vec()
     }
 
     fn stream_resume(&self) -> Vec<u8> {
@@ -357,11 +363,21 @@ impl Protocol for TrUsdx {
     /// call idempotent whatever state the radio is in — safe on a stream that
     /// is running, on one that never started, and on one that has died.
     fn stream_start(&self) -> Vec<u8> {
-        b"UA0;UA1;".to_vec()
+        b";RX;UA1;".to_vec()
     }
 
     fn stream_active(&self) -> bool {
         self.stream_on
+    }
+
+    /// `;RX;` stops the stream and, unlike `UA0;`, gets no reply that says so;
+    /// a key-down stops it too. Mark it stopped as the frame goes out, so a
+    /// control frame during an over is not bracketed with a `;RX;` that would
+    /// unkey the radio mid-transmission. The next `US` header marks it running.
+    fn wrote(&mut self, frame: &[u8]) {
+        if frame.starts_with(b";RX;") || frame.starts_with(b";TX") {
+            self.stream_on = false;
+        }
     }
 
     /// The receive audio pulled out of the stream since the last call.
@@ -492,12 +508,12 @@ mod tests {
         assert_eq!(p.set_mode(Mode::Usb), b"MD2;".to_vec());
         assert_eq!(p.set_mode(Mode::Cw), b"MD3;".to_vec());
         // In-band audio keys with `TX0;`, the CAT-audio transmit (#724)...
-        assert_eq!(p.ptt(true), b"TX0;".to_vec());
-        assert_eq!(p.ptt(false), b"RX;".to_vec());
+        assert_eq!(p.ptt(true), b";TX0;".to_vec());
+        assert_eq!(p.ptt(false), b";RX;".to_vec());
         // ...and a sound card with the bare `TX;`, the mic/line input.
         let q = TrUsdx::new(false);
-        assert_eq!(q.ptt(true), b"TX;".to_vec());
-        assert_eq!(q.ptt(false), b"RX;".to_vec());
+        assert_eq!(q.ptt(true), b";TX;".to_vec());
+        assert_eq!(q.ptt(false), b";RX;".to_vec());
     }
 
     /// A digital mode goes to the sideband its name carries. There is no DATA
@@ -541,8 +557,8 @@ mod tests {
         assert!(!open.iter().any(|f| f.contains("UA1")), "the enable must not open: {open:?}");
         assert!(p.streams_audio());
         // The retry stops and starts, so it is safe over a live stream too.
-        assert_eq!(p.stream_start(), b"UA0;UA1;".to_vec());
-        assert_eq!(p.stream_pause(), b"UA0;".to_vec());
+        assert_eq!(p.stream_start(), b";RX;UA1;".to_vec());
+        assert_eq!(p.stream_pause(), b";RX;".to_vec());
         assert_eq!(p.stream_resume(), b"UA1;".to_vec());
         // The in-band mode asks for nothing of its own — a poll would kill the
         // stream — and it asserts `UA0;` at open all the same, to clear any
@@ -648,5 +664,18 @@ mod tests {
         let mut audio = Vec::new();
         p.take_stream_audio(&mut audio);
         assert_eq!(audio, vec![0x80, 0x81]);
+    }
+
+    #[test]
+    fn a_key_down_or_pause_marks_the_stream_stopped() {
+        let mut p = TrUsdx::default();
+        for frame in [&b";RX;"[..], b";TX;", b";TX0;", b";RX;UA1;"] {
+            p.stream_on = true;
+            p.wrote(frame);
+            assert!(!p.stream_active(), "{}", String::from_utf8_lossy(frame));
+        }
+        p.stream_on = true;
+        p.wrote(b"FA00014074000;");
+        assert!(p.stream_active());
     }
 }

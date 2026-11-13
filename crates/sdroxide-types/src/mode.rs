@@ -4,6 +4,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Mode {
     Lsb,
+    /// The alias reads a config saved by 1.7.0 with a mode that has since
+    /// been removed: an unknown variant would quarantine the whole file, and
+    /// that mode ran on USB. Names only — postcard numbers by position.
+    #[serde(alias = "VaraHf")]
     Usb,
     Cw,
     Am,
@@ -372,18 +376,54 @@ pub enum Mode {
     /// convolutional code, so it copies where 45.45-baud RTTY goes marginal.
     /// Appended for the same reason as [`Mode::Hell`].
     Jtty,
-    /// VARA HF — the ARQ modem most Winlink RMS gateways and VarAC stations
-    /// run, here on the vendored xara modem core (see `vendor/xara`).
+    /// Mercury — Rhizomatica's HF ARQ modem (codec2 OFDM data modes with an
+    /// MFSK floor and a carousel ARQ), the one HERMES stations run; linked in
+    /// from `vendor/mercury`.
     ///
-    /// A connected-mode link rather than a keyboard or slotted mode: two
-    /// stations hand-shake, then trade OFDM/PSK bursts and acknowledgements
-    /// with the speed adapting to the path. Upper sideband whatever the band,
-    /// a 500, 2300 or 2750 Hz signal centred on 1500 Hz of audio — the width is
-    /// a setting ([`crate::DigiConfig::vara_bw`]), not part of the mode.
-    /// Driven by the Winlink window, the operator's panel, or an external
-    /// program on VARA's TCP host ports. Appended for the same reason as
+    /// A connected-mode link driven over a TNC host interface: the Winlink window,
+    /// the operator's panel, or an external program (Pat, BPQ, VarAC) on the
+    /// TCP host ports. Upper sideband whatever the band, 500 or 2300 Hz wide
+    /// centred on 1500 Hz of audio — the width is a setting
+    /// ([`crate::DigiConfig::mercury_bw`]), not part of the mode. Appended for
+    /// the same reason as [`Mode::Hell`].
+    Mercury,
+    /// Data2G — arodland's OFDM HF ARQ modem with LDPC/polar codes, hybrid ARQ
+    /// and a learned rate shifter; linked in from `vendor/data2g`.
+    ///
+    /// Driven exactly as [`Mode::Mercury`] is. 500, 1200 or 2300 Hz (a 2400 Hz
+    /// band) centred near 1525 Hz of audio, chosen by
+    /// [`crate::DigiConfig::data2g_bw`]. Appended for the same reason as
     /// [`Mode::Hell`].
-    VaraHf,
+    Data2g,
+    /// MT63 — the 64-carrier Walsh-spread OFDM keyboard mode, wide and slow but
+    /// very robust: a burst is interleaved over many characters and every
+    /// character is spread over all 64 carriers. USB underneath.
+    ///
+    /// The bandwidth and interleave are [`crate::DigiConfig::mt63_mode`].
+    /// Appended for the same reason as [`Mode::Hell`].
+    Mt63,
+    /// MFSK — fldigi's IZ8BLY multi-tone family (MFSK4/8/11/16/22/31/32/64/128
+    /// and the two long-interleave variants), a keyboard mode. USB underneath.
+    ///
+    /// The variant is [`crate::DigiConfig::mfsk_mode`], because they are one
+    /// modem at different symbol rates rather than eleven decoders. Appended
+    /// for the same reason as [`Mode::Hell`].
+    Mfsk,
+    /// DominoEX — incremental frequency keying (IFK+) over 18 tones with no
+    /// forward error correction: the data is the step between successive
+    /// tones, one to three nibbles of its own alphabet per character. USB
+    /// underneath. The variant is [`crate::DigiConfig::domino_mode`].
+    ///
+    /// Appended for the same reason as [`Mode::Hell`].
+    DominoEx,
+    /// Contestia — Olivia's engine with six-bit characters: a 32-symbol block,
+    /// its own scrambler and character map, so about twice Olivia's text rate
+    /// for a little less robustness. USB underneath. The tones and bandwidth are
+    /// Olivia's fields ([`crate::DigiConfig::olivia_tones`] and
+    /// [`crate::DigiConfig::olivia_bw_hz`]).
+    ///
+    /// Appended for the same reason as [`Mode::Hell`].
+    Contestia,
 }
 
 /// The bands on which a mode that keeps phone practice rides the lower
@@ -404,7 +444,7 @@ const PHONE_LSB_BANDS: [(f64, f64); 3] =
 impl Mode {
     /// Every mode, in the order they cycle and appear in the picker — which is
     /// deliberately *not* the enum's declaration order (see [`Mode::Hell`]).
-    pub const ALL: [Mode; 51] = [
+    pub const ALL: [Mode; 56] = [
         Mode::Lsb,
         Mode::Usb,
         Mode::Cw,
@@ -433,7 +473,8 @@ impl Mode {
         Mode::RttyFm,
         Mode::Packet,
         Mode::PacketHf,
-        Mode::VaraHf,
+        Mode::Mercury,
+        Mode::Data2g,
         Mode::Aprs,
         Mode::Sstv,
         Mode::SstvFm,
@@ -443,6 +484,10 @@ impl Mode {
         Mode::Acars,
         Mode::Olivia,
         Mode::Thor,
+        Mode::Contestia,
+        Mode::DominoEx,
+        Mode::Mfsk,
+        Mode::Mt63,
         Mode::Fsq,
         Mode::AtChat,
         Mode::Hell,
@@ -463,7 +508,7 @@ impl Mode {
     /// packet, RF Paint). All are USB underneath except RIFP, VHF packet and
     /// VHF SSTV, which frequency-modulate the carrier, and ACARS, which is
     /// received in AM.
-    pub const DIGITAL: [Mode; 33] = [
+    pub const DIGITAL: [Mode; 38] = [
         Mode::Ft8,
         Mode::Ft4,
         Mode::Ft2,
@@ -482,6 +527,10 @@ impl Mode {
         Mode::RttyFm,
         Mode::Olivia,
         Mode::Thor,
+        Mode::Contestia,
+        Mode::DominoEx,
+        Mode::Mfsk,
+        Mode::Mt63,
         Mode::Fsq,
         Mode::AtChat,
         Mode::Hell,
@@ -495,7 +544,8 @@ impl Mode {
         Mode::Rade,
         Mode::Packet,
         Mode::PacketHf,
-        Mode::VaraHf,
+        Mode::Mercury,
+        Mode::Data2g,
         Mode::Aprs,
     ];
 
@@ -518,6 +568,10 @@ impl Mode {
                 | Mode::Rifp
                 | Mode::Olivia
                 | Mode::Thor
+                | Mode::Contestia
+                | Mode::DominoEx
+                | Mode::Mfsk
+                | Mode::Mt63
                 | Mode::Fsq
                 | Mode::AtChat
                 | Mode::Hell
@@ -527,7 +581,8 @@ impl Mode {
                 | Mode::Navtex
                 | Mode::Packet
                 | Mode::PacketHf
-                | Mode::VaraHf
+                | Mode::Mercury
+                | Mode::Data2g
                 | Mode::Aprs
                 | Mode::Msk144
                 | Mode::Jt65
@@ -550,11 +605,12 @@ impl Mode {
         matches!(self, Mode::Packet | Mode::PacketHf)
     }
 
-    /// True for VARA HF. Not a member of [`Self::is_packet`]: the two share a
-    /// purpose (a Winlink route) and nothing else — not the modem, not the
-    /// link layer, not the controller.
-    pub fn is_vara(self) -> bool {
-        matches!(self, Mode::VaraHf)
+    /// True for the TNC modems, Mercury and Data2G: connected-mode ARQ links
+    /// driven over a TNC host interface. Not a member of
+    /// [`Self::is_packet`]: the two share a purpose (a Winlink route) and
+    /// nothing else.
+    pub fn is_tnc_modem(self) -> bool {
+        matches!(self, Mode::Mercury | Mode::Data2g)
     }
 
     /// True for APRS.
@@ -695,7 +751,16 @@ impl Mode {
     pub fn is_text_modem(self) -> bool {
         matches!(
             self,
-            Mode::Psk | Mode::Rtty | Mode::RttyFm | Mode::Olivia | Mode::Thor | Mode::Fsq
+            Mode::Psk
+                | Mode::Rtty
+                | Mode::RttyFm
+                | Mode::Olivia
+                | Mode::Thor
+                | Mode::Contestia
+                | Mode::DominoEx
+                | Mode::Mfsk
+                | Mode::Fsq
+                | Mode::Mt63
         )
     }
 
@@ -970,6 +1035,10 @@ impl Mode {
             Mode::SstvFm => "SSTV-FM",
             Mode::Olivia => "OLIVIA",
             Mode::Thor => "THOR",
+            Mode::Contestia => "CONTESTIA",
+            Mode::DominoEx => "DOMINOEX",
+            Mode::Mfsk => "MFSK",
+            Mode::Mt63 => "MT63",
             Mode::Fsq => "FSQ",
             Mode::Hell => "HELL",
             Mode::RfPaint => "RFPAINT",
@@ -977,7 +1046,6 @@ impl Mode {
             Mode::Rifp => "RIFP",
             Mode::Packet => "PACKET",
             Mode::PacketHf => "PACKET-HF",
-            Mode::VaraHf => "VARA HF",
             Mode::Aprs => "APRS",
             Mode::Wefax => "WEFAX",
             Mode::Js8 => "JS8",
@@ -998,6 +1066,8 @@ impl Mode {
             Mode::Q65 => "Q65",
             Mode::Fsk441 => "FSK441",
             Mode::Jtty => "JTTY",
+            Mode::Mercury => "MERCURY",
+            Mode::Data2g => "DATA2G",
         }
     }
 
@@ -1048,12 +1118,17 @@ impl Mode {
                 | Mode::Rtty
                 | Mode::Olivia
                 | Mode::Thor
+                | Mode::Contestia
+                | Mode::DominoEx
+                | Mode::Mfsk
+                | Mode::Mt63
                 | Mode::Fsq
                 | Mode::Hell
                 | Mode::RfPaint
                 | Mode::Packet
                 | Mode::PacketHf
-                | Mode::VaraHf
+                | Mode::Mercury
+                | Mode::Data2g
                 | Mode::Navtex
                 | Mode::Wefax
                 | Mode::Msk144
@@ -1072,6 +1147,9 @@ impl Mode {
             noise_reduction: Some(NrLevel::Off),
             auto_notch: Some(false),
             wfm_stereo: Some(true),
+            fm_decrackle: Some(true),
+            fm_deemph: Some(true),
+            fm_decrackle_dip: Some(crate::FM_DECRACKLE_DEFAULT_DIP),
             binaural: Some(false),
         }
     }
@@ -1149,6 +1227,10 @@ impl Mode {
             | Mode::Sstv
             | Mode::Olivia
             | Mode::Thor
+            | Mode::Contestia
+            | Mode::DominoEx
+            | Mode::Mfsk
+            | Mode::Mt63
             | Mode::Fsq
             | Mode::Hell
             | Mode::RfPaint
@@ -1204,9 +1286,10 @@ impl Mode {
             // HF packet is 300 baud AFSK on a sideband, tones around
             // 1600/1800 Hz — an ordinary keyboard-mode passband.
             Mode::PacketHf => (150.0, 2850.0),
-            // All three VARA widths are centred on 1500 Hz; this is the widest
-            // (2750) with a little room, and the presets narrow it.
-            Mode::VaraHf => (100.0, 2900.0),
+            // The widest setting of each with a little room; the presets
+            // narrow it to the width the link runs.
+            Mode::Mercury => (300.0, 2700.0),
+            Mode::Data2g => (300.0, 2750.0),
         }
     }
 
@@ -1390,13 +1473,18 @@ impl Mode {
             | Mode::Navtex
             | Mode::Olivia
             | Mode::Thor
+            | Mode::Contestia
+            | Mode::DominoEx
+            | Mode::Mfsk
+            | Mode::Mt63
             | Mode::Fsq
             | Mode::Hell
             | Mode::RfPaint
             | Mode::Rade
             | Mode::Packet
             | Mode::PacketHf
-            | Mode::VaraHf
+            | Mode::Mercury
+            | Mode::Data2g
             | Mode::Aprs
             | Mode::Msk144
             | Mode::Jt65
@@ -1629,10 +1717,11 @@ impl Mode {
                 ("18k", -4100.0, 13_100.0),
                 ("20k", -4700.0, 14_600.0),
             ],
-            // VARA's three widths, all centred on 1500 Hz: matching the filter to
-            // the width the link runs keeps a neighbour out of the busy detector.
-            Mode::VaraHf => {
-                &[("500", 1200.0, 1800.0), ("2.3k", 300.0, 2700.0), ("2.75k", 100.0, 2900.0)]
+            // Each width the modem offers: matching the filter to the width the
+            // link runs keeps a neighbour out of the busy detector.
+            Mode::Mercury => &[("500", 950.0, 2050.0), ("2.3k", 300.0, 2700.0)],
+            Mode::Data2g => {
+                &[("500", 1200.0, 1850.0), ("1.2k", 850.0, 2200.0), ("2.4k", 300.0, 2750.0)]
             }
             // Digital modes have a fixed wide passband; no presets.
             Mode::Wfm
@@ -1648,6 +1737,10 @@ impl Mode {
             | Mode::Sstv
             | Mode::Olivia
             | Mode::Thor
+            | Mode::Contestia
+            | Mode::DominoEx
+            | Mode::Mfsk
+            | Mode::Mt63
             | Mode::Fsq
             | Mode::Hell
             | Mode::RfPaint
@@ -2291,7 +2384,12 @@ mod tests {
             (Mode::Q65, 47),
             (Mode::Fsk441, 48),
             (Mode::Jtty, 49),
-            (Mode::VaraHf, 50),
+            (Mode::Mercury, 50),
+            (Mode::Data2g, 51),
+            (Mode::Mt63, 52),
+            (Mode::Mfsk, 53),
+            (Mode::DominoEx, 54),
+            (Mode::Contestia, 55),
         ];
         for (mode, index) in pinned {
             assert_eq!(mode as u8, index, "{} moved", mode.label());
@@ -2338,12 +2436,21 @@ mod tests {
         // dropped and nothing listed twice.
         // The last variant *by discriminant*, which is the one appended most
         // recently — not the one that reads last in the picker.
-        let last = Mode::VaraHf as u8;
+        let last = Mode::Contestia as u8;
         for i in 0..=last {
             let present = Mode::ALL.iter().filter(|m| **m as u8 == i).count();
             assert_eq!(present, 1, "discriminant {i} appears {present} times in Mode::ALL");
         }
         assert_eq!(Mode::ALL.len(), last as usize + 1);
+    }
+
+    /// A mode 1.7.0 shipped was removed after it. A config file naming it
+    /// must still parse, or the whole file is quarantined.
+    #[test]
+    fn a_saved_removed_mode_reads_as_usb() {
+        let m: Mode = serde_json::from_str("\"VaraHf\"").unwrap();
+        assert_eq!(m, Mode::Usb);
+        assert_eq!(serde_json::to_string(&Mode::Usb).unwrap(), "\"Usb\"");
     }
 
     /// Every mode offered in the band/mode menu's **Digital** row must be a

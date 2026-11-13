@@ -85,6 +85,14 @@ pub enum Command {
         rx: RxId,
         on: bool,
     },
+    /// NFM FM-Decrackle (click eliminator), de-emphasis and the sensitivity
+    /// of the slip test (see `RxState::fm_decrackle_dip`).
+    SetFmDecrackle {
+        rx: RxId,
+        on: bool,
+        deemph: bool,
+        dip: f32,
+    },
     SetSubRx(bool),
     /// Park the sub receiver on an absolute frequency. The engine clamps it to
     /// the device passband — the sub is a DDC on the same IQ stream as the main
@@ -1237,24 +1245,75 @@ pub enum Command {
     /// Appended for the usual reason — postcard numbers variants by position.
     ClearMemories,
 
-    /// VARA HF: call a station from the operator's panel. Refused, with a line
-    /// in the transcript, while another host (Winlink, a TCP program) holds the
-    /// modem. Appended for the usual reason.
-    VaraConnect {
+    /// Mercury / Data2G: call a station from the operator's panel. Refused,
+    /// with a line in the transcript, while another host (Winlink, a TCP
+    /// program) holds the modem. Appended for the usual reason.
+    TncConnect {
         call: String,
     },
-    /// VARA HF: send one line to the connected station. A CR is added.
-    VaraSend {
+    /// Mercury / Data2G: send one line to the connected station. A CR is added.
+    TncSend {
         text: String,
     },
-    /// VARA HF: hang up cleanly, waiting for the far end to agree.
-    VaraDisconnect,
-    /// VARA HF: drop the link now, whoever holds the modem.
-    VaraAbort,
-    /// VARA HF: send (true) or stop (false) a tune tone for an antenna tuner.
-    VaraTune {
+    /// Mercury / Data2G: hang up cleanly, waiting for the far end to agree.
+    TncDisconnect,
+    /// Mercury / Data2G: drop the link now, whoever holds the modem.
+    TncAbort,
+    /// Mercury: send (true) or stop (false) a tune tone for an antenna tuner.
+    TncTune {
         on: bool,
     },
-    /// VARA HF: empty the panel's transcript. The link is untouched.
-    VaraTermClear,
+    /// Mercury / Data2G: empty the panel's transcript. The link is untouched.
+    TncTermClear,
+    /// Hum filter on a receiver's listener audio (see `RxState::hum_filter`).
+    /// Appended for the usual reason — postcard numbers variants by position.
+    SetHumFilter {
+        rx: RxId,
+        on: bool,
+    },
+    /// SK filter on a receiver's listener audio, and its time constant (see
+    /// `RxState::sk_filter`). Appended likewise.
+    SetSkFilter {
+        rx: RxId,
+        on: bool,
+        tau_s: f32,
+        open_s: f32,
+        close_s: f32,
+        width: u8,
+        after_nr: bool,
+    },
+    /// The panadapter shows (true) or no longer shows (false) a stretch outside
+    /// the I/Q window while it draws from the I/Q — a hole in the picture. A
+    /// client sends it when it changes. It gates centring the window on a
+    /// resting dial: that happens only while there is a hole to fill, so a
+    /// view inside the window is left where it is. An engine that is never
+    /// told (an older client) does not centre. Appended for the usual reason.
+    SetViewUncovered(bool),
+
+    /// Play a recording back into the decoders, or steer one that is playing.
+    /// See [`crate::playback`]: the radio is stood down for the length of it
+    /// and put back on [`crate::PlaybackCommand::Stop`].
+    ///
+    /// Appended last, for the usual reason — postcard numbers variants by
+    /// position.
+    Playback(crate::PlaybackCommand),
+
+    /// Ask which recordings the station has. A question, answered once with a
+    /// [`crate::RecordingListing`] — the files live where the engine runs, which
+    /// for a browser is not where the window is.
+    ///
+    /// Appended last, for the usual reason.
+    ListRecordings,
+
+    /// Whether the weather-satellite (NOAA APT / Meteor LRPT) decoder runs,
+    /// which signal it reads and which downlink channel it centres on. Kept in
+    /// `wxsat.json`, echoed back in [`crate::RadioState::wxsat`]. Appended last,
+    /// for the usual reason.
+    SetWxsatConfig(crate::WxsatSettings),
+
+    /// Whether the radiosonde decoder runs, which channel it centres on and
+    /// whether it scans the window for sondes instead. Kept in `sonde.json`,
+    /// echoed back in [`crate::RadioState::sonde`]. Appended last, for the
+    /// usual reason.
+    SetSondeConfig(crate::SondeSettings),
 }

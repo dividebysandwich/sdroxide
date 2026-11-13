@@ -1,6 +1,6 @@
 # Privacy Policy
 
-_Last updated: 7 November 2026_
+_Last updated: 11 November 2026_
 
 sdroxide is free, open-source software (GPL-3.0-or-later). It contains **no
 telemetry, no analytics, no crash reporting and no advertising**. It does not
@@ -45,6 +45,7 @@ switched the feature on.
 | Callsign lookup | QRZ.com or HamQTH | Your account credentials and the callsign being looked up | Off |
 | Logbook upload / sync | LoTW, eQSL, QRZ Logbook, Club Log, HamQTH, World Radio League, Wavelog | Your account credentials or API key, and the QSOs you choose to upload | Off |
 | Winlink | Winlink CMS | Your callsign, password and the messages you send | Only when you use it |
+| Online radiosondes (RADIOSONDES window) | SondeHub (`api.v2.sondehub.org`) | Your station's position from your locator, rounded to 0.1° (about 11 km), and a 400 km radius, to list the sondes near you; a sonde's serial when you open its card, for its flight. Nothing is uploaded. On a remote or web client the station you are connected to sends these requests for you and keeps the answers in memory only | Off, and not remembered between runs |
 
 ## Data that is only downloaded
 
@@ -68,6 +69,10 @@ talks to the address you entered. A public KiwiSDR receiver shows its owner a
 user name for you, which is your callsign unless you set a different one. To find HPSDR and PlutoSDR radios,
 sdroxide lists your computer's network adapters and searches the local network.
 That information stays on your computer.
+
+Picking a receiver on the Public SDRs map checks whether it answers: a KiwiSDR
+`/status` request, a SpyServer greeting, or a connection to the address the
+directory lists. Nothing is checked until you pick one.
 
 sdroxide's own remote-operation server and TCI server only run if you start
 them, and they listen only on the addresses you configure.

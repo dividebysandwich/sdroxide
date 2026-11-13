@@ -79,6 +79,10 @@ settings-ui-layout = Layout
 settings-ui-theme = Theme
 settings-ui-button-style = Button style
 settings-ui-window-style = Window style
+settings-ui-tooltip-delay = Tooltip delay
+settings-ui-tooltip-delay-hint = Pointer rest before a tooltip shows
+settings-ui-tooltip-grace = Tooltip follow-on
+settings-ui-tooltip-grace-hint = After a tooltip: how long the next shows without delay; 0 = every one waits
 settings-ui-frame-rate = Screen update rate
 settings-ui-palette = Waterfall palette
 settings-ui-tuning-buttons = Tuning buttons
@@ -122,6 +126,12 @@ settings-ui-band-conditions-download = Download the band-conditions forecast
     .hint = Fetches HAMQSL.com's HF band-conditions forecast, at most once an hour, to colour the band menu. Off, the band menu shows no forecast unless the 3D view is open. Nothing is sent beyond the request itself.
 settings-ui-broadcast-schedule-download = Download the broadcast schedule
     .hint = Fetches the EiBi shortwave broadcast schedule (about 1 MB) from eibispace.de when a new broadcasting season starts. Off, the schedule built into sdroxide (or the last one downloaded) stays in use, and Settings → Spots → Download schedule now still fetches it on request.
+settings-ui-aoki-import = IMPORT AOKI LIST…
+    .hint = Nobuo Aoki's shortwave list (NDXC) as extra label candidates for LABELS BY S/N. Not downloaded by sdroxide: fetch the season's ZIP from www1.s2.starcat.ne.jp/ndxc, unpack it and pick the text file here. Stored in the configuration folder; no network request.
+settings-ui-aoki-imported = { $n } lines imported
+settings-ui-aoki-refused = Not imported: { $why }
+settings-ui-aoki-present = Aoki list imported
+settings-ui-aoki-absent = No Aoki list (optional)
 settings-ui-3d-view = 3D view
 settings-ui-clouds = Cloud rendering
 settings-ui-clouds-layered = Layered
@@ -329,6 +339,8 @@ settings-added-radio-s-s-meter =
 settings-t-0-db = 0 dB
 settings-antenna-somewhere-else-no-locator = The antenna is somewhere else and no locator is set, so nothing this radio hears is reported to PSK Reporter, WSPRnet or FreeDV Reporter. Type the receiver's locator above to report from it.
 settings-ranges-are-mhz-low-high = Ranges are in MHz, low-high, separated by commas: 144-146, 430-440 — that is 144000000-146000000 Hz and 430000000-440000000 Hz. They are dial frequencies: a converter offset does not move them. The converter offset above is the field in hertz. Leave a range empty to use whatever the device reports about itself; a device that reports nothing is taken at its word.
+settings-dwell-recentre = Centre the window on a resting dial
+settings-dwell-recentre-hover = After five seconds of rest more than a twentieth of the window off its middle, the I/Q window is centred on the dial, once per resting place. Off: the window stays where it is until the dial leaves it.
 settings-careful-rtl-sdr-blog-v4 = Careful on an RTL-SDR: the Blog V4 upconverts on its own below 28.8 MHz, so a negative offset that lands the hardware there shifts twice.
 settings-transmit-audio = Transmit audio
 settings-use = in use
@@ -478,6 +490,8 @@ settings-add-radio-computer = Add a radio on this computer
 settings-radio-s-settings-are-below = This radio's settings are below. Drag to move it along the strip.
 settings-switch-radio-dialog-follows-drag = Switch to this radio (the dialog follows). Drag to move it along the strip.
 settings-tx = ● TX
+settings-station-radio = Station:
+settings-station-radio-tip = The station radio. It runs the station's network services (spot feeds, rotator, amplifier, T/R switch) and takes the command line's settings, so it stays in the list. To rest it, switch it off with LINK; to use other hardware, choose another interface below.
 settings-mute-radio-s-audio = Mute this radio's audio
 settings-link = LINK
 settings-close-radio-configuration-kept = Close this radio (its configuration is kept)
@@ -490,6 +504,11 @@ settings-region-note = Where the station is. Sets every band plan: the band edge
         [2] 420–450 MHz, and 40 m runs to 7.300
        *[3] 430–450 MHz, and 80 m stops at 3.900
     }. Takes effect at once, and applies to every radio at this station.
+settings-country = Country
+settings-country-off = — (no channel plans)
+settings-country-system = Like this computer: { $country }
+settings-country-germany = Germany
+settings-country-note = Which licence-free channels the waterfall shows; national law sets these, not the IARU region. Germany: CB channels 1–80 (41–80 FM only, data channels in amber), Freenet 149.025–149.1125 MHz and PMR446 446.00625–446.19375 MHz, each as a block on the band-plan strip with channel tiles above it. Applies to this screen; by default it follows the country the computer is set to.
 settings-rx-grid-reported = Receptions through this radio are reported from { $grid }, not from your own locator.
 settings-rx-grid-invalid = { $grid } is not a Maidenhead locator, so nothing this radio hears is reported. Four or six characters: two letters, two digits, and optionally two more letters.
 settings-bypassed = bypassed
@@ -603,6 +622,10 @@ settings-controls-none = — none —
 
 settings-general-system-default = System default
 settings-general-remote-access = Remote access
+settings-general-signed-in-station = Signed-in station
+settings-general-sign-out = {" "}SIGN OUT{" "}
+settings-general-sign-out-forgets-device = Forgets this device's sign-in. The station has to ask again on the next connection; this one stays up until you close it.
+settings-general-password-kept-no-cookie = Remembering a password in this browser for { $stations }, because it answered no sign-in cookie. Older stations do this; it is not the same thing.
 settings-general-what-remote-client-browser-page = What a remote client — the browser page, or another sdroxide started with --connect — has to give before this station will let it operate. Applies in server mode (--server); the next sign-in picks up a change, with no restart.
 settings-general-username = Username
 settings-general-password = Password
@@ -986,7 +1009,6 @@ settings-wavelog-plain-http-address-internet-api = Plain http:// to an address o
 settings-wavelog-trusted-cert = Trusted cert
 settings-wavelog-forget-certificate = Forget this certificate
 settings-wavelog-go-back-ordinary-checking-against = Go back to ordinary checking against the public certificate authorities — for a server that now has a proper certificate.
-settings-wavelog-connection-check-runs-machine-radio = The connection check runs on the machine the radio is attached to — use the settings there to test it and list the station locations.
 settings-wavelog-server-presented-certificate-sha-256 = The server presented this certificate (SHA-256):
 settings-wavelog-compare-your-server-s-e = Compare it with your server's — e.g. `openssl x509 -noout -fingerprint -sha256 -in cert.pem` — and trust it only if they match. From then on this exact certificate is accepted and any other is refused.
 settings-wavelog-trust-certificate = Trust this certificate
@@ -2065,12 +2087,15 @@ topbar-return-selector-top-bar-popup = Return the selector to the top-bar popup
 topbar-dec-off = DEC off
 topbar-vol = Vol
 topbar-counted-steps-not-decibels-what =
-
+    {""}
 
     Counted in steps, not decibels: what one step is worth is the receiver's own business, and on an SDRplay it depends on the band as well. Right is still more gain.
 topbar-gain = Gain
+topbar-tuner-agc-owns-gain = Tuner AGC sets this stage; Manual in Settings → Radio.
+topbar-hackrf-amp-hint = HackRF RF amplifier, about +11 dB. Lit = on.
+topbar-rx888-vga-range-hint = VGA range (AD8370): AUTO by request, LOW up to ~+17 dB, HIGH with pre-amp from ~−8 dB.
 topbar-plutosdr-s-own-agc-setting =
-
+    {""}
 
     The PlutoSDR's own AGC is setting this gain, so moving the slider does nothing. Set Settings → Radio → AGC to Manual to control it here.
 topbar-agc-hang-time-click-cycle = AGC hang time — click to cycle: Off / Slow / Med / Fast
@@ -2142,6 +2167,30 @@ topbar-what-capture-costs-sample-rate = What a capture costs at this sample rate
 topbar-engine = ENGINE
 topbar-no-noise-reduction-decoders-never = No noise reduction — the decoders never saw it anyway
 topbar-strength = STRENGTH
+topbar-fm-decrackle = FM-DECRACKLE
+topbar-fm-decrackle-chip = DECRACKLE
+topbar-fm-decrackle-hint = NFM: phase slips (crackle on weak signals) found and repaired in a ring buffer; ~1 ms delay
+topbar-fm-deemph = DE-EMPH
+topbar-fm-deemph-hint = De-emphasis 6 dB/octave above 300 Hz; off for transmitters without pre-emphasis
+topbar-fm-decrackle-sens-hint = Sensitivity: magnitude dip below this share of its mean; 0.2 default, higher repairs more
+topbar-nr-filters = FILTERS
+topbar-sk-filter-hint = SK post-filter refines neural or other noise removal: penalises unwanted noise
+    (the filter resonates, leading to echo) · filter by HDZ
+topbar-sk-filter-tau-hint = Time constant tau: long = filter curve, short (0.1 s) = syllable gate too
+topbar-sk-filter-open = open
+topbar-sk-filter-close = close
+topbar-sk-filter-open-hint = Open: how fast a bin opens when speech arrives in it
+topbar-sk-filter-close-hint = Close: how fast it shuts afterwards; short = less reverb
+topbar-sk-filter-width = width
+topbar-sk-filter-width-hint = Mask smoothing, ± bins of 47 Hz; wider = less ringing, coarser
+topbar-sk-filter-after-nr = after NR
+topbar-sk-filter-after-nr-hint = SK behind RNN/DFNR instead of ahead of the AGC (variant B)
+topbar-sk-filter-caption = SK POST-FILTER
+topbar-sk-filter-reset-hint = SK back to defaults: τ 0.1 s, open 0.01 s, close 1 s, width ±1, ahead of NR
+topbar-sk-filter-before-nr = ahead of NR
+topbar-sk-preset-hint = Click loads, right-click stores the current values
+    { $values }
+topbar-hum-filter-hint = High-pass 300 Hz: 50/60 Hz mains hum and harmonics
 topbar-tone = TONE
 topbar-ctcss-dcs-no-sub-audible = CTCSS / DCS — no sub-audible tone on this signal
 topbar-tone-squelch = TONE SQUELCH
@@ -2212,15 +2261,40 @@ topbar-how-many-signals-model-reads = How many signals the model reads at once. 
 topbar-spots = SPOTS
 topbar-save-skimmer-s-spot-list = Save the skimmer's spot list to a file
 topbar-show-hide-full-band-waterfall = Show/hide the full-band waterfall strip above the panadapter — everything this receiver can see at once
-topbar-spectrum-waterfall-either-layer-both = Spectrum and waterfall — either layer, both, or neither. Lit while both are shown.
+topbar-spectrum-waterfall-either-layer-both = Spectrum: the line, peak hold, S/N, 3D and how fast it follows. Lit while the spectrum is shown.
 topbar-spectrum = SPECTRUM
 topbar-show-spectrum = SHOW SPECTRUM
 topbar-draw-spectrum-line-across-top = Draw the spectrum line across the top of the panadapter. Switched off, the waterfall takes the whole height.
 topbar-peak-hold = PEAK HOLD
+topbar-snr-guide = S/N
+topbar-snr-guide-tip = S/N per frequency over noise floor, running mean (τ 10 s up, 6 s down)
+    Full height = S/N TOP
+topbar-sk-guide = SK
+topbar-sk-guide-tip = Spectral kurtosis per frequency: noise 1, steady carrier 0
+    Modulation and speech above 1 (rolling)
+topbar-caption-sk-top = SK TOP
+topbar-sk-top-tip = SK at the full height of the SK line, dB (noise 0 dB)
+topbar-caption-sk-tau = SK τ
+topbar-sk-tau-tip = Memory of the SK averaging (rolling, like S/N)
+topbar-caption-snr-top = S/N TOP
+topbar-snr-top-tip = S/N at full height of S/N line, dB over noise floor
+topbar-caption-snr-min = S/N MIN
+topbar-snr-min-tip = Minimum S/N for labels and candidates, dB over noise floor
+spots-snr-only-tip = In view only spots with S/N ≥ S/N MIN (±2 kHz); needs IN VIEW
+topbar-spot-labels-chip = LABELS
+topbar-spot-labels = Master switch: off, no labels at all (spots and decoded calls); the switches beside it grey out. Which kinds: SPOTS
+topbar-caption-tempo = Tempo
+topbar-snr-label-filter = BY S/N
+topbar-snr-label-filter-tip = Spot labels only at S/N ≥ S/N MIN (±2 kHz), every 2 s, faded
+topbar-snr-label-peak = WITH PEAKS
+topbar-snr-label-peak-tip = Labels of AM and CW stations only at a peak 3 dB over its surroundings (0.6–2 kHz): none on interference or sidebands
+topbar-snr-label-flanks = IGNORE FLANKS
+topbar-snr-label-flanks-tip = No labels within ±10 kHz of a station 15 dB over noise floor; its own label stays
 topbar-trace-highest-level-each-column = Trace the highest level each column has reached over the live line, decaying back down — what the band did while you were looking elsewhere
 topbar-draw-spectrum-receding-surface-instead = Draw the spectrum as a receding surface instead of a flat line: the newest spectrum across the front, the ones before it flowing away from you. The last couple of seconds of the band as a landscape — a carrier that comes and goes is a ridge rather than a line that twitches. The grid and the peak hold belong to the flat line and are not drawn on it.
 topbar-how-quickly-spectrum-line-follows = How quickly the spectrum line follows the band. Slower averages more frames into each other: a steadier line, and a weak carrier that stands still long enough to read. The waterfall is not touched by it — those rows get every frame either way.
 topbar-waterfall = WATERFALL
+topbar-resolution = RESOLUTION
 topbar-show-waterfall = SHOW WATERFALL
 topbar-draw-scrolling-waterfall-below-spectrum = Draw the scrolling waterfall below the spectrum. Switched off, the spectrum line takes the whole height.
 topbar-how-fast-waterfall-scrolls-lines = How fast the waterfall scrolls, in lines a second: Slow 5, Medium 28, Fast 56, Faster 112, Fastest 224. The engine clocks these itself, so the two fastest are real detail rather than the same line drawn twice — as far as the receiver can feed them: a line can never show more than one transform, and a narrow front end makes only a few dozen a second. They cost history, since the waterfall keeps a fixed number of lines — 73 seconds at Medium, 9 at Fastest.
@@ -2238,10 +2312,16 @@ topbar-read-machine-screen-take-most = Read this machine and this screen, take t
 topbar-width-force-right-now-whatever = The width in force right now, whatever the row above asks for
 topbar-keep-floor-ceiling-set-best = Keep the floor/ceiling set for best waterfall contrast — eased back into place on a band change, after a pan or zoom, and when the levels drift. Switch it on to fit at once; switch it off to keep the levels where you set them.
 topbar-keep-tuned-frequency-middle-panadapter = Keep the tuned frequency in the middle of the panadapter: the window slides under the dial instead of the picture jumping a whole span when you tune off the edge. Switch it on to centre at once; switch it off to pan and zoom wherever you like.
-topbar-spectrum-floor-ceiling-fft-size = Spectrum floor / ceiling and FFT size
-topbar-level-drawn-bottom-spectrum-darkest = The level drawn at the bottom of the spectrum and as the darkest waterfall colour. Bring it up until the noise floor just darkens. Setting it switches FIT off.
+topbar-spectrum-floor-ceiling-fft-size = Waterfall: show, flip, scroll, contrast (floor / ceiling), labels, and the resolution (FFT size, columns). Lit while the waterfall is shown.
+topbar-level-drawn-bottom-spectrum-darkest = The level drawn at the bottom of the spectrum and as the darkest waterfall colour. Bring it up until the noise floor just darkens. With FIT on, it moves FIT's level instead, and FIT stays on.
 topbar-ceil = ceil{" "}
-topbar-level-drawn-top-bring-down = The level drawn at the top. Bring it down until the strongest signal you care about reaches full colour. Setting it switches FIT off.
+topbar-waterfall-peak = Peak per column, as original
+topbar-waterfall-mean-not-peak = Mean power (Welch) instead of peak
+topbar-welch-time-constant = Averaging time, waterfall and spectrum line
+topbar-waterfall-reassign = Reassigned spectrogram (Auger & Flandrin 1995): power moved to its frequency
+topbar-reassign-dim = Dimming of noise and anything not reassigned
+topbar-level-drawn-top-bring-down = The level drawn at the top. Bring it down until the strongest signal you care about reaches full colour. With FIT on, it moves FIT's level instead, and FIT stays on.
+topbar-fit-shift = How far FIT's level is moved on this rail. FIT keeps the move on every band; switching FIT on again starts over at zero.
 topbar-fft-size = FFT SIZE
 topbar-flip = FLIP
 topbar-scroll-waterfall-upwards-newest-row = Scroll the waterfall upwards — newest row at the bottom (V)
@@ -2269,6 +2349,9 @@ topbar-user-manual-f1 = User manual (F1)
 topbar-range-was-typed-settings-radio = That range was typed in Settings ▸ Radio ▸ RX range, not reported by the radio. Widen it, or empty the box to use whatever the device says about itself.
 topbar-what-device-reports-about-itself = That is what the device reports about itself. If the radio does cover this band, state its real range in Settings ▸ Radio ▸ RX range.
 topbar-band = BAND
+topbar-recent = RECENT
+topbar-recent-empty =
+    Fills after 3 s on a place
 topbar-mode = MODE
 topbar-digital = DIGITAL
 
@@ -2452,10 +2535,8 @@ topbar-recording = recording
 topbar-sql = sql
 topbar-stations = stations
 topbar-caption-reaction = reaction
-topbar-caption-scroll = scroll
-topbar-caption-surface = surface
 topbar-caption-flow = flow
-topbar-caption-detail = detail
+topbar-caption-detail = Columns
 topbar-floor = floor
 
 ## Digital-mode panel tabs (src/app/panels/mod.rs, pane_label).
@@ -2851,8 +2932,8 @@ setup-shared-packet-mode = shared with the packet mode
 setup-keep-stations = Keep stations
 setup-how-long-station-stays-map = How long a station stays on the map after it was last heard. Also what the map's fade is measured against, so a short window shows only what is live.
 setup-auto-reply = Auto-reply
-setup-answer-snr-grid-status = Answer SNR? / GRID? / STATUS?
-setup-answer-direct-question-addressed-you = Answer a direct question addressed to you or to @ALLCALL, with the answer rather than an acknowledgement. Never answers another station's traffic, and never answers itself.
+setup-answer-snr-grid-status = Answer SNR? / GRID? / STATUS? / INFO?…
+setup-answer-direct-question-addressed-you = Answer a direct question addressed to you, to @ALLCALL or to a group you are in: SNR?, GRID?, STATUS?, INFO?, HEARING? and AGN? (which repeats your last message to that station, if it was within ten minutes). Never answers another station's traffic, and never answers itself.
 setup-heartbeat = Heartbeat
 setup-off = Off
 setup-turbo-does-not-beacon-local = Turbo does not beacon — it is the local and VHF speed.
@@ -2866,6 +2947,42 @@ setup-heartbeat-reply = Heartbeat reply
 setup-answer-heartbeats-signal-report = Answer heartbeats with a signal report
 setup-tell-station-beaconed-how-well = Tell a station that beaconed how well you copied them. Off by default: a busy band carries a heartbeat every slot, and answering all of them would flood exactly the band heartbeats exist to keep quiet. Rate-limited to one answer per station every 15 minutes, and never while a message is still arriving or while you have something queued to send.
 setup-status-message = Status message
+setup-js8-station-info = Station info
+setup-js8-station-info-example = e.g. IC-7300 50W END-FED
+setup-js8-station-info-hint = Sent in reply to INFO?
+setup-js8-callsign = JS8 callsign
+setup-js8-callsign-hint = Only if JS8 should use a different callsign, such as KN4CRD/P or KN4CRD/QRP. Leave empty to use My callsign.
+setup-js8-groups = Groups
+setup-js8-groups-hint = Groups you are a member of, separated by spaces or commas. Messages to them count as addressed to you: they are highlighted, and the questions in them (SNR?, GRID?…) are answered.
+setup-js8-auto-response = Auto-response
+setup-js8-auto-response-on = Answer group messages with a canned reply
+setup-js8-auto-response-on-hint = When a message to a group matches a rule below, send that rule's reply, repeated if the rule says so. Off by default: this transmits in answer to traffic nobody addressed to you personally. ABORT, or sending anything yourself, cancels the repeats still waiting. Never answers your own messages, and never sends more than 20 replies an hour in all.
+setup-js8-rule-on = Rule on
+setup-js8-rule-name = Rule name
+setup-js8-rule-move-up = Move up. The first rule that matches a message is the one that answers.
+setup-js8-rule-delete = Delete this rule
+# "When [@GROUP] hears [phrase]": the two words around the group and phrase fields.
+setup-js8-rule-when = When
+setup-js8-rule-hears = hears
+setup-js8-rule-group-hint = The group whose messages this rule answers
+setup-js8-rule-any-message = any message
+setup-js8-rule-phrase-hint = Text the message must contain, ignoring case and spacing. Leave empty to answer any message to the group.
+setup-js8-rule-reply = Reply
+setup-js8-rule-reply-hint = @SENDER, @GROUP, @MYCALL and @MYGRID are filled in when it is sent.
+setup-js8-rule-to = To
+setup-js8-reply-to-sender-hint = Directed to the station that wrote
+setup-js8-reply-to-group-hint = To the whole group
+setup-js8-reply-to-as-written-hint = Exactly as written: start the reply with its addressee
+# "Send [N] ×, every [M min]": the words around the repeat count and the gap.
+setup-js8-rule-send = Send
+setup-js8-rule-times-every = ×, every
+setup-js8-rule-min-suffix = {" "}min
+setup-js8-rule-cooldown = Same station again after
+setup-js8-rule-cooldown-hint = The cooldown: a station repeating its call inside it does not start the replies again.
+setup-js8-rule-preview-empty = Sends nothing — the reply is empty
+setup-js8-rule-no-group = Name the group this rule answers, e.g. @EMCOMM.
+setup-js8-rule-self-retriggers = This reply goes to the group and contains the phrase it answers. Two stations with this rule would answer each other until the cooldown runs out.
+setup-js8-add-rule = + Add rule
 setup-tx-period = TX period
 setup-even = Even
 setup-odd = Odd
@@ -3197,6 +3314,11 @@ solar-cme-earth-directed = EARTH-DIRECTED CME { $time } · { $speed } km/s · { 
 setup-mode-setup = { $mode } Setup
 setup-transmits-as = Transmits as { $call }
 setup-decimal-degrees = Decimal degrees, negative for { $hemisphere }. Paste one straight off a map.
+setup-js8-not-a-group-name = Not a group name: { $names }
+setup-js8-callsign-same = same as My callsign ({ $call })
+setup-js8-rule-preview = Sends: { $text }
+setup-js8-rule-preview-hint = As it would go out to { $call }
+setup-js8-rule-bad-group = { $group } is not a group name.
 
 ## AMP window: messages with values
 
@@ -3254,6 +3376,21 @@ sstv-store-in = in { $dir }
 
 ## decodes (src/app/panels/decodes.rs)
 
+decodes-map-window = World map (FT8/FT4)
+decodes-map-pop-out-tip = The world map: open it in a window of its own (as big as you drag it, on a compact layout too), and switch cities, who is talking to whom, and callsigns at the dots.
+decodes-map-cities-tip = Cities on this map, on or off. The other maps keep to Settings → UI.
+decodes-map-links-tip = Who is talking to whom: a dotted line between the two stations of every exchange heard in the last ten minutes, where both have sent a locator. Fades as the exchange ages.
+decodes-map-labels-tip = Callsigns beside the station dots, fading with them.
+decodes-map-pick-gone = No decode from this station in the list any more; it is still on the map from earlier.
+decodes-map-menu = MAP ▼
+decodes-map-open-window = Open in a window
+decodes-map-item-cities = Cities
+decodes-map-item-links = Who is talking to whom
+decodes-map-item-labels = Callsigns at the dots
+decodes-map-pick-new-entity = new entity
+decodes-map-pick-new-grid = new grid
+decodes-map-pick-new-call = new call
+decodes-map-pick-worked = worked before
 decodes-decodes = DECODES
 decodes-adif = ADIF
 decodes-sort = Sort
@@ -3716,9 +3853,209 @@ js8-already-addressing-allcall = Already addressing @ALLCALL
 js8-stop = {" "}STOP{" "}
 js8-send = {" "}SEND{" "}
 js8-message = Message…
+js8-auto-resp = AUTO-RESP
+js8-auto-resp-no-rules = No auto-response rules yet — click to write one in SETUP
+js8-auto-pending = AUTO
+js8-auto-pending-text-hint = The reply, as it will be sent
+js8-auto-pending-count-hint = Sends made / sends planned. ABORT or sending anything yourself cancels the rest.
 
 ## logbook (src/app/logbook.rs)
 
+palette-hint = Go to… a mode, a band, a window, a setting, a memory, or a frequency (14.074)
+palette-nothing = nothing by that name
+palette-group-window = Window
+palette-group-settings = Settings
+palette-group-memory = Memory
+palette-group-tune = Tune
+palette-tune-to = Tune to { $mhz } MHz
+palette-win-bands = Band conditions
+palette-win-awards = Awards
+palette-win-windows = Window list
+check-open = STATION CHECK
+    .hint = One page that says what is and is not in order — callsign, radio link, receiver, audio, clock, lookups — with a button on each line that goes to where it is fixed. It reads what the program already knows; it measures nothing and transmits nothing.
+check-title = STATION CHECK
+check-verdict-ok = Nothing here needs attention.
+check-verdict-warn = Working, with something to look at.
+check-verdict-fail = Something will not work until it is dealt with.
+check-fix-settings = SETTINGS
+check-fix-unmute = UNMUTE
+check-footnote = Read from what the program already knows, as of now. Nothing is transmitted and nothing is measured afresh; a line that says "not measured" has not been checked.
+check-callsign = Callsign
+check-callsign-missing = No callsign is set. The digital modes will not transmit, contacts are logged with no station call, and spots and alerts cannot tell which messages are for you.
+check-callsign-odd = "{ $call }" does not look like a callsign.
+check-grid = Grid square
+check-grid-missing = No grid square is set. Distances, bearings, the maps and FT8's own exchange all need it.
+check-grid-odd = "{ $grid }" is not a Maidenhead locator — four or six characters, like JN48 or JN48qm.
+check-link = Radio link
+check-link-ok = The radio is connected and has said what it is.
+check-link-silent = No radio has answered yet. If this does not change in a few seconds, the radio chosen in Settings is not the one that is plugged in, or is not switched on.
+check-receiver = Receiver
+check-receiver-ok = Receiving: the spectrum is arriving.
+check-receiver-never = No spectrum has arrived since the program started.
+check-receiver-stalled = Nothing has arrived from the receiver for { $seconds } s. The device has stopped streaming — a cable, a USB port that went to sleep, or another program that took it.
+check-level = Input level
+check-level-ok = The converter is not being overdriven.
+check-level-overload = The receiver's converter is clipping. Everything it hears is distorted, strong signals most of all — turn the RF gain down, or switch a preamplifier off.
+check-audio = Radio audio
+check-audio-ok = No problem reported with the radio's sound devices.
+check-muted = Speaker
+check-muted-off = The receiver is not muted.
+check-muted-on = The receiver is muted, which is why nothing is heard.
+check-transmit = Transmit
+check-transmit-ok = This radio can transmit.
+check-transmit-rx-only = Receive only: this radio, or the way it is connected, has no transmitter the program can key.
+check-clock = Computer clock
+check-clock-unknown = Not measured. Listen on a busy FT8 frequency for a minute and the stations decoded there will say how far this clock is out.
+check-clock-ok = { $offset } s against the stations heard on FT8 — within tolerance.
+check-clock-marginal = { $offset } s against the stations heard on FT8. Still decodable, but worth correcting: on FT4 and FT2 it already costs contacts.
+check-clock-bad = { $offset } s against the stations heard on FT8. Far enough out that others will not decode you and you will decode little — set the computer's clock from a time server.
+check-lookup = Callsign lookup
+check-lookup-ok = A callbook is configured.
+check-lookup-none = No callbook is configured, so names and locators are not filled in for you. Optional.
+check-spots = Spot feeds
+check-spots-ok = { $n } feed(s) switched on.
+check-spots-none = No spot feed is switched on, so nothing is marked on the panadapter. Optional.
+welcome-title = WELCOME
+welcome-open = WELCOME TOUR
+    .hint = The first-start walkthrough again: what to set, what usually goes wrong, and what is in the program.
+welcome-step-welcome = Welcome
+welcome-step-station = Station
+welcome-step-radio = Radio
+welcome-step-transmit = Before you transmit
+welcome-step-online = Online
+welcome-step-tour = Tour
+welcome-step-check = Check
+welcome-back = ◀ BACK
+welcome-next = NEXT ▶
+welcome-finish = FINISH
+    .hint = Close the walkthrough and do not show it at start again. It stays on Settings → General.
+welcome-reopen-note = Settings → General brings this back.
+welcome-now = How it stands right now
+welcome-hello = Welcome to SDR Oxide
+welcome-intro = A software-defined transceiver: a panadapter and waterfall, every voice and digital mode from SSB to FT8, JS8, SSTV and Winlink, a logbook, maps, spot feeds — for SDRs and for ordinary transceivers alike, here or from another machine.
+welcome-intro-how = This walkthrough takes a few minutes. It asks for the two things the program cannot work without, helps you connect the radio, warns about the problems newcomers usually run into, and shows where everything is. Every page can be skipped and done later.
+welcome-language-note = Changes the program's language at once. Also in Settings → UI.
+welcome-intro-safe = Nothing here transmits
+    .hint = The walkthrough only opens settings and windows. The program never keys the transmitter until you press something that says it will.
+welcome-station-why = Your callsign and Maidenhead locator are read everywhere: the digital modes put them in every message (and will not transmit without a callsign), the logbook writes them into every contact, the maps and distances start from the locator, and spots and alerts use the callsign to tell which messages are for you.
+welcome-station-save-note = SAVE stores them; the same boxes are on Settings → General.
+welcome-station-grid-how = Don't know your locator?
+    .hint = Four characters (IN80) are enough to start; six (IN80dk) place you within a few kilometres. Any online "Maidenhead locator" map gives it from your address — or leave it empty for now and come back.
+welcome-radio-intro = What will you use? Pick the closest — the page then lists what usually goes wrong with that kind of radio, and opens the place where it is set up.
+welcome-radio-pick = Choose one to see its setup notes.
+welcome-radio-pitfalls = Common problems with this kind of radio
+welcome-radio-manual = The manual's chapter 15 has notes for each radio model, and chapter 14 is troubleshooting.
+welcome-kind-usb = An SDR on USB
+    .hint = RTL-SDR, Airspy, HackRF, SDRplay RSP, RX-888, LimeSDR, Fobos, or anything SoapySDR drives.
+welcome-kind-cat = A transceiver with a CAT cable
+    .hint = Icom, Yaesu, Kenwood, Elecraft, Xiegu, QRP Labs… controlled over a serial/USB port, with its audio on a USB sound card.
+welcome-kind-net = A radio on the network
+    .hint = Hermes Lite 2 / ANAN (OpenHPSDR), FlexRadio, Icom over LAN, ADALM-Pluto, SunSDR or Thetis over TCI, rtl_tcp.
+welcome-kind-remote = Another SDR Oxide, running as a server
+    .hint = The radio is attached to another computer running sdroxide --server; this one is the control screen.
+welcome-kind-none = No radio yet
+    .hint = Listen straight away through a public receiver on the internet (KiwiSDR, Web-888, SpyServer).
+welcome-open-radio = RADIO SETTINGS
+    .hint = Choose the interface, fill in its section, then APPLY. The lines below turn green when the radio answers.
+welcome-open-remote = REMOTE SETTINGS
+    .hint = The server's address, port and sign-in.
+welcome-open-public = PUBLIC SDRs
+    .hint = A map and list of receivers on the internet; pick one and it opens as a radio.
+welcome-tip-usb-driver = The USB driver or permissions
+    .hint = On Windows most USB SDRs (RTL-SDR, Airspy, HackRF, HydraSDR) need the WinUSB driver bound to them with Zadig. On Linux install the packaged udev rule (the .deb does it) and replug. macOS needs nothing.
+welcome-tip-usb-busy = Another program has the device
+    .hint = Only one program can open an SDR at a time. Close SDR#, SDR++, GQRX, a running rtl_tcp — or a second sdroxide — before APPLY.
+welcome-tip-usb-port = Dropped samples
+    .hint = High sample rates need a USB 3 port (the RX-888 always does), a short cable and no unpowered hub. If the log reports lost samples, lower the sample rate first.
+welcome-tip-usb-gain = Too much gain
+    .hint = Maximum RF gain overloads the converter and fills the band with false signals. Start in the middle and back off until the "Input level" line below stays green.
+welcome-tip-usb-sdrplay = SDRplay needs its own service
+    .hint = An RSP is reached only through SDRplay's API v3 service, which must be installed and running. sdroxide --probe names whatever piece is missing.
+welcome-tip-cat-port = The wrong serial port or speed
+    .hint = Many radios offer two ports over one USB cable — pick the CAT (Enhanced/Standard) one — and the baud rate must match the radio's own menu.
+welcome-tip-cat-family = The wrong CAT family
+    .hint = Kenwood and Yaesu commands look alike but are not. A Kenwood set to Yaesu may key up and not stop; an Elecraft set to Kenwood goes to plain SSB for FT8.
+welcome-tip-cat-audio = The wrong sound card
+    .hint = Receive and transmit audio go through the radio's own USB codec ("USB Audio CODEC"), not the computer's speakers and microphone. Two identical codecs? The manual's troubleshooting tells them apart.
+welcome-tip-cat-data = Digital modes need DATA mode
+    .hint = For FT8 and friends the radio must take its transmit audio from USB: USB-D / DATA-U, or its menu's "DATA MOD = USB". In plain USB it transmits the microphone.
+welcome-tip-cat-pipewire = Linux: the sound server holds the card
+    .hint = PipeWire/PulseAudio can keep the radio's sound card to itself, so the program sees "waiting for spectrum". The manual's troubleshooting shows how to hand it over.
+welcome-tip-net-subnet = Not on the same network
+    .hint = Discovery is a broadcast and does not cross a router or a VPN. If the radio is not found, type its IP address in by hand.
+welcome-tip-net-firewall = Control works, but no spectrum
+    .hint = Spectrum and audio travel as UDP. A firewall that lets the connection through but blocks UDP gives a radio that answers and shows nothing — allow sdroxide in the firewall.
+welcome-tip-net-icom = Icom over LAN needs the radio set up first
+    .hint = On the radio: Network Control ON, and a Network User name and password — the same pair goes in sdroxide. Read the IP address off the radio's Network screen; there is no discovery.
+welcome-tip-net-one = One controlling program at a time
+    .hint = A Flex already claimed by SmartSDR, or a TCI radio driven by another client, may refuse a second one. Close the other program, or enable multiFLEX.
+welcome-tip-remote-server = The server is set up on the radio's machine
+    .hint = Run sdroxide --server there, with a username and password configured; without them anyone who reaches the port can operate the station.
+welcome-tip-remote-port = The port must be reachable
+    .hint = The default is 4950. Over the internet it needs forwarding on the router, or better a VPN — and wss:// with a certificate if it is exposed.
+welcome-tip-remote-browser = A browser works too
+    .hint = The server also serves the full interface to a web browser and phones; audio there needs https or localhost.
+welcome-tip-none-public = Public receivers
+    .hint = Thousands of KiwiSDR, Web-888 and SpyServer receivers are open to listeners. Receive only — but every decoder, the logbook and the maps work, so it is a good way to learn the program.
+welcome-tip-none-later = When the radio arrives
+    .hint = Come back to this page from Settings → General → WELCOME TOUR.
+welcome-tx-intro = Most "it doesn't work" on the air is one of these. None of them shows as an error, which is why they are worth reading once.
+welcome-tip-tx-clock = The computer's clock
+    .hint = FT8, FT4, JS8 and WSPR run in fixed time slots. Within half a second is fine; past 1.5 s others stop decoding you and you decode little — the band looks dead. Let the system synchronise its clock to a time server (NTP).
+welcome-tip-tx-level = Audio level and ALC
+    .hint = For digital modes keep the radio's ALC at or near zero: too much audio splatters over other stations while the power meter looks fine. Lower the level until the ALC barely moves.
+welcome-tip-tx-drive = Start with low drive
+    .hint = Drive is a percentage of the radio's maximum. Begin low, into a dummy load or a matched antenna, and raise it while watching the power and SWR.
+welcome-tip-tx-lockout = The band lockout
+    .hint = The transmitter only keys inside the amateur bands of your IARU region. Set the region on Settings → General, or a perfectly legal frequency may be refused.
+welcome-tip-tx-trswitch = An SDR beside a transceiver
+    .hint = An SDR receiver sharing the antenna with a transmitter will be destroyed by the first over unless something disconnects it. Set up the T/R switch before keying anything.
+welcome-tip-tx-cable = Virtual audio cables
+    .hint = With a virtual cable or Flex DAX, set 48000 Hz on both ends. A mismatched rate drops samples, and the timed modes then decode nothing while the waterfall looks perfect.
+welcome-open-region = IARU REGION
+    .hint = Settings → General: the region decides which frequencies the transmitter may use.
+welcome-open-trswitch = T/R SWITCH
+    .hint = The relay that protects a receive-only SDR while the station transmits.
+welcome-online-intro = All optional, and all off until you switch them on. Each makes the program more useful:
+welcome-online-lookup = CALLSIGN LOOKUP
+    .hint = QRZ.com or HamQTH fills in names, locations and locators as you work stations.
+welcome-online-spots = SPOT FEEDS
+    .hint = DX cluster, POTA, SOTA, PSK Reporter — spots appear on the panadapter; click one to tune and pre-fill the log.
+welcome-online-uploads = LOG UPLOADS
+    .hint = LoTW, eQSL, Club Log, QRZ and HamQTH, one click from the logbook, for confirmations and awards.
+welcome-online-alerts = ALERTS
+    .hint = A sound or notification when a wanted callsign, DXCC entity or grid is heard.
+welcome-online-privacy = Nothing is sent anywhere until a service is configured here; band-condition and broadcast-schedule downloads have their own switches in Settings.
+welcome-tour-intro = The modes, the logbook and the spots are on the main screen. These are easy to miss. Each OPEN goes straight there, and the walkthrough stays open beside it.
+welcome-tour-open = OPEN
+welcome-tour-bands = Band conditions
+    .hint = Solar data and which bands are open now.
+welcome-tour-winlink = Winlink mail
+    .hint = Radio email over the internet, packet or HF — built in, no Pat or external modem.
+welcome-tour-public = Public SDRs
+    .hint = Listen through receivers anywhere in the world.
+welcome-tour-servers = WSJT-X and other programs
+    .hint = The built-in TCI and rigctld servers let WSJT-X, JTDX, loggers and others use this radio.
+welcome-tour-controls = Keys and controllers
+    .hint = Every shortcut is rebindable; MIDI and HID controllers and tuning knobs work too.
+welcome-tour-profiles = Profiles
+    .hint = Save how the station is set up — contest, portable, satellite — and put it back with one click.
+welcome-tour-palette = Command palette
+    .hint = Ctrl+K (⌘K): type a mode, a band, a window, a setting or a frequency and press Enter.
+welcome-tour-help = Help
+    .hint = The keyboard shortcuts and the controls on screen.
+welcome-check-all-good = Nothing needs attention. Have fun on the air!
+welcome-check-left = Still to look at — each has a button that goes to where it is fixed:
+welcome-check-hint = The full page, with every line. Also on Settings → General.
+welcome-next-steps = Where to go from here
+welcome-next-listen = Listen first
+    .hint = Tune around, try the band buttons, drag the passband edges on the waterfall. Nothing transmits until you press PTT, TUNE, or a mode's own call button.
+welcome-next-ft8 = A first contact on FT8
+    .hint = Pick FT8, listen a minute (that also measures your clock), then press REPLY on a station calling CQ. The exchange runs by itself and the contact is logged when it completes.
+welcome-next-palette = Lost? Press Ctrl+K
+    .hint = The command palette finds any mode, band, window or setting by name.
+welcome-next-manual = The user manual
+    .hint = docs/USER_MANUAL.md, with a chapter for every mode and notes for every radio. Hover any control for its explanation, too.
 logbook-logbook = LOGBOOK
 logbook-new-entry = + NEW ENTRY
 logbook-adif = ADIF
@@ -4073,21 +4410,28 @@ fsq-add = Add
 
 ## publicsdr (src/app/publicsdr.rs)
 
-publicsdr-tab = + TAB
-publicsdr-open-receiver-new-radio-own = Open this receiver as a new radio, in its own tab
-publicsdr-point-radio-receiver-replacing-whatever = Point *this* radio at the receiver, replacing whatever interface it is on now — asked again first, because that is a whole radio's worth of setting up
 publicsdr-not-stated = not stated
-publicsdr-replace = REPLACE
-publicsdr-point-radio-you-are-receiver = Point the radio you are on at this receiver
-publicsdr-tab-instead = + TAB INSTEAD
-publicsdr-open-receiver-another-radio-leave = Open the receiver as another radio and leave this one alone
-publicsdr-cancel = CANCEL
+publicsdr-add-as-radio = ADD AS RADIO
+publicsdr-add-as-radio-tip = Add as radio, named from directory
 publicsdr-public-sdrs = PUBLIC SDRS
 publicsdr-available = AVAILABLE
 publicsdr-hide-receivers-are-full-ones = Hide receivers that are full, and the ones whose operator has not opened any channels to apps other than a browser
 publicsdr-band = IN BAND
 publicsdr-only-receivers-cover-current-dial = Only receivers that cover the current dial frequency
 publicsdr-low-bw = LOW BW
+publicsdr-map-cities = CITIES
+publicsdr-map-cities-tip = Cities on this map, on or off.
+publicsdr-view-list = LIST
+publicsdr-view-map = MAP
+publicsdr-view-map-tip = Receivers on world map; click dot to pick all under it
+publicsdr-map-pick = Click a dot to pick the receivers under it.
+publicsdr-map-ghost = { $name }: not in the directory now — last seen here on { $seen }
+publicsdr-map-names = NAMES
+publicsdr-map-names-tip = Names of all receivers; off: picked only
+publicsdr-check-online = ONLINE
+publicsdr-check-silent = SILENT
+publicsdr-check-waiting = CHECKING…
+publicsdr-check-no-answer = No answer within 20 seconds.
 publicsdr-take-spyserver-low-bandwidth-shape = Take a SpyServer in its low-bandwidth shape: a narrow I/Q window that follows the dial plus the server's own band view, instead of megabits of wideband I/Q. No effect on a KiwiSDR, which has only the one shape.
 publicsdr-refresh = ⟳ REFRESH
 publicsdr-fetch-both-directories-again = Fetch both directories again
@@ -4097,9 +4441,6 @@ publicsdr-fetching-receiver-lists = Fetching the receiver lists…
 publicsdr-machine-radio-attached-does-not = The machine this radio is attached to does not answer device questions, so it cannot fetch the lists either.
 publicsdr-no-match = no match
 publicsdr-nothing-matches-try-turning-filter = nothing matches — try turning a filter chip back on
-publicsdr-radio = this radio
-publicsdr-radio-s-configuration-has-not = This radio's configuration has not arrived from the machine it is on yet, so there is nothing to point at the receiver — take it with + TAB instead.
-publicsdr-position-not-published-so-nothing = {" "}Its position is not published, so nothing it hears will be reported.
 
 ## hd (src/app/hd.rs)
 
@@ -4155,6 +4496,21 @@ spots-spots = SPOTS
 spots-longwave-shortwave-broadcast-stations-air = Longwave & shortwave broadcast stations on air now
 spots-view = IN VIEW
 spots-only-spots-inside-panadapter-span = Only spots inside the panadapter span
+spots-view-list = LIST
+spots-view-map = MAP
+spots-view-map-tip = Spots with location on world map; click dot to pick, right-click to release
+spots-map-names = NAMES
+spots-map-names-tip = Names beside dots
+spots-map-cities = CITIES
+spots-map-cities-tip = Cities on this map, on or off
+spots-map-hint = Click dot or waterfall label: location and path; right-click releases
+spots-map-pick = { $name } · { $place } · { $km } km · { $deg }°
+spots-map-pick-nowhere = { $name } · location unknown
+spots-map-status = { $shown } on map · { $approx } of them approximate · { $unplaced } without location
+spots-map-approx-city = ≈ place from the name ({ $city })
+spots-map-approx-country = ≈ middle of the country (site { $site })
+spots-map-size-legend = Dot size: transmitter power (log)
+spots-map-tune = TUNE
 spots-setup = ⚙ SETUP
 spots-feeds-lookup-upload-settings = Feeds, lookup & upload settings
 spots-call-station-site-frequency = call, station, site, frequency
@@ -4182,7 +4538,7 @@ ism-where-decoder-actually-listening-follows = Where the decoder is actually lis
 ism-transmissions-gate-opened-how-many = Transmissions the gate opened on, and how many produced a valid frame. Many bursts and no decodes means the band is busy with devices sdroxide cannot read yet. None at all means nothing is reaching the threshold — lower it, or check that the dial is on the band.
 ism-nothing-heard-yet = nothing heard yet
 ism-click-tune-receiver =
-
+    {""}
 
     Click to tune the receiver to it
 
@@ -4271,6 +4627,8 @@ rade-rade-v1-occupies-roughly-1060 = RADE V1 occupies roughly 1060–1880 Hz of 
 ## frame (src/app/frame.rs)
 
 frame-acknowledge = Acknowledge
+frame-curtain-handle-tip = Drag: panel up/down over panadapter
+    Double-click: all the way up / back
 frame-dismiss = Dismiss
 frame-get-sdroxide-com = Get it at sdroxide.com
 frame-reconnecting = Reconnecting…
@@ -4286,20 +4644,20 @@ frame-restart-without-oob-tx-put = Restart without --oob-tx to put the lockout b
 
 smeter-alc-how-hard-transmitter-being = ALC — how hard the transmitter is being driven, as a percentage of the most it can put out. 100 % is full scale, not full power in watts: what that is worth at the antenna depends on the radio and on Drive.
 smeter-radio-reports-no-forward-power =
-
+    {""}
 
     This radio reports no forward power, so the figure beside ALC is the ALC reading again rather than watts.
 smeter-no-swr-radio-has-no =
-
+    {""}
 
     No SWR: this radio has no bridge to measure it with, and sdroxide will not invent one — it can only show what the radio itself reports. A rig with an SWR meter (over CAT, TCI or a LAN link) and an HPSDR board both fill this in; a plain SDR transmitter cannot.
 smeter-no-signal-report-yet-receiver = No signal report yet — the receiver has not delivered a meter reading.
 smeter-s9-73-dbm-each-s =
-
+    {""}
 
     S9 is −73 dBm and each S-unit below it is 6 dB. The dBm figure is only as honest as the front end's calibration — an uncalibrated receiver reports dBFS with a dBm label.
 smeter-ovld-converter-into-rails-so =
-
+    {""}
 
     OVLD: the converter is into its rails, so the level shown understates the signal. Wind the front-end gain back.
 smeter-table-held = , table held
@@ -4308,14 +4666,16 @@ smeter-ps = PS --
 ## multi (src/multi.rs)
 
 multi-tx = ● TX
-multi-link = LINK
 multi-mute-radio-s-audio = Mute this radio's audio
-multi-close-radio-s-split-view = Close this radio's split view
-multi-open-radio-split-view-own = Open this radio in a split view of its own
-multi-already-open-another-split-view = Already open in another split view
 multi-show-radio-here = Show this radio here
+multi-show-on-map = Show on the map
 multi-add-radio-computer-settings-radio = Add a radio on this computer (Settings → Radio to add one at a station)
 multi-add-radio = Add a radio
+multi-take-radio-off-row = Take off row; keeps running
+multi-open-pane = New pane with hidden radio
+multi-pick-radio = Radio ▼
+multi-pick-radio-tip = Add radio to row; rings = link open
+multi-new-radio = New radio…
 multi-asked-station-another-radio = Asked the station for another radio…
 multi-client-cannot-open-connection = This client cannot open a connection.
 
@@ -4389,6 +4749,10 @@ login-password = Password
 login-remember-device = Remember on this device
 login-signs-without-asking-next-time = Signs in without asking next time, and lets the 3D view's tab in without asking at all. The password is kept in the clear, so leave this off on a machine other people use.
 login-keeps-password-device-clear = Keeps the password on this device, in the clear.
+login-remember-station = Remember this station
+login-remember-me = REMEMBER ME
+login-station-keeps-sign-in = This station keeps your sign-in, not this page — nothing to fill in on the other radios, and nothing to forget when you leave.
+login-not-this-time = Not this time: this browser forgets it when it closes, so you are asked again next session and nothing about this sign-in is left on the device.
 login-checking = {" "}CHECKING…{" "}
 login-sign = {" "}SIGN IN{" "}
 login-wrong-password-shuts-server-s = A wrong password shuts the server's door for a few seconds, so this can take a moment.
@@ -4821,6 +5185,16 @@ js8-sent = Sent at { $speed }
 js8-partial-frames-sent = partial ({ $frames } frames sent)
 js8-reply-2 = Reply to { $value }: “{ $value2 }”
 js8-address-composer = Address the composer at { $value }
+js8-auto-resp-on = Answering group messages with { $n } { $n ->
+        [one] rule
+       *[other] rules
+    } — click to stop
+js8-auto-resp-ready = { $n } auto-response { $n ->
+        [one] rule
+       *[other] rules
+    } ready — click to start answering
+js8-auto-pending-next-slot = { $sent }/{ $total } · next slot
+js8-auto-pending-next = { $sent }/{ $total } · next { $left }
 
 ## macros: messages with values (src/app/panels/macros.rs)
 
@@ -4933,14 +5307,7 @@ publicsdr-antenna =
 publicsdr-receivers-fetched-ago = { $entries } receivers · { $per_net } · fetched { $age } ago
 publicsdr-showing-search-narrow = showing { $shown } of { $n } — search to narrow it
 publicsdr-match = { $n } match
-publicsdr-replace-taking-receiver-points-same =
-    Replace { $this } with { $entry }?
-
-    { $this2 } is on { $iface }. Taking this receiver points the same tab at { $address } instead, renames it “{ $entry2 }”, and holds the dial to the { $range_label } the receiver publishes — nothing here transmits.
-
-    The { $iface2 } settings stay where they are, and so do the ranges stated for them: switching the interface back in Settings → Radio brings the radio back as it was.
-publicsdr-receptions-will-reported = {" "}Receptions will be reported from { $value }.
-publicsdr-pointing-radio = Pointing this radio at { $entry }…{ $site }
+publicsdr-map-status = { $shown } on the map · { $unplaced } without a position
 publicsdr-opening-another-radio = Opening { $entry } as another radio…
 
 ## qo100: messages with values (src/app/qo100.rs)
@@ -5266,7 +5633,6 @@ cat-family-rs-hfiq = RS-HFIQ
 cat-family-tr-usdx = (tr)uSDX
 cat-family-rigctld = Hamlib rigctld (network)
 cat-family-flrig = flrig (network)
-publicsdr-its-interface = its interface
 
 ## Values from sdroxide-types drawn on chips, menus and lists (src/i18n/labels.rs).
 agc-mode-off = Off
@@ -5349,6 +5715,9 @@ js8-speed-normal = NORMAL
 js8-speed-fast = FAST
 js8-speed-turbo = TURBO
 js8-speed-slow = SLOW
+js8-auto-reply-to-sender = Sender
+js8-auto-reply-to-group = Group
+js8-auto-reply-to-as-written = As written
 lime-aux-role-off = Not used
 lime-aux-role-diversity = A second aerial (diversity / QRM suppression)
 lime-aux-role-pure-signal = Transmit feedback (PureSignal predistortion)
@@ -5463,6 +5832,17 @@ sense-line-dcd = DCD (carrier detect)
 shift-simplex = SIMPLEX
 shift-minus = −
 shift-plus = +
+smeter-trace-right-click = Right-click: direction and speed of the trace
+smeter-trace-caption-flow = flow
+smeter-trace-flow-right = RIGHT
+smeter-trace-flow-left = LEFT
+smeter-trace-flow-hint = The way the plot moves: LEFT puts the newest reading at the right edge, RIGHT at the left
+smeter-trace-range-hint = Bottom and top of the plot in S-units: drag either knob, e.g. S3–S9 or S6–S9 to spread a band that lives there over the whole height. Receive only
+smeter-trace-caption-speed = speed
+smeter-trace-speed-hint = The waterfall's steps, in its proportions: SLOW holds 168 s, MEDIUM 30 s, FAST 15 s, FASTER 7.5 s, FASTEST 3.75 s
+smeter-snr-right = middle { $mid } dB · { $khz } kHz · { $frames } fr
+smeter-snr-off = S/N is off
+smeter-snr-hover = S/N face: the passband's power over the noise floor of the S/N guide, in dB ((S+N)/N, like the S/N line); the bar is the mean over the cursor's width, the marker the strongest cell at its middle (±10 % of the width). The S-meter's other faces read absolute dBm instead.
 speed-slow = Slow
 speed-medium = Medium
 speed-fast = Fast
@@ -5589,71 +5969,331 @@ settings-ui-workspace-save = SAVE CURRENT
 settings-ui-workspace-save-hint = Save the arrangement you have now under this name
 settings-ui-workspace-name-first = Type a name first
 topbar-band-window2-hint = WINDOW — open the selector in a window of its own, as wide as you like, on any monitor
+tnc-starting = Starting the modem…
+tnc-link = LINK
+tnc-connected = CONNECTED
+tnc-calling = CALLING
+tnc-incoming = INCOMING
+tnc-idle = LISTENING
+tnc-unavailable = NOT RUNNING
+tnc-problem = Problem
+tnc-tx = TX
+tnc-busy = BUSY
+tnc-busy-hint = Someone else is on the channel. A call now would land on top of them.
+tnc-setup = ⚙ SETUP
+tnc-setup-hint = Station callsign, bandwidth, the lead-in before each burst, the TCP host ports
+tnc-peer = Peer
+tnc-width = Width
+tnc-speed = Speed
+tnc-snr = S/N
+tnc-bytes = Bytes
+tnc-queued = Queued
+tnc-host = Host
+tnc-ports = Ports
+tnc-ports-off = off
+tnc-nobody = nobody
+tnc-holder-panel = this panel
+tnc-holder-winlink = the MAIL window
+tnc-holder-tcp = a program at { $addr }
+tnc-tune = TUNE
+tnc-tune-hint = A steady tone for an antenna tuner (Mercury). Not while a link is up; press again to stop.
+tnc-abort = ABORT
+tnc-abort-hint = Drop the link now, whoever is driving it. The far end will time out rather than be told.
+tnc-terminal = TERMINAL
+tnc-callsign = callsign
+tnc-connect = CONNECT
+tnc-connect-hint = Call this station
+tnc-disconnect = DISCONNECT
+tnc-disconnect-hint = Hang up properly: what is queued goes first, then the far end agrees.
+tnc-held-by = The modem is in use by { $holder }.
+tnc-no-callsign = Set a callsign first (⚙ SETUP)
+tnc-clear = CLEAR
+tnc-clear-hint = Empty the transcript. The link is untouched.
+tnc-nothing-yet = Nothing yet. Type a callsign above and CONNECT, or turn on Listen in ⚙ SETUP to take calls.
+tnc-type-here = type here, Enter sends
+tnc-not-connected = not connected
+tnc-send = SEND
+setup-tnc-call-hint = The callsign the modem answers to, with an optional SSID. Empty uses your callsign above. A program driving the modem (Pat, VarAC, BPQ) sets its own.
+setup-tnc-bandwidth = Bandwidth
+setup-tnc-lead = PTT lead
+setup-tnc-lead-auto = Auto
+setup-tnc-lead-hint = Silence the modem puts ahead of each burst while the transmitter settles. Auto picks 50 ms for an IQ SDR and 150 ms for a sound-card rig. Raise it if the start of each burst is cut off. Mercury reads it once, when it first starts.
+setup-tnc-listen = Answer calls
+setup-tnc-listen-check = Listen from the panel
+setup-tnc-listen-hint = Take incoming calls in the panel's terminal. Ignored while the TCP host ports are on, since a program attached there wants the calls.
+setup-tnc-host = TCP host
+setup-tnc-host-hint = Offer the modem on a TNC command port and the one after it (8300/8301 by default, localhost only), so Pat, Winlink Express, BPQ or VarAC can use this radio as their modem.
+setup-mercury-port = Mercury's own port
+setup-mercury-port-hint = Mercury always opens a command and data port of its own; sdroxide keeps them on localhost and carries the TCP host's lines to them. Change this only if 18300–18302 are taken. Read once, when Mercury first starts.
+settings-radio-mercury = Radio (Mercury)
+settings-call-gateway-mercury = Call a gateway over the air on Mercury. Put the radio in MERCURY first.
+settings-radio-data2g = Radio (Data2G)
+settings-call-gateway-data2g = Call a gateway over the air on Data2G. Put the radio in DATA2G first.
+settings-tnc-dial-note = The dial frequency, upper sideband, as the gateway's keeper publishes it. Zero leaves the dial where it is.
 
-## VARA HF panel
+# Playing a recording back into the decoders.
+playback-radio-n = { " " }· radio { $n }
 
-vara-starting = Starting the VARA modem…
-vara-link = LINK
-vara-connected = CONNECTED
-vara-calling = CALLING
-vara-idle = LISTENING
-vara-session-state = Modem session state: { $state }
-vara-tx = TX
-vara-busy = BUSY
-vara-busy-hint = Someone else is on the channel. A call now would land on top of them.
-vara-setup = ⚙ SETUP
-vara-setup-hint = Station callsign, bandwidth, registered speeds, the TCP host ports
-vara-peer = Peer
-vara-width = Width
-vara-speed = Speed
-vara-snr = S/N
-vara-bytes = Bytes
-vara-queued = Queued
-vara-attempt = Attempt
-vara-host = Host
-vara-ports = Ports
-vara-ports-off = off
-vara-nobody = nobody
-vara-holder-panel = this panel
-vara-holder-winlink = the MAIL window
-vara-holder-tcp = a program at { $addr }
-vara-tune = TUNE
-vara-tune-hint = A steady tone for an antenna tuner, for up to a minute. Not while a link is up.
-vara-abort = ABORT
-vara-abort-hint = Drop the link now, whoever is driving it. The far end will time out rather than be told.
-vara-terminal = TERMINAL
-vara-callsign = callsign
-vara-connect = CONNECT
-vara-connect-hint = Call this station on VARA HF
-vara-disconnect = DISCONNECT
-vara-disconnect-hint = Hang up properly: what is queued goes first, then the far end agrees.
-vara-held-by = The modem is in use by { $holder }.
-vara-no-callsign = Set a callsign first (⚙ SETUP)
-vara-clear = CLEAR
-vara-clear-hint = Empty the transcript. The link is untouched.
-vara-nothing-yet = Nothing yet. Type a callsign above and CONNECT, or turn on Listen in ⚙ SETUP to take calls.
-vara-type-here = type here, Enter sends
-vara-not-connected = not connected
-vara-send = SEND
+playback-no-stamp = no stamp in the name — plays in the mode you are in
 
-setup-vara-setup = VARA HF Setup
-setup-vara-call-hint = The callsign the modem answers to, with an optional SSID. Empty uses your callsign above. A program driving the modem (Pat, VarAC) sets its own.
-setup-vara-bandwidth = Bandwidth
-setup-vara-registered = Speed levels
-setup-vara-registered-check = Registered
-setup-vara-registered-hint = Unlock the speed levels above 4, as a registered copy of VARA does. For owners of a VARA licence; an unregistered station stops at level 4 however good the path is.
-setup-vara-retries = Retries
-setup-vara-retries-hint = Connect attempts before a call is given up.
-setup-vara-cwid = CW ID
-setup-vara-cwid-check = Identify in CW at the end of a link
-setup-vara-latency = TX latency
-setup-vara-latency-auto = Auto
-setup-vara-latency-hint = How long the transmit path takes from the modem to the antenna. Auto picks about 20 ms for an IQ SDR and 120 ms for a sound-card rig. Raise it if links fail right after the call is answered.
-setup-vara-listen = Answer calls
-setup-vara-listen-check = Listen from the panel
-setup-vara-listen-hint = Take incoming calls in the panel's terminal. Ignored while the TCP host ports are on, since a program attached there wants the calls.
-setup-vara-host = TCP host
-setup-vara-host-hint = Offer the modem on VARA's own command port and the one after it (8300/8301 by default, localhost only), so Pat, Winlink Express or VarAC can use this radio as their VARA modem.
-settings-radio-vara = Radio (VARA HF)
-settings-call-rms-gateway-vara = Call an RMS gateway over the air on VARA HF. Put the radio in VARA HF first.
-settings-vara-dial-note = The dial frequency, upper sideband, as gateway lists give it for VARA. Zero leaves the dial where it is.
+playback-title = PLAYBACK — recorded audio
+
+playback-find-hint = mode, MHz, date, name…
+
+playback-refresh-hint = Read the recordings folder again
+
+playback-asking = Asking the station for its recordings…
+
+playback-folder = Folder: { $dir }
+
+playback-none = No recordings yet. Press REC → MP3 while something is on the air; the file appears here, named with its time, frequency and mode.
+
+playback-on = ▶ ON
+
+playback-play = ▶ PLAY
+
+playback-iq-hint = An I/Q capture, not audio. Playback takes the audio the recorder writes; an I/Q capture is played with --file.
+
+playback-not-while-tx = Not while transmitting
+
+playback-play-hint = Play this recording into the decoders from the start
+
+playback-busy-playing = Playing back — stop it before deleting it
+
+playback-busy-recording = Still being recorded — stop REC before deleting it
+
+playback-delete-ask = DELETE?
+
+playback-delete-hint-armed = Press again to delete this file for good. It cannot be undone.
+
+playback-delete-hint = Delete this recording from the folder (asks once more first)
+
+playback-strip-label = ▶ PLAYBACK
+
+playback-not-live = not live — the radio is standing down
+
+playback-carry-on = Carry on playing
+
+playback-pause = ⏸ PAUSE
+
+playback-pause-hint = Pause — the decoders hear silence until you carry on
+
+playback-again = ↺ AGAIN
+
+playback-again-hint = Back to the start — another try at a picture or a decode
+
+playback-loop = LOOP
+
+playback-loop-hint = Start again from the top when the file ends
+
+playback-stop = ■ STOP
+
+playback-stop-hint = End the playback and put the radio back where it was
+
+playback-files = FILES
+
+playback-end-of-file = end of file
+
+playback-paused = paused
+
+playback-recorded-on-mode = Recorded on { $mhz } MHz in { $mode } — the dial and mode were set from the file's name.
+
+playback-recorded-on = Recorded on { $mhz } MHz — the dial and mode were set from the file's name.
+
+playback-no-dial-mode = The name records no dial or mode, so it plays in the mode you are in — pick the decoder from the mode menu.
+
+playback-format-stereo = { $rate } Hz, stereo — the left (receive) channel is played.
+
+playback-format-mono = { $rate } Hz, mono — the one channel is played.
+
+playback-stopped = Stopped: { $fault }
+
+playback-intro = Play a recording back into the decoders — SSTV, CW, RTTY, PSK, FT8 and every other mode that decodes from audio. The radio stands down while it plays, the dial and mode go to what the recording was made on, and STOP puts the radio back. Change the mode while it plays to try another decoder.
+
+topbar-stereo-yields-hint = WFM stereo is off while noise reduction or the auto-notch runs — they would smear the two channels. Switch them off to hear stereo
+
+topbar-stereo-playback-hint = Stereo: the recording is playing back in both ears, as recorded. Click to force mono
+
+topbar-stereo-mono-recording-hint = This recording is mono — there is no second channel to play
+
+topbar-caption-play-back = Play back
+
+topbar-recordings-chip = ▶ RECORDINGS…
+
+topbar-recordings-hint = Play a recording back into the decoders — a missed SSTV picture, a weak RTTY or CW signal, an FT8 slot — with the waterfall and the decode log, as if it were on the air. The radio stands down while it plays.
+
+playback-find = Find
+
+playback-refresh = REFRESH
+
+## Weather satellites (NOAA APT, Meteor LRPT)
+
+wxsat-title = WEATHER SATELLITES
+
+sat-wxsat-hint = WEATHER SATELLITES — the picture a NOAA (APT) or Meteor (LRPT) satellite sends on 137 MHz, drawn as it comes in, in a window you can detach
+
+sat-wxsat = WEATHER SATELLITES
+
+wxsat-decode = Decode
+
+wxsat-decode-hint = Run the decoder on the chosen channel. It works from the sample window and leaves the radio's mode alone, so the channel has to be inside the window.
+
+wxsat-channel = Satellite
+
+wxsat-tune = Tune here
+
+wxsat-tune-hint = Switch the decoder on and bring the dial to this channel, so that the signal is inside the sample window.
+
+wxsat-clear = Clear
+
+wxsat-clear-hint = Start a blank picture. What has been received so far is gone unless it was saved.
+
+wxsat-save = Save PNG
+
+wxsat-save-hint = Save the picture as it is drawn (turned over if Flip is on) as a grey PNG; an LRPT picture saves the channel shown.
+
+wxsat-flip = Flip
+
+wxsat-flip-hint = Turn the picture over: a satellite flying south is drawn upside down.
+
+wxsat-state-off = Decoder off
+
+wxsat-level = Level { $db } dBFS
+
+wxsat-locked = Line sync locked
+
+wxsat-searching = Looking for the line sync
+
+wxsat-lines = { $n } lines
+
+wxsat-outside-window = The channel is outside the sample window, or too close to its edge for the whole signal. Use Tune here, or a wider window.
+
+wxsat-waiting = No picture yet. Switch the decoder on when a satellite is above the horizon; a pass lasts about ten minutes.
+
+wxsat-signal = Signal
+
+wxsat-kind-apt = APT
+
+wxsat-kind-lrpt = LRPT
+
+wxsat-image-channel = Channel { $n }
+
+wxsat-rows = { $n } rows
+
+wxsat-frame-locked = Frame sync locked
+
+wxsat-frames = { $n } good frames
+
+wxsat-waiting-lrpt = No picture yet. Meteor LRPT is digital: the picture starts a few seconds after the satellite is heard, row by row, and each channel is a separate picture.
+
+wxsat-searching-frame = Looking for the frame sync
+
+sat-picture = PICTURE
+
+sat-picture-hint = Open the WEATHER SATELLITES window on this link: the decoder switches to its signal and channel, and the dial moves there.
+sondemap-no-sonde-yet = No radiosonde heard yet
+sonde-decoding = DECODING
+sonde-decoding-off = DECODER OFF
+sonde-count = Sondes: { $n }
+sonde-frames = Frames: { $n }
+sonde-channel = Channel
+sonde-channel-hover = The sonde frequency to listen on (400–406 MHz). The radio is tuned there too, so the channel is inside the window.
+sonde-col-serial = Sonde
+sonde-col-alt = Altitude
+sonde-col-climb = Climb
+sonde-col-speed = Speed
+sonde-col-battery = Battery
+sonde-col-heard = Heard
+sonde-scan = Scan
+sonde-scan-hover = Look across the whole sample window for sondes and decode up to four at once, instead of listening on one channel. The window must cover them: the channel box centres the radio.
+sonde-online = Online (SondeHub)
+sonde-online-hover = Also show sondes other stations have heard, from SondeHub's public list. Only reads: your locator, rounded to 0.1°, and a 400 km radius are sent; nothing is uploaded. Off until you switch it on.
+sonde-online-count = { $n } online
+sonde-online-no-grid = Set your locator in the digital-mode setup to see online sondes.
+sonde-online-failed = SondeHub did not answer.
+sonde-export = Export flight
+sonde-export-kml-hover = Save this sonde's flight as a KML track (Google Earth): time, longitude, latitude, altitude in metres
+sonde-export-csv-hover = Save this sonde's flight as a CSV table for a spreadsheet: time, latitude, longitude, altitude in metres
+sonde-export-none = No position kept yet for this sonde.
+sonde-col-temp = Temp.
+sonde-col-humidity = Humidity
+sonde-col-pressure = Pressure
+sonde-online-why-signin = The station wants you signed in first.
+sonde-online-why-busy = The station is already asking SondeHub as often as it may. Try again in a minute.
+sonde-online-why-upstream = The station could not reach SondeHub.
+sonde-online-why-unreadable = The answer was not a list of sondes.
+sonde-online-why-no-station = No station to ask, and this page cannot reach SondeHub itself.
+sonde-online-why-http = Answer: HTTP { $n }.
+sonde-card-source = Source
+sonde-card-source-radio = This radio
+sonde-card-source-hub = SondeHub (heard by another station)
+sonde-card-model = Model
+sonde-card-maker = Maker
+sonde-card-variant = Variant
+sonde-card-position = Position
+sonde-card-from-you = From you
+sonde-card-heading = Heading
+sonde-card-satellites = Satellites
+sonde-card-snr = Signal-to-noise
+sonde-card-station = Heard by
+sonde-card-station-position = Station position
+sonde-card-antenna = Antenna
+sonde-card-software = Software
+sonde-card-frames = Frames heard
+sonde-card-open = Open on { $site }
+sonde-card-close = Close
+sonde-card-source-both = Radio + SondeHub (both hear it)
+sonde-card-stale = Status
+sonde-card-stale-value = Gone from the list: last known position
+sonde-card-detach = Detach
+sonde-card-attach = Attach
+sonde-card-listen-hover = Click to tune the radio to this channel: the dial goes there and the decoder listens on it alone.
+sonde-card-decoding = Decoded by this radio
+sonde-card-waiting = Listening on this channel, nothing decoded yet
+sonde-card-click-to-listen = Click the frequency to listen
+sonde-type-all = All types
+sonde-type-hover = Look for one type of sonde: choosing one starts the scan, which moves the window across the band until that type is heard. Only that type is listed and drawn.
+sonde-export-saved = Saved { $name }.
+sonde-title = RADIOSONDES
+sonde-tune = TUNE
+sonde-tune-hover = Switch the decoder on and bring the radio to the sonde channel, so the channel is inside the sample window. A mode that parks the receiver elsewhere (ADS-B, AIS, HFDL…) is left for NFM.
+sonde-needs-iq = The radiosonde decoder needs a wideband I/Q source; a rig that only hands over audio cannot feed it.
+sonde-off-hint = The radiosonde decoder is off. Press DECODER OFF to start it, or TUNE to start it and go to the channel.
+sonde-outside-window = The sample window does not reach the sonde band (400–406 MHz): press TUNE to bring the radio there.
+ism-sonde-chip = RADIOSONDES
+ism-sonde-chip-hover = Weather-balloon radiosondes on 400–406 MHz (RS41, DFM, M10/M20, iMet and more): a map of every sonde heard with its flight, in a window of its own
+
+## Keyboard modes: MT63 (src/app/panels/text_modem.rs)
+textmodem-mt63-long-hint = MT63-{ $label }, { $bw } Hz wide — the long interleave spreads a burst over { $chars } characters
+textmodem-mt63-short-hint = MT63-{ $label }, { $bw } Hz wide, short interleave — the short interleave spreads a burst over { $chars } characters
+textmodem-mt63-not-offered = 1K and 500L not offered yet
+textmodem-mt63-not-offered-hint = MT63-1K and the 500 Hz long interleave read with the batch decoder but not yet through the live receiver: the lock searches the symbol phase and the polarity but not the band centre, and a search that does was found to trade one variant for another.
+
+## Keyboard modes: MFSK (src/app/panels/text_modem.rs)
+textmodem-mfsk-hint = { $label } — { $baud } baud, { $tones } tones, { $bw } Hz wide{ $caveat }
+textmodem-mfsk-reverse-hint = Invert the tone order. A station received on the opposite sideband to the one it was sent on arrives mirrored about its centre and reads as noise until this is on.
+
+## Keyboard modes: DominoEX (src/app/panels/text_modem.rs)
+textmodem-domino-hint = { $name } — { $baud } baud, 18 tones, incremental frequency keying with no forward error correction
+textmodem-ifk-reverse-hint = Invert the tone steps. IFK+ carries its data in the step between successive tones, so a station received on the opposite sideband has every step negative and reads as noise until this is on.
+
+## Keyboard modes: PSK families (src/app/panels/text_modem.rs)
+textmodem-psk-family = Family
+textmodem-psk-family-plain-hint = PSK31's own family: one differential carrier, no forward error correction
+textmodem-psk-family-bpsk63f-hint = The robust code at 62.5 baud, with no interleaver — the one coded mode fldigi sends without one
+textmodem-psk-family-robust-hint = One carrier with the robust code and a 2x2xN interleaver
+textmodem-psk-family-multi-hint = Several carriers, PSK31's varicode and **no** code — wider and faster, and it needs a clean signal
+textmodem-psk-family-robust-multi-hint = Several carriers **and** the robust code: the widest and the most robust of the PSK modes
+textmodem-psk-baud-fast-hint = { $baud } baud — reads from about a second in: at this rate the receiver's lock time is a third of a message
+textmodem-psk-baud-hint = { $baud } baud
+textmodem-psk-bpsk-hint = One bit per symbol, differentially detected
+textmodem-psk-8psk-hint = Three bits per symbol, no code: the fastest at any given speed and the least robust. Reads its own transmission back; fldigi's 8PSK recordings do not read yet, so it is unproven against other programs
+textmodem-psk-coded = coded
+textmodem-psk-no-code = no code
+textmodem-psk-coded-hint =
+    { $baud } baud, { $n } { $n ->
+            [one] carrier
+           *[other] carriers
+        }, { $code }, { $bw } Hz wide
+textmodem-psk-rx-only = receive only
+textmodem-psk-rx-only-hint = This bank receives — fldigi's recording of it reads — but our own transmission of it does not read back through the same receiver yet, so transmit is refused rather than putting an unproven signal on the air.

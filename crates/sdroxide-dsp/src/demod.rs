@@ -64,6 +64,11 @@ pub trait Demodulator: Send {
     /// Operator override: `false` forces mono regardless of the pilot.
     fn set_stereo_enabled(&mut self, _on: bool) {}
 
+    /// NFM FM-Decrackle: click eliminator on/off, de-emphasis on/off, and the
+    /// magnitude-dip share of the slip test. Only voice NFM acts on it; called
+    /// every block, so it must be cheap when nothing changes.
+    fn set_fm_decrackle(&mut self, _on: bool, _deemph: bool, _dip: f32) {}
+
     /// How much of the difference channel is currently mixed in (0 = mono,
     /// 1 = full stereo). Diagnostic; the blend is driven by pilot SNR.
     fn stereo_blend(&self) -> f32 {
@@ -215,12 +220,17 @@ pub fn make_demod(mode: Mode, channel_rate: f64) -> Option<Box<dyn Demodulator>>
         | Mode::Navtex
         | Mode::Olivia
         | Mode::Thor
+        | Mode::Contestia
+        | Mode::DominoEx
+        | Mode::Mfsk
+        | Mode::Mt63
         | Mode::Fsq
         | Mode::Hell
         | Mode::RfPaint
         // HF packet is 300 baud AFSK audio on a sideband, like RTTY.
         | Mode::PacketHf
-        | Mode::VaraHf
+        | Mode::Mercury
+        | Mode::Data2g
         // AtChat COFDM: 2.7 kHz of audio on USB, tapped by the digi engine.
         | Mode::AtChat
         | Mode::Rade
@@ -249,7 +259,8 @@ pub fn make_demod(mode: Mode, channel_rate: f64) -> Option<Box<dyn Demodulator>>
         // and the ±5 kHz scaling the transmitter below uses. Its video
         // subcarrier runs 1200–2300 Hz, which is inside that chain with room
         // to spare either side.
-        Mode::Nfm | Mode::SstvFm | Mode::RttyFm => {
+        Mode::Nfm => Some(Box::new(FmDemod::new_voice(channel_rate, lo, hi))),
+        Mode::SstvFm | Mode::RttyFm => {
             Some(Box::new(FmDemod::new(channel_rate, lo, hi)))
         }
         Mode::Wfm => {
@@ -668,6 +679,183 @@ impl Demodulator for SamDemod {
 const NFM_HPF_HZ: f64 = 250.0;
 const NFM_HPF_POLES: usize = 4;
 
+/// FM click eliminator ("Klicktilger") — removes the 2π phase slips a
+/// discriminator turns into clicks when the carrier sinks into the noise.
+///
+/// Below the FM threshold the noise now and then swings the received phasor
+/// round the origin. The phase then advances by a whole turn in a fraction of a
+/// millisecond, and a plain discriminator hands that turn on as a click — on a
+/// weak CB or 2 m signal a crackle "like New Year's fireworks". A slip has a
+/// signature the audio no longer shows: the magnitude |z| dips close to zero,
+/// and over the dip the instantaneous frequency, less its running median, adds
+/// up to about ±2π. Speech does neither: fast modulation through a narrow
+/// filter moves the phase too, but without the magnitude collapsing.
+///
+/// So each sample's frequency is kept in a ring with look-back and look-ahead
+/// of about a millisecond either side. A slip is a local peak of the slip sum
+/// over `l ≈ 2·rate/bandwidth` samples above π, *and* a magnitude minimum in
+/// that window below a fifth of the mean magnitude over ±1 ms; its window then
+/// takes the running median (±0.5 ms) in place of the measured frequency. The
+/// output is the frequency in radians per sample, delayed by the look-ahead
+/// (≈ 1.3 ms at 48 kHz, 5.4 kHz bandwidth).
+//
+// Why: HDZ 2026-11-10, CB 27.305 MHz NFM: "der Sender zieht seine ganze
+//      Umgebung hoch als Knistern, wie ein Silvesterfeuerwerk … unser
+//      Endgegner"; "kannst du den Ring-Anti-Crackle-Filter trotzdem mal bauen".
+//      Bench (tools/fm-pruefstand.py in HDZ's notes, speech FM ±2 kHz, 5.4 kHz
+//      filter): about 93 % of slips found, none on a noise-free signal; the
+//      magnitude test is what keeps fast modulation from being taken for slips.
+//      Gain over de-emphasis alone +1.3 / +0.7 / +0.2 dB SINAD at C/N 0 / 2 /
+//      4 dB, about half of what removing every slip perfectly would give.
+pub struct ClickTilger {
+    /// Half-width of the running median, slip window, half-width of the
+    /// magnitude mean.
+    m: usize,
+    l: usize,
+    a: usize,
+    raw: Vec<f32>,
+    mag: Vec<f32>,
+    out: Vec<f32>,
+    med: Vec<f32>,
+    sum: Vec<f32>,
+    /// Next centre to decide on, next sample to hand out, first centre a new
+    /// repair may sit on.
+    dec: usize,
+    emit: usize,
+    blocked: usize,
+    prev: Complex32,
+    scratch: Vec<f32>,
+    repaired: u64,
+    /// Magnitude-dip share a slip window must reach (the NR menu's
+    /// sensitivity).
+    dip: f32,
+}
+
+/// A slip window must reach this far below the local mean magnitude, to start
+/// with (the bench optimum; `sdroxide_types::FM_DECRACKLE_DEFAULT_DIP`).
+const TILGER_DIP: f32 = 0.2;
+
+impl ClickTilger {
+    pub fn new(rate: f64, bandwidth_hz: f64) -> Self {
+        ClickTilger {
+            m: ((0.0005 * rate).round() as usize).max(2),
+            l: Self::window(rate, bandwidth_hz),
+            a: ((0.001 * rate).round() as usize).max(4),
+            raw: Vec::new(),
+            mag: Vec::new(),
+            out: Vec::new(),
+            med: Vec::new(),
+            sum: Vec::new(),
+            dec: 0,
+            emit: 0,
+            blocked: 0,
+            prev: Complex32::new(1.0, 0.0),
+            scratch: Vec::new(),
+            repaired: 0,
+            dip: TILGER_DIP,
+        }
+    }
+
+    /// Sensitivity of the slip test: a window must dip below this share of the
+    /// local mean magnitude. Higher repairs more.
+    pub fn set_dip(&mut self, dip: f32) {
+        self.dip = dip;
+    }
+
+    fn window(rate: f64, bandwidth_hz: f64) -> usize {
+        ((2.0 * rate / bandwidth_hz.abs().max(500.0)).round() as usize).max(5)
+    }
+
+    /// Follow a new receive bandwidth: a slip lasts about one over it.
+    pub fn set_bandwidth(&mut self, rate: f64, bandwidth_hz: f64) {
+        self.l = Self::window(rate, bandwidth_hz);
+    }
+
+    /// How many slips have been taken out so far (diagnostics and tests).
+    #[allow(dead_code)]
+    pub fn repaired(&self) -> u64 {
+        self.repaired
+    }
+
+    /// Feed filtered baseband; appends the repaired instantaneous frequency
+    /// (radians per sample) of every sample whose look-ahead is complete.
+    pub fn process(&mut self, iq: &[Complex32], out: &mut Vec<f32>) {
+        for &z in iq {
+            self.raw.push((z * self.prev.conj()).arg());
+            self.prev = z;
+            self.mag.push(z.norm());
+        }
+        self.out.extend_from_slice(&self.raw[self.out.len()..]);
+        let (m, l, a) = (self.m, self.l, self.a);
+        let h = l / 2;
+        let n = self.raw.len();
+        // Running median of the raw frequency, once its window is complete.
+        while self.med.len() + m < n {
+            let i = self.med.len();
+            self.scratch.clear();
+            self.scratch.extend_from_slice(&self.raw[i.saturating_sub(m)..=i + m]);
+            let k = self.scratch.len() / 2;
+            let (_, v, _) = self.scratch.select_nth_unstable_by(k, |x, y| x.total_cmp(y));
+            self.med.push(*v);
+        }
+        // Slip sum over [i − h, i − h + l), once the medians are there.
+        while self.sum.len() + l - h <= self.med.len() {
+            let i = self.sum.len();
+            let lo = i.saturating_sub(h);
+            let hi = i + l - h;
+            let s: f32 = (lo..hi).map(|k| self.raw[k] - self.med[k]).sum();
+            self.sum.push(s);
+        }
+        // Decide on a centre once its neighbourhood of ±l is summed and the
+        // magnitude mean of ±a is in.
+        while self.dec + l < self.sum.len() && self.dec + a < n {
+            let c = self.dec;
+            let s = self.sum[c].abs();
+            let peak = s > std::f32::consts::PI
+                && c >= self.blocked
+                && (c.saturating_sub(l)..c).all(|k| self.sum[k].abs() <= s)
+                && (c + 1..=c + l).all(|k| self.sum[k].abs() < s);
+            if peak {
+                let w0 = c.saturating_sub(h);
+                let w1 = c + l - h;
+                let lo = c.saturating_sub(a);
+                let mean = self.mag[lo..=c + a].iter().sum::<f32>() / (c + a + 1 - lo) as f32;
+                let dip = self.mag[w0..w1].iter().fold(f32::MAX, |x, &y| x.min(y));
+                if dip < self.dip * mean {
+                    self.out[w0..w1].copy_from_slice(&self.med[w0..w1]);
+                    self.blocked = c + l;
+                    self.repaired += 1;
+                }
+            }
+            self.dec += 1;
+        }
+        // Hand out what no later repair can reach any more.
+        let ready = self.dec.saturating_sub(l);
+        if ready > self.emit {
+            out.extend_from_slice(&self.out[self.emit..ready]);
+            self.emit = ready;
+        }
+        // Keep enough history behind the oldest index still read.
+        let back = 2 * (m + l + a);
+        let drop = self.emit.saturating_sub(back);
+        if drop > 0 {
+            for v in [&mut self.raw, &mut self.mag, &mut self.out, &mut self.med, &mut self.sum] {
+                v.drain(..drop);
+            }
+            self.dec -= drop;
+            self.emit -= drop;
+            self.blocked = self.blocked.saturating_sub(drop);
+        }
+    }
+}
+
+/// NFM voice de-emphasis corner: 6 dB per octave above 300 Hz, the curve an
+/// FM speech transmitter's pre-emphasis raises. Unity gain at 1 kHz.
+//
+// Why: HDZ 2026-11-10 after the bench samples: "mit 6 dB muss sein". Bench:
+//      +5 to +6 dB SINAD at every C/N, the largest single gain.
+const NFM_DEEMPH_HZ: f64 = 300.0;
+
 /// NFM: quadrature discriminator, scaled for ±5 kHz deviation, then a high-pass
 /// that takes out the sub-audible signalling and an audio low-pass. The
 /// CTCSS/DCS decoder is tapped off the raw discriminator ahead of both.
@@ -690,9 +878,40 @@ pub struct FmDemod {
     listen: Vec<f32>,
     power: PowerMeter,
     sub_tone: crate::ctcss::SubToneDetect,
+    /// Voice NFM only: the click eliminator, its output, and the de-emphasis
+    /// (one-pole state, coefficient, gain for unity at 1 kHz).
+    tilger: Option<ClickTilger>,
+    repaired: Vec<f32>,
+    deemph: Option<(f32, f32, f32)>,
+    /// Voice NFM only: what the operator has switched on, and the receive
+    /// bandwidth a fresh tilger is built for.
+    voice: bool,
+    tilger_on: bool,
+    deemph_on: bool,
+    bandwidth_hz: f64,
 }
 
 impl FmDemod {
+    /// Voice NFM: the plain demodulator plus click eliminator and
+    /// de-emphasis. SSTV and RTTY over FM keep [`FmDemod::new`]: a tone
+    /// decoder wants the flat discriminator.
+    pub fn new_voice(rate: f64, lo: f32, hi: f32) -> Self {
+        let mut d = Self::new(rate, lo, hi);
+        d.voice = true;
+        d.tilger_on = true;
+        d.deemph_on = true;
+        d.tilger = Some(ClickTilger::new(rate, (hi - lo) as f64));
+        let alpha = 1.0 - (-std::f64::consts::TAU * NFM_DEEMPH_HZ / rate).exp();
+        let gain = (1.0 + (1000.0 / NFM_DEEMPH_HZ).powi(2)).sqrt();
+        d.deemph = Some((0.0, alpha as f32, gain as f32));
+        // De-emphasis takes ~9 dB off the voice at 830 Hz and next to nothing
+        // off a CTCSS tone, which the transmitter adds after its pre-emphasis.
+        // One more high-pass section (−9.5 dB at 88.5 Hz, −0.4 dB at 830 Hz)
+        // gives the sub-audible rejection back.
+        d.hpf.push(DcBlock::new(NFM_HPF_HZ, rate));
+        d
+    }
+
     pub fn new(rate: f64, lo: f32, hi: f32) -> Self {
         FmDemod {
             rate,
@@ -706,6 +925,13 @@ impl FmDemod {
             listen: Vec::new(),
             power: PowerMeter::new(),
             sub_tone: crate::ctcss::SubToneDetect::new(rate),
+            tilger: None,
+            repaired: Vec::new(),
+            deemph: None,
+            voice: false,
+            tilger_on: false,
+            deemph_on: false,
+            bandwidth_hz: (hi - lo) as f64,
         }
     }
 }
@@ -724,15 +950,62 @@ impl Demodulator for FmDemod {
         }
         self.sub_tone.process(&self.disc);
 
+        // The sub-audible decoder above reads the raw discriminator; the
+        // listener gets the slips taken out, a millisecond or so later.
+        let listen_src: &[f32] = match self.tilger.as_mut().filter(|_| self.tilger_on) {
+            Some(t) => {
+                self.repaired.clear();
+                t.process(&self.filtered, &mut self.repaired);
+                for v in &mut self.repaired {
+                    *v *= self.scale;
+                }
+                &self.repaired
+            }
+            None => &self.disc,
+        };
         self.listen.clear();
-        for &s in &self.disc {
-            self.listen.push(self.hpf.iter_mut().fold(s, |v, hp| hp.run(v)));
+        for &s in listen_src {
+            let mut v = self.hpf.iter_mut().fold(s, |v, hp| hp.run(v));
+            if let Some((y, alpha, gain)) = self.deemph.as_mut().filter(|_| self.deemph_on) {
+                *y += *alpha * (v - *y);
+                v = *y * *gain;
+            }
+            self.listen.push(v);
         }
         self.lpf.process(&self.listen, out);
     }
 
     fn set_filter(&mut self, lo: f32, hi: f32) {
         self.fir.set_taps(bandpass_taps(PASSBAND_TAPS, lo as f64, hi as f64, self.rate));
+        self.bandwidth_hz = (hi - lo) as f64;
+        if let Some(t) = self.tilger.as_mut() {
+            t.set_bandwidth(self.rate, self.bandwidth_hz);
+        }
+    }
+
+    fn set_fm_decrackle(&mut self, on: bool, deemph: bool, dip: f32) {
+        if !self.voice {
+            return;
+        }
+        // Switched back on: start from an empty ring rather than one holding
+        // samples from before the gap.
+        if on && !self.tilger_on {
+            self.tilger = Some(ClickTilger::new(self.rate, self.bandwidth_hz));
+        }
+        self.tilger_on = on;
+        if let Some(t) = self.tilger.as_mut() {
+            t.set_dip(dip);
+        }
+        // The fifth high-pass section belongs to the de-emphasis (it keeps
+        // CTCSS down once the voice is tilted), so it comes and goes with it.
+        if deemph != self.deemph_on {
+            if deemph {
+                self.hpf.push(DcBlock::new(NFM_HPF_HZ, self.rate));
+            } else {
+                self.hpf.truncate(NFM_HPF_POLES);
+            }
+            self.deemph_on = deemph;
+        }
     }
 
     fn audio_rate(&self) -> f64 {
@@ -1355,6 +1628,124 @@ impl PilotPll {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// FM tone at 48 kHz as complex baseband.
+    fn fm_tone(n: usize, dev_hz: f64, tone_hz: f64) -> Vec<Complex32> {
+        let rate = 48_000.0_f64;
+        let mut ph = 0.0_f64;
+        (0..n)
+            .map(|i| {
+                let f = dev_hz * (std::f64::consts::TAU * tone_hz * i as f64 / rate).sin();
+                ph += std::f64::consts::TAU * f / rate;
+                Complex32::new(ph.cos() as f32, ph.sin() as f32)
+            })
+            .collect()
+    }
+
+    fn run_tilger(iq: &[Complex32]) -> (Vec<f32>, u64) {
+        let mut t = ClickTilger::new(48_000.0, 5_400.0);
+        let mut out = Vec::new();
+        for chunk in iq.chunks(480) {
+            t.process(chunk, &mut out);
+        }
+        (out, t.repaired())
+    }
+
+    fn raw_freq(iq: &[Complex32]) -> Vec<f32> {
+        let mut prev = Complex32::new(1.0, 0.0);
+        iq.iter()
+            .map(|&z| {
+                let d = (z * prev.conj()).arg();
+                prev = z;
+                d
+            })
+            .collect()
+    }
+
+    #[test]
+    fn click_tilger_leaves_a_clean_signal_alone() {
+        // Fast, deep modulation moves the phase by more than π over the slip
+        // window (±4 kHz at 1 kHz) and must still not be taken for a slip, as
+        // the magnitude never dips: nothing repaired, every handed-out sample
+        // the raw discriminator's.
+        let iq = fm_tone(48_000, 4000.0, 1000.0);
+        let (out, repaired) = run_tilger(&iq);
+        assert_eq!(repaired, 0);
+        assert!(out.len() > 47_000, "look-ahead holds back only a little: {}", out.len());
+        assert_eq!(out[..], raw_freq(&iq)[..out.len()]);
+    }
+
+    /// Repairs counted on a CB-like voice signal (±2 kHz at 1 kHz) behind
+    /// the 5.4 kHz NFM filter, which cuts sidebands and so ripples the
+    /// magnitude, at sensitivity `dip`.
+    fn repairs_behind_the_filter(dip: f32) -> u64 {
+        let mut fir = ComplexFir::new(bandpass_taps(PASSBAND_TAPS, -2700.0, 2700.0, 48_000.0));
+        let mut filtered = Vec::new();
+        fir.process(&fm_tone(48_000, 2000.0, 1000.0), &mut filtered);
+        let mut t = ClickTilger::new(48_000.0, 5_400.0);
+        t.set_dip(dip);
+        let mut out = Vec::new();
+        for chunk in filtered.chunks(480) {
+            t.process(chunk, &mut out);
+        }
+        t.repaired()
+    }
+
+    #[test]
+    fn the_top_of_the_sensitivity_range_leaves_a_clean_signal_alone() {
+        // The NR menu's slider ends at 0.6 (`FM_DECRACKLE_DIP_RANGE`): a
+        // clean signal must come through untouched there. Past 1 the dip test
+        // holds wherever the filter ripples the magnitude and only the phase
+        // jump is left, so the counter-check must repair.
+        assert_eq!(repairs_behind_the_filter(0.6), 0);
+        assert!(repairs_behind_the_filter(1.2) > 0, "the counter-check finds nothing to take");
+    }
+
+    #[test]
+    fn fm_decrackle_off_is_the_plain_demodulator() {
+        // Both switches off in the NR menu: voice NFM must sound exactly as the
+        // demodulator did before FM-Decrackle existed.
+        let iq = fm_tone(24_000, 2000.0, 700.0);
+        let mut plain = FmDemod::new(48_000.0, -2700.0, 2700.0);
+        let mut voice = FmDemod::new_voice(48_000.0, -2700.0, 2700.0);
+        voice.set_fm_decrackle(false, false, 0.2);
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        for chunk in iq.chunks(480) {
+            plain.process(chunk, &mut a);
+            voice.set_fm_decrackle(false, false, 0.2);
+            voice.process(chunk, &mut b);
+        }
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn click_tilger_takes_out_a_phase_slip() {
+        // One full turn added over 8 samples while the magnitude dips to 5 %:
+        // the raw discriminator gains 2π there, the repaired one must not.
+        let clean = fm_tone(24_000, 2000.0, 700.0);
+        let mut iq = clean.clone();
+        let at = 12_000;
+        for (k, z) in iq.iter_mut().enumerate() {
+            if k >= at {
+                let p = (((k - at) as f32 + 0.5) / 8.0).min(1.0) * std::f32::consts::TAU;
+                let dip = if k < at + 8 { 0.05 } else { 1.0 };
+                *z *= Complex32::from_polar(dip, p);
+            }
+        }
+        let (out, repaired) = run_tilger(&iq);
+        assert_eq!(repaired, 1);
+        let reference = raw_freq(&clean);
+        let raw = raw_freq(&iq);
+        let err = |v: &[f32]| (at - 200..at + 200).map(|k| v[k] - reference[k]).sum::<f32>().abs();
+        assert!(err(&raw) > 6.0, "the slip is in the raw stream: {}", err(&raw));
+        // What stays is the median standing in for a 700 Hz tone over the 18
+        // repaired samples, not the turn: at least nine tenths of it must go.
+        assert!(
+            err(&out) < std::f32::consts::TAU / 10.0,
+            "and gone after the tilger: {}",
+            err(&out)
+        );
+    }
 
     /// RMS of the SSB/CW demod's audio for a carrier at `tone_hz`, filter
     /// `lo..hi`, settled.

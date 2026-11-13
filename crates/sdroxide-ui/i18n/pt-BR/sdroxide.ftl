@@ -478,6 +478,8 @@ settings-add-radio-computer = Adicionar um rádio neste computador
 settings-radio-s-settings-are-below = As configurações deste rádio estão abaixo. Arraste para movê-lo ao longo da barra.
 settings-switch-radio-dialog-follows-drag = Trocar para este rádio (a caixa acompanha). Arraste para movê-lo ao longo da barra.
 settings-tx = ● TX
+settings-station-radio = Estação:
+settings-station-radio-tip = O rádio da estação. Ele executa os serviços de rede da estação (feeds de spots, rotor, amplificador, chave TX/RX) e recebe as configurações da linha de comando, por isso permanece na lista. Para deixá-lo em repouso, desligue-o com LINK; para usar outro hardware, escolha outra interface abaixo.
 settings-mute-radio-s-audio = Silenciar o áudio deste rádio
 settings-link = LINK
 settings-close-radio-configuration-kept = Fechar este rádio (a configuração é mantida)
@@ -603,6 +605,10 @@ settings-controls-none = — nenhum —
 
 settings-general-system-default = Padrão do sistema
 settings-general-remote-access = Acesso remoto
+settings-general-signed-in-station = Estação conectada
+settings-general-sign-out = {" "}SAIR{" "}
+settings-general-sign-out-forgets-device = Esquece o login deste dispositivo. A estação vai pedir novamente na próxima conexão; esta continua aberta até você fechá-la.
+settings-general-password-kept-no-cookie = Uma senha está sendo lembrada neste navegador para { $stations }, porque nenhum cookie de login foi fornecido. Estações mais antigas fazem isso; não é a mesma coisa.
 settings-general-what-remote-client-browser-page = O que um cliente remoto — a página do navegador, ou outro sdroxide iniciado com --connect — precisa apresentar antes que esta estação o deixe operar. Vale no modo servidor (--server); o próximo login pega uma alteração, sem reinício.
 settings-general-username = Usuário
 settings-general-password = Senha
@@ -986,7 +992,6 @@ settings-wavelog-plain-http-address-internet-api = http:// simples para um ender
 settings-wavelog-trusted-cert = Certificado confiável
 settings-wavelog-forget-certificate = Esquecer este certificado
 settings-wavelog-go-back-ordinary-checking-against = Volta à verificação comum com as autoridades certificadoras públicas — para um servidor que agora tem um certificado adequado.
-settings-wavelog-connection-check-runs-machine-radio = A verificação de conexão roda na máquina à qual o rádio está conectado — use as configurações de lá para testá-la e listar os locais da estação.
 settings-wavelog-server-presented-certificate-sha-256 = O servidor apresentou este certificado (SHA-256):
 settings-wavelog-compare-your-server-s-e = Compare com o do seu servidor — por exemplo, `openssl x509 -noout -fingerprint -sha256 -in cert.pem` — e confie só se coincidirem. A partir daí este certificado exato é aceito e qualquer outro é recusado.
 settings-wavelog-trust-certificate = Confiar neste certificado
@@ -2065,14 +2070,14 @@ topbar-return-selector-top-bar-popup = Devolver o seletor ao pop-up da barra sup
 topbar-dec-off = DEC desligado
 topbar-vol = Vol
 topbar-counted-steps-not-decibels-what =
-
+    {""}
 
     Contado em passos, não em decibéis: o que um passo vale é assunto do próprio receptor, e em um SDRplay depende também da faixa. Certo continua sendo mais ganho.
 topbar-gain = Ganho
 
 
 topbar-plutosdr-s-own-agc-setting =
-
+    {""}
 
     O AGC próprio do PlutoSDR é que define este ganho, então mover o controle deslizante não faz nada. Defina Configurações → Rádio → AGC como Manual para controlá-lo aqui.
 topbar-agc-hang-time-click-cycle = Tempo de retenção do AGC — clique para alternar: Desligado / Lento / Médio / Rápido
@@ -2241,9 +2246,14 @@ topbar-width-force-right-now-whatever = A largura em vigor agora, seja qual for 
 topbar-keep-floor-ceiling-set-best = Mantém o piso/teto definidos para o melhor contraste da cascata — reajustados suavemente após uma troca de faixa, um deslocamento ou zoom, e quando os níveis derivam. Ligue para ajustar de imediato; desligue para manter os níveis onde você os definiu.
 topbar-keep-tuned-frequency-middle-panadapter = Mantém a frequência sintonizada no meio do panadaptador: a janela desliza sob o dial, em vez de a imagem saltar uma faixa inteira quando você sintoniza além da borda. Ligue para centralizar de imediato; desligue para deslocar e dar zoom onde quiser.
 topbar-spectrum-floor-ceiling-fft-size = Piso / teto do espectro e tamanho da FFT
-topbar-level-drawn-bottom-spectrum-darkest = O nível desenhado na base do espectro e como a cor mais escura da cascata. Aumente até que o piso de ruído apenas escureça. Defini-lo desliga o AJUSTAR.
+topbar-level-drawn-bottom-spectrum-darkest = O nível desenhado na base do espectro e como a cor mais escura da cascata. Aumente até que o piso de ruído apenas escureça. Com o AJUSTAR ligado, ele desloca o nível do AJUSTAR, que continua ligado.
 topbar-ceil = teto{" "}
-topbar-level-drawn-top-bring-down = O nível desenhado no topo. Reduza até que o sinal mais forte que lhe interessa atinja a cor plena. Defini-lo desliga o AJUSTAR.
+topbar-waterfall-mean-not-peak = A cascata como potência média (Welch) em vez do pico: ruído calmo, os mesmos sinais. Um ponto CW mais curto que uma linha ou uma portadora mais estreita que uma coluna aparece mais fraco.
+topbar-welch-time-constant = Por quanto tempo o WELCH faz a média, para a cascata e a linha do espectro: mais longo é mais calmo e mostra uma mudança mais tarde.
+topbar-waterfall-reassign = REASSIGN: a cascata como espectrograma reatribuído (Auger e Flandrin 1995): a potência de cada célula é movida para a frequência em que está centrada, de modo que uma portadora ou um tom é uma linha nítida em vez de uma faixa borrada. A alternativa ao WELCH; o ruído fica igualmente calmo.
+topbar-reassign-dim = Quanto mais escuro o REASSIGN desenha o que não moveu para uma linha: o ruído e o que fica abaixo do limiar. 0 desenha como o WELCH; mais alto deixa as linhas sobre fundo escuro.
+topbar-level-drawn-top-bring-down = O nível desenhado no topo. Reduza até que o sinal mais forte que lhe interessa atinja a cor plena. Com o AJUSTAR ligado, ele desloca o nível do AJUSTAR, que continua ligado.
+topbar-fit-shift = Quanto o nível do AJUSTAR está deslocado neste controle. O AJUSTAR mantém o deslocamento em todas as bandas; ligá-lo de novo volta a zero.
 topbar-fft-size = TAMANHO DA FFT
 topbar-flip = INVERTER
 topbar-scroll-waterfall-upwards-newest-row = Rola a cascata para cima — linha mais recente embaixo (V)
@@ -2271,6 +2281,9 @@ topbar-user-manual-f1 = Manual do usuário (F1)
 topbar-range-was-typed-settings-radio = Essa faixa foi digitada em Configurações ▸ Rádio ▸ Faixa de RX, não informada pelo rádio. Amplie-a, ou esvazie a caixa para usar o que o dispositivo informa sobre si mesmo.
 topbar-what-device-reports-about-itself = Isto é o que o dispositivo informa sobre si mesmo. Se o rádio cobre esta faixa, informe a faixa real dele em Configurações ▸ Rádio ▸ Faixa de RX.
 topbar-band = FAIXA
+topbar-recent = RECENTES
+topbar-recent-empty =
+    Preenche após 3 s em um local
 topbar-mode = MODO
 topbar-digital = DIGITAL
 
@@ -2454,8 +2467,6 @@ topbar-recording = gravando
 topbar-sql = sql
 topbar-stations = estações
 topbar-caption-reaction = reação
-topbar-caption-scroll = rolagem
-topbar-caption-surface = superfície
 topbar-caption-flow = fluxo
 topbar-caption-detail = detalhe
 topbar-floor = piso
@@ -3717,6 +3728,201 @@ js8-message = Mensagem…
 
 ## logbook (src/app/logbook.rs)
 
+palette-hint = Ir para… um modo, uma faixa, uma janela, uma configuração, uma memória ou uma frequência (14.074)
+palette-nothing = nada com esse nome
+palette-group-window = Janela
+palette-group-settings = Configurações
+palette-group-memory = Memória
+palette-group-tune = Sintonia
+palette-tune-to = Sintonizar em { $mhz } MHz
+palette-win-bands = Condições de propagação
+palette-win-awards = Prêmios
+palette-win-windows = Lista de janelas
+check-open = VERIFICAÇÃO DA ESTAÇÃO
+    .hint = Uma página que mostra o que está em ordem e o que não está — indicativo, enlace de rádio, receptor, áudio, relógio, consultas — com um botão em cada linha que leva a onde se corrige. Ela lê o que o programa já sabe; não mede nada e não transmite nada.
+check-title = VERIFICAÇÃO DA ESTAÇÃO
+check-verdict-ok = Nada aqui precisa de atenção.
+check-verdict-warn = Funcionando, mas há algo a observar.
+check-verdict-fail = Algo não vai funcionar até ser resolvido.
+check-fix-settings = AJUSTES
+check-fix-unmute = ATIVAR SOM
+check-footnote = Lido a partir do que o programa sabe agora. Nada é transmitido e nada é medido de novo; uma linha que diz «não medido» não foi verificada.
+check-callsign = Indicativo
+check-callsign-missing = Nenhum indicativo definido. Os modos digitais não transmitirão, os contatos são registrados sem o indicativo da estação, e spots e alertas não conseguem saber quais mensagens são para você.
+check-callsign-odd = «{ $call }» não parece um indicativo.
+check-grid = Quadrado locator
+check-grid-missing = Nenhum quadrado locator definido. Distâncias, rumos, os mapas e a troca do próprio FT8 precisam dele.
+check-grid-odd = «{ $grid }» não é um locator Maidenhead — quatro ou seis caracteres, como JN48 ou JN48qm.
+check-link = Enlace de rádio
+check-link-ok = O rádio está conectado e se identificou.
+check-link-silent = Nenhum rádio respondeu ainda. Se isso não mudar em alguns segundos, o rádio escolhido em Ajustes não é o que está conectado ou não está ligado.
+check-receiver = Receptor
+check-receiver-ok = Recebendo: o espectro está chegando.
+check-receiver-never = Nenhum espectro chegou desde que o programa foi iniciado.
+check-receiver-stalled = Nada chega do receptor há { $seconds } s. O dispositivo parou de transmitir dados — um cabo, uma porta USB que entrou em suspensão ou outro programa que o pegou.
+check-level = Nível de entrada
+check-level-ok = O conversor não está saturado.
+check-level-overload = O conversor do receptor está cortando. Tudo o que ele ouve fica distorcido, sobretudo os sinais fortes — reduza o ganho de RF ou desligue um pré-amplificador.
+check-audio = Áudio do rádio
+check-audio-ok = Nenhum problema informado com as placas de som do rádio.
+check-muted = Alto-falante
+check-muted-off = O receptor não está silenciado.
+check-muted-on = O receptor está silenciado, por isso não se ouve nada.
+check-transmit = Transmissão
+check-transmit-ok = Este rádio pode transmitir.
+check-transmit-rx-only = Somente recepção: este rádio, ou a forma como está conectado, não tem um transmissor que o programa possa acionar.
+check-clock = Relógio do computador
+check-clock-unknown = Não medido. Ouça uma frequência FT8 movimentada por um minuto; as estações decodificadas ali mostrarão quanto este relógio está desviado.
+check-clock-ok = { $offset } s em relação às estações ouvidas no FT8 — dentro da tolerância.
+check-clock-marginal = { $offset } s em relação às estações ouvidas no FT8. Ainda decodificável, mas vale corrigir: no FT4 e no FT2 já custa contatos.
+check-clock-bad = { $offset } s em relação às estações ouvidas no FT8. Desviado o suficiente para que outros não decodifiquem você e você decodifique pouco — ajuste o relógio do computador por um servidor de horário.
+check-lookup = Consulta de indicativo
+check-lookup-ok = Um callbook está configurado.
+check-lookup-none = Nenhum callbook configurado, então nomes e locators não são preenchidos para você. Opcional.
+check-spots = Fontes de spots
+check-spots-ok = { $n } fonte(s) ligada(s).
+check-spots-none = Nenhuma fonte de spots ligada, então nada é marcado no panadaptador. Opcional.
+welcome-title = BEM-VINDO
+welcome-open = GUIA DE BOAS-VINDAS
+    .hint = O roteiro da primeira inicialização de novo: o que configurar, o que costuma dar errado e o que há no programa.
+welcome-step-welcome = Boas-vindas
+welcome-step-station = Estação
+welcome-step-radio = Rádio
+welcome-step-transmit = Antes de transmitir
+welcome-step-online = Online
+welcome-step-tour = Roteiro
+welcome-step-check = Verificação
+welcome-back = ◀ VOLTAR
+welcome-next = AVANÇAR ▶
+welcome-finish = CONCLUIR
+    .hint = Fecha o roteiro e não o mostra mais na inicialização. Ele continua em Ajustes → Geral.
+welcome-reopen-note = Ajustes → Geral o traz de volta.
+welcome-now = Situação atual
+welcome-hello = Bem-vindo ao SDR Oxide
+welcome-intro = Um transceptor definido por software: panadaptador e cascata, todos os modos de voz e digitais, do SSB ao FT8, JS8, SSTV e Winlink, um diário, mapas, fontes de spots — para SDRs e para transceptores comuns, aqui ou a partir de outra máquina.
+welcome-intro-how = Este roteiro leva alguns minutos. Ele pede as duas coisas sem as quais o programa não funciona, ajuda a conectar o rádio, alerta sobre os problemas em que quem começa costuma esbarrar e mostra onde fica cada coisa. Cada página pode ser pulada e feita depois.
+welcome-language-note = Muda o idioma do programa de imediato. Também em Ajustes → Interface.
+welcome-intro-safe = Nada disto transmite
+    .hint = O roteiro só abre ajustes e janelas. O programa nunca aciona o transmissor até que você pressione algo que diga que o fará.
+welcome-station-why = Seu indicativo e seu locator Maidenhead são lidos em toda parte: os modos digitais os colocam em cada mensagem (e não transmitem sem indicativo), o diário os grava em cada contato, os mapas e as distâncias partem do locator, e spots e alertas usam o indicativo para saber quais mensagens são para você.
+welcome-station-save-note = SALVAR os guarda; as mesmas caixas estão em Ajustes → Geral.
+welcome-station-grid-how = Não sabe o seu locator?
+    .hint = Quatro caracteres (IN80) bastam para começar; seis (IN80dk) o colocam a poucos quilômetros. Qualquer mapa online de «locator Maidenhead» o fornece a partir do seu endereço — ou deixe em branco por enquanto e volte depois.
+welcome-radio-intro = O que você vai usar? Escolha o mais próximo — a página então lista o que costuma dar errado com esse tipo de rádio e abre o lugar onde ele é configurado.
+welcome-radio-pick = Escolha um para ver suas notas de configuração.
+welcome-radio-pitfalls = Problemas comuns com este tipo de rádio
+welcome-radio-manual = O capítulo 15 do manual traz notas para cada modelo de rádio, e o capítulo 14 é a solução de problemas.
+welcome-kind-usb = Um SDR por USB
+    .hint = RTL-SDR, Airspy, HackRF, SDRplay RSP, RX-888, LimeSDR, Fobos, ou qualquer um que o SoapySDR controle.
+welcome-kind-cat = Um transceptor com cabo CAT
+    .hint = Icom, Yaesu, Kenwood, Elecraft, Xiegu, QRP Labs… controlado por uma porta serial/USB, com o áudio em uma placa de som USB.
+welcome-kind-net = Um rádio na rede
+    .hint = Hermes Lite 2 / ANAN (OpenHPSDR), FlexRadio, Icom por LAN, ADALM-Pluto, SunSDR ou Thetis por TCI, rtl_tcp.
+welcome-kind-remote = Outro SDR Oxide, funcionando como servidor
+    .hint = O rádio está ligado a outro computador que roda sdroxide --server; este aqui é a tela de controle.
+welcome-kind-none = Ainda sem rádio
+    .hint = Ouça já por meio de um receptor público na internet (KiwiSDR, Web-888, SpyServer).
+welcome-open-radio = AJUSTES DO RÁDIO
+    .hint = Escolha a interface, preencha a sua seção e depois APLICAR. As linhas abaixo ficam verdes quando o rádio responde.
+welcome-open-remote = AJUSTES REMOTOS
+    .hint = O endereço, a porta e o login do servidor.
+welcome-open-public = SDRs PÚBLICOS
+    .hint = Um mapa e uma lista de receptores na internet; escolha um e ele abre como um rádio.
+welcome-tip-usb-driver = O driver USB ou as permissões
+    .hint = No Windows, a maioria dos SDRs USB (RTL-SDR, Airspy, HackRF, HydraSDR) precisa do driver WinUSB associado com o Zadig. No Linux, instale a regra udev incluída (o .deb faz isso) e reconecte. No macOS não é preciso nada.
+welcome-tip-usb-busy = Outro programa está com o dispositivo
+    .hint = Só um programa de cada vez pode abrir um SDR. Feche o SDR#, o SDR++, o GQRX, um rtl_tcp em execução — ou um segundo sdroxide — antes de APLICAR.
+welcome-tip-usb-port = Amostras perdidas
+    .hint = Taxas de amostragem altas exigem uma porta USB 3 (o RX-888 sempre exige), um cabo curto e nenhum hub sem alimentação. Se o registro informar amostras perdidas, reduza primeiro a taxa de amostragem.
+welcome-tip-usb-gain = Ganho demais
+    .hint = O ganho de RF no máximo sobrecarrega o conversor e enche a banda de sinais falsos. Comece no meio e recue até que a linha «Nível de entrada» abaixo continue verde.
+welcome-tip-usb-sdrplay = O SDRplay precisa do próprio serviço
+    .hint = Um RSP só é alcançado pelo serviço SDRplay API v3, que precisa estar instalado e em execução. sdroxide --probe indica qual peça está faltando.
+welcome-tip-cat-port = Porta serial ou velocidade erradas
+    .hint = Muitos rádios oferecem duas portas em um mesmo cabo USB — escolha a CAT (Enhanced/Standard) — e a taxa em baud precisa corresponder ao menu do próprio rádio.
+welcome-tip-cat-family = Família CAT errada
+    .hint = Os comandos Kenwood e Yaesu se parecem, mas não são iguais. Um Kenwood configurado como Yaesu pode entrar em transmissão e não parar; um Elecraft configurado como Kenwood passa para SSB comum no FT8.
+welcome-tip-cat-audio = Placa de som errada
+    .hint = O áudio de recepção e de transmissão passa pelo codec USB do próprio rádio («USB Audio CODEC»), não pelos alto-falantes e microfone do computador. Dois codecs idênticos? A solução de problemas do manual os diferencia.
+welcome-tip-cat-data = Os modos digitais precisam do modo DATA
+    .hint = Para FT8 e similares, o rádio precisa pegar o áudio de transmissão da USB: USB-D / DATA-U, ou «DATA MOD = USB» no menu. Em USB comum, ele transmite o microfone.
+welcome-tip-cat-pipewire = Linux: o servidor de som segura a placa
+    .hint = O PipeWire/PulseAudio pode reservar para si a placa de som do rádio, e o programa então mostra «aguardando espectro». A solução de problemas do manual mostra como liberá-la.
+welcome-tip-net-subnet = Não estão na mesma rede
+    .hint = A descoberta é um broadcast e não atravessa roteador nem VPN. Se o rádio não for encontrado, digite o endereço IP manualmente.
+welcome-tip-net-firewall = O controle funciona, mas sem espectro
+    .hint = Espectro e áudio trafegam por UDP. Um firewall que deixa a conexão passar mas bloqueia UDP resulta num rádio que responde e não mostra nada — libere o sdroxide no firewall.
+welcome-tip-net-icom = Icom por LAN exige configurar o rádio antes
+    .hint = No rádio: Network Control ATIVADO, e um nome de usuário de rede e uma senha — o mesmo par vai no sdroxide. Leia o endereço IP na tela Network do rádio; não há descoberta.
+welcome-tip-net-one = Um programa controlador de cada vez
+    .hint = Um Flex já reivindicado pelo SmartSDR, ou um rádio TCI controlado por outro cliente, pode recusar um segundo. Feche o outro programa ou ative o multiFLEX.
+welcome-tip-remote-server = O servidor está configurado no computador do rádio
+    .hint = Execute lá o sdroxide --server com um nome de usuário e uma senha configurados; sem eles, qualquer um que chegue à porta pode operar a estação.
+welcome-tip-remote-port = A porta precisa estar acessível
+    .hint = O padrão é 4950. Pela internet ela precisa de redirecionamento de porta no roteador, ou melhor, uma VPN — e wss:// com certificado se estiver exposta.
+welcome-tip-remote-browser = Um navegador também funciona
+    .hint = O servidor também entrega a interface completa a um navegador web e a celulares; o áudio ali precisa de https ou localhost.
+welcome-tip-none-public = Receptores públicos
+    .hint = Milhares de receptores KiwiSDR, Web-888 e SpyServer estão abertos a ouvintes. Só recepção — mas todos os decodificadores, o diário e os mapas funcionam, então é um bom jeito de aprender o programa.
+welcome-tip-none-later = Quando o rádio chegar
+    .hint = Volte a esta página em Ajustes → Geral → GUIA DE BOAS-VINDAS.
+welcome-tx-intro = A maior parte dos «não funciona» no ar é uma destas. Nenhuma aparece como erro, por isso vale a pena lê-las uma vez.
+welcome-tip-tx-clock = O relógio do computador
+    .hint = FT8, FT4, JS8 e WSPR funcionam em janelas de tempo fixas. Dentro de meio segundo está bom; acima de 1,5 s os outros param de decodificar você e você decodifica pouco — a banda parece morta. Deixe o sistema sincronizar o relógio com um servidor de horário (NTP).
+welcome-tip-tx-level = Nível de áudio e ALC
+    .hint = Nos modos digitais, mantenha o ALC do rádio em zero ou perto disso: áudio demais espalha o sinal sobre outras estações enquanto o medidor de potência parece normal. Abaixe o nível até que o ALC quase não se mova.
+welcome-tip-tx-drive = Comece com pouca excitação
+    .hint = A excitação é uma porcentagem do máximo do rádio. Comece baixo, em carga fantasma ou com antena casada, e suba observando potência e SWR.
+welcome-tip-tx-lockout = O bloqueio de banda
+    .hint = O transmissor só transmite dentro das faixas de radioamador da sua região IARU. Defina a região em Ajustes → Geral, ou uma frequência perfeitamente legal pode ser recusada.
+welcome-tip-tx-trswitch = Um SDR ao lado de um transceptor
+    .hint = Um receptor SDR que divide a antena com um transmissor será destruído na primeira transmissão, a menos que algo o desconecte. Instale a chave T/R antes de acionar qualquer coisa.
+welcome-tip-tx-cable = Cabos de áudio virtuais
+    .hint = Com um cabo virtual ou Flex DAX, defina 48000 Hz nas duas pontas. Uma taxa diferente descarta amostras, e os modos temporizados então não decodificam nada enquanto a cascata parece perfeita.
+welcome-open-region = REGIÃO IARU
+    .hint = Ajustes → Geral: a região define quais frequências o transmissor pode usar.
+welcome-open-trswitch = CHAVE T/R
+    .hint = O relé que protege um SDR somente de recepção enquanto a estação transmite.
+welcome-online-intro = Tudo opcional, e tudo desligado até que você ative. Cada um torna o programa mais útil:
+welcome-online-lookup = CONSULTA DE INDICATIVO
+    .hint = QRZ.com ou HamQTH preenchem nomes, localizações e locators conforme você trabalha as estações.
+welcome-online-spots = FONTES DE SPOTS
+    .hint = Cluster DX, POTA, SOTA, PSK Reporter — os spots aparecem no panadaptador; clique em um para sintonizar e preencher o diário.
+welcome-online-uploads = ENVIOS DE LOG
+    .hint = LoTW, eQSL, Club Log, QRZ e HamQTH, com um clique a partir do diário, para confirmações e premiações.
+welcome-online-alerts = ALERTAS
+    .hint = Um som ou notificação quando um indicativo, entidade DXCC ou quadrado procurado é ouvido.
+welcome-online-privacy = Nada é enviado a lugar nenhum até que um serviço seja configurado aqui; os downloads de condições de propagação e de horários de transmissão têm chaves próprias nos Ajustes.
+welcome-tour-intro = Os modos, o diário e os spots estão na tela principal. Estes são fáceis de deixar passar. Cada ABRIR leva direto para lá, e o roteiro fica aberto ao lado.
+welcome-tour-open = ABRIR
+welcome-tour-bands = Condições de propagação
+    .hint = Dados solares e quais bandas estão abertas agora.
+welcome-tour-winlink = Correio Winlink
+    .hint = E-mail por rádio pela internet, pacote ou HF — integrado, sem Pat nem modem externo.
+welcome-tour-public = SDRs públicos
+    .hint = Ouça por receptores em qualquer lugar do mundo.
+welcome-tour-servers = WSJT-X e outros programas
+    .hint = Os servidores TCI e rigctld integrados deixam o WSJT-X, o JTDX, programas de diário e outros usarem este rádio.
+welcome-tour-controls = Teclas e controladores
+    .hint = Cada atalho pode ser redefinido; controladores MIDI e HID e botões de sintonia também funcionam.
+welcome-tour-profiles = Perfis
+    .hint = Salve como a estação está configurada — concurso, portátil, satélite — e restaure com um clique.
+welcome-tour-palette = Paleta de comandos
+    .hint = Ctrl+K (⌘K): digite um modo, uma banda, uma janela, um ajuste ou uma frequência e pressione Enter.
+welcome-tour-help = Ajuda
+    .hint = Os atalhos de teclado e os controles na tela.
+welcome-check-all-good = Nada precisa de atenção. Bons contatos no ar!
+welcome-check-left = Ainda para ver — cada um tem um botão que leva a onde se corrige:
+welcome-check-hint = A página completa, com cada linha. Também em Ajustes → Geral.
+welcome-next-steps = Para onde ir agora
+welcome-next-listen = Primeiro ouça
+    .hint = Sintonize pela banda, experimente os botões de banda, arraste as bordas da passagem na cascata. Nada transmite até que você pressione PTT, TUNE ou o botão de chamada do próprio modo.
+welcome-next-ft8 = Um primeiro contato no FT8
+    .hint = Escolha FT8, ouça um minuto (isso também mede o seu relógio), depois pressione RESPONDER numa estação que chama CQ. A troca acontece sozinha e o contato é registrado ao terminar.
+welcome-next-palette = Perdido? Pressione Ctrl+K
+    .hint = A paleta de comandos encontra qualquer modo, banda, janela ou ajuste pelo nome.
+welcome-next-manual = O manual do usuário
+    .hint = docs/USER_MANUAL.md, com um capítulo para cada modo e notas para cada rádio. Passe o cursor sobre qualquer controle para ver a explicação também.
 logbook-logbook = DIÁRIO
 logbook-new-entry = + NOVO REGISTRO
 logbook-adif = ADIF
@@ -4071,21 +4277,26 @@ fsq-add = Adicionar
 
 ## publicsdr (src/app/publicsdr.rs)
 
-publicsdr-tab = + ABA
-publicsdr-open-receiver-new-radio-own = Abre este receptor como um novo rádio, em aba própria
-publicsdr-point-radio-receiver-replacing-whatever = Aponta *este* rádio para o receptor, substituindo a interface em que ele está agora — perguntado de novo antes, porque isso equivale a configurar um rádio inteiro
 publicsdr-not-stated = não informado
-publicsdr-replace = SUBSTITUIR
-publicsdr-point-radio-you-are-receiver = Aponta o rádio em que você está para este receptor
-publicsdr-tab-instead = + ABA EM VEZ DISSO
-publicsdr-open-receiver-another-radio-leave = Abre o receptor como outro rádio e deixa este em paz
-publicsdr-cancel = CANCELAR
 publicsdr-public-sdrs = SDRS PÚBLICOS
 publicsdr-available = DISPONÍVEL
 publicsdr-hide-receivers-are-full-ones = Oculta os receptores que estão lotados, e os cujo operador não abriu canais para aplicativos além de um navegador
 publicsdr-band = NA FAIXA
 publicsdr-only-receivers-cover-current-dial = Somente receptores que cobrem a frequência atual do dial
 publicsdr-low-bw = BAIXA LARG
+publicsdr-map-cities = CIDADES
+publicsdr-map-cities-tip = Cidades neste mapa, sim ou não.
+publicsdr-view-list = LISTA
+publicsdr-view-map = MAPA
+publicsdr-view-map-tip = Os mesmos receptores em um mapa-múndi. Clique em um ponto para escolher todos os receptores sob ele.
+publicsdr-map-pick = Clique em um ponto para escolher os receptores sob ele.
+publicsdr-map-ghost = { $name }: fora do diretório agora — visto aqui pela última vez em { $seen }
+publicsdr-map-names = NOMES
+publicsdr-map-names-tip = Mostrar os nomes dos receptores no mapa. Desligado: só os escolhidos são nomeados.
+publicsdr-check-online = ON-LINE
+publicsdr-check-silent = MUDO
+publicsdr-check-waiting = TESTANDO…
+publicsdr-check-no-answer = Sem resposta em 20 segundos.
 publicsdr-take-spyserver-low-bandwidth-shape = Usa um SpyServer na sua forma de baixa largura de banda: uma janela I/Q estreita que segue o dial, mais a visão de banda do próprio servidor, em vez de megabits de I/Q de banda larga. Sem efeito em um KiwiSDR, que só tem essa forma.
 publicsdr-refresh = ⟳ ATUALIZAR
 publicsdr-fetch-both-directories-again = Busca os dois diretórios de novo
@@ -4095,9 +4306,6 @@ publicsdr-fetching-receiver-lists = Buscando as listas de receptores…
 publicsdr-machine-radio-attached-does-not = A máquina à qual este rádio está conectado não responde a perguntas sobre dispositivos, então também não consegue buscar as listas.
 publicsdr-no-match = nenhum resultado
 publicsdr-nothing-matches-try-turning-filter = nada corresponde — tente reativar um dos filtros
-publicsdr-radio = este rádio
-publicsdr-radio-s-configuration-has-not = A configuração deste rádio ainda não chegou da máquina em que ele está, então não há nada a apontar para o receptor — use + ABA para isso.
-publicsdr-position-not-published-so-nothing = {" "}A posição dele não é publicada, então nada que ele ouvir será informado.
 
 ## hd (src/app/hd.rs)
 
@@ -4180,7 +4388,7 @@ ism-where-decoder-actually-listening-follows = Onde o decodificador está de fat
 ism-transmissions-gate-opened-how-many = Transmissões em que a porta abriu, e quantas produziram um quadro válido. Muitas rajadas e nenhuma decodificação significa que a faixa está ocupada com dispositivos que o sdroxide ainda não consegue ler. Nenhuma significa que nada chega ao limiar — baixe-o, ou confira se o dial está na faixa.
 ism-nothing-heard-yet = nada ouvido ainda
 ism-click-tune-receiver =
-
+    {""}
 
     Clique para sintonizar o receptor nele
 
@@ -4284,20 +4492,20 @@ frame-restart-without-oob-tx-put = Reinicie sem --oob-tx para restaurar o bloque
 
 smeter-alc-how-hard-transmitter-being = ALC — com que força o transmissor está sendo excitado, em porcentagem da potência máxima que ele pode entregar. 100 % é a escala total, não a potência total em watts: quanto isso vale na antena depende do rádio e da Excitação.
 smeter-radio-reports-no-forward-power =
-
+    {""}
 
     Este rádio não informa potência direta, então o valor ao lado do ALC é novamente a leitura do ALC, e não watts.
 smeter-no-swr-radio-has-no =
-
+    {""}
 
     Sem ROE: este rádio não tem ponte para medi-la, e o sdroxide não a inventará — ele só pode mostrar o que o próprio rádio informa. Um equipamento com medidor de ROE (pelo CAT, TCI ou um link de LAN) e uma placa HPSDR preenchem isto; um transmissor SDR comum não consegue.
 smeter-no-signal-report-yet-receiver = Nenhum relatório de sinal ainda — o receptor não entregou uma leitura de medidor.
 smeter-s9-73-dbm-each-s =
-
+    {""}
 
     S9 é −73 dBm e cada unidade S abaixo dele é 6 dB. O valor em dBm é tão honesto quanto a calibração do front end — um receptor não calibrado informa dBFS com um rótulo de dBm.
 smeter-ovld-converter-into-rails-so =
-
+    {""}
 
     OVLD: o conversor está nos seus limites, então o nível mostrado subestima o sinal. Reduza o ganho do front end.
 smeter-table-held = , tabela mantida
@@ -4306,14 +4514,16 @@ smeter-ps = PS --
 ## multi (src/multi.rs)
 
 multi-tx = ● TX
-multi-link = ENLACE
 multi-mute-radio-s-audio = Silenciar o áudio deste rádio
-multi-close-radio-s-split-view = Fechar a visão dividida deste rádio
-multi-open-radio-split-view-own = Abrir este rádio em uma visão dividida própria
-multi-already-open-another-split-view = Já aberto em outra visão dividida
 multi-show-radio-here = Mostrar este rádio aqui
+multi-show-on-map = Mostrar no mapa
 multi-add-radio-computer-settings-radio = Adicionar um rádio neste computador (Configurações → Rádio para adicionar um em uma estação)
 multi-add-radio = Adicionar um rádio
+multi-take-radio-off-row = Tirar este rádio desta fileira. Ele continua funcionando; os anéis o desligam.
+multi-open-pane = Abrir outro painel com um rádio que não está na tela
+multi-pick-radio = Rádio ▼
+multi-pick-radio-tip = Colocar um rádio nesta fileira. Os anéis marcam os rádios com o link aberto.
+multi-new-radio = Novo rádio…
 multi-asked-station-another-radio = Pedi à estação outro rádio…
 multi-client-cannot-open-connection = Este cliente não consegue abrir uma conexão.
 
@@ -4387,6 +4597,10 @@ login-password = Senha
 login-remember-device = Lembrar neste dispositivo
 login-signs-without-asking-next-time = Entra sem perguntar na próxima vez, e deixa a aba da visão 3D entrar sem perguntar de jeito nenhum. A senha fica guardada em texto puro, então desligue isto em uma máquina que outras pessoas usam.
 login-keeps-password-device-clear = Mantém a senha neste dispositivo, em texto puro.
+login-remember-station = Lembrar esta estação
+login-remember-me = LEMBRAR DE MIM
+login-station-keeps-sign-in = É a estação que guarda o seu login, não esta página — nada a preencher nos outros rádios e nada a esquecer ao sair.
+login-not-this-time = Desta vez não: este navegador esquece ao fechar, então você será solicitado de novo na próxima sessão e nada deste login fica no dispositivo.
 login-checking = {" "}VERIFICANDO…{" "}
 login-sign = {" "}ENTRAR{" "}
 login-wrong-password-shuts-server-s = Uma senha errada fecha a porta do servidor por alguns segundos, então isto pode levar um momento.
@@ -4929,14 +5143,7 @@ publicsdr-antenna =
 publicsdr-receivers-fetched-ago = { $entries } receptores · { $per_net } · buscado há { $age }
 publicsdr-showing-search-narrow = mostrando { $shown } de { $n } — pesquise para restringir
 publicsdr-match = { $n } resultado
-publicsdr-replace-taking-receiver-points-same =
-    Substituir { $this } por { $entry }?
-
-    { $this2 } está em { $iface }. Escolher este receptor faz a mesma aba apontar para { $address }, a renomeia “{ $entry2 }” e mantém o dial na { $range_label } que o receptor publica — nada aqui transmite.
-
-    As configurações de { $iface2 } continuam onde estão, e também as faixas informadas para elas: voltar a interface em Configurações → Rádio devolve o rádio como estava.
-publicsdr-receptions-will-reported = {" "}As recepções serão informadas a partir de { $value }.
-publicsdr-pointing-radio = Apontando este rádio para { $entry }…{ $site }
+publicsdr-map-status = { $shown } no mapa · { $unplaced } sem posição
 publicsdr-opening-another-radio = Abrindo { $entry } como outro rádio…
 
 ## qo100: mensagens com valores (src/app/qo100.rs)
@@ -5262,7 +5469,6 @@ cat-family-rs-hfiq = RS-HFIQ
 cat-family-tr-usdx = (tr)uSDX
 cat-family-rigctld = Hamlib rigctld (rede)
 cat-family-flrig = flrig (rede)
-publicsdr-its-interface = a sua interface
 
 ## Valores de sdroxide-types exibidos em chips, menus e listas (src/i18n/labels.rs).
 agc-mode-off = Desligado
@@ -5545,70 +5751,214 @@ settings-ui-workspace-save = SALVAR ATUAL
 settings-ui-workspace-save-hint = Salva a disposição atual com este nome
 settings-ui-workspace-name-first = Digite um nome primeiro
 topbar-band-window2-hint = JANELA — abre o seletor em uma janela própria, tão larga quanto você quiser, em qualquer monitor
+tnc-link = ENLACE
+tnc-connected = CONECTADO
+tnc-calling = CHAMANDO
+tnc-idle = ESCUTANDO
+tnc-tx = TX
+tnc-busy = OCUPADO
+tnc-busy-hint = Há outra estação no canal. Uma chamada agora cairia por cima dela.
+tnc-setup = ⚙ CONFIG
+tnc-peer = Correspondente
+tnc-width = Largura
+tnc-speed = Velocidade
+tnc-snr = S/R
+tnc-bytes = Bytes
+tnc-queued = Na fila
+tnc-host = Host
+tnc-ports = Portas
+tnc-ports-off = desligadas
+tnc-nobody = ninguém
+tnc-holder-panel = este painel
+tnc-holder-winlink = a janela MAIL
+tnc-holder-tcp = um programa em { $addr }
+tnc-tune = SINTONIA
+tnc-abort = ABORTAR
+tnc-abort-hint = Derrubar o enlace agora, quem quer que o esteja conduzindo. A outra ponta vai esgotar o tempo em vez de ser avisada.
+tnc-terminal = TERMINAL
+tnc-callsign = indicativo
+tnc-connect = CONECTAR
+tnc-disconnect = DESCONECTAR
+tnc-disconnect-hint = Desligar direito: o que está na fila sai primeiro, depois a outra ponta concorda.
+tnc-held-by = O modem está em uso por { $holder }.
+tnc-no-callsign = Defina um indicativo primeiro (⚙ CONFIG)
+tnc-clear = LIMPAR
+tnc-clear-hint = Esvaziar a transcrição. O enlace não é afetado.
+tnc-nothing-yet = Nada ainda. Digite um indicativo acima e CONECTAR, ou ligue Escutar em ⚙ CONFIG para atender chamadas.
+tnc-type-here = digite aqui, Enter envia
+tnc-not-connected = não conectado
+tnc-send = ENVIAR
+setup-tnc-bandwidth = Largura de banda
+setup-tnc-listen = Atender chamadas
+setup-tnc-listen-check = Escutar pelo painel
+setup-tnc-listen-hint = Atender chamadas recebidas no terminal do painel. Sem efeito enquanto as portas TCP do host estiverem ligadas, pois um programa conectado ali quer as chamadas.
+setup-tnc-host = Host TCP
+playback-radio-n = { " " }· rádio { $n }
+playback-no-stamp = sem carimbo no nome — toca no modo em que você está
+playback-title = REPRODUÇÃO — áudio gravado
+playback-find-hint = modo, MHz, data, nome…
+playback-refresh-hint = Ler a pasta de gravações de novo
+playback-asking = Pedindo à estação suas gravações…
+playback-folder = Pasta: { $dir }
+playback-none = Nenhuma gravação ainda. Pressione REC → MP3 enquanto algo estiver no ar; o arquivo aparece aqui, nomeado com hora, frequência e modo.
+playback-on = ▶ LIGADO
+playback-play = ▶ TOCAR
+playback-iq-hint = Uma captura I/Q, não áudio. A reprodução usa o áudio que o gravador escreve; uma captura I/Q é tocada com --file.
+playback-not-while-tx = Não durante a transmissão
+playback-play-hint = Tocar esta gravação nos decodificadores desde o início
+playback-busy-playing = Reproduzindo — pare antes de excluir
+playback-busy-recording = Ainda sendo gravada — pare o REC antes de excluir
+playback-delete-ask = EXCLUIR?
+playback-delete-hint-armed = Pressione de novo para excluir este arquivo definitivamente. Não pode ser desfeito.
+playback-delete-hint = Excluir esta gravação da pasta (pergunta mais uma vez antes)
+playback-strip-label = ▶ REPRODUÇÃO
+playback-not-live = fora do ar — o rádio está em espera
+playback-carry-on = Continuar reproduzindo
+playback-pause = ⏸ PAUSAR
+playback-pause-hint = Pausar — os decodificadores ouvem silêncio até você continuar
+playback-again = ↺ REPETIR
+playback-again-hint = Volta ao início — outra tentativa em uma imagem ou decodificação
+playback-loop = LOOP
+playback-loop-hint = Recomeçar do início quando o arquivo terminar
+playback-stop = ■ PARAR
+playback-stop-hint = Encerrar a reprodução e devolver o rádio ao que estava
+playback-files = ARQUIVOS
+playback-end-of-file = fim do arquivo
+playback-paused = pausado
+playback-recorded-on-mode = Gravado em { $mhz } MHz em { $mode } — o dial e o modo foram ajustados a partir do nome do arquivo.
+playback-recorded-on = Gravado em { $mhz } MHz — o dial e o modo foram ajustados a partir do nome do arquivo.
+playback-no-dial-mode = O nome não registra dial nem modo, então toca no modo em que você está — escolha o decodificador no menu de modo.
+playback-format-stereo = { $rate } Hz, estéreo — o canal esquerdo (recepção) é reproduzido.
+playback-format-mono = { $rate } Hz, mono — o único canal é reproduzido.
+playback-stopped = Parado: { $fault }
+playback-intro = Reproduz uma gravação nos decodificadores — SSTV, CW, RTTY, PSK, FT8 e todos os outros modos que decodificam a partir de áudio. O rádio fica em espera enquanto toca, o dial e o modo vão para o que a gravação usou, e PARAR devolve o rádio. Mude o modo durante a reprodução para tentar outro decodificador.
+topbar-stereo-yields-hint = O estéreo WFM fica desligado enquanto a redução de ruído ou o auto-notch estão ativos — eles borrariam os dois canais. Desligue-os para ouvir estéreo
+topbar-stereo-playback-hint = Estéreo: a gravação está sendo reproduzida nos dois ouvidos, como gravada. Clique para forçar mono
+topbar-stereo-mono-recording-hint = Esta gravação é mono — não há segundo canal para reproduzir
+topbar-caption-play-back = Reproduzir
+topbar-recordings-chip = ▶ GRAVAÇÕES…
+topbar-recordings-hint = Reproduz uma gravação de volta nos decodificadores — uma imagem SSTV perdida, um sinal RTTY ou CW fraco, um slot de FT8 — com o waterfall e o log de decodificação, como se estivesse no ar. O rádio fica em espera enquanto ela toca.
+playback-find = Buscar
+playback-refresh = ATUALIZAR
+wxsat-title = SATÉLITES METEOROLÓGICOS
+sat-wxsat-hint = SATÉLITES METEOROLÓGICOS — a imagem que um satélite NOAA (APT) ou Meteor (LRPT) envia em 137 MHz, desenhada à medida que chega, em uma janela que pode ser destacada
+sat-wxsat = SATÉLITES METEOROLÓGICOS
+wxsat-decode = Decodificar
+wxsat-channel = Satélite
+wxsat-tune = Sintonizar aqui
+wxsat-tune-hint = Liga o decodificador e leva o dial para este canal, para que o sinal fique dentro da janela de amostragem.
+wxsat-clear = Limpar
+wxsat-save = Salvar PNG
+wxsat-flip = Girar
+wxsat-flip-hint = Vira a imagem: um satélite voando para o sul é desenhado de cabeça para baixo.
+wxsat-state-off = Decodificador desligado
+wxsat-level = Nível { $db } dBFS
+wxsat-locked = Sincronismo de linha travado
+wxsat-searching = Procurando o sincronismo de linha
+wxsat-lines = { $n } linhas
+wxsat-outside-window = O canal está fora da janela de amostragem, ou perto demais da borda para o sinal inteiro. Use Sintonizar aqui, ou uma janela mais larga.
+wxsat-waiting = Ainda sem imagem. Ligue o decodificador quando um satélite estiver acima do horizonte; uma passagem dura cerca de dez minutos.
+wxsat-signal = Sinal
+wxsat-kind-apt = APT
+wxsat-kind-lrpt = LRPT
+wxsat-image-channel = Canal { $n }
+wxsat-rows = { $n } fileiras
+wxsat-frame-locked = Sincronismo de quadro travado
+wxsat-frames = { $n } quadros bons
+wxsat-waiting-lrpt = Ainda sem imagem. O LRPT do Meteor é digital: a imagem começa alguns segundos depois de ouvir o satélite, fileira por fileira, e cada canal é uma imagem separada.
+wxsat-searching-frame = Procurando o sincronismo de quadro
+sondemap-no-sonde-yet = Nenhuma radiossonda recebida ainda
+sonde-decoding = DECODIFICANDO
+sonde-decoding-off = DECODIFICADOR DESLIGADO
+sonde-count = Sondas: { $n }
+sonde-frames = Quadros: { $n }
+sonde-channel = Canal
+sonde-channel-hover = A frequência da sonda a escutar (400–406 MHz). O rádio também é sintonizado ali, para que o canal fique dentro da janela.
+sonde-col-serial = Sonda
+sonde-col-alt = Altitude
+sonde-col-climb = Subida
+sonde-col-speed = Velocidade
+sonde-col-battery = Bateria
+sonde-col-heard = Recebida
+sonde-scan = Varredura
+sonde-scan-hover = Procura sondas em toda a janela de amostragem e decodifica até quatro ao mesmo tempo, em vez de escutar um só canal. A janela precisa cobri-las: o campo Canal centraliza o rádio.
+sonde-online = Online (SondeHub)
+sonde-online-hover = Mostra também as sondas ouvidas por outras estações, da lista pública do SondeHub. Apenas leitura: seu locator arredondado a 0,1° e um raio de 400 km são enviados; nada é publicado. Desligado até você ativar.
+sonde-online-count = { $n } online
+sonde-online-no-grid = Defina seu locator na configuração dos modos digitais para ver as sondas online.
+sonde-online-failed = O SondeHub não respondeu.
+sonde-export = Exportar o voo
+sonde-export-kml-hover = Salvar o voo desta sonda como trilha KML (Google Earth): hora, longitude, latitude, altitude em metros
+sonde-export-csv-hover = Salvar o voo desta sonda como tabela CSV para uma planilha: hora, latitude, longitude, altitude em metros
+sonde-export-none = Nenhuma posição guardada ainda para esta sonda.
+sonde-col-temp = Temp.
+sonde-col-humidity = Umidade
+sonde-col-pressure = Pressão
+sonde-online-why-signin = A estação exige login primeiro.
+sonde-online-why-busy = A estação já consulta o SondeHub tão seguido quanto pode. Tente de novo em um minuto.
+sonde-online-why-upstream = A estação não conseguiu alcançar o SondeHub.
+sonde-online-why-unreadable = A resposta não era uma lista de sondas.
+sonde-online-why-no-station = Nenhuma estação para consultar, e esta página não alcança o SondeHub sozinha.
+sonde-online-why-http = Resposta: HTTP { $n }.
+sonde-card-source = Origem
+sonde-card-source-radio = Este rádio
+sonde-card-source-hub = SondeHub (ouvida por outra estação)
+sonde-card-model = Modelo
+sonde-card-maker = Fabricante
+sonde-card-variant = Variante
+sonde-card-position = Posição
+sonde-card-from-you = De você
+sonde-card-heading = Rumo
+sonde-card-satellites = Satélites
+sonde-card-snr = Relação sinal/ruído
+sonde-card-station = Ouvida por
+sonde-card-station-position = Posição da estação
+sonde-card-antenna = Antena
+sonde-card-software = Software
+sonde-card-frames = Quadros recebidos
+sonde-card-open = Abrir no { $site }
+sonde-card-close = Fechar
+sonde-card-source-both = Rádio + SondeHub (ambos a recebem)
+sonde-card-stale = Estado
+sonde-card-stale-value = Fora da lista: última posição conhecida
+sonde-card-detach = Destacar
+sonde-card-attach = Fixar
+sonde-card-listen-hover = Clique para sintonizar o rádio neste canal: o dial vai para lá e o decodificador escuta só ele.
+sonde-card-decoding = Decodificada por este rádio
+sonde-card-waiting = Escutando neste canal, nada decodificado ainda
+sonde-card-click-to-listen = Clique na frequência para ouvir
+sonde-type-all = Todos os tipos
+sonde-type-hover = Procurar um tipo de sonda: escolher um inicia a varredura, que move a janela pela faixa até ouvir esse tipo. Só esse tipo é listado e desenhado.
+sonde-export-saved = { $name } salvo.
 
-## VARA HF panel
+## Keyboard modes: MT63 (src/app/panels/text_modem.rs)
+textmodem-mt63-long-hint = MT63-{ $label }, { $bw } Hz de largura — o entrelaçamento longo espalha uma rajada por { $chars } caracteres
+textmodem-mt63-short-hint = MT63-{ $label }, { $bw } Hz de largura, entrelaçamento curto — o entrelaçamento curto espalha uma rajada por { $chars } caracteres
+textmodem-mt63-not-offered = 1K e 500L ainda não disponíveis
+textmodem-mt63-not-offered-hint = O MT63-1K e o entrelaçamento longo de 500 Hz são lidos pelo decodificador em lote, mas ainda não pelo receptor ao vivo: o travamento procura a fase do símbolo e a polaridade, mas não o centro da banda, e uma busca que o faça trocava uma variante por outra.
 
-vara-starting = Iniciando o modem VARA…
-vara-link = ENLACE
-vara-connected = CONECTADO
-vara-calling = CHAMANDO
-vara-idle = ESCUTANDO
-vara-session-state = Estado da sessão do modem: { $state }
-vara-tx = TX
-vara-busy = OCUPADO
-vara-busy-hint = Há outra estação no canal. Uma chamada agora cairia por cima dela.
-vara-setup = ⚙ CONFIG
-vara-setup-hint = Indicativo da estação, largura de banda, níveis registrados, portas TCP do host
-vara-peer = Correspondente
-vara-width = Largura
-vara-speed = Velocidade
-vara-snr = S/R
-vara-bytes = Bytes
-vara-queued = Na fila
-vara-attempt = Tentativa
-vara-host = Host
-vara-ports = Portas
-vara-ports-off = desligadas
-vara-nobody = ninguém
-vara-holder-panel = este painel
-vara-holder-winlink = a janela MAIL
-vara-holder-tcp = um programa em { $addr }
-vara-tune = SINTONIA
-vara-tune-hint = Um tom contínuo para o acoplador de antena, por até um minuto. Não durante um enlace.
-vara-abort = ABORTAR
-vara-abort-hint = Derrubar o enlace agora, quem quer que o esteja conduzindo. A outra ponta vai esgotar o tempo em vez de ser avisada.
-vara-terminal = TERMINAL
-vara-callsign = indicativo
-vara-connect = CONECTAR
-vara-connect-hint = Chamar esta estação em VARA HF
-vara-disconnect = DESCONECTAR
-vara-disconnect-hint = Desligar direito: o que está na fila sai primeiro, depois a outra ponta concorda.
-vara-held-by = O modem está em uso por { $holder }.
-vara-no-callsign = Defina um indicativo primeiro (⚙ CONFIG)
-vara-clear = LIMPAR
-vara-clear-hint = Esvaziar a transcrição. O enlace não é afetado.
-vara-nothing-yet = Nada ainda. Digite um indicativo acima e CONECTAR, ou ligue Escutar em ⚙ CONFIG para atender chamadas.
-vara-type-here = digite aqui, Enter envia
-vara-not-connected = não conectado
-vara-send = ENVIAR
-setup-vara-setup = Configuração do VARA HF
-setup-vara-call-hint = O indicativo ao qual o modem responde, com SSID opcional. Vazio usa o seu indicativo acima. Um programa que conduza o modem (Pat, VarAC) define o seu próprio.
-setup-vara-bandwidth = Largura de banda
-setup-vara-registered = Níveis de velocidade
-setup-vara-registered-check = Registrado
-setup-vara-registered-hint = Liberar os níveis acima de 4, como faz uma cópia registrada do VARA. Para quem tem licença do VARA; uma estação não registrada para no nível 4 por melhor que seja o caminho.
-setup-vara-retries = Repetições
-setup-vara-retries-hint = Tentativas de conexão antes de desistir de uma chamada.
-setup-vara-cwid = ID em CW
-setup-vara-cwid-check = Identificar-se em CW ao fim de um enlace
-setup-vara-latency = Latência de TX
-setup-vara-latency-auto = Auto
-setup-vara-latency-hint = Quanto tempo a cadeia de transmissão leva do modem até a antena. Auto escolhe cerca de 20 ms para um SDR IQ e 120 ms para um rádio com placa de som. Aumente se os enlaces falharem logo depois que a chamada é atendida.
-setup-vara-listen = Atender chamadas
-setup-vara-listen-check = Escutar pelo painel
-setup-vara-listen-hint = Atender chamadas recebidas no terminal do painel. Sem efeito enquanto as portas TCP do host estiverem ligadas, pois um programa conectado ali quer as chamadas.
-setup-vara-host = Host TCP
-setup-vara-host-hint = Oferecer o modem na porta de comandos do próprio VARA e na seguinte (8300/8301 por padrão, só localhost), para que Pat, Winlink Express ou VarAC usem este rádio como seu modem VARA.
-settings-radio-vara = Rádio (VARA HF)
-settings-call-rms-gateway-vara = Chamar um gateway RMS pelo ar em VARA HF. Coloque o rádio em VARA HF antes.
-settings-vara-dial-note = A frequência do dial, banda lateral superior, como as listas de gateways a informam para VARA. Zero deixa o dial onde está.
+## Keyboard modes: MFSK (src/app/panels/text_modem.rs)
+textmodem-mfsk-hint = { $label } — { $baud } baud, { $tones } tons, { $bw } Hz de largura{ $caveat }
+textmodem-mfsk-reverse-hint = Inverte a ordem dos tons. Uma estação recebida na banda lateral oposta àquela em que foi transmitida chega espelhada em torno do seu centro e soa como ruído até isto ser ativado.
+
+## Keyboard modes: DominoEX (src/app/panels/text_modem.rs)
+textmodem-domino-hint = { $name } — { $baud } baud, 18 tons, modulação incremental de frequência sem correção de erros direta
+textmodem-ifk-reverse-hint = Inverte os passos de tom. O IFK+ leva seus dados no passo entre tons sucessivos, então uma estação recebida na banda lateral oposta tem todos os passos negativos e soa como ruído até isto ser ativado.
+
+## Keyboard modes: PSK families (src/app/panels/text_modem.rs)
+textmodem-psk-family = Família
+textmodem-psk-family-plain-hint = A família própria do PSK31: uma portadora diferencial, sem correção de erros direta
+textmodem-psk-family-bpsk63f-hint = O código robusto a 62,5 baud, sem entrelaçador — o único modo codificado que o fldigi envia sem um
+textmodem-psk-family-robust-hint = Uma portadora com o código robusto e um entrelaçador 2x2xN
+textmodem-psk-family-multi-hint = Várias portadoras, varicode do PSK31 e **sem** código — mais largo e mais rápido, e exige um sinal limpo
+textmodem-psk-family-robust-multi-hint = Várias portadoras **e** o código robusto: o mais largo e o mais robusto dos modos PSK
+textmodem-psk-baud-fast-hint = { $baud } baud — lê a partir de cerca de um segundo: nesta taxa, o tempo de travamento do receptor é um terço de uma mensagem
+textmodem-psk-baud-hint = { $baud } baud
+textmodem-psk-bpsk-hint = Um bit por símbolo, detectado diferencialmente
+textmodem-psk-coded = codificado
+textmodem-psk-no-code = sem código
+textmodem-psk-coded-hint =
+    { $baud } baud, { $n } { $n ->
+            [one] portadora
+           *[other] portadoras
+        }, { $code }, { $bw } Hz de largura

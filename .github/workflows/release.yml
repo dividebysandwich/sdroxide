@@ -26,6 +26,20 @@ env:
   # CMake 4.x on the macOS/Windows runners refuses to configure it without
   # this override (CMake 3.x ignores the variable).
   CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+  # The compiler every native build and the web client are built with. Pinned
+  # rather than `stable` so a -compat, macOS or Windows binary can be rebuilt
+  # bit for bit later (see reproducible.yml): a new rustc changes the output
+  # even when the source has not. Bump it deliberately, like any other
+  # dependency. (Windows adds the x86_64-pc-windows-gnu target to it; the
+  # MinGW toolchain it links with is pinned in
+  # .github/actions/setup-windows-build.)
+  RUST_TOOLCHAIN: "1.98.1"
+  # The Xcode — so clang, the linker and the macOS SDK — every macOS build
+  # uses. Each runner image carries several and moves its default with the
+  # image; this one is on both macOS images in the platform table below. When
+  # a runner image drops it, packaging/macos/setup-build-env.sh fails and lists
+  # what the image has instead.
+  MACOS_XCODE: "26.3"
 
 jobs:
   # Which build combinations this run wants. A tag or a manual run builds all
@@ -59,14 +73,25 @@ jobs:
           # retires that runner image on 2027-04-17 with brownouts from
           # 2026-09-17, while a container image keeps working on any runner.
           # Every other entry carries no `container` key, which `build` reads
-          # as the empty string and GitHub as "no container".
+          # as the empty string and GitHub as "no container". The image is
+          # pinned by digest (a multi-arch index, so the same digest serves
+          # both architectures): `ubuntu:22.04` is re-pushed every few weeks,
+          # and a rebuild from a different base cannot match the release.
+          # reproducible.yml reads the digest from here, as it does the
+          # toolchain, so there is one place to bump either. The macOS
+          # runners are named by version rather than `macos-latest`, for the
+          # same reason: `-latest` moved from macOS 15 to 26 under the release
+          # once already, and a different image is a different build.
+          # reproducible.yml reads the arm64 label from here too, and the
+          # Windows one, pinned likewise (the MSVC that compiles build scripts
+          # and proc macros comes with the image).
           platforms='[
             {"label": "linux-x86_64",         "os": "ubuntu-latest"},
             {"label": "linux-aarch64",        "os": "ubuntu-24.04-arm"},
-            {"label": "linux-x86_64-compat",  "os": "ubuntu-latest",    "container": "ubuntu:22.04"},
-            {"label": "linux-aarch64-compat", "os": "ubuntu-24.04-arm", "container": "ubuntu:22.04"},
-            {"label": "windows-x86_64",       "os": "windows-latest"},
-            {"label": "macos-aarch64",        "os": "macos-latest"},
+            {"label": "linux-x86_64-compat",  "os": "ubuntu-latest",    "container": "ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02"},
+            {"label": "linux-aarch64-compat", "os": "ubuntu-24.04-arm", "container": "ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02"},
+            {"label": "windows-x86_64",       "os": "windows-2025"},
+            {"label": "macos-aarch64",        "os": "macos-26"},
             {"label": "macos-x86_64",         "os": "macos-15-intel"}
           ]'
           # Every platform is built twice: `soapy` (dynamically links SoapySDR)
@@ -130,12 +155,18 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned, like the Linux and macOS builds: every native binary embeds this
+      # dist, so a -compat or macOS binary can only be rebuilt bit for bit if
+      # the dist can be too.
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
           key: web-dist
+      - name: Reproducible build settings
+        run: packaging/reproducible-env.sh >> "$GITHUB_ENV"
       - name: Install trunk
         run: |
           mkdir -p "$HOME/.local/bin"
@@ -172,27 +203,16 @@ jobs:
     steps:
       # The -compat jobs start from a bare Ubuntu 22.04 image rather than the
       # runner image, so everything the runner normally provides is installed
-      # here (as root — the image has no sudo). This must run BEFORE checkout:
-      # without git in the container, actions/checkout silently falls back to
-      # the REST API download, which cannot fetch the vendor/ submodules.
-      # curl is for rustup, wget for the Opus model download that RADE's
-      # autogen.sh does, zstd for the cache archives, and build-essential also
-      # brings binutils (strip) and dpkg-dev (dpkg-shlibdeps, which cargo-deb
-      # runs to compute the .deb's Depends).
-      - name: Install build environment (compat container)
+      # here (as root — the image has no sudo). git must be in place BEFORE
+      # checkout: without it in the container, actions/checkout silently falls
+      # back to the REST API download, which cannot fetch the vendor/
+      # submodules. The rest comes from the checkout, just below.
+      - name: Install git (compat container)
         if: matrix.container
         run: |
           apt-get update
-          # build-essential also carries the C++ compiler the vendored DRM
-          # receiver needs; nothing about DRM is a *system* dependency, because
-          # Dream, faad2 and the FFT are all built from source in-tree.
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            git ca-certificates curl wget zstd build-essential \
-            libasound2-dev pkg-config cmake autoconf automake libtool libclang-dev \
-            file desktop-file-utils
-          if [[ "${{ matrix.variant }}" == "soapy" ]]; then
-            apt-get install -y --no-install-recommends libsoapysdr-dev
-          fi
+            git ca-certificates
 
       # `submodules` pulls vendor/rade_c (the RADE codec), vendor/faad2 (the AAC
       # decoder the DRM receiver is built with), vendor/rtl_433 and vendor/xng
@@ -202,6 +222,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
+
+      # From a script rather than inline so reproducible.yml installs exactly
+      # the same set.
+      - name: Install build environment (compat container)
+        if: matrix.container
+        run: packaging/linux/install-compat-deps.sh ${{ matrix.variant }}
 
       - name: Compute version
         run: |
@@ -238,36 +264,15 @@ jobs:
             sudo apt-get install -y --no-install-recommends libsoapysdr-dev
           fi
 
+      # The pinned MSYS2/MinGW toolchain, and cargo pointed at the
+      # x86_64-pc-windows-gnu target. Why MinGW and how it is pinned are in the
+      # action; reproducible.yml uses the same one.
+      - name: Set up build environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-windows-build
+
       # Extract the PothosSDR bundle (no install needed); soapysdr-sys finds
       # SoapySDR.dll via PATH. Same approach as rust-soapysdr's own CI.
-      # RADE's Opus dependency is built with autotools, which MSVC cannot drive
-      # and whose static library MSVC cannot link. Windows therefore builds the
-      # `x86_64-pc-windows-gnu` target inside MSYS2/MinGW — the same way
-      # upstream FreeDV ships its Windows binaries. The DRM receiver is
-      # compiled by `cc` directly rather than through its own build system, so
-      # it never generates a makefile and cannot hit the MSYS `make` trap that
-      # an absolute path in a rule line sets off.
-      - name: Set up MSYS2 (Windows)
-        if: runner.os == 'Windows'
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            base-devel
-            mingw-w64-x86_64-toolchain
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-clang
-            autoconf
-            automake
-            libtool
-      - name: Use the MSYS2 toolchain (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          echo "CARGO_BUILD_TARGET=x86_64-pc-windows-gnu" >> "$GITHUB_ENV"
-          echo "D:/a/_temp/msys64/mingw64/bin" >> "$GITHUB_PATH"
-          echo "D:/a/_temp/msys64/usr/bin" >> "$GITHUB_PATH"
-
       - name: Install SoapySDR (Windows)
         if: runner.os == 'Windows' && matrix.variant == 'soapy'
         run: |
@@ -275,19 +280,33 @@ jobs:
           7z x -opothos -y pothossdr.exe > /dev/null
           echo "${{ github.workspace }}/pothos/bin" >> "$GITHUB_PATH"
 
-      # RADE builds a FARGAN-enabled Opus from source with autotools.
-      - name: Install build dependencies (macOS)
+      # Selects the pinned Xcode, then installs what RADE's FARGAN-enabled Opus
+      # needs (it is built from source with autotools), plus SoapySDR for that
+      # variant — from the formula versions the runner image was made with.
+      # From a script so reproducible.yml sets up exactly the same.
+      - name: Set up build environment (macOS)
         if: runner.os == 'macOS'
-        run: brew install cmake autoconf automake libtool
+        run: packaging/macos/setup-build-env.sh "$MACOS_XCODE" ${{ matrix.variant }}
 
-      - name: Install SoapySDR (macOS)
-        if: runner.os == 'macOS' && matrix.variant == 'soapy'
-        run: brew install pkg-config soapysdr
-
-      - uses: dtolnay/rust-toolchain@stable
+      # On Windows the host toolchain stays MSVC (it builds the build scripts
+      # and proc macros); the release itself is the windows-gnu target added
+      # here.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ runner.os == 'Windows' && 'x86_64-pc-windows-gnu' || '' }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.label }}-${{ matrix.variant }}
+
+      # Every build, not only -compat: it costs nothing, and it keeps the
+      # checkout's path out of the regular binaries too. The -compat, macOS and
+      # Windows builds are the ones expected to rebuild bit for bit, since only
+      # they have a pinned environment; the regular Linux builds run on
+      # whatever `ubuntu-latest` is that week. On Windows this has to come after
+      # the setup action, which sets the CARGO_BUILD_TARGET it reads.
+      - name: Reproducible build settings
+        run: packaging/reproducible-env.sh >> "$GITHUB_ENV"
 
       # The embed-web feature bakes these files into the binary via rust-embed.
       - name: Fetch web client
@@ -303,6 +322,10 @@ jobs:
           # linked C, so it costs the SoapySDR-free artifact nothing at run time
           # and the release notes' "everything above" stays true. Both embed the
           # web client.
+          #
+          # packaging/rebuild-release.sh is this, for the `cat` build, outside
+          # CI: keep the two in step. (reproducible.yml rebuilds every release
+          # with it, so a drift shows up as a release that does not verify.)
           if [[ "${{ matrix.variant }}" == "cat" ]]; then
             cargo build --release --locked -p sdroxide --no-default-features --features embed-web,rtl433
           else
@@ -320,9 +343,12 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           BIN="target/$CARGO_BUILD_TARGET/release/sdroxide.exe"
-          objdump -p "$BIN" | grep -i "DLL Name:" | sort -u
-          if objdump -p "$BIN" \
-               | grep -Eiq "DLL Name:[[:space:]]*(libstdc\+\+|libgcc_s|libwinpthread)"; then
+          # Captured first: with pipefail, `objdump | grep -q` fails when grep
+          # stops reading early, and the check passed with the DLLs in (#842).
+          dlls="$(objdump -p "$BIN" | grep -i "DLL Name:" | sort -u)"
+          echo "$dlls"
+          if echo "$dlls" \
+               | grep -Ei "DLL Name:[[:space:]]*(libstdc\+\+|libgcc_s|libwinpthread|zlib1)" >/dev/null; then
             echo "::error::sdroxide.exe still needs a MinGW runtime DLL beside it"
             exit 1
           fi
@@ -453,8 +479,13 @@ jobs:
           its section 13 applies: if you run sdroxide as a server and let other
           people use it over a network, you have to offer them the source.
           EOF
-          tar czf "out/$PKG.tar.gz" -C stage sdroxide
-          cargo install cargo-deb --locked
+          # Sorted, owned by root, stamped with the commit's time and without
+          # gzip's own name-and-time header, so the archive depends on nothing
+          # but the files in it. The macOS step below uses the same script.
+          packaging/reproducible-tar.sh "out/$PKG.tar.gz" stage sdroxide
+          # Pinned for the same reason as the compiler; it also takes its file
+          # times from SOURCE_DATE_EPOCH.
+          cargo install cargo-deb --locked --version 3.8.0
           # The SoapySDR build uses the `soapysdr` deb variant (package
           # sdroxide-soapysdr, recommends the driver modules); the default build
           # uses the base metadata (package sdroxide, no SoapySDR recommendation).
@@ -548,6 +579,12 @@ jobs:
           # cargo write to a target-specific directory rather than
           # target/release.
           BIN_DIR="target/$CARGO_BUILD_TARGET/release"
+          # Drop the symbol table, as Linux and macOS do. cargo's own release
+          # strip removes only the debug info, which leaves a COFF symbol table
+          # whose `.file` entries name every C source file by the absolute path
+          # it was compiled from — the checkout's, which differs per machine.
+          # The .zip and the MSI both take this stripped file.
+          strip "$BIN_DIR/sdroxide.exe"
           cp "$BIN_DIR/sdroxide.exe" stage/sdroxide/
           cp LICENSE stage/sdroxide/LICENSE.txt
           # MIT notice for the FX3 firmware image embedded in the binary.
@@ -640,9 +677,18 @@ jobs:
           its section 13 applies: if you run sdroxide as a server and let other
           people use it over a network, you have to offer them the source.
           EOF
-          7z a "out/$PKG.zip" ./stage/sdroxide > /dev/null
+          # Sorted, every file stamped with the commit's time, no extra fields:
+          # the zip counterpart of the Linux and macOS tarballs.
+          packaging/reproducible-zip.sh "out/$PKG.zip" stage sdroxide
           # The MSI (fixed product identity) is only built for the default
           # (non-SoapySDR) variant; SoapySDR users take the portable .zip.
+          #
+          # The sdroxide.exe inside it is the reproducible one, but the .msi
+          # around it is not: WiX gives every build a new package code and
+          # stamps the summary information and the cabinet with the time it
+          # ran, and has no option to fix either. A rebuild is checked against
+          # the .zip, or against the files an administrative install
+          # (`msiexec /a`) unpacks.
           if [[ "${{ matrix.variant }}" == "cat" ]]; then
             dotnet tool install --global wix --version 5.0.2
             wix build packaging/windows/main.wxs -arch x64 \
@@ -738,9 +784,18 @@ jobs:
           its section 13 applies: if you run sdroxide as a server and let other
           people use it over a network, you have to offer them the source.
           EOF
-          tar czf "out/$PKG.tar.gz" -C stage sdroxide
+          # As on Linux: sorted, root-owned, stamped with the commit's time.
+          # GNU tar (`gtar` on the runner) rather than the system bsdtar, which
+          # cannot sort and would add AppleDouble `._` entries of its own.
+          packaging/reproducible-tar.sh "out/$PKG.tar.gz" stage sdroxide
           # The .app/.dmg (fixed bundle identity) is only built for the default
           # (non-SoapySDR) variant; SoapySDR users take the portable tarball.
+          #
+          # The .app inside is reproducible — the binary, Info.plist and the
+          # ad-hoc signature (which has no timestamp) all are — but the .dmg
+          # around it is not: hdiutil stamps the volume and its catalogue with
+          # the time it ran and offers no way to fix it. A rebuild is checked
+          # against the tarball, or against the .app copied out of the image.
           if [[ "${{ matrix.variant }}" == "cat" ]]; then
             mkdir -p stage-dmg
             APP=stage-dmg/sdroxide.app
@@ -799,6 +854,107 @@ jobs:
             rm -f rw.dmg
           fi
 
+      # What a rebuild needs besides the source: the image and compiler are
+      # pinned above, and install-compat-deps.sh takes the packages from the
+      # snapshot.ubuntu.com snapshot at the commit's time, so a rebuild gets
+      # the same set; it is listed here all the same, to check against. The
+      # checksums are of the files beside it, as built.
+      # packaging/reproducible-env.sh has the rest.
+      - name: Record build environment (compat container)
+        if: matrix.container
+        run: |
+          {
+            echo "package: $PKG"
+            echo "source: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/tree/$GITHUB_SHA"
+            echo "image: ${{ matrix.container }}"
+            echo "apt: $(grep -m1 -o 'https://snapshot\.ubuntu\.com/ubuntu/[0-9TZ]*' /etc/apt/sources.list || echo '<no snapshot>')"
+            echo "built: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "SOURCE_DATE_EPOCH: $SOURCE_DATE_EPOCH"
+            echo "SDROXIDE_BUILD: ${SDROXIDE_BUILD:-<unset>}"
+            echo
+            echo "## rustc -vV"
+            rustc -vV
+            echo
+            echo "## sha256"
+            (cd out && sha256sum -- *)
+            echo
+            echo "## dpkg -l"
+            dpkg-query -W -f '${Package}:${Architecture}=${Version}\n' | sort
+          } > buildinfo
+          # Written aside and moved in, or it would be among the files it sums.
+          mv buildinfo "out/$PKG.buildinfo"
+          cat "out/$PKG.buildinfo"
+
+      # The same for macOS, where there is no image digest to pin: the runner
+      # label and the Xcode are pinned above, and the runner image version
+      # (GitHub's ImageVersion) names everything else the build saw, including
+      # the Homebrew formulae, which setup-build-env.sh takes from the image
+      # rather than updating. A rebuild needs a runner on that same image
+      # version; GitHub keeps one for a few weeks after the next is out.
+      - name: Record build environment (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          {
+            echo "package: $PKG"
+            echo "source: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/tree/$GITHUB_SHA"
+            echo "runner: ${{ matrix.os }}, image ${ImageOS:-?} ${ImageVersion:-?}"
+            echo "macOS: $(sw_vers -productVersion) ($(sw_vers -buildVersion)), $(uname -m)"
+            echo "xcode: $(xcodebuild -version | tr '\n' ' ')($(xcode-select -p))"
+            echo "sdk: $(xcrun --show-sdk-version) $(xcrun --show-sdk-build-version)"
+            echo "built: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "SOURCE_DATE_EPOCH: $SOURCE_DATE_EPOCH"
+            echo "SDROXIDE_BUILD: ${SDROXIDE_BUILD:-<unset>}"
+            echo
+            echo "## rustc -vV"
+            rustc -vV
+            echo
+            echo "## clang, ld"
+            clang --version | sed -n 1p
+            ld -v 2>&1 | sed -n 1p
+            echo
+            echo "## sha256 (the .dmg is not expected to reproduce; see Package)"
+            (cd out && shasum -a 256 -- *)
+            echo
+            echo "## brew list --versions"
+            brew list --versions
+          } > buildinfo
+          mv buildinfo "out/$PKG.buildinfo"
+          cat "out/$PKG.buildinfo"
+
+      # And for Windows. The MinGW toolchain is pinned by the setup-msys2
+      # commit in .github/actions/setup-windows-build, and the package list
+      # below is what that pin installed, by exact version: repo.msys2.org
+      # keeps old versions, so `pacman -U` can put the same set back later.
+      # The runner image adds only the MSVC that builds build scripts and proc
+      # macros, which do not end up in the binary.
+      - name: Record build environment (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          {
+            echo "package: $PKG"
+            echo "source: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/tree/$GITHUB_SHA"
+            echo "runner: ${{ matrix.os }}, image ${ImageOS:-?} ${ImageVersion:-?}"
+            echo "target: $CARGO_BUILD_TARGET"
+            echo "built: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "SOURCE_DATE_EPOCH: $SOURCE_DATE_EPOCH"
+            echo "SDROXIDE_BUILD: ${SDROXIDE_BUILD:-<unset>}"
+            echo
+            echo "## rustc -vV"
+            rustc -vV
+            echo
+            echo "## gcc, ld"
+            gcc --version | sed -n 1p
+            ld --version | sed -n 1p
+            echo
+            echo "## sha256 (the .msi is not expected to reproduce; see Package)"
+            (cd out && sha256sum -- *)
+            echo
+            echo "## pacman -Q (MSYS2, listed by setup-windows-build)"
+            cat "$MSYS2_PACKAGES"
+          } > buildinfo
+          mv buildinfo "out/$PKG.buildinfo"
+          cat "out/$PKG.buildinfo"
+
       - uses: actions/upload-artifact@v7
         with:
           name: pkg-${{ matrix.label }}-${{ matrix.variant }}
@@ -827,6 +983,13 @@ jobs:
         run: |
           cd web-dist
           zip -r "../dist/sdroxide-web-$GITHUB_REF_NAME.zip" .
+      # One file to check a download against, and the thing a rebuild of a
+      # -compat, macOS or Windows package compares with.
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -985,9 +1148,53 @@ jobs:
           Every binary embeds the web client: run `sdroxide --server` and open
           `http://<host>:4950` in a browser. `sdroxide-web-*.zip` contains the
           standalone web assets for use with `--web-root`.
+
+          ### Verifying this release
+
+          The standard builds for `linux-x86_64-compat`, `linux-aarch64-compat`,
+          `macos-aarch64`, `macos-x86_64` and `windows-x86_64`, and the web
+          client, are reproducible: built again from the @TAG@ source, they
+          come out byte for byte the same as the binaries in these downloads.
+          The installers around them (`.dmg`, `.msi`, `.AppImage`, `.deb`) are
+          not, because the tools that make them stamp each one with the time,
+          but they carry the same binaries. `SHA256SUMS` lists every download,
+          and each `.buildinfo` names the exact build environment.
+
+          To print the hashes of the binaries inside this release, or compare
+          them with your own build, from a checkout of @TAG@:
+
+              packaging/verify-release.sh --repo @REPO@ @TAG@
+              packaging/verify-release.sh --repo @REPO@ @TAG@ linux-x86_64-compat=path/to/your/sdroxide
+
+          To rebuild it yourself: on Linux with Docker,
+          `packaging/linux/rebuild-in-docker.sh --repo @REPO@ @TAG@`; on any
+          platform, fork the repository and run *Actions → Reproducibility →
+          Run workflow* with tag `@TAG@`. That rebuilds this release on your
+          fork's runners and compares it with these downloads. The details are
+          in `docs/reproducible-builds.md`.
           EOF
+          sed -i -e "s|@TAG@|$GITHUB_REF_NAME|g" -e "s|@REPO@|$GITHUB_REPOSITORY|g" notes.md
           if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
               --title "sdroxide $GITHUB_REF_NAME" --notes-file notes.md --generate-notes
           fi
           gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber dist/*
+
+  # Rebuild what was just published, from the tag, somewhere else, and check
+  # that the binaries inside the downloads come out the same (see
+  # reproducible.yml). After the release rather than before it, because what
+  # it checks is the published downloads themselves. A failure turns this run
+  # red with the release already out: it means a release that does not
+  # reproduce, which wants fixing in the next one rather than holding this one.
+  # Called from here because the release is created with GITHUB_TOKEN, whose
+  # events start no other workflow; `on: release` would never fire.
+  verify:
+    name: verify release
+    needs: release
+    if: github.ref_type == 'tag'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reproducible.yml
+    with:
+      tag: ${{ github.ref_name }}
+      repo: ${{ github.repository }}

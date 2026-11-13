@@ -48,6 +48,10 @@ pub struct RigState {
     pub rig_squelch: Option<f32>,
     /// AGC setting, reported as Hamlib's `AGC` — see [`agc_to_hamlib`].
     pub agc: AgcMode,
+    /// The operator's CW sidetone pitch. A CW passband is centred on it by
+    /// rule, so a width a client asks for is centred there too — see
+    /// [`centred_on`].
+    pub cw_pitch_hz: f32,
     /// The receiver's front-end gain — the stage the top bar's Gain slider
     /// moves — reported as Hamlib's `RF` level. `None` on a radio with no RX
     /// gain the software can set, which then has no `RF` level at all.
@@ -87,6 +91,7 @@ impl Default for RigState {
             squelch_db: SQUELCH_OPEN_DB,
             rig_squelch: None,
             agc: AgcMode::Med,
+            cw_pitch_hz: 700.0,
             rf_gain: None,
             can_tx: false,
             rx_ranges: Vec::new(),
@@ -163,6 +168,18 @@ impl RfGain {
         };
         snapped.clamp(self.min, self.max)
     }
+}
+
+/// A passband of the same width, centred on `pitch_hz`.
+///
+/// A CW filter is centred on the sidetone by rule — the BW chip's presets do
+/// exactly this, and the mode's default filter is 450–950 for a 700 Hz pitch.
+/// A width from a rigctl client has to be centred too: `filter_for` keeps the
+/// mode's default low edge, so `M CW 200` left the passband at 450–650 with the
+/// tone at 700 Hz sitting outside it (review of #451).
+pub fn centred_on(pitch_hz: f32, lo: f32, hi: f32) -> (f32, f32) {
+    let half = (hi - lo).abs() / 2.0;
+    (pitch_hz - half, pitch_hz + half)
 }
 
 /// An NR strength as Hamlib's `NR` level: thirds of 0.0..=1.0.
@@ -286,11 +303,16 @@ pub fn to_hamlib_mode(m: Mode) -> &'static str {
         | Mode::Navtex
         | Mode::Olivia
         | Mode::Thor
+        | Mode::Contestia
+        | Mode::DominoEx
+        | Mode::Mfsk
+        | Mode::Mt63
         | Mode::Fsq
         | Mode::Hell
         | Mode::RfPaint
         | Mode::PacketHf
-        | Mode::VaraHf
+        | Mode::Mercury
+        | Mode::Data2g
         | Mode::AtChat
         | Mode::Jtty
         | Mode::Rade => "PKTUSB",

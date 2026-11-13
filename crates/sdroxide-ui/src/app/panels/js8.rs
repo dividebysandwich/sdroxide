@@ -312,6 +312,26 @@ impl SdroxideApp {
                     value2 = format!("{:.0}", sdroxide_types::HB_BAND_HI_HZ)
                 ));
             }
+            // Group auto-responses. Like the beacon, this transmits without
+            // the operator pressing anything, so its state belongs in the
+            // header and not only in SETUP.
+            let rules_on = self.digi_cfg_edit.js8_auto_rules_on;
+            let armed = self.digi_cfg_edit.js8_auto_rules.iter().filter(|r| r.enabled).count();
+            let auto = crate::chrome::chip(ui, rules_on && armed > 0, tr!("js8-auto-resp"))
+                .on_hover_text(match (rules_on, armed) {
+                    (_, 0) => tr!("js8-auto-resp-no-rules"),
+                    (true, n) => tr!("js8-auto-resp-on", n = n),
+                    (false, n) => tr!("js8-auto-resp-ready", n = n),
+                })
+                .clicked();
+            if auto {
+                if armed == 0 {
+                    self.show_digi_settings = true;
+                } else {
+                    self.digi_cfg_edit.js8_auto_rules_on = !rules_on;
+                    cmds.push(Command::SetDigiConfig(self.digi_cfg_edit.clone()));
+                }
+            }
             crate::chrome::row_tail(ui, |ui| {
                 // Every setting this mode has — callsign, groups, auto-reply,
                 // the beacon interval, the status message — lives in that
@@ -342,6 +362,41 @@ impl SdroxideApp {
                 self.digi_squelch_slider(ui, cmds);
             });
         });
+        // What the auto-responses are about to do. One line each, with a
+        // countdown, for the same reason the beacon has one: an unattended
+        // transmitter has to say when it will key next.
+        for p in &js8.auto_pending {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(tr!("js8-auto-pending"))
+                        .monospace()
+                        .strong()
+                        .color(crate::theme::YELLOW()),
+                );
+                ui.label(
+                    RichText::new(format!("{} → {}", p.rule, p.trigger))
+                        .monospace()
+                        .color(crate::theme::CYAN_DIM()),
+                );
+                ui.label(RichText::new(&p.text).monospace())
+                    .on_hover_text(tr!("js8-auto-pending-text-hint"));
+                ui.label(
+                    RichText::new(if p.sent == 0 {
+                        tr!("js8-auto-pending-next-slot", sent = p.sent, total = p.total)
+                    } else {
+                        tr!(
+                            "js8-auto-pending-next",
+                            sent = p.sent,
+                            total = p.total,
+                            left = format!("{}:{:02}", p.next_in_s / 60, p.next_in_s % 60)
+                        )
+                    })
+                    .monospace()
+                    .color(crate::theme::YELLOW()),
+                )
+                .on_hover_text(tr!("js8-auto-pending-count-hint"));
+            });
+        }
         ui.add_space(4.0);
         // The slot clock, under the header and across both columns. JS8's turn
         // is the speed's, not fifteen seconds by definition, so this is also
@@ -1087,7 +1142,7 @@ impl SdroxideApp {
         // Actions — the lower of the two rows. Wrapped, because the right
         // column can be dragged narrow and a chip that does not fit must move
         // to the next line rather than be clipped off the edge.
-        ui.horizontal_wrapped(|ui| {
+        crate::chrome::wrapped_row_up(ui, "js8-actions", |ui| {
             // `chip_enabled` rather than a scope around the pair: this row
             // wraps, and a child `Ui` in a wrapping row does not.
             if rx_only_hint(crate::chrome::chip_enabled(ui, tx_ok, false, &tr!("js8-cq")), tx_ok)
@@ -1121,8 +1176,9 @@ impl SdroxideApp {
             });
             // The clears are a different kind of thing from the templates
             // beside them — those fill the box, these empty a window — so they
-            // get a rule between them (issue #473).
-            ui.separator();
+            // get a rule between them (issue #473). A chip-tall one: a full
+            // separator in this row grows the row every frame.
+            crate::chrome::row_rule(ui);
             // Always present: greys at @ALLCALL, where there is nothing to
             // forget. A chip that comes and goes is a chip nobody aims at.
             let clear_to = crate::chrome::chip_accent_enabled(

@@ -102,6 +102,12 @@ impl IqSource for AirspyHfSource {
         Ok(pairs)
     }
 
+    /// A centre of its own — the receiver's own LO — so the engine may centre the
+    /// I/Q on a resting dial (`Engine::recentre_after_dwell`).
+    fn recentre_on_dwell(&self) -> bool {
+        true
+    }
+
     fn describe(&self) -> String {
         self.label.clone()
     }
