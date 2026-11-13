@@ -1151,6 +1151,13 @@ impl Mode {
             fm_deemph: Some(true),
             fm_decrackle_dip: Some(crate::FM_DECRACKLE_DEFAULT_DIP),
             binaural: Some(false),
+            hum_filter: Some(false),
+            sk_filter: Some(false),
+            sk_filter_tau_s: Some(crate::SK_FILTER_DEFAULT_TAU_S),
+            sk_filter_open_s: Some(crate::SK_FILTER_DEFAULT_OPEN_S),
+            sk_filter_close_s: Some(crate::SK_FILTER_DEFAULT_CLOSE_S),
+            sk_filter_width: Some(crate::SK_FILTER_DEFAULT_WIDTH),
+            sk_filter_after_nr: Some(crate::SK_FILTER_DEFAULT_AFTER_NR),
         }
     }
 
