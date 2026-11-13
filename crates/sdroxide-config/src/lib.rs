@@ -971,6 +971,40 @@ pub struct RadiosFile {
     /// has been added.
     #[serde(default)]
     pub order: Vec<u32>,
+    /// The multi-radio window's panes and the radios on each pane's row, as
+    /// the operator last left them, so a session opens the way the last one
+    /// closed. A display choice, like [`RadiosFile::order`], and kept out of
+    /// the roster for the same reason.
+    #[serde(default, skip_serializing_if = "PaneLayout::is_empty")]
+    pub layout: PaneLayout,
+}
+
+/// The multi-radio window's arrangement: which radio each pane shows, which
+/// radios are on each pane's row of tabs, and which one has the keyboard.
+///
+/// A radio on no row is one taken off with "−"; it keeps running and stays
+/// off the rows after a restart. `known` tells it apart from a radio added
+/// since — one this layout has never seen goes on the first row, the way
+/// every radio did before there was a layout to keep.
+// Why: HDZ 2026-11-13: "welche Radios wie an und aus sind, muss beim
+//      App-Start gemerkt werden, das ist ein Fix."
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PaneLayout {
+    /// Left to right, the radio each pane shows, by id.
+    pub panes: Vec<u32>,
+    /// One row per pane, the radios picked onto it, by id.
+    pub rows: Vec<Vec<u32>>,
+    /// The radio holding the keyboard.
+    pub focused: Option<u32>,
+    /// Every radio of this station the layout was saved with.
+    pub known: Vec<u32>,
+}
+
+impl PaneLayout {
+    pub fn is_empty(&self) -> bool {
+        self.panes.is_empty()
+    }
 }
 
 impl Default for RadiosFile {
@@ -979,6 +1013,7 @@ impl Default for RadiosFile {
             radios: vec![RadioSlot { id: 0, name: String::new(), enabled: true }],
             next_id: 1,
             order: Vec::new(),
+            layout: PaneLayout::default(),
         }
     }
 }
@@ -1094,6 +1129,13 @@ pub fn reorder_radios(ids: &[u32]) -> Result<(), ConfigError> {
     let mut roster = load_radios();
     roster.order =
         ids.iter().copied().filter(|id| roster.radios.iter().any(|r| r.id == *id)).collect();
+    save_radios(&roster)
+}
+
+/// Record the multi-radio window's panes and rows (see [`PaneLayout`]).
+pub fn save_pane_layout(layout: &PaneLayout) -> Result<(), ConfigError> {
+    let mut roster = load_radios();
+    roster.layout = layout.clone();
     save_radios(&roster)
 }
 
@@ -3333,6 +3375,24 @@ mod tests {
         // And the file never grows an id the roster does not have.
         reorder_radios(&[fourth.id, third.id, 0, again.id]).unwrap();
         assert_eq!(load_radios().order, vec![fourth.id, 0, again.id]);
+
+        // The panes and rows survive a reload, and the other roster writers
+        // leave them standing; a roster without them writes none.
+        assert!(!fs::read_to_string(root.join("radios.json")).unwrap().contains("layout"));
+        let layout = PaneLayout {
+            panes: vec![0, fourth.id],
+            rows: vec![vec![0], vec![fourth.id]],
+            focused: Some(fourth.id),
+            known: vec![0, again.id, fourth.id],
+        };
+        save_pane_layout(&layout).unwrap();
+        rename_radio(0, "Shack").unwrap();
+        set_radio_enabled(again.id, false).unwrap();
+        assert_eq!(load_radios().layout, layout, "kept through a rename and a switch");
+        set_radio_enabled(again.id, true).unwrap();
+        rename_radio(0, "").unwrap();
+        save_pane_layout(&PaneLayout::default()).unwrap();
+
         remove_radio(again.id).unwrap();
         remove_radio(fourth.id).unwrap();
 

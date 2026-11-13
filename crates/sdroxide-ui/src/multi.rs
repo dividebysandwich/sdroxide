@@ -186,6 +186,10 @@ pub struct MultiApp {
     //      left, one tab on the right): "könnte man wenigstens die roten
     //      Rahmen ausrichten aneinander".
     strip_heights: Vec<f32>,
+    /// The arrangement last written to the roster, so it is written again
+    /// only when the operator changes it.
+    #[cfg(not(target_arch = "wasm32"))]
+    saved_layout: Option<sdroxide_config::PaneLayout>,
     factory: Option<RadioFactory>,
     /// How a station somewhere else is dialled — Settings → Remote. Present
     /// in every native session, including one that is itself a remote client:
@@ -291,15 +295,28 @@ impl MultiApp {
         for (i, t) in tabs.iter_mut().enumerate() {
             t.app.set_focused_flag(i == 0);
         }
-        let panes = vec![tabs[0].id];
-        // Every radio on the one pane's row: a session opens looking exactly
-        // as the single strip always did.
-        let rows = vec![tabs.iter().map(|t| t.id).collect()];
+        // The panes and rows the last session closed with. Without any — a
+        // first start, a station from before they were kept — every radio is
+        // on the one pane's row: a session opens looking exactly as the single
+        // strip always did.
+        let ids: Vec<u32> = tabs.iter().map(|t| t.id).collect();
+        #[cfg(not(target_arch = "wasm32"))]
+        let saved = sdroxide_config::load_radios().layout;
+        #[cfg(not(target_arch = "wasm32"))]
+        let (panes, rows, focus) = restore_layout(&ids, &saved);
+        #[cfg(target_arch = "wasm32")]
+        let (panes, rows, focus) = (vec![ids[0]], vec![ids.clone()], None::<u32>);
+        let focused = focus.and_then(|id| ids.iter().position(|t| *t == id)).unwrap_or(0);
+        for (i, t) in tabs.iter_mut().enumerate() {
+            t.app.set_focused_flag(i == focused);
+        }
         MultiApp {
             tabs,
-            focused: 0,
+            focused,
             panes,
             rows,
+            #[cfg(not(target_arch = "wasm32"))]
+            saved_layout: Some(saved),
             strip_heights: Vec::new(),
             factory,
             remote,
@@ -540,6 +557,31 @@ impl MultiApp {
                 self.focus_tab(i, ctx);
             }
         }
+    }
+
+    /// Write the panes, rows and focus to the roster when they have changed,
+    /// so the next session opens on them. Only a station's own radios count:
+    /// a screen showing nothing but somebody else's has no roster of its own
+    /// to write.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn remember_layout(&mut self) {
+        let known: Vec<u32> = self.tabs.iter().filter(|t| !t.remote).map(|t| t.id).collect();
+        if known.is_empty() {
+            return;
+        }
+        let layout = sdroxide_config::PaneLayout {
+            panes: self.panes.clone(),
+            rows: self.rows.clone(),
+            focused: self.tabs.get(self.focused).map(|t| t.id),
+            known,
+        };
+        if self.saved_layout.as_ref() == Some(&layout) {
+            return;
+        }
+        if let Err(e) = sdroxide_config::save_pane_layout(&layout) {
+            eprintln!("sdroxide: recording the panes: {e}");
+        }
+        self.saved_layout = Some(layout);
     }
 
     /// The pane the focused radio sits on — where "switch to radio X"
@@ -1722,6 +1764,8 @@ impl eframe::App for MultiApp {
         self.apply_strip_actions(actions, &ctx);
         self.handle_requests(reqs, &ctx);
         self.open_peer_radios(&ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.remember_layout();
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -1736,5 +1780,93 @@ impl eframe::App for MultiApp {
         for tab in &mut self.tabs {
             tab.app.shutdown_ctrl();
         }
+    }
+}
+
+/// The panes, rows and focus a session opens with: the saved ones, held
+/// against the radios there are now. A radio that has gone leaves its row; a
+/// pane left with nothing to show goes; a radio the saved layout never saw
+/// joins the first row. Nothing saved, or nothing left of it: one pane, every
+/// radio on its row.
+#[cfg(not(target_arch = "wasm32"))]
+fn restore_layout(
+    ids: &[u32],
+    saved: &sdroxide_config::PaneLayout,
+) -> (Vec<u32>, Vec<Vec<u32>>, Option<u32>) {
+    let fresh = || (vec![ids[0]], vec![ids.to_vec()], None);
+    let mut panes = Vec::new();
+    let mut rows: Vec<Vec<u32>> = Vec::new();
+    for (k, &shown) in saved.panes.iter().enumerate() {
+        let row: Vec<u32> = saved
+            .rows
+            .get(k)
+            .map_or_else(Vec::new, |r| r.iter().copied().filter(|id| ids.contains(id)).collect());
+        if !ids.contains(&shown) && row.is_empty() {
+            continue;
+        }
+        // A shown radio that has gone is left for `sanitize_panes`, which puts
+        // the next radio on the row in its place.
+        panes.push(shown);
+        rows.push(row);
+    }
+    if panes.is_empty() {
+        return fresh();
+    }
+    for &id in ids {
+        if !saved.known.contains(&id)
+            && !rows.iter().any(|r| r.contains(&id))
+            && !panes.contains(&id)
+        {
+            rows[0].push(id);
+        }
+    }
+    (panes, rows, saved.focused.filter(|id| ids.contains(id)))
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod layout_tests {
+    use super::restore_layout;
+    use sdroxide_config::PaneLayout;
+
+    /// Two panes, a radio taken off with "−", the second pane focused: the
+    /// next start opens on exactly that.
+    #[test]
+    fn a_saved_layout_comes_back() {
+        let saved = PaneLayout {
+            panes: vec![0, 2],
+            rows: vec![vec![0, 1], vec![2]],
+            focused: Some(2),
+            known: vec![0, 1, 2, 3],
+        };
+        let (panes, rows, focus) = restore_layout(&[0, 1, 2, 3], &saved);
+        assert_eq!(panes, vec![0, 2]);
+        assert_eq!(rows, vec![vec![0, 1], vec![2]]);
+        assert_eq!(focus, Some(2));
+        assert!(!rows.iter().any(|r| r.contains(&3)), "radio 3 was taken off; it stays off");
+    }
+
+    /// Nothing saved is the strip as it always was: one pane, every radio.
+    #[test]
+    fn nothing_saved_is_one_pane_with_every_radio() {
+        let (panes, rows, focus) = restore_layout(&[4, 0, 1], &PaneLayout::default());
+        assert_eq!(panes, vec![4]);
+        assert_eq!(rows, vec![vec![4, 0, 1]]);
+        assert_eq!(focus, None);
+    }
+
+    /// A radio added since joins the first row; one closed since leaves its
+    /// row, and a pane with nothing left goes with it.
+    #[test]
+    fn radios_added_and_closed_since() {
+        let saved = PaneLayout {
+            panes: vec![0, 5],
+            rows: vec![vec![0], vec![5]],
+            focused: Some(5),
+            known: vec![0, 5],
+        };
+        let (panes, rows, focus) = restore_layout(&[0, 7], &saved);
+        assert_eq!(panes, vec![0]);
+        assert_eq!(rows, vec![vec![0, 7]]);
+        assert_eq!(focus, None, "the focused radio is gone");
     }
 }
