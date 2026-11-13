@@ -114,9 +114,12 @@ impl Device {
         if model == Model::Duo && crate::remote::wanted(dev.rate_hz) {
             match crate::remote::upload_for(dev.rate_hz) {
                 Ok(upload) => {
+                    // Noted before the load: one that fails half-way has
+                    // still taken the radio out of stand-alone, and the next
+                    // narrow open or close should try to put it back.
+                    crate::remote::note_remote();
                     dev.load_remote(&upload)?;
                     dev.remote = true;
-                    crate::remote::note_remote();
                     crate::remote::note_loaded(dev.rate_hz);
                 }
                 Err(w) => {

@@ -1062,6 +1062,12 @@ impl IqSource for EladSource {
         if let Control::Serial(cat) = &mut self.control {
             cat.release();
         }
+        // The transmit guard is process-wide: a source let go while keyed
+        // would otherwise refuse every later wide open until a restart.
+        if self.keyed {
+            self.keyed = false;
+            sdroxide_elad::set_transmitting(false);
+        }
         self.handle.release();
     }
 
