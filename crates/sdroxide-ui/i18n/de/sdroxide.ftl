@@ -2171,7 +2171,7 @@ topbar-sk-filter-width = Breite
 topbar-sk-filter-width-hint = Glättung der Maske, ±Bins à 47 Hz; breiter = weniger Klingeln, gröber
 topbar-sk-filter-after-nr = nach NR
 topbar-sk-filter-after-nr-hint = SK hinter RNN/DFNR — und damit hinter der AGC: was das Filter wegnimmt, bleibt weg (dafür der Booster daneben); aus: vor der AGC, die den Pegel ausgleicht
-topbar-sk-filter-boost-hint = Anhebung nach dem SK-Filter, 0–18 dB, weich unter Vollaussteuerung begrenzt: hinter NR gleicht sonst niemand den Pegel aus, den das Filter wegnimmt
+topbar-sk-filter-boost-hint = Anhebung nach dem SK-Filter, 0–18 dB (5 dB), weich unter Vollaussteuerung begrenzt: hinter NR gleicht sonst niemand den Pegel aus, den das Filter wegnimmt
 topbar-sk-filter-boost-before-nr = Vor NR gleicht die AGC den Pegel aus; der Booster wirkt nur hinter NR
 topbar-sk-filter-caption = SK-NACHFILTER
 topbar-sk-filter-reset-hint = SK auf Grundwerte: τ 0,1 s, auf 0,01 s, zu 1 s, Breite ±1, vor NR

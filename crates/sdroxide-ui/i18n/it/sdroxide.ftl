@@ -5972,5 +5972,5 @@ textmodem-psk-coded-hint =
         }, { $code }, larghezza { $bw } Hz
 
 topbar-sk-filter-after-nr-hint = SK dopo RNN/DFNR — e dopo l'AGC: ciò che il filtro toglie resta tolto (vedi il boost accanto); spento: prima dell'AGC, che ripristina il livello
-topbar-sk-filter-boost-hint = Boost dopo il filtro SK, 0–18 dB, limitato dolcemente sotto il fondo scala: dopo l'NR nulla ripristina il livello tolto dal filtro
+topbar-sk-filter-boost-hint = Boost dopo il filtro SK, 0–18 dB (5 dB), limitato dolcemente sotto il fondo scala: dopo l'NR nulla ripristina il livello tolto dal filtro
 topbar-sk-filter-boost-before-nr = Prima dell'NR l'AGC ripristina il livello; il boost agisce solo dopo l'NR

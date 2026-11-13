@@ -146,11 +146,12 @@ pub struct RxState {
     /// at unity — and behind NR it also sits behind the AGC, so nothing puts
     /// the level back: the result can be very quiet. Ahead of the AGC the
     /// AGC restores it, so the boost only applies behind NR. A soft limiter
-    /// keeps a boosted peak off full scale. 0 dB to start with.
+    /// keeps a boosted peak off full scale. [`SK_FILTER_DEFAULT_BOOST_DB`] to
+    /// start with, also for a state stored before the field existed.
     // Why: HDZ 2026-11-13: "beim SK würde ich gerne einen kleinen
     //      Lautstärke-Booster noch dazu haben, weil das Ergebnis sehr leise
-    //      sein kann".
-    #[serde(default)]
+    //      sein kann"; "plus 5 dB Defaultwert".
+    #[serde(default = "sk_filter_default_boost")]
     pub sk_filter_boost_db: f32,
     /// NFM "FM-Decrackle": the click eliminator that takes out the 2π phase
     /// slips a weak FM signal turns into crackle, ~1 ms look-ahead. Ignored
@@ -192,6 +193,12 @@ pub const SK_FILTER_DEFAULT_AFTER_NR: bool = true;
 
 /// The SK boost the NR menu offers, in dB.
 pub const SK_FILTER_BOOST_RANGE_DB: (f32, f32) = (0.0, 18.0);
+/// The SK boost to start with, in dB.
+pub const SK_FILTER_DEFAULT_BOOST_DB: f32 = 5.0;
+
+fn sk_filter_default_boost() -> f32 {
+    SK_FILTER_DEFAULT_BOOST_DB
+}
 
 fn sk_filter_default_after_nr() -> bool {
     SK_FILTER_DEFAULT_AFTER_NR
@@ -256,7 +263,7 @@ impl RxState {
             sk_filter_close_s: SK_FILTER_DEFAULT_CLOSE_S,
             sk_filter_width: SK_FILTER_DEFAULT_WIDTH,
             sk_filter_after_nr: SK_FILTER_DEFAULT_AFTER_NR,
-            sk_filter_boost_db: 0.0,
+            sk_filter_boost_db: SK_FILTER_DEFAULT_BOOST_DB,
             fm_decrackle: true,
             fm_deemph: true,
             fm_decrackle_dip: FM_DECRACKLE_DEFAULT_DIP,
@@ -854,5 +861,17 @@ mod sk_filter_tests {
         stored.as_object_mut().unwrap().remove("sk_filter_after_nr");
         let read: RxState = serde_json::from_value(stored).unwrap();
         assert!(read.sk_filter_after_nr, "a stored state without the field");
+    }
+
+    /// The SK boost starts at +5 dB, for a fresh receiver and for one stored
+    /// before the boost existed.
+    #[test]
+    fn the_sk_boost_starts_at_five_db() {
+        let fresh = RxState::with_mode(Mode::Usb);
+        assert_eq!(fresh.sk_filter_boost_db, 5.0);
+        let mut stored = serde_json::to_value(fresh).unwrap();
+        stored.as_object_mut().unwrap().remove("sk_filter_boost_db");
+        let read: RxState = serde_json::from_value(stored).unwrap();
+        assert_eq!(read.sk_filter_boost_db, 5.0, "a stored state without the field");
     }
 }

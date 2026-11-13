@@ -4276,7 +4276,7 @@ impl SdroxideApp {
                     r.sk_filter_close_s = sdroxide_types::SK_FILTER_DEFAULT_CLOSE_S;
                     r.sk_filter_width = sdroxide_types::SK_FILTER_DEFAULT_WIDTH;
                     r.sk_filter_after_nr = sdroxide_types::SK_FILTER_DEFAULT_AFTER_NR;
-                    r.sk_filter_boost_db = 0.0;
+                    r.sk_filter_boost_db = sdroxide_types::SK_FILTER_DEFAULT_BOOST_DB;
                     let r = *r;
                     send(cmds, true, &r);
                 }

@@ -781,7 +781,7 @@ menu. Ordinary dragging and keyboard adjustment still work.
     also after the AGC. The filter only takes level away, so ahead of the AGC
     the AGC puts it back, and behind it nothing does — the result can be
     quiet. The **+dB** field beside after NR lifts it again, 0 to 18 dB
-    (0 to start with), softly limited so a peak stays under full scale; it
+    (+5 dB to start with), softly limited so a peak stays under full scale; it
     greys out with after NR off, where the AGC does that job.
   - **FM-DECRACKLE** (NFM only, greyed out in other modes) — a row of its own
     for the crackle of a weak FM signal. Below the FM threshold the noise now
