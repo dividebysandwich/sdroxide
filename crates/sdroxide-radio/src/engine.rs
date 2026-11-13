@@ -2833,6 +2833,12 @@ struct Engine {
     tx_live_pace: LivePacer,
     tx: Option<TxChain>,
     tx_active: bool,
+    /// A fresh external antenna-tuner request for an RF carrier.
+    atu_rf_requested: bool,
+    /// The ATU owns the transmitter from accepted command through terminal status.
+    atu_operation_active: bool,
+    /// A band change waiting for the ATU to be safely taken out of circuit.
+    atu_band_bypass_pending: bool,
     /// The loudest the microphone got this over, and how many blocks of it were
     /// modulated — see [`Engine::report_silent_microphone`].
     voice_peak: f32,
@@ -4576,6 +4582,9 @@ fn engine_thread(
         tx_live_pace: LivePacer::default(),
         tx: None,
         tx_active: false,
+        atu_rf_requested: false,
+        atu_operation_active: false,
+        atu_band_bypass_pending: false,
         voice_peak: 0.0,
         voice_blocks: 0,
         hw_ptt: false,
@@ -6721,6 +6730,15 @@ impl Engine {
                 }
             }
             ControlUpdate::Ptt(closed) => self.apply_hw_ptt(closed),
+            ControlUpdate::AtuState { rf_requested, operation_active } => {
+                let changed = self.atu_rf_requested != rf_requested
+                    || self.atu_operation_active != operation_active;
+                self.atu_rf_requested = rf_requested;
+                self.atu_operation_active = operation_active;
+                if changed {
+                    self.sync_tx_state();
+                }
+            }
             // An over the operator started at the radio. Recorded, never
             // answered: see [`ControlUpdate::RigTx`] for why keying along with
             // it would talk over the person holding the microphone.
@@ -7092,7 +7110,56 @@ impl Engine {
     /// there and then, rather than being missed.
     fn poll_band_change(&mut self) {
         let band = self.state.band;
-        if std::mem::replace(&mut self.band_seen, band) == band {
+        let changed = std::mem::replace(&mut self.band_seen, band) != band;
+
+        // A tuner match belongs to the band on which it was found. Take the
+        // tuner out of circuit on a band change, using the same source command
+        // and operation interlock as the operator's Bypass control. If the
+        // radio is transmitting or another ATU operation is still running,
+        // retain the request and retry on a later poll.
+        if changed
+            && self.caps.has_atu
+            && (self.state.atu.enabled
+                || matches!(
+                    self.state.atu.status,
+                    sdroxide_types::AtuStatus::Tuned | sdroxide_types::AtuStatus::Tuning
+                ))
+        {
+            self.atu_band_bypass_pending = true;
+        }
+        if self.atu_band_bypass_pending {
+            if !self.caps.has_atu {
+                self.atu_band_bypass_pending = false;
+            } else if !self.tx_active
+                && !self.rig_tx
+                && !self.state.tx.ptt
+                && !self.state.tx.tune
+                && !self.digi_tx
+                && !self.atu_operation_active
+                && !self.atu_rf_requested
+                && self.state.atu.status != sdroxide_types::AtuStatus::Tuning
+            {
+                if self.state.atu.enabled {
+                    match self.source.atu_bypass() {
+                        Ok(()) => self.atu_operation_active = true,
+                        Err(e) => {
+                            warn!(
+                                "automatically bypassing the antenna tuner after a band change: {e}"
+                            );
+                            self.notice(&format!(
+                                "The antenna tuner could not be bypassed after the band change: {e}"
+                            ));
+                        }
+                    }
+                }
+                // Do not repeat a rejected command every engine tick. The
+                // tuner state will be refreshed normally and a later band
+                // change can request another bypass.
+                self.atu_band_bypass_pending = false;
+            }
+        }
+
+        if !changed {
             return;
         }
         // The antenna first, and outside the WSPR exemption below: a beam that
@@ -7303,6 +7370,12 @@ impl Engine {
                     self.spots.reporter_rx_presence(snr_db.round().clamp(-128.0, 127.0) as i32);
                 }
                 DigiAction::KeyTx => {
+                    // An active external ATU owns the transmitter.
+                    // Ignore digital key-downs until its request ends.
+                    if self.atu_tx_interlocked() {
+                        return;
+                    }
+
                     // Key up via the normal PTT path so the safety rails apply.
                     self.digi_tx = true;
                     self.state.tx.ptt = true;
@@ -7405,6 +7478,17 @@ impl Engine {
                 // rails to hang off, so it is claimed here and held for as long
                 // as the message takes.
                 DigiAction::SendCw { text, seconds } => {
+                    // The external ATU owns the transmitter.
+                    // Do not allow a radio-keyed CW message to start during tuning.
+                    if self.atu_tx_interlocked() {
+                        warn!("CW refused: external ATU operation is active");
+                        self.notice("transmit refused — external ATU operation is active");
+                        if let Some(d) = self.digi.as_mut() {
+                            d.abort_tx();
+                        }
+                        return;
+                    }
+
                     if self.tx_gate.as_ref().is_some_and(|g| !g.try_acquire(self.instance)) {
                         let msg = match self.tx_gate.as_ref().and_then(|g| g.holder()) {
                             Some(id) => format!("radio {} is on the air", id + 1),
@@ -9272,6 +9356,12 @@ impl Engine {
             ToneBurst => self.fire_tone_burst(),
             SetPtt(on) => self.set_ptt(on),
             SetTune(on) => {
+                // The external ATU owns the transmitter until its request ends.
+                // Ignore operator TUNE key-downs, but always permit key-up.
+                if on && self.atu_tx_interlocked() {
+                    return;
+                }
+
                 // As with PTT, an operator TUNE takes the transmitter back.
                 self.end_tci_tx();
                 self.cancel_voice_play();
@@ -9321,7 +9411,7 @@ impl Engine {
                 // CAT/TCI rigs command output power directly; IQ sources ignore
                 // this and scale the modulated samples instead. While tuning the
                 // rig is holding the tune level, so leave it alone until unkey.
-                if !self.state.tx.tune {
+                if !self.state.tx.tune && !self.atu_rf_active() {
                     let d = self.tx_drive();
                     self.source.set_tx_drive(d as f64);
                 }
@@ -9331,7 +9421,7 @@ impl Engine {
                 self.source.set_tune_drive(self.tx_tune_level() as f64);
                 // Tuning right now: the rig's power is the tune level, so the
                 // slider takes effect without unkeying.
-                if self.state.tx.tune {
+                if self.state.tx.tune || self.atu_rf_active() {
                     self.source.set_tx_drive(self.tx_tune_level() as f64);
                 }
             }
@@ -9508,22 +9598,47 @@ impl Engine {
                 if !self.caps.has_atu {
                     return;
                 }
-                if self.tx_active {
-                    self.notice("The tuner keys the radio itself — not while transmitting.");
+                if self.tx_active
+                    || self.rig_tx
+                    || self.state.tx.ptt
+                    || self.state.tx.tune
+                    || self.digi_tx
+                {
+                    self.notice(
+                        "The antenna tuner can only be operated while the radio is receiving.",
+                    );
                     return;
                 }
                 if let Err(e) = self.source.atu_tune() {
                     warn!("starting the antenna tuner: {e}");
                     self.notice(&format!("The radio would not start its tuner: {e}"));
+                } else {
+                    // The command is accepted: acquire the interlock now,
+                    // before the next status-poll cycle can report 0xEE.
+                    self.atu_operation_active = true;
                 }
             }
             AtuBypass => {
                 if !self.caps.has_atu {
                     return;
                 }
+                if self.tx_active
+                    || self.rig_tx
+                    || self.state.tx.ptt
+                    || self.state.tx.tune
+                    || self.digi_tx
+                {
+                    self.notice(
+                        "The antenna tuner can only be operated while the radio is receiving.",
+                    );
+                    return;
+                }
                 if let Err(e) = self.source.atu_bypass() {
                     warn!("bypassing the antenna tuner: {e}");
                     self.notice(&format!("The radio would not bypass its tuner: {e}"));
+                } else {
+                    // Bypass has the same operation-wide transmit interlock.
+                    self.atu_operation_active = true;
                 }
             }
             SetAntenna { dir, name } => {
@@ -10045,6 +10160,11 @@ impl Engine {
                 }
             }
             DigiTxActive(on) => {
+                // The external ATU owns the transmitter.
+                // Refuse digital-voice key-downs, but allow key-up.
+                if on && self.atu_tx_interlocked() {
+                    return;
+                }
                 if let Some(d) = self.digi.as_mut() {
                     d.set_tx_active(on);
                 }
@@ -10058,13 +10178,21 @@ impl Engine {
                 }
             }
             CwStraight(on) => {
-                if let Some(d) = self.digi.as_mut() {
-                    d.set_straight(on);
+                // The external ATU owns the transmitter.
+                // Block straight-key closure, but always allow release.
+                if !on || !self.atu_tx_interlocked() {
+                    if let Some(d) = self.digi.as_mut() {
+                        d.set_straight(on);
+                    }
                 }
             }
             CwKey(down) => {
-                if let Some(d) = self.digi.as_mut() {
-                    d.key_down(down);
+                // The external ATU owns the transmitter.
+                // Block CW key-down, but always allow key-up.
+                if !down || !self.atu_tx_interlocked() {
+                    if let Some(d) = self.digi.as_mut() {
+                        d.key_down(down);
+                    }
                 }
             }
             SstvSetMode(mode) => {
@@ -13405,6 +13533,14 @@ impl Engine {
             self.apply(Command::SetPtt(false));
             return;
         }
+        // The external ATU owns the transmitter until its request ends.
+        // Refuse TCI key-downs, but always permit the unkey path above.
+        if self.atu_tx_interlocked() {
+            if let Some(s) = self.tci_srv.as_ref() {
+                s.deny_tx();
+            }
+            return;
+        }
         // Refuse rather than interrupt: the operator, a digital-mode burst and
         // TUNE all outrank a network client.
         if !self.tci_cfg.allow_tx || self.digi_tx || self.state.tx.ptt || self.state.tx.tune {
@@ -14174,6 +14310,11 @@ impl Engine {
             }
         );
         self.follow_rig_tx(on);
+        // An external ATU owns the host TX path, but the radio's own
+        // transmission always overrides it.
+        if self.atu_tx_interlocked() || self.tx_active {
+            self.sync_tx_state();
+        }
         // Straight through to the switch rather than waiting for the next tick.
         // The whole value of hearing about this early is spending none of it.
         // The bands first, as `poll_tr_switch` does: a rig that retuned and
@@ -17056,6 +17197,12 @@ impl Engine {
         if self.tx_active {
             let _ = self.source.tx_end();
         }
+        // An ATU request belongs to the old source. Clear it before reconciling
+        // rig TX, so a falling rig-TX indication cannot restart the old ATU
+        // carrier while the source is being replaced.
+        self.atu_rf_requested = false;
+        self.atu_operation_active = false;
+        self.atu_band_bypass_pending = false;
         // Nor the old link's word that the radio was on the air by itself: the
         // new one reports only changes, so a stale `true` would keep receive
         // muted and transmit refused until the radio keyed again.
@@ -17108,6 +17255,8 @@ impl Engine {
             antenna_tx: self.source.current_tx_antenna(),
             // The levels carry over; a keyed transmit never does.
             tx: sdroxide_types::TxState { ptt: false, tune: false, ..self.state.tx },
+            // The old source's tuner state does not describe the new source.
+            atu: Default::default(),
             // The scan was walking the old front end's span.
             scan: sdroxide_types::ScanState::default(),
             skimmer: if self.audio_mode {
@@ -17540,7 +17689,22 @@ impl Engine {
     /// the rig and a tune would go out at the (typically much lower) voice
     /// drive.
     fn tx_power_level(&self) -> f32 {
-        if self.state.tx.tune { self.tx_tune_level() } else { self.tx_drive() }
+        if self.state.tx.tune || self.atu_rf_active() {
+            self.tx_tune_level()
+        } else {
+            self.tx_drive()
+        }
+    }
+
+    /// An external ATU request owns the host TX path unless the radio
+    /// itself has started transmitting.
+    fn atu_rf_active(&self) -> bool {
+        self.atu_rf_requested && !self.rig_tx
+    }
+
+    /// Whether an external antenna-tuner operation owns the host TX path.
+    fn atu_tx_interlocked(&self) -> bool {
+        self.atu_operation_active || self.atu_rf_requested
     }
 
     /// The drive actually used: the operator's setting, calibrated for the band
@@ -17670,6 +17834,12 @@ impl Engine {
     /// keyboard binding, or the radio's own PTT line ([`Self::apply_hw_ptt`]).
     /// Every route lands here so they cannot drift apart.
     fn set_ptt(&mut self, on: bool) {
+        // The external ATU owns the transmitter until its request ends.
+        // Ignore operator key-downs, but always permit key-up.
+        if on && self.atu_tx_interlocked() {
+            return;
+        }
+
         // …and over a burst-only over. A hand on PTT while the 1750 Hz burst is
         // still playing means the operator is about to speak, so the over
         // becomes theirs and the end of the burst must not take it away from
@@ -17771,7 +17941,9 @@ impl Engine {
         if closed == self.hw_ptt {
             return; // a level, re-reported; only edges do anything
         }
-        if closed && (self.tx_active || self.state.tx.tune || self.digi_tx) {
+        if closed
+            && (self.atu_tx_interlocked() || self.tx_active || self.state.tx.tune || self.digi_tx)
+        {
             return; // someone else owns this over — and owns its key-up too
         }
         self.hw_ptt = closed;
@@ -17782,7 +17954,15 @@ impl Engine {
     /// Reconcile the TX hardware state with `ptt || tune`, enforcing the
     /// safety rails on key-down.
     fn sync_tx_state(&mut self) {
-        let want_tx = self.state.tx.ptt || self.state.tx.tune;
+        let requested_tx = self.atu_rf_active() || self.state.tx.ptt || self.state.tx.tune;
+
+        // The radio is already transmitting under its own control.
+        // Refuse any request for host transmission.
+        if requested_tx && self.rig_tx {
+            return self.deny_tx("the radio is transmitting on its own PTT");
+        }
+
+        let want_tx = !self.rig_tx && requested_tx;
         if want_tx == self.tx_active {
             return;
         }
@@ -17812,15 +17992,6 @@ impl Engine {
                 return self.deny_tx(&format!(
                     "SWR guard tripped at {swr:.1}:1. Acknowledge it to transmit again"
                 ));
-            }
-            // The radio is already transmitting under its own control —
-            // somebody has their hand on its microphone. Keying here would put
-            // sdroxide's audio into an over that is not its to drive, and on a
-            // rig whose key-down doubles as an audio-source switch it would cut
-            // the operator off mid-word. Placed with the other pure state
-            // checks, before anything acquires or tears down.
-            if self.rig_tx {
-                return self.deny_tx("the radio is transmitting on its own PTT");
             }
             // The station's transmit interlock: one radio on the air at a
             // time. First among the rails, before anything with side effects,
@@ -18575,6 +18746,12 @@ impl Engine {
 
     /// Transmit slot `slot`, keying up the same way the operator's PTT does.
     fn start_voice_play(&mut self, slot: usize) {
+        // The external ATU owns the transmitter until its request ends.
+        // Do not allow a voice-keyer transmission to start during tuning.
+        if self.atu_tx_interlocked() {
+            warn!("voice keyer: external ATU operation is active");
+            return;
+        }
         if !self.state.rx[0].mode.allows_voice_keyer() {
             warn!("voice keyer: not available in {}", self.state.rx[0].mode.label());
             return;
@@ -18947,9 +19124,10 @@ impl Engine {
         if self.audio_mode || self.caps.tx_audio {
             return self.tx_block_audio();
         }
+        let atu_rf = self.atu_rf_active();
         // Digital-mode burst: the FT8/FT4 controller supplies the audio; the
         // real mic is drained and discarded so it can't leak into the burst.
-        if self.digi_tx {
+        if self.digi_tx && !atu_rf {
             return self.tx_block_digi();
         }
 
@@ -18965,7 +19143,7 @@ impl Engine {
         // had gone dead for the rest of the over.
         let bursting = fm && self.burst.is_some();
         // Fill the 48 kHz FIFO from whoever owns this over (mic or TCI client).
-        if !bursting && !self.fill_tx_audio_fifo() {
+        if !bursting && !atu_rf && !self.fill_tx_audio_fifo() {
             std::thread::sleep(Duration::from_millis(2));
             return Ok(());
         }
@@ -18980,7 +19158,7 @@ impl Engine {
 
         tx.mod_buf.clear();
         let mut burst_done = false;
-        if self.state.tx.tune || tx.modulator.is_none() {
+        if self.state.tx.tune || atu_rf || tx.modulator.is_none() {
             // Steady carrier at the tune level. A PTT in CW only gets here with
             // no keyer to hold the over for (see `set_ptt`).
             let level = tune_level;
@@ -19203,6 +19381,7 @@ impl Engine {
     /// its own modulation. PTT is asserted separately by `sync_tx_state`.
     fn tx_block_audio(&mut self) -> crate::Result<()> {
         let mut audio = [0.0f32; TX_AUDIO_BLOCK];
+        let atu_rf = self.atu_rf_active();
         // The digital mode's burst has played out, and the 1750 Hz burst has —
         // two different bursts, both of which end an over, so they are named
         // apart rather than sharing one flag.
@@ -19212,7 +19391,7 @@ impl Engine {
         // over a digital burst or a tune, both of which own their whole block.
         let mut signalling = false;
 
-        if self.digi_tx {
+        if self.digi_tx && !atu_rf {
             self.feed_digi_mic();
             // Full scale into the rig, as the tune tone below goes out on a
             // radio with its own power control — and for the same reason. That
@@ -19229,7 +19408,7 @@ impl Engine {
             // the over. Where it is read, `fill_digi_tx_block` queued the block
             // instead and this finds the digi already spoken for.
             self.play_cw_sidetone(&audio);
-        } else if self.state.tx.tune {
+        } else if self.state.tx.tune || atu_rf {
             // An audio-modulated rig (CAT/TCI) needs a tone to produce a carrier;
             // silence would key up with no output. On a rig with its own power
             // control the tone is just the modulating signal and goes out at full

@@ -1701,7 +1701,9 @@ use sdroxide_types::{
 /// `RxState` gains `fm_decrackle`, `fm_deemph` and `fm_decrackle_dip`, and
 /// `SpectrumConfig` gains `smooth`, `reassign`, `reassign_floor_db` and
 /// `reassign_dim_db` at its tail.
-pub const PROTO_VERSION: u16 = 205;
+/// v206: `AtuState` gains optional Reg7 diagnostics and a host command-delivery
+/// error, appended to the state carried by `RadioState`.
+pub const PROTO_VERSION: u16 = 206;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

@@ -685,6 +685,30 @@ pub struct AtuState {
     /// than tuning for it — the tuner's memories, kept and applied by the
     /// radio itself.
     pub using_memory: bool,
+    /// Whether this tuner exposes the HPSDR Pico Reg7 diagnostic register.
+    /// Other tuner backends leave this false.
+    #[serde(default)]
+    pub reg7_supported: bool,
+    /// Raw Reg7 byte from the HPSDR Pico tuner, retained for diagnostics.
+    #[serde(default)]
+    pub reg7_status: Option<u8>,
+    /// Whether the last Reg7 byte is within the source's freshness window.
+    /// The byte itself is retained when stale so the last diagnostic remains
+    /// visible without presenting it as current.
+    #[serde(default)]
+    pub reg7_fresh: bool,
+    /// Host-side failure to deliver the command, distinct from a Pico Reg7 fault.
+    #[serde(default)]
+    pub command_error: Option<AtuCommandError>,
+}
+
+/// A failure reported by the host command-delivery path, not by the tuner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AtuCommandError {
+    /// The command was rejected before the I2C write was queued.
+    Rejected,
+    /// The I2C write failed or was not acknowledged.
+    DeliveryFailed,
 }
 
 impl Default for RadioState {
