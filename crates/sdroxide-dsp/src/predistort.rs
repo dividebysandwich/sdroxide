@@ -91,6 +91,11 @@ const LOCK_THRESHOLD: f32 = 0.5;
 /// How many samples of full-rate refinement either side of the coarse answer.
 const REFINE: usize = ENV_DECIM;
 
+/// How far either side of a held alignment the periodic re-check looks, in
+/// samples. Enough for a delay that creeps; a delay that jumps further is
+/// found again by the full search.
+const NEAR: usize = 2 * REFINE;
+
 /// A bin needs this many samples in a block before that block is allowed to
 /// move it. Amplitude histograms of speech are steep: the top bins see very
 /// few samples, and learning a bin from three of them is learning noise.
@@ -338,13 +343,8 @@ impl PureSignal {
             return false;
         }
         // Spin out the known LO difference.
-        self.scratch.clear();
-        self.scratch.reserve(y.len());
         let step = -std::f64::consts::TAU * offset_hz / sample_rate_hz;
-        for (n, s) in y.iter().enumerate() {
-            let ph = (step * n as f64) as f32;
-            self.scratch.push(*s * Complex32::from_polar(1.0, ph));
-        }
+        derotate(y, step, &mut self.scratch);
         let m = self.scratch.len();
         let start = self.fb_total;
         self.fb_total += m as u64;
@@ -356,7 +356,16 @@ impl PureSignal {
         if searching || recheck {
             self.since_check = 0;
             self.since_locate = 0;
-            self.locate(start, m);
+            // Once locked, the periodic check only has to confirm the delay has
+            // not crept, so it looks a few samples either side of where it was
+            // rather than across the whole history: over the second of history
+            // a networked radio keeps, the full search is long enough to starve
+            // the transmitter it shares a thread with. A delay that has jumped
+            // further fails this, and the full search runs on the next block.
+            match self.offset {
+                Some(off) if recheck => self.locate_near(start, m, off),
+                _ => self.locate(start, m),
+            }
         }
         let Some(off) = self.offset else { return false };
 
@@ -399,14 +408,7 @@ impl PureSignal {
         if self.fenv.len() < 8 || self.env.len() <= self.fenv.len() {
             return;
         }
-        let mut best = (0.0f32, 0usize);
-        let span = self.env.len() - self.fenv.len();
-        for p in 0..=span {
-            let s = correlate(&self.env[p..p + self.fenv.len()], &self.fenv);
-            if s > best.0 {
-                best = (s, p);
-            }
-        }
+        let best = best_correlation(&self.env, &self.fenv);
         if best.0 < LOCK_THRESHOLD {
             self.offset = None;
             self.score = best.0;
@@ -433,6 +435,31 @@ impl PureSignal {
         // Stored as the constant difference between the two streams' sample
         // counts, which is what stays true from one block to the next.
         self.offset = Some(self.base as i64 + fine.1 as i64 - fb_start as i64);
+    }
+
+    /// Re-check a held alignment by searching only [`NEAR`] samples either side
+    /// of it. Keeps the alignment (moved to the best of those) if it still
+    /// scores; otherwise drops it, so the full [`Self::locate`] runs next.
+    fn locate_near(&mut self, fb_start: u64, m: usize, off: i64) {
+        let win = m.min(4096);
+        let centre = fb_start as i64 + off - self.base as i64;
+        let lo = (centre - NEAR as i64).max(0);
+        let hi = (centre + NEAR as i64).min(self.refs.len() as i64 - win as i64);
+        if lo > hi {
+            self.offset = None;
+            self.score = 0.0;
+            return;
+        }
+        let (lo, hi) = (lo as usize, hi as usize);
+        let ref_env: Vec<f32> = self.refs[lo..hi + win].iter().map(|s| s.norm()).collect();
+        let fb_env: Vec<f32> = self.scratch[..win].iter().map(|s| s.norm()).collect();
+        let (score, at) = best_correlation(&ref_env, &fb_env);
+        self.score = score;
+        if score < LOCK_THRESHOLD {
+            self.offset = None;
+            return;
+        }
+        self.offset = Some(self.base as i64 + (lo + at) as i64 - fb_start as i64);
     }
 
     /// One update of the table from an aligned pair.
@@ -547,6 +574,70 @@ fn correlate(a: &[f32], b: &[f32]) -> f32 {
 }
 
 /// The same, straight from two complex blocks' envelopes.
+/// Multiply `y` by a phasor turning `step` radians a sample, starting at zero
+/// phase, into `out`. A running rotation in double precision rather than a
+/// sine and cosine per sample — the same result to well under a part in a
+/// million, for a small fraction of the cost at a few megasamples a second.
+fn derotate(y: &[Complex32], step: f64, out: &mut Vec<Complex32>) {
+    out.clear();
+    out.reserve(y.len());
+    let (sr, si) = (step.cos(), step.sin());
+    let (mut c, mut s) = (1.0f64, 0.0f64);
+    for (n, v) in y.iter().enumerate() {
+        out.push(*v * Complex32::new(c as f32, s as f32));
+        let nc = c * sr - s * si;
+        s = c * si + s * sr;
+        c = nc;
+        // Rounding makes the phasor's length wander; a few hundred steps of it
+        // is nowhere near enough to matter, but over a long block it would.
+        if n % 1024 == 1023 {
+            let r = (c * c + s * s).sqrt();
+            c /= r;
+            s /= r;
+        }
+    }
+}
+
+/// The position in `hay` where `needle` correlates best, and how well — what
+/// sliding [`correlate`] along `hay` gives, with the window's mean and energy
+/// carried as running sums instead of recomputed at every position.
+fn best_correlation(hay: &[f32], needle: &[f32]) -> (f32, usize) {
+    let n = needle.len();
+    if n == 0 || hay.len() < n {
+        return (0.0, 0);
+    }
+    let inv = 1.0 / n as f32;
+    let mb = needle.iter().sum::<f32>() * inv;
+    let centred: Vec<f32> = needle.iter().map(|v| v - mb).collect();
+    let db: f32 = centred.iter().map(|v| v * v).sum();
+    if db <= 0.0 {
+        return (0.0, 0);
+    }
+    // Sums of the window in f64, so sliding it across a long history does not
+    // accumulate the error a single-precision running sum would.
+    let mut sum: f64 = hay[..n].iter().map(|&v| f64::from(v)).sum();
+    let mut sum2: f64 = hay[..n].iter().map(|&v| f64::from(v) * f64::from(v)).sum();
+    let mut best = (0.0f32, 0usize);
+    for p in 0..=hay.len() - n {
+        if p > 0 {
+            let (out, inn) = (f64::from(hay[p - 1]), f64::from(hay[p + n - 1]));
+            sum += inn - out;
+            sum2 += inn * inn - out * out;
+        }
+        let da = (sum2 - sum * sum / n as f64) as f32;
+        if da > 0.0 {
+            // The needle is centred, so the window's own mean drops out of the
+            // cross term.
+            let num: f32 = hay[p..p + n].iter().zip(&centred).map(|(a, b)| a * b).sum();
+            let s = num / (da * db).sqrt();
+            if s > best.0 {
+                best = (s, p);
+            }
+        }
+    }
+    best
+}
+
 fn envelope_score(a: &[Complex32], b: &[Complex32]) -> f32 {
     let n = a.len().min(b.len());
     let ea: Vec<f32> = a[..n].iter().map(|s| s.norm()).collect();
@@ -815,5 +906,74 @@ mod tests {
         // Half way between the first two bin centres.
         let mid = ps.gain_at(0.25);
         assert!((mid.re - 0.625).abs() < 1e-5, "{mid:?}");
+    }
+
+    /// The running rotation that spins out the LO difference gives what a sine
+    /// and cosine per sample did, across a block longer than any real one.
+    #[test]
+    fn the_running_rotation_matches_a_phasor_per_sample() {
+        let y = source(65_536, 7);
+        for offset_hz in [625_000.0f64, -312_500.0, 12_345.6, 0.0] {
+            let step = -std::f64::consts::TAU * offset_hz / 2_500_000.0;
+            let mut fast = Vec::new();
+            derotate(&y, step, &mut fast);
+            for (n, (f, v)) in fast.iter().zip(&y).enumerate() {
+                // The phase exactly, in double precision. (The old per-sample
+                // code rounded the phase itself to single precision first,
+                // which over a long block is the larger error of the two.)
+                let ph = step * n as f64;
+                let want = *v * Complex32::new(ph.cos() as f32, ph.sin() as f32);
+                assert!((*f - want).norm() < 1e-4, "sample {n} at {offset_hz} Hz: {f} vs {want}");
+            }
+        }
+    }
+
+    /// The sliding search finds the same position, and the same score, as
+    /// correlating at every position from scratch.
+    #[test]
+    fn the_sliding_search_agrees_with_correlating_at_every_position() {
+        let hay: Vec<f32> = source(6_000, 11).iter().map(|s| s.norm()).collect();
+        let needle: Vec<f32> = hay[3_210..3_210 + 256].to_vec();
+        let mut slow = (0.0f32, 0usize);
+        for p in 0..=hay.len() - needle.len() {
+            let c = correlate(&hay[p..p + needle.len()], &needle);
+            if c > slow.0 {
+                slow = (c, p);
+            }
+        }
+        let fast = best_correlation(&hay, &needle);
+        assert_eq!(fast.1, slow.1);
+        assert!((fast.0 - slow.0).abs() < 1e-3, "{} vs {}", fast.0, slow.0);
+        assert_eq!(fast.1, 3_210);
+    }
+
+    /// Locked, the periodic re-check keeps the alignment with its narrow
+    /// search, through many more blocks than it takes to come due; and a
+    /// delay that then jumps far past that window is found again.
+    #[test]
+    fn a_held_alignment_survives_the_recheck_and_a_jump_is_found_again() {
+        let rate = 200_000.0;
+        let mut ps = PureSignal::with_history(32, 0.9, rate, 1.0);
+        let coupler = Complex32::from_polar(0.11, 1.0);
+        let mut delay = 30_000usize;
+        let mut line: Vec<Complex32> = vec![Complex32::new(0.0, 0.0); delay];
+        let mut locked_rounds = 0;
+        for round in 0..120 {
+            if round == 60 {
+                // The feedback loses 20 000 samples: the delay jumps.
+                line.drain(..20_000);
+                delay -= 20_000;
+            }
+            let mut block = source(8192, 900 + round);
+            ps.predistort(&mut block);
+            line.extend(block.iter().map(|s| amplifier(*s) * coupler));
+            let fb: Vec<Complex32> = line.drain(..8192).collect();
+            ps.feed_back(&fb, 0.0, rate);
+            if (40..60).contains(&round) || round >= 100 {
+                assert!(ps.locked(), "round {round} (delay {delay}): score {}", ps.score());
+                locked_rounds += 1;
+            }
+        }
+        assert!(locked_rounds >= 40);
     }
 }
