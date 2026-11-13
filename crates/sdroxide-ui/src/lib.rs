@@ -67,7 +67,7 @@ pub use app::SdroxideApp;
 pub use multi::{MultiApp, RadioFactory, RadioTab, RemoteFactory};
 #[cfg(feature = "remote")]
 pub use remote::{AudioBridge, RemoteController};
-/// The solar-system view as a standalone app, for the browser tab the ☀ 3D
+/// The solar-system view as a standalone app, for the browser tab the SOLAR
 /// chip opens. Natively the same view is a child viewport of the main window
 /// instead — see `solar3d::Solar3d`.
 #[cfg(feature = "remote")]

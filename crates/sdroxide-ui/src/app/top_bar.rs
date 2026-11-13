@@ -5629,7 +5629,7 @@ impl SdroxideApp {
     /// SNR a track must reach before it earns a box on the waterfall. Fades out
     /// on its own like the band/mode popup.
     fn skimmer_button(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, extra: f32) {
-        let [_, _, skim, _] = DISPLAY_TOOL_CHIPS;
+        let [_, skim, _] = DISPLAY_TOOL_CHIPS;
         let btn = chip_stretched(ui, self.state.skimmer.any_enabled(), skim, extra)
             .on_hover_text(tr!("topbar-cw-psk-rtty-skimmers-decode"));
         let popup_id = egui::Popup::default_response_id(&btn);
@@ -5775,7 +5775,7 @@ impl SdroxideApp {
     /// exactly as for SKIM and FFT below — so the menu leaves the chip out here
     /// and [`Self::display_controls`] inlines its contents instead.
     fn display_view_chips(&mut self, ui: &mut egui::Ui, narrow: bool, extra: f32) {
-        let [_, spec, wide] = DISPLAY_VIEW_CHIPS;
+        let [fft, spec, fit, wide] = DISPLAY_VIEW_CHIPS;
         // Only a front end with a full-band lane has ever sent one of these, so
         // its presence is what says the strip is on offer at all — there is no
         // capability flag for it, and inventing one would mean a wire-format
@@ -5784,9 +5784,28 @@ impl SdroxideApp {
         // A phone draws the waterfall alone, so the two chips that choose what
         // else is drawn have nothing to control there.
         let picks_layers = !crate::layout::tier(ui.ctx()).waterfall_only();
-        self.solar_button(ui, extra);
+        // FFT and SPEC side by side, the waterfall's and the spectrum's
+        // popups; a menu inlines both below instead.
+        // Why: HDZ 2026-11-09: "Knöpfe SPEC und FIT tauschen, weil FFT und
+        //      SPEC gehören zusammen".
+        if !narrow {
+            self.fft_button(ui, fft, extra);
+        }
         if picks_layers && !narrow {
             self.layers_button(ui, spec, extra);
+        }
+        // FIT, the switch that keeps the floor and ceiling set by itself.
+        // Lit while the floor/ceiling are kept fitted by themselves. Switching
+        // it on fits immediately, which is also how a one-off fit is asked for:
+        // click it off and on again.
+        if chip_stretched(ui, self.view.auto_fit, fit, extra)
+            .on_hover_text(tr!("topbar-keep-floor-ceiling-set-best"))
+            .clicked()
+        {
+            self.view.auto_fit = !self.view.auto_fit;
+            if self.view.auto_fit {
+                self.fit_levels_now(ui.input(|i| i.time));
+            }
         }
         if picks_layers
             && has_wide
@@ -6123,19 +6142,7 @@ impl SdroxideApp {
         narrow: bool,
         extra: f32,
     ) {
-        let [fit, ctr, _, fft] = DISPLAY_TOOL_CHIPS;
-        // Lit while the floor/ceiling are kept fitted by themselves. Switching
-        // it on fits immediately, which is also how a one-off fit is asked for:
-        // click it off and on again.
-        if chip_stretched(ui, self.view.auto_fit, fit, extra)
-            .on_hover_text(tr!("topbar-keep-floor-ceiling-set-best"))
-            .clicked()
-        {
-            self.view.auto_fit = !self.view.auto_fit;
-            if self.view.auto_fit {
-                self.fit_levels_now(ui.input(|i| i.time));
-            }
-        }
+        let [ctr, _, _] = DISPLAY_TOOL_CHIPS;
         // FIT's twin for the frequency axis (issue #174): lit while the window
         // follows the dial, so the tuned frequency stays in the middle of the
         // picture and the band scrolls past it instead of the picture jumping a
@@ -6148,13 +6155,18 @@ impl SdroxideApp {
         {
             self.view.center_on_vfo = !self.view.center_on_vfo;
         }
-        // In a box these two hang off chips of their own. A menu inlines
+        // In a box the skimmers hang off a chip of their own; a menu inlines
         // them below instead: a popup opened from a popup counts as a click
-        // outside the first and closes it.
-        if narrow {
-            return;
+        // outside the first and closes it. HFDL is a plain chip, so it stays.
+        if !narrow {
+            self.skimmer_button(ui, cmds, extra);
         }
-        self.skimmer_button(ui, cmds, extra);
+        self.hfdl_chip(ui, cmds, extra);
+    }
+
+    /// The FFT chip and its popup: the waterfall's controls, lit while the
+    /// waterfall is drawn. First in the Display box's top row, beside SPEC.
+    fn fft_button(&mut self, ui: &mut egui::Ui, fft: &str, extra: f32) {
         // The waterfall's controls live in a popup off this button, lit while
         // the waterfall is drawn.
         let fft_btn = chip_stretched(ui, self.view.waterfall_visible(), fft, extra)
@@ -6177,6 +6189,49 @@ impl SdroxideApp {
             if r.response.contains_pointer() {
                 self.fft_popup_since = Some(now);
             }
+        }
+    }
+
+    /// The HFDL chip, in the Display box beside SKIM: like SKIM it shows a
+    /// decoder running. It opens HFDL's own mode, whose panel docks under the
+    /// waterfall.
+    fn hfdl_chip(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, extra: f32) {
+        let hfdl_label = tr!("topbar-chip-hfdl");
+        // HFDL: shortwave aircraft ground network. It opens HFDL's own mode,
+        // whose panel docks under the waterfall; accented while the decoder
+        // runs, like the ISM chip, because it spends a downconverter and a
+        // worker thread whether or not the panel is on screen.
+        let hfdl_mode = self.state.rx[0].mode.is_hfdl();
+        let hfdl_running = self.state.hfdl.enabled;
+        let hfdl_chip = if hfdl_running {
+            accent_chip_stretched(
+                ui,
+                true,
+                &hfdl_label,
+                crate::theme::GREEN(),
+                crate::theme::INK_ON_BRIGHT(),
+                extra,
+            )
+        } else {
+            chip_stretched(ui, hfdl_mode, &hfdl_label, extra)
+        };
+        if hfdl_chip
+            .on_hover_text(if hfdl_mode {
+                tr!("topbar-hfdl-ground-network-decode-log")
+            } else if hfdl_running {
+                tr!("topbar-hfdl-ground-network-decoding-now")
+            } else {
+                tr!("topbar-hfdl-ground-network-aircraft-shortwave")
+            })
+            .clicked()
+        {
+            // The lane follows its own chosen frequency; bring the dial with it
+            // so the panadapter shows the signal being decoded.
+            cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Hfdl });
+            cmds.push(Command::SetVfo {
+                vfo: self.state.active_vfo,
+                hz: self.state.hfdl.frequency_hz,
+            });
         }
     }
 
@@ -6203,7 +6258,7 @@ impl SdroxideApp {
     /// rows plus the box margins.
     fn display_rows_w(&self, ui: &egui::Ui) -> f32 {
         let row1: &[&str] =
-            if self.wide_frame.is_some() { &DISPLAY_VIEW_CHIPS } else { &DISPLAY_VIEW_CHIPS[..2] };
+            if self.wide_frame.is_some() { &DISPLAY_VIEW_CHIPS } else { &DISPLAY_VIEW_CHIPS[..3] };
         chip_row_w(ui, row1).max(chip_row_w(ui, &DISPLAY_TOOL_CHIPS))
             + 2.0 * crate::chrome::MODULE_MARGIN_X
     }
@@ -6213,7 +6268,7 @@ impl SdroxideApp {
     fn display_condensed(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, w: f32) {
         let inner = w - 2.0 * crate::chrome::MODULE_MARGIN_X;
         let row1: &[&str] =
-            if self.wide_frame.is_some() { &DISPLAY_VIEW_CHIPS } else { &DISPLAY_VIEW_CHIPS[..2] };
+            if self.wide_frame.is_some() { &DISPLAY_VIEW_CHIPS } else { &DISPLAY_VIEW_CHIPS[..3] };
         let extra1 = ((inner - chip_row_w(ui, row1)) / row1.len() as f32).max(0.0);
         let extra2 = ((inner - chip_row_w(ui, &DISPLAY_TOOL_CHIPS))
             / DISPLAY_TOOL_CHIPS.len() as f32)
@@ -6678,8 +6733,8 @@ impl SdroxideApp {
     }
 
     /// The remaining window chips — the condensed System box's bottom row.
-    fn system_chips_bottom(&mut self, ui: &mut egui::Ui, extra: f32, cmds: &mut Vec<Command>) {
-        let [mail, mem, scan_label, hfdl_label, grid_label, amp_label, settings, help] =
+    fn system_chips_bottom(&mut self, ui: &mut egui::Ui, extra: f32, _cmds: &mut Vec<Command>) {
+        let [mail, mem, scan_label, _solar, grid_label, amp_label, settings, help] =
             system_chip_labels_bottom_amp();
         let has_amp = self.has_amp();
         if chip_stretched(ui, self.mail.open, &mail, extra)
@@ -6721,42 +6776,11 @@ impl SdroxideApp {
         {
             self.show_scanner = !self.show_scanner;
         }
-        // HFDL: shortwave aircraft ground network. It opens HFDL's own mode,
-        // whose panel docks under the waterfall; accented while the decoder
-        // runs, like the ISM chip, because it spends a downconverter and a
-        // worker thread whether or not the panel is on screen.
-        let hfdl_mode = self.state.rx[0].mode.is_hfdl();
-        let hfdl_running = self.state.hfdl.enabled;
-        let hfdl_chip = if hfdl_running {
-            accent_chip_stretched(
-                ui,
-                true,
-                &hfdl_label,
-                crate::theme::GREEN(),
-                crate::theme::INK_ON_BRIGHT(),
-                extra,
-            )
-        } else {
-            chip_stretched(ui, hfdl_mode, &hfdl_label, extra)
-        };
-        if hfdl_chip
-            .on_hover_text(if hfdl_mode {
-                tr!("topbar-hfdl-ground-network-decode-log")
-            } else if hfdl_running {
-                tr!("topbar-hfdl-ground-network-decoding-now")
-            } else {
-                tr!("topbar-hfdl-ground-network-aircraft-shortwave")
-            })
-            .clicked()
-        {
-            // The lane follows its own chosen frequency; bring the dial with it
-            // so the panadapter shows the signal being decoded.
-            cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Hfdl });
-            cmds.push(Command::SetVfo {
-                vfo: self.state.active_vfo,
-                hz: self.state.hfdl.frequency_hz,
-            });
-        }
+        // The solar view, where HFDL stood: a window chip among the window
+        // chips. HFDL went to the Display box beside SKIM.
+        // Why: HDZ 2026-11-08: "der HFDL würde ich mit dem Knopf SOLAR
+        //      tauschen, da der HFDL wie der SKIM-Knopf eine Betriebsanzeige ist".
+        self.solar_button(ui, extra);
         // Grid tracker: the worked squares on a map, with a HEARD layer for
         // what is on the air now.
         if chip_stretched(ui, self.show_grid, &grid_label, extra)
@@ -6993,7 +7017,7 @@ fn system_chip_labels_bottom_amp() -> [String; 8] {
         tr!("topbar-chip-mail"),
         tr!("topbar-chip-mem"),
         tr!("topbar-chip-scan"),
-        tr!("topbar-chip-hfdl"),
+        SOLAR_CHIP.to_string(),
         tr!("topbar-chip-grid"),
         tr!("topbar-chip-amp"),
         tr!("topbar-chip-settings"),
@@ -7010,11 +7034,11 @@ fn system_chip_labels_bottom_amp() -> [String; 8] {
 /// is out of this window, so the ordinary arrangement pays no width for it (see
 /// [`SdroxideApp::module_windows_chip_wanted`]).
 fn system_chips_bottom_row(has_amp: bool, windows: bool) -> Vec<String> {
-    let [mail, mem, scan, hfdl, grid, amp, settings, help] = system_chip_labels_bottom_amp();
+    let [mail, mem, scan, solar, grid, amp, settings, help] = system_chip_labels_bottom_amp();
     let mut row = if has_amp {
-        vec![mail, mem, scan, hfdl, grid, amp, settings]
+        vec![mail, mem, scan, solar, grid, amp, settings]
     } else {
-        vec![mail, mem, scan, hfdl, grid, settings]
+        vec![mail, mem, scan, solar, grid, settings]
     };
     if windows {
         row.push(MODULE_WINDOWS_CHIP.to_string());
@@ -7027,18 +7051,23 @@ fn system_chips_bottom_row(has_amp: bool, windows: bool) -> Vec<String> {
 /// program ships carries.
 const MODULE_WINDOWS_CHIP: &str = "▣";
 
-/// The Display box's top row: the solar view, then the chips that choose what
-/// the panadapter draws — the last of those only on a front end with a
-/// full-band lane. Peak hold used to stand here too and now lives in SPEC's
-/// popup, beside the spectrum line it is drawn over. Visible to the app module
-/// because [`SdroxideApp::solar_button`], which draws its first chip, lives in
-/// `app::solar`.
-pub(in crate::app) const DISPLAY_VIEW_CHIPS: [&str; 3] = ["☀ 3D", "SPEC", "WIDE"];
+/// The Display box's top row: the FFT popup and SPEC beside it (the
+/// waterfall's and the spectrum's settings), the level fit, then the full-band
+/// lane, only on a front end that has one. Everything on it changes the
+/// picture.
+// Why: HDZ 2026-11-07: "tausche FFT mit SOLAR, dann sind oben wenigstens nur
+//      optische Sachen"; 2026-11-09: "Knöpfe SPEC und FIT tauschen, weil FFT
+//      und SPEC gehören zusammen".
+pub(in crate::app) const DISPLAY_VIEW_CHIPS: [&str; 4] = ["FFT", "SPEC", "FIT", "WIDE"];
 
-/// The Display box's bottom row: the level fit, centre tuning, the skimmers,
-/// and the FFT/levels popup. Read by the measurement and by each chip's own
-/// draw site.
-const DISPLAY_TOOL_CHIPS: [&str; 4] = ["FIT", "CTR", "SKIM", "FFT"];
+/// The Display box's bottom row: centre tuning and the two decoders that run
+/// in the background, the skimmers and HFDL, each lit while it runs.
+pub(in crate::app) const DISPLAY_TOOL_CHIPS: [&str; 3] = ["CTR", "SKIM", "HFDL"];
+
+/// The solar view's chip, in the System box among the window chips since HFDL
+/// took its place in the Display box. SOLAR, not "☀ 3D": "3D" is also the
+/// spectrum's receding surface in SPEC.
+pub(in crate::app) const SOLAR_CHIP: &str = "SOLAR";
 
 /// The caption under the FDM-DUO's power presets (AJ3G, 18 Oct 2026).
 const DUO_PRESETS_CAPTION: &str = "ELAD FDM-DUO TX PWR";
@@ -9498,7 +9527,7 @@ mod tests {
             let (ctx, input) = desktop_ctx();
             ctx.run_ui(input, |ui| {
                 let row1: &[&str] =
-                    if has_wide { &DISPLAY_VIEW_CHIPS } else { &DISPLAY_VIEW_CHIPS[..2] };
+                    if has_wide { &DISPLAY_VIEW_CHIPS } else { &DISPLAY_VIEW_CHIPS[..3] };
                 let room = chip_row_w(ui, row1).max(chip_row_w(ui, &DISPLAY_TOOL_CHIPS));
                 for row in [row1, &DISPLAY_TOOL_CHIPS[..]] {
                     ui.horizontal(|ui| {
@@ -10072,7 +10101,10 @@ mod tests {
             // 1400 pt is where `layout::tier_for` starts calling a window a
             // desktop; the top panel's 8+8 margin and `angled_frame`'s 10+10
             // come off it before the packer sees it.
-            let avail = 1400.0 - 16.0 - 20.0;
+            // FFT · SPEC · FIT / CTR · SKIM · HFDL, SOLAR among the window
+            // chips, makes the Display box a few points wider: a CAT rig's
+            // second row needs about 1368 pt, so it is checked at 1410.
+            let avail = 1410.0 - 16.0 - 20.0;
             for mode in [Mode::Lsb, Mode::Nfm, Mode::Wfm, Mode::Drm] {
                 let boxes = cat_rig_strip_boxes(ui, mode);
                 let widths: Vec<f32> = boxes.iter().map(|b| b.w).collect();
