@@ -9286,15 +9286,11 @@ impl Engine {
             }
             SetScanning(on) => self.set_scanning(on),
             ScanNext => {
-                if let Some(sc) = self.scan.as_mut() {
-                    sc.back = false;
-                }
+                self.scan_set_direction(false);
                 self.scan_skip(false);
             }
             ScanBack => {
-                if let Some(sc) = self.scan.as_mut() {
-                    sc.back = true;
-                }
+                self.scan_set_direction(true);
                 self.scan_skip(false);
             }
             ScanSkip => self.scan_skip(true),
@@ -15951,6 +15947,50 @@ impl Engine {
 
     /// Leave the channel the scan is holding on, optionally never to stop there
     /// again.
+    /// Turn a running scan ▶ or ◀. On a turn, the candidates still queued lie
+    /// in the old direction, so the queue keeps only those on the new side of
+    /// the dial — for a memory scan, the scannable channels before or after the
+    /// one it sits on — and the next one dealt is the nearest that way. A
+    /// panorama only sweeps upwards.
+    fn scan_set_direction(&mut self, back: bool) {
+        if self.scan_cfg.kind == ScanKind::Panorama {
+            return;
+        }
+        let here = self.state.active_freq_hz();
+        // A fast memory scan deals from its window plan, and keeps it.
+        let fast_mem = self.scan_cfg.mem_fast && self.scan_can_sweep();
+        let plain_mem = self.scan_cfg.kind == ScanKind::Memories && !fast_mem;
+        let mem_order: Vec<(u32, f64)> = if plain_mem {
+            self.scannable_memories().map(|m| (m.id, m.freq_hz)).collect()
+        } else {
+            Vec::new()
+        };
+        let Some(sc) = self.scan.as_mut() else { return };
+        if sc.back == back {
+            return;
+        }
+        sc.back = back;
+        if plain_mem {
+            let at = mem_order.iter().position(|&(_, hz)| (hz - here).abs() < 1.0);
+            sc.queue.clear();
+            if let Some(at) = at {
+                let side = if back { &mem_order[..at] } else { &mem_order[at + 1..] };
+                sc.queue.extend(side.iter().map(|&(id, _)| ScanTarget::Memory(id)));
+            }
+        } else {
+            sc.queue.retain(|t| match *t {
+                ScanTarget::Freq(hz) => {
+                    if back {
+                        hz < here
+                    } else {
+                        hz > here
+                    }
+                }
+                ScanTarget::Memory(_) => true,
+            });
+        }
+    }
+
     fn scan_skip(&mut self, forever: bool) {
         if !self.state.scan.running {
             return;
