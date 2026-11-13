@@ -5251,12 +5251,12 @@ impl SdroxideApp {
     /// DUO's menu 34 on that setting now and saves it, so it is sent again at
     /// every connect; see [`super::duo_power`].
     ///
-    /// DIG A sits under them, centred on the TUNE row's line (AJ3G, 13 Nov
-    /// 2026), with the caption below it: [`Self::tx_dig_chip`].
+    /// DIG A sits under the caption, centred under 3W and 5W (AJ3G, 13 Nov
+    /// 2026): [`Self::tx_dig_chip`].
     fn tx_duo_presets(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let current = self.radio_cfg.as_ref().map(|r| r.cat.elad_tx_power);
         ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(MODULE_ROW_SPACING, MODULE_ROW_SPACING);
+            ui.spacing_mut().item_spacing = egui::vec2(MODULE_ROW_SPACING, 2.0);
             let row = ui.horizontal(|ui| {
                 for &(label, code) in &super::duo_power::PRESETS {
                     let lit = current == Some(code);
@@ -5276,14 +5276,15 @@ impl SdroxideApp {
                 }
             });
             let w = row.response.rect.width();
-            // Centred under the row, which puts it under 3W and 5W.
+            // The caption straight under the buttons it names, then DIG A,
+            // both centred under the row, which puts DIG A under 3W and 5W
+            // (AJ3G, 13 Nov 2026: "move the ELAD FDM-DUO PWR above DIG A").
             ui.allocate_ui_with_layout(
                 egui::vec2(w, 0.0),
                 egui::Layout::top_down(egui::Align::Center),
                 |ui| {
                     ui.set_min_width(w);
                     ui.spacing_mut().item_spacing = egui::vec2(MODULE_ROW_SPACING, 2.0);
-                    self.tx_dig_chip(ui, cmds);
                     let ink = ui.visuals().widgets.inactive.fg_stroke.color;
                     ui.label(
                         RichText::new(DUO_PRESETS_CAPTION.to_uppercase())
@@ -5291,6 +5292,7 @@ impl SdroxideApp {
                             .strong()
                             .color(ink),
                     );
+                    self.tx_dig_chip(ui, cmds);
                 },
             );
         });
