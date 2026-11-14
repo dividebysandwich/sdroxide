@@ -5,7 +5,7 @@ use eframe::egui::{self, RichText};
 
 use crate::i18n::tr;
 use crate::recorder::{
-    DEFAULT_INTERVAL_S, MIN_INTERVAL_S, Recorder, STRIP_ROWS, SessionInfo, StoredRow, StripInfo,
+    DEFAULT_INTERVAL_S, MAX_INTERVAL_S, MIN_INTERVAL_S, Recorder, STRIP_ROWS, SessionInfo, StoredRow, StripInfo,
     Sweep, mb,
 };
 
@@ -144,6 +144,11 @@ impl RecTab {
 
     fn fail(&mut self, e: rusqlite::Error) {
         self.error = Some(e.to_string());
+        // The error screen has no STOP: a session left running behind it
+        // would go on recording unseen.
+        if let Some(rec) = &mut self.rec {
+            let _ = rec.stop(now_ms());
+        }
     }
 
     /// Whether the strip is showing a loaded recording rather than live rows.
@@ -363,7 +368,7 @@ impl RecTab {
                     !recording,
                     egui::DragValue::new(&mut self.interval_s)
                         .speed(1.0)
-                        .range(MIN_INTERVAL_S..=f64::INFINITY)
+                        .range(MIN_INTERVAL_S..=MAX_INTERVAL_S)
                         .fixed_decimals(0)
                         .suffix(" s"),
                 )

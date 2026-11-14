@@ -32,6 +32,8 @@ pub const STRIP_ROWS: i64 = 120;
 pub const COLS: usize = 1024;
 /// The shortest interval between two stored rows.
 pub const MIN_INTERVAL_S: f64 = 1.0;
+/// The longest: a week. Keeps the millisecond arithmetic far from `i64::MAX`.
+pub const MAX_INTERVAL_S: f64 = 7.0 * 86_400.0;
 /// The interval a fresh database starts with.
 pub const DEFAULT_INTERVAL_S: f64 = 10.0;
 /// The file's name in the configuration directory.
@@ -172,6 +174,19 @@ pub struct Recorder {
     active: Option<Active>,
 }
 
+/// Closing the database closes the session being recorded, so the row still
+/// being gathered is written rather than lost at exit or on a reopen.
+impl Drop for Recorder {
+    fn drop(&mut self) {
+        if self.active.is_some() {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as i64);
+            let _ = self.stop(now);
+        }
+    }
+}
+
 impl Recorder {
     /// The file in the configuration directory, made on first use.
     pub fn open_default() -> Result<Self, String> {
@@ -191,6 +206,7 @@ impl Recorder {
         db.execute_batch(
             "PRAGMA auto_vacuum = INCREMENTAL;
              PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
              PRAGMA foreign_keys = ON;
              CREATE TABLE IF NOT EXISTS meta (
                  key   TEXT PRIMARY KEY,
@@ -239,11 +255,11 @@ impl Recorder {
             .flatten()
             .and_then(|v| v.parse::<f64>().ok())
             .filter(|v| v.is_finite())
-            .map_or(DEFAULT_INTERVAL_S, |v| v.max(MIN_INTERVAL_S))
+            .map_or(DEFAULT_INTERVAL_S, |v| v.clamp(MIN_INTERVAL_S, MAX_INTERVAL_S))
     }
 
     pub fn set_interval_s(&self, s: f64) -> rusqlite::Result<()> {
-        let s = if s.is_finite() { s.max(MIN_INTERVAL_S) } else { DEFAULT_INTERVAL_S };
+        let s = if s.is_finite() { s.clamp(MIN_INTERVAL_S, MAX_INTERVAL_S) } else { DEFAULT_INTERVAL_S };
         self.db.execute(
             "INSERT INTO meta (key, value) VALUES ('interval_s', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -278,7 +294,7 @@ impl Recorder {
     ) -> rusqlite::Result<i64> {
         self.stop(now_ms)?;
         let interval_s = if interval_s.is_finite() {
-            interval_s.max(MIN_INTERVAL_S)
+            interval_s.clamp(MIN_INTERVAL_S, MAX_INTERVAL_S)
         } else {
             DEFAULT_INTERVAL_S
         };
