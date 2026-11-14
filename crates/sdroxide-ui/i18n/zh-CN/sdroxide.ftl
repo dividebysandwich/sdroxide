@@ -5971,3 +5971,7 @@ textmodem-psk-coded-hint =
             [one] 个载波
            *[other] 个载波
         }，{ $code }，带宽 { $bw } Hz
+
+topbar-sk-filter-after-nr-hint = SK 位于 RNN/DFNR 之后——因而也在 AGC 之后：滤波器削去的电平不会恢复（见旁边的提升）；关闭：位于恢复电平的 AGC 之前
+topbar-sk-filter-boost-hint = SK 滤波后的提升 0–18 dB（5 dB），在满刻度以下软限幅：NR 之后没有任何环节恢复滤波器削去的电平
+topbar-sk-filter-boost-before-nr = NR 之前由 AGC 恢复电平；提升仅在 NR 之后生效

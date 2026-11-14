@@ -5986,3 +5986,7 @@ textmodem-psk-coded-hint =
             [one] 搬送波
            *[other] 搬送波
         }、{ $code }、帯域幅 { $bw } Hz
+
+topbar-sk-filter-after-nr-hint = SK を RNN/DFNR の後に — つまり AGC の後: フィルターが下げたレベルは戻らない (隣のブースト参照)。オフ: レベルを戻す AGC の前
+topbar-sk-filter-boost-hint = SK フィルター後のブースト 0–18 dB (5 dB)、フルスケール手前でソフトリミット: NR の後ではフィルターが下げたレベルを戻すものがない
+topbar-sk-filter-boost-before-nr = NR の前では AGC がレベルを戻すため、ブーストは NR の後のみ有効

@@ -6037,3 +6037,7 @@ textmodem-psk-coded-hint =
             [one] porteuse
            *[other] porteuses
         }, { $code }, { $bw } Hz de large
+
+topbar-sk-filter-after-nr-hint = SK après RNN/DFNR — et après l'AGC : ce que le filtre retire reste retiré (voir le gain à côté) ; désactivé : avant l'AGC, qui rétablit le niveau
+topbar-sk-filter-boost-hint = Gain après le filtre SK, 0–18 dB (5 dB), limité en douceur sous la pleine échelle : après le NR rien ne rétablit le niveau retiré par le filtre
+topbar-sk-filter-boost-before-nr = Avant le NR l'AGC rétablit le niveau ; le gain n'agit qu'après le NR

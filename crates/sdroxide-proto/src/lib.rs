@@ -1712,7 +1712,10 @@ use sdroxide_types::{
 ///
 /// v208: SDRplay low IF. `SdrPlayConfig` gains `low_if` at its tail, which
 /// changes the layout of every `RadioConfig` sent.
-pub const PROTO_VERSION: u16 = 208;
+///
+/// v209: SK boost. `RxState` gains `sk_filter_boost_db` after
+/// `sk_filter_after_nr`, and `Command::SetSkFilter` gains `boost_db`.
+pub const PROTO_VERSION: u16 = 209;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

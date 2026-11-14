@@ -2193,7 +2193,9 @@ topbar-sk-filter-close-hint = Close: how fast it shuts afterwards; short = less 
 topbar-sk-filter-width = width
 topbar-sk-filter-width-hint = Mask smoothing, ± bins of 47 Hz; wider = less ringing, coarser
 topbar-sk-filter-after-nr = after NR
-topbar-sk-filter-after-nr-hint = SK behind RNN/DFNR instead of ahead of the AGC (variant B)
+topbar-sk-filter-after-nr-hint = SK behind RNN/DFNR — and behind the AGC, so what the filter takes away stays away (see the boost beside it); off: ahead of the AGC, which restores the level
+topbar-sk-filter-boost-hint = Boost after the SK filter, 0–18 dB (5 dB), softly limited under full scale: behind NR nothing restores the level the filter takes
+topbar-sk-filter-boost-before-nr = Ahead of NR the AGC restores the level; the boost applies behind NR only
 topbar-sk-filter-caption = SK POST-FILTER
 topbar-sk-filter-reset-hint = SK back to defaults: τ 0.1 s, open 0.01 s, close 1 s, width ±1, ahead of NR
 topbar-sk-filter-before-nr = ahead of NR

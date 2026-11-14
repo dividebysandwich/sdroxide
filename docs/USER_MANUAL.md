@@ -777,7 +777,12 @@ menu. Ordinary dragging and keyboard adjustment still work.
     curve. It delays the audio by about 21 ms and runs behind the NR engine
     (**after NR**, on to start with), where it takes what RNN or DFNR left and
     lifts the formants they found; with after NR off it runs ahead of HUM and
-    the AGC.
+    the AGC. The place matters even with no NR engine chosen: after NR is
+    also after the AGC. The filter only takes level away, so ahead of the AGC
+    the AGC puts it back, and behind it nothing does — the result can be
+    quiet. The **+dB** field beside after NR lifts it again, 0 to 18 dB
+    (+5 dB to start with), softly limited so a peak stays under full scale; it
+    greys out with after NR off, where the AGC does that job.
   - **FM-DECRACKLE** (NFM only, greyed out in other modes) — a row of its own
     for the crackle of a weak FM signal. Below the FM threshold the noise now
     and then swings the received phase a whole turn round, and a plain

@@ -498,6 +498,7 @@ fn the_nr_filters_survive_a_restart() {
                 close_s: f32::NAN,
                 width: 3,
                 after_nr: false,
+                boost_db: 6.0,
             },
         );
         let _ = wait_for(&h, "USB's HUM and SK on", |s| {
@@ -513,6 +514,7 @@ fn the_nr_filters_survive_a_restart() {
     assert!((s.rx[0].sk_filter_tau_s - 2.0).abs() < 1e-6, "the time constant comes back");
     assert_eq!(s.rx[0].sk_filter_width, 3, "the width comes back");
     assert!(!s.rx[0].sk_filter_after_nr, "the place before NR comes back");
+    assert!((s.rx[0].sk_filter_boost_db - 6.0).abs() < 1e-6, "the SK boost comes back");
     stop(h);
 
     // And another mode keeps its own: LSB never had them switched on.

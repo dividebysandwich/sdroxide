@@ -6038,3 +6038,7 @@ textmodem-psk-coded-hint =
             [one] portadora
            *[other] portadoras
         }, { $code }, { $bw } Hz de largura
+
+topbar-sk-filter-after-nr-hint = SK após RNN/DFNR — e após o AGC: o que o filtro tira não volta (veja o reforço ao lado); desligado: antes do AGC, que repõe o nível
+topbar-sk-filter-boost-hint = Reforço após o filtro SK, 0–18 dB (5 dB), limitado suavemente abaixo do fundo de escala: após o NR nada repõe o nível que o filtro tira
+topbar-sk-filter-boost-before-nr = Antes do NR o AGC repõe o nível; o reforço só age após o NR

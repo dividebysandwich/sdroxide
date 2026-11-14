@@ -6030,3 +6030,7 @@ textmodem-psk-coded-hint =
             [one] draaggolf
            *[other] draaggolven
         }, { $code }, { $bw } Hz breed
+
+topbar-sk-filter-after-nr-hint = SK achter RNN/DFNR — en dus achter de AGC: wat het filter wegneemt blijft weg (zie de boost ernaast); uit: vóór de AGC, die het niveau herstelt
+topbar-sk-filter-boost-hint = Versterking na het SK-filter, 0–18 dB (5 dB), zacht begrensd onder volle schaal: achter NR herstelt niets het niveau dat het filter wegneemt
+topbar-sk-filter-boost-before-nr = Vóór NR herstelt de AGC het niveau; de boost werkt alleen achter NR

@@ -34,6 +34,33 @@
 //      core; at 0.1 s the pauses went from 5.8 to 12.9 dB below the speech.
 
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
+
+/// Where [`boost`]'s soft limiter starts to bend, as a share of full scale.
+const BOOST_KNEE: f32 = 0.7;
+
+/// Raise `audio` by `db`, bending peaks softly under full scale: linear up to
+/// [`BOOST_KNEE`], then a tanh curve towards 1 that never goes past it.
+/// The SK filter only takes level away, and behind NR — behind the AGC —
+/// nothing puts it back; this is the NR menu's SK boost. 0 dB or less leaves
+/// the audio untouched.
+// Why: HDZ 2026-11-13: "beim SK würde ich gerne einen kleinen Lautstärke-
+//      Booster noch dazu haben, weil das Ergebnis sehr leise sein kann".
+pub fn boost(audio: &mut [f32], db: f32) {
+    if db.is_nan() || db <= 0.0 {
+        return;
+    }
+    let g = 10f32.powf(db / 20.0);
+    let room = 1.0 - BOOST_KNEE;
+    for s in audio.iter_mut() {
+        let y = *s * g;
+        let a = y.abs();
+        *s = if a <= BOOST_KNEE {
+            y
+        } else {
+            y.signum() * (BOOST_KNEE + room * ((a - BOOST_KNEE) / room).tanh())
+        };
+    }
+}
 use rustfft::num_complex::Complex32;
 use std::sync::Arc;
 
@@ -431,5 +458,24 @@ mod tests {
         };
         let (narrow, wide) = (step(0), step(8));
         assert!(wide < narrow * 0.5, "width 8 left a step of {wide:.3} against {narrow:.3}");
+    }
+
+    /// The SK boost: 0 dB leaves the audio alone, +6 dB doubles what stays
+    /// under the knee, and a peak driven far over full scale goes no further
+    /// than full scale.
+    #[test]
+    fn boost_raises_and_bends_peaks_under_full_scale() {
+        let mut a = vec![0.1f32, -0.2, 0.3];
+        boost(&mut a, 0.0);
+        assert_eq!(a, vec![0.1, -0.2, 0.3]);
+        let mut b = vec![0.1f32, -0.2];
+        boost(&mut b, 20.0 * 2f32.log10());
+        assert!((b[0] - 0.2).abs() < 1e-6 && (b[1] + 0.4).abs() < 1e-6, "{b:?}");
+        let mut c = vec![0.9f32, -0.9, 0.5];
+        boost(&mut c, 18.0);
+        assert!(c.iter().all(|x| x.abs() <= 1.0), "{c:?}");
+        assert!(c[0] > BOOST_KNEE && c[2] > BOOST_KNEE, "{c:?}");
+        // Gegenprobe: without the limiter +18 dB would put 0.9 at about 7.1.
+        assert!(0.9 * 10f32.powf(18.0 / 20.0) > 7.0);
     }
 }
