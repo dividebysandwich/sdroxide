@@ -3372,6 +3372,8 @@ impl SdroxideApp {
                 &self.midi_out_ports,
                 &self.input.midi_status(),
                 self.input.last_midi,
+                &self.input.tmate2_status(),
+                self.input.last_tmate2.clone(),
             ),
             SettingsTab::Servers => {
                 settings_rigctld_tab(

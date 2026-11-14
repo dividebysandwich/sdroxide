@@ -1,0 +1,36 @@
+[package]
+name = "sdroxide-tmate2"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# The ELAD / WoodBoxRadio TMate 2 USB controller: a big tuning dial, two small
+# dials and six keys under a segment LCD, sold to drive ELAD's own SDR software
+# and supported by SDR Console, SW2 and others.
+#
+# Pure Rust and no system libraries, for the reason `sdroxide-relay` gives: the
+# device is HID, `nusb` cannot claim a HID interface on Windows without
+# replacing its driver, and `hidapi` would want libudev at build time on Linux.
+# Reading reports takes hidraw on Linux and `hid.dll` plus overlapped
+# `ReadFile` on Windows, and nothing else.
+#
+# Native-only. Must never be a dependency of any wasm-targeted crate — the
+# settings UI reaches the vocabulary through `sdroxide-types`, which is
+# wasm-safe.
+[dependencies]
+sdroxide-types.workspace = true
+crossbeam-channel.workspace = true
+tracing.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_IO",
+  "Win32_System_Threading",
+  "Win32_Storage_FileSystem",
+  "Win32_Devices_DeviceAndDriverInstallation",
+] }

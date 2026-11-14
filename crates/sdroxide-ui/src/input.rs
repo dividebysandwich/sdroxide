@@ -71,6 +71,9 @@ pub(crate) enum HeldSource {
     Mouse(usize),
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     Midi(usize),
+    /// A row of `cfg.tmate2.bindings`.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    Tmate2(usize),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -517,6 +520,13 @@ pub struct InputRuntime {
     /// (a step change, say) doesn't tear the connection down.
     #[cfg(not(target_arch = "wasm32"))]
     midi_sent: sdroxide_midi::MidiConfig,
+    /// Last TMate 2 control that moved, shown in the settings dialog.
+    pub last_tmate2: Option<String>,
+    #[cfg(not(target_arch = "wasm32"))]
+    tmate2: Option<sdroxide_tmate2::Tmate2Handle>,
+    /// The enable flag the TMate 2 worker was last told about.
+    #[cfg(not(target_arch = "wasm32"))]
+    tmate2_sent: bool,
 }
 
 impl InputRuntime {
@@ -538,6 +548,13 @@ impl InputRuntime {
             let ctx = ctx.clone();
             (Some(sdroxide_midi::spawn(want.clone(), move || crate::repaint::animate(&ctx))), want)
         };
+        #[cfg(not(target_arch = "wasm32"))]
+        let tmate2 = {
+            let ctx = ctx.clone();
+            sdroxide_tmate2::spawn(cfg.tmate2.enabled, move || crate::repaint::animate(&ctx))
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let tmate2_sent = cfg.tmate2.enabled;
         #[cfg(target_arch = "wasm32")]
         let _ = ctx;
         InputRuntime {
@@ -552,6 +569,11 @@ impl InputRuntime {
             midi,
             #[cfg(not(target_arch = "wasm32"))]
             midi_sent,
+            last_tmate2: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            tmate2: Some(tmate2),
+            #[cfg(not(target_arch = "wasm32"))]
+            tmate2_sent,
         }
     }
 
@@ -587,6 +609,9 @@ impl InputRuntime {
     pub fn discard_midi(&mut self) {
         if let Some(midi) = self.midi.as_mut() {
             let _ = midi.poll();
+        }
+        if let Some(t) = self.tmate2.as_mut() {
+            let _ = t.poll();
         }
     }
 
@@ -701,7 +726,7 @@ impl InputRuntime {
                                 .unwrap_or(true),
                             // MIDI releases arrive as messages, not as polled
                             // state; only the global conditions above end them.
-                            HeldSource::Midi(_) => false,
+                            HeldSource::Midi(_) | HeldSource::Tmate2(_) => false,
                         }
                     })
                     .map(|h| h.src)
@@ -1006,6 +1031,155 @@ impl InputRuntime {
         }
     }
 
+    /// Drain the TMate 2 worker and apply what it produced: dial counts summed
+    /// per binding, so a fast spin is one command per frame, and keys in the
+    /// order they arrived.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn poll_tmate2(
+        &mut self,
+        ctx: &eframe::egui::Context,
+        state: &mut RadioState,
+        ui: &mut UiSink<'_>,
+        cmds: &mut Vec<Command>,
+    ) {
+        use sdroxide_tmate2::Tmate2Event;
+
+        let want = self.cfg.tmate2.enabled;
+        if want != self.tmate2_sent {
+            if let Some(t) = self.tmate2.as_ref() {
+                t.set_enabled(want);
+            }
+            self.tmate2_sent = want;
+        }
+        let Some(t) = self.tmate2.as_mut() else { return };
+        let events = t.poll();
+        if events.is_empty() {
+            return;
+        }
+        let now = ctx.input(|i| i.time);
+
+        let mut deltas: Vec<(usize, f32)> = Vec::new();
+        let mut buttons: Vec<(usize, bool)> = Vec::new();
+        for ev in events {
+            match ev {
+                Tmate2Event::Connected(_) => {}
+                Tmate2Event::Disconnected => self.release_tmate2_holds(state, ui, cmds),
+                Tmate2Event::Dial { control, delta } => {
+                    self.last_tmate2 = Some(format!("{}  {delta:+}", control.label()));
+                    for (ix, b) in self.cfg.tmate2.bindings.iter().enumerate() {
+                        if !b.enabled || b.control != control {
+                            continue;
+                        }
+                        match b.action.kind() {
+                            ActionKind::Continuous => {
+                                match deltas.iter_mut().find(|(i, _)| *i == ix) {
+                                    Some(e) => e.1 += delta as f32,
+                                    None => deltas.push((ix, delta as f32)),
+                                }
+                            }
+                            // A dial bound to a button action fires once per
+                            // report it moves in.
+                            ActionKind::Momentary => buttons.push((ix, true)),
+                        }
+                    }
+                }
+                Tmate2Event::Key { control, down } => {
+                    self.last_tmate2 =
+                        Some(format!("{}  {}", control.label(), if down { "down" } else { "up" }));
+                    for (ix, b) in self.cfg.tmate2.bindings.iter().enumerate() {
+                        if b.enabled
+                            && b.control == control
+                            && b.action.kind() == ActionKind::Momentary
+                        {
+                            buttons.push((ix, down));
+                        }
+                    }
+                }
+            }
+        }
+
+        for (ix, down) in buttons {
+            self.tmate2_button(ix, down, now, state, ui, cmds);
+        }
+        for (ix, counts) in deltas {
+            let Some(b) = self.cfg.tmate2.bindings.get(ix).cloned() else { continue };
+            let d = self.scaled(b.action, &b.tuning, now, counts);
+            let input = ActionInput::Delta { d, step: b.tuning.step };
+            apply_action(b.action, input, b.button_mode, state, ui, cmds);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn tmate2_button(
+        &mut self,
+        ix: usize,
+        down: bool,
+        now: f64,
+        state: &mut RadioState,
+        ui: &mut UiSink<'_>,
+        cmds: &mut Vec<Command>,
+    ) {
+        let Some(b) = self.cfg.tmate2.bindings.get(ix) else { return };
+        let mode =
+            if b.action == Action::CwStraight { ButtonMode::Momentary } else { b.button_mode };
+        let action = b.action;
+        let src = HeldSource::Tmate2(ix);
+        if down {
+            self.press(src, action, mode, now);
+        } else if self.release(src).is_none()
+            && mode == ButtonMode::Momentary
+            && !matches!(action, Action::Ptt | Action::TuneCarrier)
+        {
+            // Nothing was held: a hold whose press was already undone (focus
+            // loss, timeout). Except for PTT and TUNE, whose key-up is sent
+            // regardless, as MIDI's is: unkeying twice costs nothing.
+            return;
+        }
+        if action == Action::Ptt {
+            tracing::info!(binding = ix, down, ?mode, "TMate 2 PTT");
+        }
+        let sample = if down { ActionInput::Press } else { ActionInput::Release };
+        apply_action(action, sample, mode, state, ui, cmds);
+    }
+
+    /// Release everything the TMate 2 was holding — it was unplugged, or
+    /// turned off, and can no longer send the key-up itself.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn release_tmate2_holds(
+        &mut self,
+        state: &mut RadioState,
+        ui: &mut UiSink<'_>,
+        cmds: &mut Vec<Command>,
+    ) {
+        let stale: Vec<HeldSource> = self
+            .held
+            .iter()
+            .filter(|h| matches!(h.src, HeldSource::Tmate2(_)))
+            .map(|h| h.src)
+            .collect();
+        for src in stale {
+            if let Some(action) = self.release(src) {
+                apply_action(action, ActionInput::Release, ButtonMode::Momentary, state, ui, cmds);
+            }
+        }
+    }
+
+    /// Live TMate 2 connection state, for the settings dialog.
+    pub fn tmate2_status(&self) -> Tmate2StatusView {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let s = self.tmate2.as_ref().map(|t| t.status()).unwrap_or_default();
+            Tmate2StatusView {
+                supported: sdroxide_tmate2::SUPPORTED,
+                connected: s.connected,
+                device: s.device,
+                error: s.error,
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        Tmate2StatusView::default()
+    }
+
     /// Live MIDI connection state, for the settings dialog.
     pub fn midi_status(&self) -> MidiStatusView {
         #[cfg(not(target_arch = "wasm32"))]
@@ -1049,8 +1223,21 @@ impl InputRuntime {
             HeldSource::Midi(ix) => {
                 self.cfg.midi.bindings.get(ix).map(|b| (b.action, b.button_mode))
             }
+            HeldSource::Tmate2(ix) => {
+                self.cfg.tmate2.bindings.get(ix).map(|b| (b.action, b.button_mode))
+            }
         }
     }
+}
+
+/// TMate 2 connection state as the settings dialog needs it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Tmate2StatusView {
+    /// False on wasm and on platforms without a HID backend for it.
+    pub supported: bool,
+    pub connected: bool,
+    pub device: String,
+    pub error: Option<String>,
 }
 
 /// A MIDI port as the settings dialog lists it: the stable id it reconnects
@@ -1409,6 +1596,9 @@ mod tests {
             last_midi: None,
             midi: None,
             midi_sent: Default::default(),
+            last_tmate2: None,
+            tmate2: None,
+            tmate2_sent: false,
         };
         runtime.cfg.midi.bindings.push(sdroxide_types::MidiBinding {
             action: Action::Ptt,
@@ -1427,6 +1617,47 @@ mod tests {
         state.tx.ptt = true;
         runtime.midi_button(0, false, 1.0, &mut state, &mut ui, &mut cmds);
         assert_eq!(cmds, vec![Command::SetPtt(false)]);
+    }
+
+    /// A TMate 2 key held for PTT keys and unkeys the rig, and pulling the
+    /// controller out while it is held unkeys it too.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn tmate2_ptt_is_released_when_the_controller_goes_away() {
+        let mut runtime = InputRuntime {
+            cfg: InputSettings::default(),
+            held: Vec::new(),
+            accum: HashMap::new(),
+            key_capture: None,
+            midi_learn: None,
+            learn_values: Vec::new(),
+            last_midi: None,
+            midi: None,
+            midi_sent: Default::default(),
+            last_tmate2: None,
+            tmate2: None,
+            tmate2_sent: false,
+        };
+        runtime.cfg.tmate2.bindings = vec![sdroxide_types::Tmate2Binding {
+            control: sdroxide_types::Tmate2Control::F6,
+            action: Action::Ptt,
+            button_mode: ButtonMode::Momentary,
+            ..Default::default()
+        }];
+        let mut state = RadioState::default();
+        let mut view = ViewState::default();
+        let mut flags = [false; 6];
+        let mut speech_acts = Vec::new();
+        let mut ui = sink(&mut view, &mut flags, &mut speech_acts);
+        let mut cmds = Vec::new();
+        runtime.tmate2_button(0, true, 0.0, &mut state, &mut ui, &mut cmds);
+        assert_eq!(cmds, vec![Command::SetPtt(true)]);
+        assert!(runtime.any_held());
+        cmds.clear();
+        state.tx.ptt = true;
+        runtime.release_tmate2_holds(&mut state, &mut ui, &mut cmds);
+        assert_eq!(cmds, vec![Command::SetPtt(false)]);
+        assert!(!runtime.any_held());
     }
 
     /// One-shots must not fire twice for one physical press.

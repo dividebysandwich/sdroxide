@@ -180,7 +180,7 @@ pub use ibp::{
 pub use input::{
     Action, ActionInput, ActionKind, BindingTuning, ButtonMode, InputSettings, KeyBinding,
     KeyChord, MidiBinding, MidiMsg, MidiMsgKind, MidiSettings, MouseButton, MouseButtonBinding,
-    RelativeMode, WheelAction, WheelSettings,
+    RelativeMode, Tmate2Binding, Tmate2Control, Tmate2Settings, WheelAction, WheelSettings,
 };
 pub use ism::{
     ISM_MAX_DEVICES_DEFAULT, ISM_THRESHOLD_DB_DEFAULT, IsmBurstClass, IsmChannelStatus, IsmFamily,

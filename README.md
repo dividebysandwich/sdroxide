@@ -1104,6 +1104,13 @@ Space, and a held PTT is released on key-up, on window focus loss, on a text
 field taking the keyboard, when the controller is unplugged, and after a
 configurable timeout.
 
+The **ELAD / WoodBoxRadio TMate 2** USB controller is supported directly, with
+no ELAD software or DLL: enable it under **Controls → ELAD TMate 2** and it is
+found by itself when plugged in. The main dial tunes, E1 and E2 drive volume and
+filter width, and the dial pushes and F1–F6 are bindable to any action. Windows
+and Linux; on Linux install `packaging/linux/60-sdroxide-tmate2.rules` so it can
+be opened without root. The LCD is not driven yet.
+
 Bindings are stored with the *user interface*, not the engine, so a knob plugged
 into your laptop works against a remote radio over `--connect` too.
 

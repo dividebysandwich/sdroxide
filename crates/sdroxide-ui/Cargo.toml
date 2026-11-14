@@ -126,6 +126,9 @@ sdroxide-dsp = { path = "../sdroxide-dsp" }
 # MIDI control surfaces (VFO knob, PTT button, faders). Native-only: it links
 # the host MIDI stack, so it must never reach the wasm dependency path.
 sdroxide-midi.workspace = true
+# The ELAD / WoodBoxRadio TMate 2 USB controller. Native-only, for the same
+# reason: it opens a HID device.
+sdroxide-tmate2.workspace = true
 # Drives the one-shot adapter probe in `wgpu_options` to completion. wgpu's
 # enumeration is a future for the browser's sake only, and this is the executor
 # wgpu and eframe already pull in, so it adds no build time.

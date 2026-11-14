@@ -59,6 +59,8 @@ pub(in crate::app) fn settings_controls_tab(
     midi_out: &[(String, String)],
     midi_status: &crate::input::MidiStatusView,
     last_midi: Option<(sdroxide_types::MidiMsg, u8)>,
+    tmate2_status: &crate::input::Tmate2StatusView,
+    last_tmate2: Option<String>,
 ) {
     use sdroxide_types::{
         Action, ActionKind, ButtonMode, KeyBinding, MouseButton, MouseButtonBinding, WheelAction,
@@ -315,6 +317,144 @@ pub(in crate::app) fn settings_controls_tab(
         midi_status,
         last_midi,
     );
+
+    ui.add_space(10.0);
+    ui.separator();
+    ui.add_space(6.0);
+    settings_tmate2_section(ui, cfg, memories, tmate2_status, last_tmate2);
+}
+
+/// The ELAD / WoodBoxRadio TMate 2: an enable switch, the connection state,
+/// a readout of the control that last moved, and one row per binding. The
+/// controls are fixed, so a row picks one from a list instead of learning it.
+fn settings_tmate2_section(
+    ui: &mut egui::Ui,
+    cfg: &mut sdroxide_types::InputSettings,
+    memories: &[MemoryChannel],
+    status: &crate::input::Tmate2StatusView,
+    last: Option<String>,
+) {
+    use sdroxide_types::{ActionKind, ButtonMode, Tmate2Binding, Tmate2Control};
+
+    ui.label(
+        RichText::new(tr!("settings-controls-tmate2"))
+            .size(14.0)
+            .strong()
+            .color(crate::theme::CYAN()),
+    );
+    ui.add_space(4.0);
+    if !status.supported {
+        ui.label(RichText::new(tr!("settings-controls-tmate2-unsupported")).weak());
+        return;
+    }
+    ui.label(RichText::new(tr!("settings-controls-tmate2-intro")).weak());
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        crate::chrome::checkbox(ui, &mut cfg.tmate2.enabled, tr!("settings-controls-enable"));
+        if !cfg.tmate2.enabled {
+            return;
+        }
+        if status.connected {
+            ui.label(
+                RichText::new(format!("● {}", status.device))
+                    .color(Color32::from_rgb(90, 200, 110)),
+            );
+        } else if let Some(e) = &status.error {
+            ui.label(RichText::new(e).color(Color32::from_rgb(230, 90, 80)));
+        } else {
+            ui.label(RichText::new(tr!("settings-controls-not-connected")).weak());
+        }
+    });
+    if cfg.tmate2.enabled {
+        ui.add_space(4.0);
+        match last {
+            Some(l) => ui.label(RichText::new(l).monospace().weak()),
+            None => ui.label(RichText::new(tr!("settings-controls-move-control-see-here")).weak()),
+        };
+    }
+
+    ui.add_space(8.0);
+    let mut remove: Option<usize> = None;
+    egui::Grid::new("tmate2-grid").num_columns(5).spacing([10.0, 6.0]).striped(true).show(
+        ui,
+        |ui| {
+            ui.label(RichText::new(tr!("settings-controls-control")).small().weak());
+            ui.label(RichText::new(tr!("settings-controls-does")).small().weak());
+            ui.label(RichText::new(tr!("settings-controls-step-mode")).small().weak());
+            ui.label(RichText::new(tr!("settings-controls-on")).small().weak());
+            ui.label("");
+            ui.end_row();
+
+            for (i, b) in cfg.tmate2.bindings.iter_mut().enumerate() {
+                ComboBox::from_id_salt(("tm2ctl", i))
+                    .width(130.0)
+                    .selected_text(b.control.label())
+                    .show_styled(ui, |ui| {
+                        for c in Tmate2Control::ALL {
+                            if ui.selectable_label(b.control == c, c.label()).clicked() {
+                                b.control = c;
+                            }
+                        }
+                    });
+
+                if action_combo(ui, ("tm2act", i), &mut b.action, memories) {
+                    b.tuning.step = b.action.default_step();
+                }
+
+                match b.action.kind() {
+                    ActionKind::Continuous => {
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut b.tuning.step)
+                                    .speed(1.0)
+                                    .range(0.0001..=1_000_000.0),
+                            );
+                            ui.add(
+                                egui::DragValue::new(&mut b.tuning.accel)
+                                    .speed(0.05)
+                                    .range(0.0..=4.0)
+                                    .prefix("×"),
+                            )
+                            .on_hover_text(tr!(
+                                "settings-controls-speed-sensitivity-spin-faster-tune"
+                            ));
+                            crate::chrome::checkbox(ui, &mut b.tuning.invert, "rev");
+                        });
+                    }
+                    ActionKind::Momentary => {
+                        ui.horizontal(|ui| {
+                            for m in ButtonMode::ALL {
+                                if crate::chrome::chip(ui, b.button_mode == m, m.tr()).clicked() {
+                                    b.button_mode = m;
+                                }
+                            }
+                        });
+                    }
+                }
+
+                crate::chrome::checkbox(ui, &mut b.enabled, "");
+                if ui.small_button("✕").clicked() {
+                    remove = Some(i);
+                }
+                ui.end_row();
+            }
+        },
+    );
+    if let Some(i) = remove {
+        cfg.tmate2.bindings.remove(i);
+    }
+
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        if crate::chrome::chip(ui, false, tr!("settings-controls-tmate2-add")).clicked() {
+            cfg.tmate2.bindings.push(Tmate2Binding::default());
+        }
+        if crate::chrome::chip(ui, false, tr!("settings-controls-tmate2-defaults")).clicked() {
+            cfg.tmate2.bindings = Tmate2Binding::defaults();
+        }
+    });
+    ui.add_space(8.0);
+    ui.label(RichText::new(tr!("settings-controls-tmate2-help")).weak());
 }
 
 /// MIDI control surfaces: port selection, a live message readout, and the

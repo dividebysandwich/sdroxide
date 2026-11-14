@@ -870,6 +870,150 @@ pub struct MidiSettings {
     pub bindings: Vec<MidiBinding>,
 }
 
+/// One physical control on an ELAD / WoodBoxRadio TMate 2.
+///
+/// The three dials are endless encoders with a push switch each; F1–F6 are the
+/// six keys under the display. Names follow the panel: the big knob is the
+/// main dial, the two small ones are printed E1 (left) and E2 (right).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Tmate2Control {
+    MainDial,
+    E1Dial,
+    E2Dial,
+    MainPush,
+    E1Push,
+    E2Push,
+    F1,
+    F2,
+    F3,
+    F4,
+    F5,
+    F6,
+}
+
+impl Tmate2Control {
+    pub const ALL: [Tmate2Control; 12] = [
+        Tmate2Control::MainDial,
+        Tmate2Control::E1Dial,
+        Tmate2Control::E2Dial,
+        Tmate2Control::MainPush,
+        Tmate2Control::E1Push,
+        Tmate2Control::E2Push,
+        Tmate2Control::F1,
+        Tmate2Control::F2,
+        Tmate2Control::F3,
+        Tmate2Control::F4,
+        Tmate2Control::F5,
+        Tmate2Control::F6,
+    ];
+
+    /// Whether this control turns (and so sends a step count) rather than
+    /// being pressed.
+    pub fn is_dial(self) -> bool {
+        matches!(self, Tmate2Control::MainDial | Tmate2Control::E1Dial | Tmate2Control::E2Dial)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Tmate2Control::MainDial => "Main dial",
+            Tmate2Control::E1Dial => "E1 dial",
+            Tmate2Control::E2Dial => "E2 dial",
+            Tmate2Control::MainPush => "Main dial push",
+            Tmate2Control::E1Push => "E1 push",
+            Tmate2Control::E2Push => "E2 push",
+            Tmate2Control::F1 => "F1",
+            Tmate2Control::F2 => "F2",
+            Tmate2Control::F3 => "F3",
+            Tmate2Control::F4 => "F4",
+            Tmate2Control::F5 => "F5",
+            Tmate2Control::F6 => "F6",
+        }
+    }
+}
+
+/// What one TMate 2 control does. Several rows may name the same control.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Tmate2Binding {
+    pub control: Tmate2Control,
+    pub action: Action,
+    pub tuning: BindingTuning,
+    pub button_mode: ButtonMode,
+    pub enabled: bool,
+}
+
+impl Default for Tmate2Binding {
+    fn default() -> Self {
+        Tmate2Binding {
+            control: Tmate2Control::MainDial,
+            action: Action::Tune,
+            tuning: BindingTuning::with_step(Action::Tune.default_step()),
+            button_mode: ButtonMode::Toggle,
+            enabled: true,
+        }
+    }
+}
+
+impl Tmate2Binding {
+    fn dial(control: Tmate2Control, action: Action, step: f32) -> Self {
+        Tmate2Binding {
+            control,
+            action,
+            tuning: BindingTuning::with_step(step),
+            ..Tmate2Binding::default()
+        }
+    }
+
+    fn button(control: Tmate2Control, action: Action) -> Self {
+        Tmate2Binding {
+            control,
+            action,
+            tuning: BindingTuning::with_step(action.default_step()),
+            button_mode: ButtonMode::Toggle,
+            enabled: true,
+        }
+    }
+
+    /// What a TMate 2 does out of the box: tune on the main dial, volume and
+    /// filter width on the small ones, and band, mode and receiver toggles on
+    /// the keys. Push-to-talk is left unbound, as it is for every other input.
+    ///
+    /// The main dial's step is small because the TMate 2 accelerates in
+    /// hardware: a slow turn counts 1 per detent and a fast spin 5 or 10, so a
+    /// 10 Hz step still covers a band quickly.
+    pub fn defaults() -> Vec<Tmate2Binding> {
+        use Tmate2Control::*;
+        vec![
+            Tmate2Binding::dial(MainDial, Action::Tune, 10.0),
+            Tmate2Binding::dial(E1Dial, Action::Volume, Action::Volume.default_step()),
+            Tmate2Binding::dial(E2Dial, Action::FilterWidth, Action::FilterWidth.default_step()),
+            Tmate2Binding::button(MainPush, Action::VfoToggle),
+            Tmate2Binding::button(E1Push, Action::Mute),
+            Tmate2Binding::button(E2Push, Action::NoiseReductionCycle),
+            Tmate2Binding::button(F1, Action::BandDown),
+            Tmate2Binding::button(F2, Action::BandUp),
+            Tmate2Binding::button(F3, Action::ModePrev),
+            Tmate2Binding::button(F4, Action::ModeNext),
+            Tmate2Binding::button(F5, Action::AgcCycle),
+            Tmate2Binding::button(F6, Action::NoiseBlanker),
+        ]
+    }
+}
+
+/// The ELAD / WoodBoxRadio TMate 2 USB controller.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Tmate2Settings {
+    pub enabled: bool,
+    pub bindings: Vec<Tmate2Binding>,
+}
+
+impl Default for Tmate2Settings {
+    fn default() -> Self {
+        Tmate2Settings { enabled: false, bindings: Tmate2Binding::defaults() }
+    }
+}
+
 /// Everything client-local input control needs.
 ///
 /// Persisted as `input.json` on native and in eframe storage on wasm. It lives
@@ -885,6 +1029,9 @@ pub struct InputSettings {
     /// stuck-controller backstop. 0 disables the timeout.
     pub ptt_hold_timeout_s: f32,
     pub midi: MidiSettings,
+    /// The TMate 2 controller. Absent from files written before it existed,
+    /// which then read as disabled with the shipped bindings.
+    pub tmate2: Tmate2Settings,
     /// Which set of shipped defaults this file has already seen. See
     /// [`InputSettings::SCHEMA`] and [`InputSettings::migrate`].
     ///
@@ -911,6 +1058,7 @@ impl Default for InputSettings {
             mouse_buttons: Vec::new(),
             ptt_hold_timeout_s: 300.0,
             midi: MidiSettings::default(),
+            tmate2: Tmate2Settings::default(),
             schema: InputSettings::SCHEMA,
         }
     }

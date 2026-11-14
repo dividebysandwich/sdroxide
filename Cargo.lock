@@ -6072,6 +6072,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdroxide-tmate2"
+version = "1.7.3"
+dependencies = [
+ "crossbeam-channel",
+ "libc",
+ "sdroxide-types",
+ "tracing",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "sdroxide-tnc"
 version = "1.7.3"
 dependencies = [
@@ -6119,6 +6130,7 @@ dependencies = [
  "sdroxide-proto",
  "sdroxide-solar",
  "sdroxide-speech",
+ "sdroxide-tmate2",
  "sdroxide-types",
  "sdroxide-version",
  "serde",

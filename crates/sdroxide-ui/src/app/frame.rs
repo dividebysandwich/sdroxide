@@ -2370,6 +2370,8 @@ impl SdroxideApp {
         input.poll_pointer_and_keys(ctx, state, &mut sink, cmds);
         #[cfg(not(target_arch = "wasm32"))]
         input.poll_midi(ctx, state, &mut sink, cmds);
+        #[cfg(not(target_arch = "wasm32"))]
+        input.poll_tmate2(ctx, state, &mut sink, cmds);
         drop(sink);
         for act in speech_acts {
             self.apply_speech_action(act, now);
