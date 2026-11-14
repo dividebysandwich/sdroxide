@@ -362,6 +362,14 @@ pub struct DeviceCaps {
     /// its number.
     #[serde(default)]
     pub has_atu: bool,
+    /// What [`Self::has_rx_antenna`] switches is not a receiving antenna but
+    /// the radio's low-power *transverter* port — an ELAD FDM-DUO's 0 dBm RF
+    /// OUT (`TT`), which takes transmit away from the PA. The panel calls it
+    /// XVTR, moves receive to the RX-only socket with it, and the engine
+    /// refuses it mid-over. Claimed by the family, not learned. Appended last,
+    /// so every field already on the wire keeps its number.
+    #[serde(default)]
+    pub rx_antenna_is_xvtr: bool,
 }
 
 impl DeviceCaps {

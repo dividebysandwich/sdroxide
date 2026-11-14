@@ -425,6 +425,14 @@ pub trait IqSource: Send {
     fn tx_drive_ceiling(&self) -> Option<f32> {
         None
     }
+    /// Whether the station wants the radio's low-power transverter port in use
+    /// on the band the dial is in — a Transverters row that says so. The engine
+    /// follows it between overs on a radio that has such a port (an ELAD
+    /// FDM-DUO's `TT`), and only on a change, so a port the operator set by
+    /// hand on a band no row covers is left alone.
+    fn transverter_port(&self) -> bool {
+        false
+    }
     /// Tell the source where the *dial* is, when that is not where the hardware
     /// is tuned.
     ///
@@ -1058,6 +1066,7 @@ impl ConvertedSource {
                 rx_offset_hz: offset_hz,
                 tx_offset_hz,
                 tx_drive: None,
+                rf_out: false,
             }),
         )
     }
@@ -1123,6 +1132,10 @@ pub struct ConverterStep {
     /// A ceiling on transmit drive while this step is selected, 0.0–1.0.
     /// `None` is no ceiling — the radio's own bands.
     pub tx_drive: Option<f32>,
+    /// Whether the radio sends its transmit out of a low-power transverter
+    /// port while this step is selected — the ELAD FDM-DUO's 0 dBm RF OUT
+    /// (`TT1`). See [`IqSource::transverter_port`].
+    pub rf_out: bool,
 }
 
 impl ConverterStep {
@@ -1132,6 +1145,7 @@ impl ConverterStep {
         self.rx_offset_hz == 0.0
             && self.tx_offset_hz == Some(0.0)
             && self.tx_drive.is_none()
+            && !self.rf_out
             && self.band.is_none()
     }
 
@@ -1446,6 +1460,10 @@ impl IqSource for ConvertedSource {
     /// The ceiling the selected transverter puts on transmit drive.
     fn tx_drive_ceiling(&self) -> Option<f32> {
         self.step.tx_drive
+    }
+
+    fn transverter_port(&self) -> bool {
+        self.step.rf_out
     }
 
     fn describe(&self) -> String {

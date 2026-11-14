@@ -48,6 +48,11 @@ const LINK_GAP: f32 = 4.0;
 /// What the RIG box's receiving-antenna chip says, in the one place the width
 /// measurement and the chip itself both read it from.
 const RX_ANT_LABEL: &str = "RX ANT";
+/// What the same chip says on an ELAD FDM-DUO, where the extra port is the
+/// 0 dBm RF OUT for a transverter rather than a receiving antenna.
+const XVTR_LABEL: &str = "XVTR";
+/// The ELAD receive socket a transverter's IF comes back on.
+const XVTR_RX_SOCKET: &str = "RX only";
 /// What the RIG box's antenna-tuner chips say, read by the width measurement
 /// and the chips alike. The tune chip wears the second while a tune runs, so
 /// the box is measured against the wider of the two.
@@ -4574,6 +4579,65 @@ impl SdroxideApp {
         }
     }
 
+    /// Whether the radio's "receiving antenna" flag is really its transverter
+    /// port, as on an ELAD FDM-DUO — see [`Self::xvtr_chip`].
+    fn rx_ant_is_xvtr(&self) -> bool {
+        self.caps.as_ref().is_some_and(|c| c.rx_antenna_is_xvtr)
+    }
+
+    /// The label the extra-port chip wears on this radio.
+    fn rx_ant_label(&self) -> &'static str {
+        if self.rx_ant_is_xvtr() { XVTR_LABEL } else { RX_ANT_LABEL }
+    }
+
+    /// The FDM-DUO's transverter port. Lit — in the warning colour, because
+    /// the PA is then out of circuit and HF has no power — while the rig sends
+    /// its transmit out of the 0 dBm RF OUT SMA (`TT1`).
+    ///
+    /// Lighting it also moves receive to the RX-only socket, where the
+    /// transverter's IF comes back, so the 5 W path is never on the
+    /// transverter; putting it out returns transmit to the PA and the receiver
+    /// to the socket it was on before. The engine refuses either while keyed.
+    fn xvtr_chip(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, on: bool, ants: &[String]) {
+        let clicked = crate::chrome::chip_accent(
+            ui,
+            on,
+            XVTR_LABEL,
+            crate::theme::YELLOW(),
+            crate::theme::INK_ON_BRIGHT(),
+        )
+        .on_hover_text(tr!("topbar-elad-xvtr"))
+        .clicked();
+        if !clicked {
+            return;
+        }
+        // Mid-over the engine refuses the switch and says why; the receive
+        // socket must not move on its own either.
+        if self.state.tx.ptt || self.state.tx.tune {
+            cmds.push(Command::SetRxAntenna(!on));
+            return;
+        }
+        let rx_only = ants.iter().any(|a| a == XVTR_RX_SOCKET);
+        if !on {
+            if rx_only && self.state.antenna_rx != XVTR_RX_SOCKET {
+                self.xvtr_prev_ant = Some(self.state.antenna_rx.clone());
+                self.state.antenna_rx = XVTR_RX_SOCKET.to_string(); // optimistic echo
+                cmds.push(Command::SetAntenna { dir: Direction::Rx, name: XVTR_RX_SOCKET.into() });
+            }
+            self.state.rx_antenna = true;
+            cmds.push(Command::SetRxAntenna(true));
+        } else {
+            self.state.rx_antenna = false;
+            cmds.push(Command::SetRxAntenna(false));
+            if let Some(prev) = self.xvtr_prev_ant.take()
+                && ants.contains(&prev)
+            {
+                self.state.antenna_rx = prev.clone();
+                cmds.push(Command::SetAntenna { dir: Direction::Rx, name: prev });
+            }
+        }
+    }
+
     /// Whether the radio's own power switch can be reached from here.
     fn rig_power(&self) -> bool {
         self.caps.as_ref().is_some_and(|c| c.commands_rig_power)
@@ -4641,7 +4705,7 @@ impl SdroxideApp {
             top += gap + widest;
         }
         if self.rig_rx_antenna().is_some() {
-            top += gap + crate::chrome::chip_width(ui, RX_ANT_LABEL, None);
+            top += gap + crate::chrome::chip_width(ui, self.rx_ant_label(), None);
         }
         if top > 0.0 {
             top += crate::chrome::text_width(ui, "ANT", body.clone());
@@ -4740,13 +4804,16 @@ impl SdroxideApp {
                 // it is — an extra input switched into the receive path, with
                 // the main aerial left on transmit throughout. Lit while it is
                 // in circuit, like every other chip that names a state.
-                if let Some(on) = rx_ant
-                    && crate::chrome::chip(ui, on, RX_ANT_LABEL)
+                if let Some(on) = rx_ant {
+                    if self.rx_ant_is_xvtr() {
+                        self.xvtr_chip(ui, cmds, on, &ants);
+                    } else if crate::chrome::chip(ui, on, RX_ANT_LABEL)
                         .on_hover_text(tr!("topbar-radio-s-separate-receiving-antenna"))
                         .clicked()
-                {
-                    self.state.rx_antenna = !on; // optimistic echo
-                    cmds.push(Command::SetRxAntenna(!on));
+                    {
+                        self.state.rx_antenna = !on; // optimistic echo
+                        cmds.push(Command::SetRxAntenna(!on));
+                    }
                 }
                 if let Some(atu) = self.rig_atu()
                     && self.atu_in_ant_row()

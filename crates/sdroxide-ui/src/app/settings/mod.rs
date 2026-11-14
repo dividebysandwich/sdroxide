@@ -458,17 +458,28 @@ fn transverter_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
     ui.add_space(6.0);
 
     let mut remove: Option<usize> = None;
-    egui::Grid::new("xvtr-grid").num_columns(8).spacing([10.0, 6.0]).striped(true).show(ui, |ui| {
-        for h in [
-            "",
-            &tr!("settings-name"),
-            &tr!("settings-band-low"),
-            &tr!("settings-band-high"),
-            &tr!("settings-offset"),
-            &tr!("settings-transmit"),
-            &tr!("settings-max-drive"),
-            "",
-        ] {
+    // An ELAD FDM-DUO can send its transmit out of a 0 dBm port meant for
+    // exactly this, so each row says whether it should.
+    let elad = cfg.backend == sdroxide_types::Backend::Elad
+        || (cfg.backend == sdroxide_types::Backend::Cat
+            && cfg.cat.family == sdroxide_types::CatFamily::Elad);
+    let cols = if elad { 9 } else { 8 };
+    let grid = egui::Grid::new("xvtr-grid").num_columns(cols).spacing([10.0, 6.0]).striped(true);
+    grid.show(ui, |ui| {
+        let mut heads: Vec<String> = vec![
+            String::new(),
+            tr!("settings-name").to_string(),
+            tr!("settings-band-low").to_string(),
+            tr!("settings-band-high").to_string(),
+            tr!("settings-offset").to_string(),
+            tr!("settings-transmit").to_string(),
+            tr!("settings-max-drive").to_string(),
+        ];
+        if elad {
+            heads.push(tr!("settings-xvtr-rf-out").to_string());
+        }
+        heads.push(String::new());
+        for h in heads {
             ui.label(RichText::new(h).weak().size(10.0));
         }
         ui.end_row();
@@ -520,6 +531,10 @@ fn transverter_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
                     .suffix(" %"),
             )
             .on_hover_text(tr!("settings-ceiling-transmit-drive-while-transverter"));
+            if elad {
+                crate::chrome::checkbox(ui, &mut x.elad_rf_out, "")
+                    .on_hover_text(tr!("settings-xvtr-rf-out-hover"));
+            }
             if crate::chrome::chip(ui, false, tr!("settings-remove")).clicked() {
                 remove = Some(i);
             }

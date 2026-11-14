@@ -900,6 +900,7 @@ fn a_transverter_table_gives_each_band_its_own_offset() {
             rx_offset_hz: -22_000_000.0,
             tx_offset_hz: Some(-22_000_000.0),
             tx_drive: Some(0.05),
+            rf_out: false,
         },
         // 2 m into the same I.F.: 28 − 144 = −116.
         ConverterStep {
@@ -907,6 +908,7 @@ fn a_transverter_table_gives_each_band_its_own_offset() {
             rx_offset_hz: -116_000_000.0,
             tx_offset_hz: Some(-116_000_000.0),
             tx_drive: Some(0.02),
+            rf_out: false,
         },
     ]);
 
@@ -964,12 +966,14 @@ fn moving_between_transverters_retunes_the_same_radio() {
             rx_offset_hz: -22_000_000.0,
             tx_offset_hz: Some(-22_000_000.0),
             tx_drive: Some(0.05),
+            rf_out: false,
         },
         ConverterStep {
             band: Some((144_000_000.0, 148_000_000.0)),
             rx_offset_hz: -116_000_000.0,
             tx_offset_hz: Some(-116_000_000.0),
             tx_drive: Some(0.02),
+            rf_out: false,
         },
     ]);
     let mut source = ConvertedSource::with_plan(Box::new(inner), plan);
@@ -990,6 +994,43 @@ fn moving_between_transverters_retunes_the_same_radio() {
     assert_eq!(source.tx_drive_ceiling(), None);
 }
 
+/// A row that asks for the radio's low-power transverter port (an ELAD
+/// FDM-DUO's 0 dBm RF OUT) asks for it only while the dial is in its band; the
+/// radio's own bands and a row that does not ask leave the port alone.
+#[test]
+fn the_transverter_port_is_wanted_only_inside_a_row_that_asks_for_it() {
+    use sdroxide_radio::{ConverterPlan, ConverterStep};
+
+    let plan = ConverterPlan::from_steps([
+        ConverterStep {
+            band: Some((50_000_000.0, 54_000_000.0)),
+            rx_offset_hz: -22_000_000.0,
+            tx_offset_hz: Some(-22_000_000.0),
+            tx_drive: Some(0.05),
+            rf_out: false,
+        },
+        ConverterStep {
+            band: Some((144_000_000.0, 148_000_000.0)),
+            rx_offset_hz: -116_000_000.0,
+            tx_offset_hz: Some(-116_000_000.0),
+            tx_drive: Some(1.0),
+            rf_out: true,
+        },
+    ]);
+    let mut source = ConvertedSource::with_plan(Box::new(Hardware::new(14_200_000.0)), plan);
+    assert!(!source.transverter_port(), "HF is the PA");
+
+    source.set_center_hz(144_300_000.0).expect("2 m");
+    assert!(source.transverter_port(), "2 m goes out of RF OUT");
+
+    source.set_center_hz(50_150_000.0).expect("6 m");
+    assert!(!source.transverter_port(), "a row that does not ask leaves it");
+
+    source.set_center_hz(144_300_000.0).expect("2 m");
+    source.set_center_hz(14_200_000.0).expect("20 m");
+    assert!(!source.transverter_port(), "leaving the band hands back the PA");
+}
+
 /// A radio opened on a transverter's I.F. has to come up on the *band*, not on
 /// the I.F.: the engine reads `center_hz()` before it has commanded anything,
 /// and a source that answered 28 MHz would put the dial there.
@@ -1002,6 +1043,7 @@ fn a_source_opened_on_an_intermediate_frequency_comes_up_on_the_band() {
         rx_offset_hz: -116_000_000.0,
         tx_offset_hz: Some(-116_000_000.0),
         tx_drive: Some(0.02),
+        rf_out: false,
     }]);
     // Opened where `converter_open_hz` would have put it for a 144.300 dial.
     let hw = Hardware::new(28_300_000.0);
@@ -1031,12 +1073,14 @@ fn opening_a_shared_if_uses_the_requested_band_and_keeps_direct_hf() {
             rx_offset_hz: -22_000_000.0,
             tx_offset_hz: Some(-22_000_000.0),
             tx_drive: Some(0.05),
+            rf_out: false,
         },
         ConverterStep {
             band: Some((144_000_000.0, 148_000_000.0)),
             rx_offset_hz: -116_000_000.0,
             tx_offset_hz: Some(-116_000_000.0),
             tx_drive: Some(0.02),
+            rf_out: false,
         },
     ]);
 
@@ -1075,12 +1119,14 @@ fn linking_a_radio_with_shared_if_preserves_the_saved_two_meter_dial() {
             rx_offset_hz: -22_000_000.0,
             tx_offset_hz: Some(-22_000_000.0),
             tx_drive: Some(0.05),
+            rf_out: false,
         },
         ConverterStep {
             band: Some((144_000_000.0, 148_000_000.0)),
             rx_offset_hz: -116_000_000.0,
             tx_offset_hz: Some(-116_000_000.0),
             tx_drive: Some(0.02),
+            rf_out: false,
         },
     ]);
     let saved_dial = 144_191_530.0;

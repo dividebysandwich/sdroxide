@@ -949,6 +949,7 @@ fn probe_caps(dev: &soapysdr::Device) -> Result<DeviceCaps> {
         has_rx_antenna: false,
         agc_off_unavailable: false,
         has_atu: false,
+        rx_antenna_is_xvtr: false,
         wide_span_hz: 0.0,
         // A SoapySDR device may well have two coherent receivers; nothing in
         // the API says so, and nothing here combines them.
