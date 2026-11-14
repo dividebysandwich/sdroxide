@@ -423,8 +423,6 @@ impl EladSource {
         self.model
     }
 
-    /// Whether the rig can be keyed at all — which is the question the caps'
-    /// transmit channel count is really asking.
     /// Whether the receiver is read through an over sdroxide keyed — the
     /// operator's choice to hear their own signal ([`EladConfig::hear_own_tx`]).
     /// The DDC streams through an over either way; this only decides whether
@@ -433,6 +431,8 @@ impl EladSource {
         self.hear_own_tx && self.can_transmit()
     }
 
+    /// Whether the rig can be keyed at all — which is the question the caps'
+    /// transmit channel count is really asking.
     pub fn can_transmit(&self) -> bool {
         self.model.transmits() && !matches!(self.control, Control::None)
     }
