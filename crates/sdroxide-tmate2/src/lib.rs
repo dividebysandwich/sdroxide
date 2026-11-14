@@ -10,8 +10,9 @@
 //! and none is open, so plugging the TMate 2 in after start-up, or pulling it
 //! and putting it back, needs nothing from the operator.
 //!
-//! The LCD is left blank for now; the panel's USB LED is lit while sdroxide is
-//! driving it.
+//! The LCD shows what [`Tmate2Handle::set_display`] last gave it — frequency,
+//! mode, S-meter and status legends — and the panel's USB LED is lit while
+//! sdroxide is driving it.
 
 mod hid;
 pub mod protocol;
@@ -24,6 +25,7 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded, unbounded};
 use sdroxide_types::Tmate2Control;
 use tracing::{debug, info, warn};
 
+pub use protocol::{Display, ModeIcon};
 use protocol::{InputReport, REPORT_LEN};
 
 /// How often a missing device is looked for.
@@ -67,6 +69,7 @@ pub struct Tmate2Status {
 
 enum Ctl {
     Enable(bool),
+    Display(Display),
     Shutdown,
 }
 
@@ -100,6 +103,12 @@ impl Tmate2Handle {
     /// Everything queued since the last call.
     pub fn poll(&mut self) -> Vec<Tmate2Event> {
         self.events.try_iter().collect()
+    }
+
+    /// What the LCD should show. Cheap to call every frame: the caller is
+    /// expected to send only on change, and the worker writes it out at once.
+    pub fn set_display(&self, d: Display) {
+        let _ = self.ctl.send(Ctl::Display(d));
     }
 
     pub fn set_enabled(&self, on: bool) {
@@ -146,6 +155,8 @@ fn worker(
     let mut open: Option<Open> = None;
     let mut last_scan: Option<Instant> = None;
     let mut last_error: Option<String> = None;
+    let mut display = Display::default();
+    let mut dirty = false;
 
     let emit = |ev: Tmate2Event| {
         if events.try_send(ev).is_ok() {
@@ -158,6 +169,12 @@ fn worker(
         loop {
             match ctl.try_recv() {
                 Ok(Ctl::Enable(on)) => enabled = on,
+                Ok(Ctl::Display(d)) => {
+                    if d != display {
+                        display = d;
+                        dirty = true;
+                    }
+                }
                 Ok(Ctl::Shutdown) | Err(TryRecvError::Disconnected) => {
                     if let Some(mut o) = open.take() {
                         let _ = o.dev.write(&protocol::closing_output());
@@ -195,6 +212,7 @@ fn worker(
                     );
                     emit(Tmate2Event::Connected(o.name.clone()));
                     last_error = None;
+                    dirty = true;
                     open = Some(o);
                 }
                 Ok(None) => {
@@ -259,9 +277,10 @@ fn worker(
             }
         }
 
-        if o.refreshed.elapsed() >= REFRESH {
+        if dirty || o.refreshed.elapsed() >= REFRESH {
+            dirty = false;
             o.refreshed = Instant::now();
-            if let Err(e) = o.dev.write(&protocol::idle_output()) {
+            if let Err(e) = o.dev.write(&protocol::output(&display)) {
                 debug!("TMate 2 refresh write failed: {e}");
             }
         }

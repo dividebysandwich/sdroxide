@@ -1109,7 +1109,8 @@ no ELAD software or DLL: enable it under **Controls → ELAD TMate 2** and it is
 found by itself when plugged in. The main dial tunes, E1 and E2 drive volume and
 filter width, and the dial pushes and F1–F6 are bindable to any action. Windows
 and Linux; on Linux install `packaging/linux/60-sdroxide-tmate2.rules` so it can
-be opened without root. The LCD is not driven yet.
+be opened without root. The LCD shows the frequency, mode and S-meter (forward
+power while transmitting) and the A/B, RX/TX, NB, NR, AN, RIT and XIT legends.
 
 Bindings are stored with the *user interface*, not the engine, so a knob plugged
 into your laptop works against a remote radio over `--connect` too.

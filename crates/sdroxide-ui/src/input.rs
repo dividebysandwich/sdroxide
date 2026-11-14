@@ -527,6 +527,9 @@ pub struct InputRuntime {
     /// The enable flag the TMate 2 worker was last told about.
     #[cfg(not(target_arch = "wasm32"))]
     tmate2_sent: bool,
+    /// What the TMate 2's LCD was last told to show.
+    #[cfg(not(target_arch = "wasm32"))]
+    tmate2_shown: Option<sdroxide_tmate2::Display>,
 }
 
 impl InputRuntime {
@@ -574,6 +577,8 @@ impl InputRuntime {
             tmate2: Some(tmate2),
             #[cfg(not(target_arch = "wasm32"))]
             tmate2_sent,
+            #[cfg(not(target_arch = "wasm32"))]
+            tmate2_shown: None,
         }
     }
 
@@ -1164,6 +1169,26 @@ impl InputRuntime {
         }
     }
 
+    /// Tell the TMate 2 what its LCD should show, when that has changed.
+    /// Called once a frame with the radio's state and the latest meters.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn tmate2_display(
+        &mut self,
+        state: &RadioState,
+        meters: Option<&sdroxide_types::Meters>,
+    ) {
+        if !self.cfg.tmate2.enabled {
+            return;
+        }
+        let d = tmate2_display_for(state, meters);
+        if self.tmate2_shown.as_ref() != Some(&d) {
+            if let Some(t) = self.tmate2.as_ref() {
+                t.set_display(d.clone());
+            }
+            self.tmate2_shown = Some(d);
+        }
+    }
+
     /// Live TMate 2 connection state, for the settings dialog.
     pub fn tmate2_status(&self) -> Tmate2StatusView {
         #[cfg(not(target_arch = "wasm32"))]
@@ -1227,6 +1252,55 @@ impl InputRuntime {
                 self.cfg.tmate2.bindings.get(ix).map(|b| (b.action, b.button_mode))
             }
         }
+    }
+}
+
+/// What the TMate 2's LCD shows for this radio state: the frequency of the
+/// VFO in use, its mode, the receive meter (or forward power on transmit), and
+/// the legends for the toggles the panel has a word for.
+#[cfg(not(target_arch = "wasm32"))]
+fn tmate2_display_for(
+    state: &RadioState,
+    meters: Option<&sdroxide_types::Meters>,
+) -> sdroxide_tmate2::Display {
+    use sdroxide_tmate2::ModeIcon;
+    use sdroxide_types::{Mode, NrLevel};
+
+    let hz = match state.active_vfo {
+        Vfo::A => state.vfo_a_hz,
+        Vfo::B => state.vfo_b_hz,
+    };
+    let rx = &state.rx[0];
+    let mode = match rx.mode {
+        Mode::Lsb => Some(ModeIcon::Lsb),
+        Mode::Usb => Some(ModeIcon::Usb),
+        Mode::Cw => Some(ModeIcon::Cw),
+        Mode::Am => Some(ModeIcon::Am),
+        Mode::Sam => Some(ModeIcon::Sam),
+        Mode::Nfm | Mode::Wfm | Mode::SstvFm | Mode::RttyFm | Mode::Aprs => Some(ModeIcon::Fm),
+        Mode::Dsb | Mode::Isb => Some(ModeIcon::Dsb),
+        Mode::Drm => Some(ModeIcon::Drm),
+        Mode::Spec => None,
+        _ => Some(ModeIcon::Dig),
+    };
+    let tx = state.tx.ptt;
+    sdroxide_tmate2::Display {
+        freq_hz: (hz.is_finite() && hz > 0.0).then_some(hz.round() as u64),
+        mode,
+        vfo_b: state.active_vfo == Vfo::B,
+        tx,
+        nb: state.noise_blanker,
+        nr: rx.noise_reduction != NrLevel::Off,
+        an: rx.auto_notch,
+        rit: state.rit.enabled,
+        xit: state.xit.enabled,
+        signal_dbm: meters.and_then(|m| m.s_dbm.is_finite().then_some(m.s_dbm.round() as i32)),
+        tx_watts: meters
+            .and_then(|m| m.tx.as_ref())
+            .and_then(|t| t.fwd_w)
+            .filter(|w| w.is_finite() && *w >= 0.0)
+            .map(|w| w.round() as u32),
+        lock_led: false,
     }
 }
 
@@ -1599,6 +1673,7 @@ mod tests {
             last_tmate2: None,
             tmate2: None,
             tmate2_sent: false,
+            tmate2_shown: None,
         };
         runtime.cfg.midi.bindings.push(sdroxide_types::MidiBinding {
             action: Action::Ptt,
@@ -1637,6 +1712,7 @@ mod tests {
             last_tmate2: None,
             tmate2: None,
             tmate2_sent: false,
+            tmate2_shown: None,
         };
         runtime.cfg.tmate2.bindings = vec![sdroxide_types::Tmate2Binding {
             control: sdroxide_types::Tmate2Control::F6,
