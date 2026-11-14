@@ -3745,14 +3745,6 @@ fn caret_at(placed: &[(u32, egui::Rect)], slot: usize) -> Option<(f32, egui::Ran
     }
 }
 
-/// `ids` with `dragged` taken out and put back in front of `before` — or at the
-/// end, where `before` is `None`.
-///
-/// Both indices are read off the list *before* the removal and the target is
-/// then stepped back over the hole, which is what makes dropping a chip on
-/// either half of itself a no-op: both halves name a gap that is where it
-/// already is, and an index taken after the removal would read one of them as a
-/// move by one.
 /// Whether a remembered chip drag outlived its release elsewhere: the button
 /// is up, and no chip on the strip reported the release this frame. The frame
 /// that drops a chip has the button up as well, so `dropped` is what keeps the
@@ -3761,6 +3753,14 @@ fn drag_is_stale(dropped: bool, pointer_down: bool) -> bool {
     !dropped && !pointer_down
 }
 
+/// `ids` with `dragged` taken out and put back in front of `before` — or at the
+/// end, where `before` is `None`.
+///
+/// Both indices are read off the list *before* the removal and the target is
+/// then stepped back over the hole, which is what makes dropping a chip on
+/// either half of itself a no-op: both halves name a gap that is where it
+/// already is, and an index taken after the removal would read one of them as a
+/// move by one.
 fn reordered(ids: &[u32], dragged: u32, before: Option<u32>) -> Vec<u32> {
     let mut out = ids.to_vec();
     let Some(from) = ids.iter().position(|id| *id == dragged) else { return out };
