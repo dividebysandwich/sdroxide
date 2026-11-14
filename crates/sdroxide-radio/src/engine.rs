@@ -1438,6 +1438,8 @@ struct Pano {
     bins: Vec<f32>,
     /// When the sweep under way began.
     sweep_at: Instant,
+    /// Sweeps finished into this panorama: the first had no pause before it.
+    rows: u32,
 }
 
 struct Scan {
@@ -15313,6 +15315,16 @@ impl Engine {
         Duration::from_millis(self.scan_cfg.dwell_ms.max(40) as u64)
     }
 
+    /// The pause a panorama takes after each full sweep, an hour at most.
+    fn scan_pano_pause(&self) -> Duration {
+        let s = self.scan_cfg.pano_pause_s;
+        if s.is_finite() && s > 0.0 {
+            Duration::from_secs_f32(s.min(3600.0))
+        } else {
+            Duration::ZERO
+        }
+    }
+
     /// Start or stop scanning, saying why if it cannot start.
     fn set_scanning(&mut self, on: bool) {
         if !on {
@@ -15516,6 +15528,7 @@ impl Engine {
     /// a sweep is in. Never stops anywhere — on to the next slice.
     fn scan_read_pano_slice(&mut self, now: Instant) {
         let (lo, hi) = self.scan_cfg.range();
+        let pano_pause = self.scan_pano_pause();
         let span = self.state.sample_rate;
         let center = self.state.center_hz;
         let fresh = self.pano.as_ref().is_none_or(|p| p.lo != lo || p.hi != hi);
@@ -15524,7 +15537,7 @@ impl Engine {
             // showed before it.
             self.wide_levels = None;
             let n = crate::scanner::panorama_bins(lo, hi, span, self.scan_db.len());
-            self.pano = Some(Pano { lo, hi, bins: vec![f32::NAN; n], sweep_at: now });
+            self.pano = Some(Pano { lo, hi, bins: vec![f32::NAN; n], sweep_at: now, rows: 0 });
         }
         let (uh, _) = crate::scanner::panorama_geometry(self.scan_cfg.pano_usable);
         let last = self.scan.as_ref().is_some_and(|sc| sc.slice + 1 >= sc.slices.len());
@@ -15570,10 +15583,16 @@ impl Engine {
             if last {
                 let mut row = p.bins.clone();
                 crate::scanner::fill_panorama_gaps(&mut row);
+                // Row to row, the pause included: what paces the strip's scale.
                 let took = now.duration_since(p.sweep_at);
                 p.sweep_at = now;
                 self.state.scan.sweeps = self.state.scan.sweeps.saturating_add(1);
-                self.state.scan.sweep_ms = took.as_millis().min(u32::MAX as u128) as u32;
+                // The sweep itself, as shown: the pause is a setting, not
+                // sweeping. The first sweep had none to take off.
+                let pause = if p.rows > 0 { pano_pause } else { Duration::ZERO };
+                p.rows = p.rows.saturating_add(1);
+                let swept = took.saturating_sub(pause);
+                self.state.scan.sweep_ms = swept.as_millis().min(u32::MAX as u128) as u32;
                 if row.iter().all(|v| v.is_finite()) {
                     self.pano_row_s = took.as_secs_f32();
                     self.wide_bins = row;
@@ -15685,6 +15704,7 @@ impl Engine {
         let (lo, hi) = self.scan_cfg.range();
         let pano = self.scan_cfg.kind == ScanKind::Panorama;
         let pano_usable = self.scan_cfg.pano_usable;
+        let pano_pause = self.scan_pano_pause();
         let span = self.state.sample_rate;
         let settle = self.scan_settle();
         let Some(sc) = self.scan.as_mut() else { return Refill::Stopped };
@@ -15701,9 +15721,14 @@ impl Engine {
             }
         }
         // Round again at either end: a scanner runs until it is stopped.
+        let before = sc.slice;
         sc.slice = crate::scanner::step_index(sc.slice, sc.slices.len(), sc.back);
         let center = sc.slices[sc.slice];
-        sc.phase = ScanPhase::Settling(now + settle);
+        // A panorama that has just finished a sweep waits out its pause on the
+        // first slice of the next one; the very first sweep starts at once.
+        let pause =
+            if pano && before != usize::MAX && sc.slice == 0 { pano_pause } else { Duration::ZERO };
+        sc.phase = ScanPhase::Settling(now + settle + pause);
 
         // Park the dial on the slice as well, so the operator sees where the
         // scan is looking rather than a dial left behind on the last candidate.

@@ -1706,7 +1706,10 @@ use sdroxide_types::{
 /// `ScannerConfig` gains `stop_snr`, `snr_db` and `pano_usable` after
 /// `follow_squelch`, and `ScanState` gains `sweeps` and `sweep_ms`, which
 /// changes the layout of every state frame.
-pub const PROTO_VERSION: u16 = 206;
+///
+/// v207: PANO pause. `ScannerConfig` gains `pano_pause_s` after `pano_usable`,
+/// which changes the layout of `SetScannerConfig` and of the scanner echo.
+pub const PROTO_VERSION: u16 = 207;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

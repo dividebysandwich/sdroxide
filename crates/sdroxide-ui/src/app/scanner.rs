@@ -8,7 +8,24 @@ use sdroxide_types::{
 };
 
 use crate::app::SdroxideApp;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::app::recorder_tab;
 use crate::chrome::StyledCombo;
+
+/// Rows in the full-band strip, which is what a strip's length is counted in.
+const STRIP_ROWS: usize = crate::widgets::wide_spectrum::ROWS;
+
+/// A strip's length as read: minutes under two hours, hours above.
+fn strip_length(secs: f64) -> String {
+    let min = secs / 60.0;
+    if min < 10.0 {
+        format!("{min:.1} min")
+    } else if min < 120.0 {
+        format!("{min:.0} min")
+    } else {
+        format!("{:.1} h", min / 60.0)
+    }
+}
 
 impl SdroxideApp {
     pub(in crate::app) fn scanner_window(&mut self, ctx: &egui::Context, cmds: &mut Vec<Command>) {
@@ -20,6 +37,18 @@ impl SdroxideApp {
         // settings are; the engine persists it and echoes it back.
         let mut cfg = self.scanner.clone();
         let mut clear_strip = false;
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut rec = std::mem::take(&mut self.rec_tab);
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut rec_action = None;
+        #[cfg(not(target_arch = "wasm32"))]
+        let radio = self.caps.as_ref().map_or_else(String::new, |c| {
+            if c.label.is_empty() { c.driver.clone() } else { c.label.clone() }
+        });
+        #[cfg(not(target_arch = "wasm32"))]
+        // From the source, not from the strip: a loaded recording holds the
+        // strip while the source goes on delivering.
+        let wide_live = rec.live_seen();
         let tool_title = tr!("scanner-scanner");
         let mut tool_st = self.take_tool_state("Scanner");
         let tool_child = crate::app::undocked::ChildWindow::own(self);
@@ -29,8 +58,49 @@ impl SdroxideApp {
             &mut tool_st,
             tool_child,
             &mut open,
-            |ui| self.scanner_body(ui, &mut cfg, cmds, &mut clear_strip),
+            |ui| {
+                #[cfg(not(target_arch = "wasm32"))]
+                let recording = rec.recording();
+                #[cfg(target_arch = "wasm32")]
+                let recording = false;
+                self.scanner_tabs(ui, &mut cfg, cmds, recording);
+                self.scanner_body(ui, &mut cfg, cmds, &mut clear_strip);
+                // The strip PANO draws, kept: the recorder and its sessions on
+                // the same page.
+                // Why: HDZ 2026-11-13: "führ mal Reiter 3 und 4 zusammen, das
+                //      geht auf eine Seite".
+                if cfg.kind == ScanKind::Panorama {
+                    ui.separator();
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let now = ui.input(|i| i.time);
+                        let pano = self.state.scan.running;
+                        rec_action = rec.show(ui, &radio, wide_live, pano, now);
+                    }
+                    // The browser has no file to keep a database in.
+                    #[cfg(target_arch = "wasm32")]
+                    ui.horizontal(|ui| {
+                        for label in [tr!("rec-record"), tr!("rec-store")] {
+                            ui.add_enabled_ui(false, |ui| crate::chrome::chip(ui, false, label))
+                                .inner
+                                .on_disabled_hover_text(tr!("rec-desktop-only"));
+                        }
+                    });
+                }
+            },
         );
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if clear_strip {
+                rec.forget_view();
+            }
+            self.rec_tab = rec;
+            match rec_action {
+                Some(recorder_tab::RecAction::Load(rows)) => self.load_recorded_strip(&rows),
+                Some(recorder_tab::RecAction::Live) => clear_strip = true,
+                None => {}
+            }
+        }
         if clear_strip {
             // The strip goes, lines and all, and comes back with the first
             // complete sweep.
@@ -47,19 +117,55 @@ impl SdroxideApp {
         self.show_scanner = open;
     }
 
-    fn scanner_body(
+    /// Whether the strip shows a loaded recording rather than live rows.
+    pub(in crate::app) fn rec_viewing(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.rec_tab.viewing();
+        #[cfg(target_arch = "wasm32")]
+        return false;
+    }
+
+    /// Put a recorded strip into the full-band strip and hold it there until
+    /// LIVE: the rows go through the strip's own intake, oldest first, so it
+    /// looks exactly as it did live.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn load_recorded_strip(&mut self, rows: &[crate::recorder::StoredRow]) {
+        self.wide_wf.clear();
+        self.wide_grid = None;
+        self.wide_guide = None;
+        let palette = self.ui_settings.waterfall_palette;
+        let mut last = None;
+        for (i, r) in rows.iter().enumerate() {
+            let f = r.frame(i as u32 + 1);
+            self.wide_wf.push(&f, palette);
+            last = Some(f);
+        }
+        // The strip draws against this frame and folds it in again — the same
+        // number, so it is not taken as one more row.
+        self.wide_frame = last.map(std::sync::Arc::new);
+        self.view.wide_waterfall = true;
+    }
+
+    /// The tab row: what to scan, START/STOP at the end. PANO turns pink while
+    /// its strip is being recorded, so a recording is seen from every tab.
+    fn scanner_tabs(
         &self,
         ui: &mut egui::Ui,
         cfg: &mut ScannerConfig,
         cmds: &mut Vec<Command>,
-        clear_strip: &mut bool,
+        recording: bool,
     ) {
         let scan = self.state.scan;
 
         // What to scan.
         ui.horizontal(|ui| {
             for kind in ScanKind::ALL {
-                if crate::chrome::chip(ui, cfg.kind == kind, kind.tr())
+                let text = if recording && kind == ScanKind::Panorama {
+                    RichText::new(format!("{} ●", kind.tr())).color(crate::theme::PINK())
+                } else {
+                    RichText::new(kind.tr())
+                };
+                if crate::chrome::chip(ui, cfg.kind == kind, text)
                     .on_hover_text(match kind {
                         ScanKind::Memories => tr!("scanner-work-through-stored-memory-channels"),
                         ScanKind::Range => tr!("scanner-work-through-slice-band-channel"),
@@ -86,20 +192,34 @@ impl SdroxideApp {
             });
         });
         ui.separator();
+    }
 
+    fn scanner_body(
+        &self,
+        ui: &mut egui::Ui,
+        cfg: &mut ScannerConfig,
+        cmds: &mut Vec<Command>,
+        clear_strip: &mut bool,
+    ) {
         match cfg.kind {
             ScanKind::Range => self.scanner_range(ui, cfg),
             ScanKind::Memories => self.scanner_memories(ui, cfg),
-            ScanKind::Panorama => self.scanner_panorama(ui, cfg),
+            ScanKind::Panorama => {
+                // The two times first: together they set how far apart the
+                // strip's rows are, which a recording's time axis rests on.
+                // Why: HDZ 2026-11-13: "mach die beiden zeiten warte je
+                //      segment und pause after each line oben hin".
+                self.scanner_panorama_times(ui, cfg);
+                ui.separator();
+                self.scanner_panorama(ui, cfg);
+            }
         }
 
         ui.separator();
-        if cfg.kind == ScanKind::Panorama {
-            self.scanner_panorama_settle(ui, cfg);
-        } else {
+        if cfg.kind != ScanKind::Panorama {
             self.scanner_thresholds(ui, cfg);
+            ui.separator();
         }
-        ui.separator();
         self.scanner_status(ui, cfg, cmds, clear_strip);
     }
 
@@ -164,7 +284,7 @@ impl SdroxideApp {
     /// stop somewhere is indistinguishable from a scanner that cannot hear it,
     /// and the operator who pressed SKIP three passes ago is exactly the person
     /// who will wonder why the repeater never comes up.
-    /// A panorama: only the range. It stops nowhere, so the grid, the mode and
+    /// A panorama: the range and the slice width. It stops nowhere, so the grid, the mode and
     /// the thresholds a range scan judges channels by do not apply.
     fn scanner_panorama(&self, ui: &mut egui::Ui, cfg: &mut ScannerConfig) {
         egui::Grid::new("scan-pano").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
@@ -180,6 +300,17 @@ impl SdroxideApp {
                 ui.label(RichText::new("MHz").weak());
             });
             ui.end_row();
+
+            ui.label(tr!("scanner-pano-width"));
+            let mut pct = cfg.pano_usable * 100.0;
+            if ui
+                .add(egui::Slider::new(&mut pct, 50.0..=95.0).step_by(5.0).suffix(" %"))
+                .on_hover_text(tr!("scanner-pano-width-hint"))
+                .changed()
+            {
+                cfg.pano_usable = pct / 100.0;
+            }
+            ui.end_row();
         });
         if !cfg.range_is_usable() {
             ui.label(
@@ -190,9 +321,10 @@ impl SdroxideApp {
         ui.label(RichText::new(tr!("scanner-panorama-hint")).weak());
     }
 
-    /// How long each panorama slice waits for the front end before it is read.
-    fn scanner_panorama_settle(&self, ui: &mut egui::Ui, cfg: &mut ScannerConfig) {
-        egui::Grid::new("scan-pano-settle").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+    /// A panorama's two times: how long each slice waits for the front end
+    /// before it is read, and the pause after each full sweep.
+    fn scanner_panorama_times(&self, ui: &mut egui::Ui, cfg: &mut ScannerConfig) {
+        egui::Grid::new("scan-pano-times").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
             ui.label(tr!("scanner-settles"));
             ui.add(
                 egui::DragValue::new(&mut cfg.dwell_ms).speed(5.0).range(40..=2000).suffix(" ms"),
@@ -200,14 +332,55 @@ impl SdroxideApp {
             .on_hover_text(tr!("scanner-settles-hint"));
             ui.end_row();
 
-            ui.label(tr!("scanner-pano-width"));
-            let mut pct = cfg.pano_usable * 100.0;
-            if ui
-                .add(egui::Slider::new(&mut pct, 50.0..=95.0).step_by(5.0).suffix(" %"))
-                .on_hover_text(tr!("scanner-pano-width-hint"))
-                .changed()
-            {
-                cfg.pano_usable = pct / 100.0;
+            ui.label(tr!("scanner-pano-pause"));
+            ui.add(
+                egui::DragValue::new(&mut cfg.pano_pause_s)
+                    .speed(1.0)
+                    .range(0.0..=3600.0)
+                    .fixed_decimals(0)
+                    .suffix(" s"),
+            )
+            .on_hover_text(tr!("scanner-pano-pause-hint"));
+            ui.end_row();
+
+            // Where the sweep is, and how long a strip comes out at with the
+            // times above, measured rather than promised: the last sweep's own
+            // time plus the pause, times the strip's rows.
+            // Why: HDZ 2026-11-13: "beim scannen sollte die zeile mit dem update,
+            //      wieviel der scanner gerade hat, wieder erscheinen … und update
+            //      auch die zeit, empirisch, wieviel ein streifen jetzt wird".
+            let scan = self.state.scan;
+            let (lo, hi) = cfg.range();
+            ui.label(tr!("scanner-pano-now"));
+            if scan.running && hi > lo {
+                let here = self.state.active_freq_hz();
+                let pct = ((here - lo) / (hi - lo) * 100.0).clamp(0.0, 100.0);
+                ui.label(
+                    RichText::new(tr!(
+                        "scanner-pano-now-at",
+                        mhz = format!("{:.3}", here / 1e6),
+                        pct = format!("{pct:.0}"),
+                        n = scan.sweeps + 1
+                    ))
+                    .color(crate::theme::CYAN()),
+                );
+            } else {
+                ui.label(RichText::new("—").weak());
+            }
+            ui.end_row();
+
+            ui.label(tr!("scanner-pano-strip"));
+            if scan.sweeps > 0 {
+                let row_s = scan.sweep_ms as f64 / 1000.0 + f64::from(cfg.pano_pause_s.max(0.0));
+                let strip_s = row_s * STRIP_ROWS as f64;
+                ui.label(tr!(
+                    "scanner-pano-strip-is",
+                    row = format!("{row_s:.1}"),
+                    strip = strip_length(strip_s)
+                ))
+                .on_hover_text(tr!("scanner-pano-strip-hint", rows = STRIP_ROWS));
+            } else {
+                ui.label(RichText::new(tr!("scanner-pano-strip-first")).weak());
             }
             ui.end_row();
         });
@@ -508,6 +681,16 @@ impl SdroxideApp {
                         n = scan.sweeps,
                         secs = format!("{:.1}", scan.sweep_ms as f64 / 1000.0)
                     )
+                };
+                // The sweep time is the sweep alone; the pause shows beside it,
+                // so the spacing of the rows reads off the line.
+                let text = if cfg.pano_pause_s >= 1.0 && scan.sweeps > 0 {
+                    format!(
+                        "{text} {}",
+                        tr!("scanner-pano-plus-pause", secs = format!("{:.0}", cfg.pano_pause_s))
+                    )
+                } else {
+                    text
                 };
                 ui.label(RichText::new(text).color(crate::theme::CYAN()).strong());
             } else {
