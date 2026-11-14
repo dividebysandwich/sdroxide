@@ -757,13 +757,6 @@ impl MultiApp {
         self.loose().first().copied()
     }
 
-    /// The radios on no row, in strip order: what "Pick radio ▼" and the
-    /// columns chip have to offer. While it is empty every radio is placed,
-    /// and neither is drawn.
-    // Why: HDZ 2026-11-04: "wenn alle Radios platziert sind, dann wird Popdown
-    //      und Spalten-Eumel ausgeblendet, nur wenn ich irgendwo ein Radio vom
-    //      Panel löse, kann ich eine neue Spalte oder einen neuen Selektor
-    //      machen".
     /// Whether a connection rests, waiting to be picked.
     fn has_resting(&self) -> bool {
         #[cfg(not(target_arch = "wasm32"))]
@@ -772,6 +765,13 @@ impl MultiApp {
         return false;
     }
 
+    /// The radios on no row, in strip order: what "Pick radio ▼" and the
+    /// columns chip have to offer. While it is empty every radio is placed,
+    /// and neither is drawn.
+    // Why: HDZ 2026-11-04: "wenn alle Radios platziert sind, dann wird Popdown
+    //      und Spalten-Eumel ausgeblendet, nur wenn ich irgendwo ein Radio vom
+    //      Panel löse, kann ich eine neue Spalte oder einen neuen Selektor
+    //      machen".
     fn loose(&self) -> Vec<u32> {
         self.tabs
             .iter()
@@ -1355,9 +1355,16 @@ impl MultiApp {
     /// A free id for a tab that holds somebody else's radio. Never one from
     /// the roster: that station is not one of ours.
     fn next_remote_id(&self) -> u32 {
+        // A resting connection keeps the id it was saved with, and picking it
+        // brings that id back: a new tab must not take it meanwhile.
+        #[cfg(not(target_arch = "wasm32"))]
+        let resting = self.resting.iter().map(|c| c.id);
+        #[cfg(target_arch = "wasm32")]
+        let resting = std::iter::empty();
         self.tabs
             .iter()
             .map(|t| t.id)
+            .chain(resting)
             .filter(|id| *id >= REMOTE_TAB_ID_BASE)
             .max()
             .map_or(REMOTE_TAB_ID_BASE, |m| m.saturating_add(1))
