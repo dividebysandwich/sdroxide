@@ -1794,6 +1794,15 @@ Corresponding Source.** Using sdroxide on your own machine changes nothing. The
 model is confined to the `sdroxide-deepcw` crate, and the wasm web client links
 none of it.
 
-The grey-line shade, the IBP beacon schedule, the meteor-shower calendar and the
-Kp history are adapted from ideas in
-[OpenHamClock](https://github.com/accius/openhamclock) (MIT).
+## Acknowledgements
+
+- [fldigi](https://sourceforge.net/projects/fldigi/) (GPL-3.0), Dave Freese
+  W1HKJ and the fldigi contributors: the reference for the keyboard modes,
+  among them MT63, MFSK, DominoEX/THOR, Olivia and the NAVTEX alphabet.
+- [OnAir](https://github.com/adswill/OnAir), GPL-3.0-or-later,
+  Copyright (C) 2026 Kristijonas Adomaitis and OnAir contributors: the DominoEX,
+  THOR and MFSK modems were written from its keyboard-mode family
+  (`core/src/hfdig/`).
+- [OpenHamClock](https://github.com/accius/openhamclock) (MIT): the grey-line
+  shade, the IBP beacon schedule, the meteor-shower calendar and the Kp history
+  are adapted from ideas in it.
