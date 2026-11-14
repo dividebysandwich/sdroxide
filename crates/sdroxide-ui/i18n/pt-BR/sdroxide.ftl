@@ -4592,6 +4592,7 @@ multi-take-radio-off-row = Tirar este rádio desta fileira. Ele continua funcion
 multi-open-pane = Abrir outro painel com um rádio que não está na tela
 multi-pick-radio = Rádio ▼
 multi-pick-radio-tip = Colocar um rádio nesta fileira. Os anéis marcam os rádios com o link aberto.
+multi-resting-connection-tip = Conexão em repouso: escolher disca { $url }
 multi-new-radio = Novo rádio…
 multi-asked-station-another-radio = Pedi à estação outro rádio…
 multi-client-cannot-open-connection = Este cliente não consegue abrir uma conexão.

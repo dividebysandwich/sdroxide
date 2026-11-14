@@ -4688,6 +4688,7 @@ multi-take-radio-off-row = Aus Reihe nehmen; läuft weiter
 multi-open-pane = Neue Spalte mit verdecktem Funkgerät
 multi-pick-radio = Radio ▼
 multi-pick-radio-tip = Funkgerät in Reihe holen; Ringe = Verbindung offen
+multi-resting-connection-tip = Ruhende Verbindung: Auswählen wählt { $url } an
 multi-new-radio = Neues Funkgerät…
 multi-asked-station-another-radio = Die Station nach einem weiteren Funkgerät gefragt…
 multi-client-cannot-open-connection = Dieser Client kann keine Verbindung öffnen.

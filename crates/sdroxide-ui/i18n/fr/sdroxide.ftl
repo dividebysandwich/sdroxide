@@ -4592,6 +4592,7 @@ multi-take-radio-off-row = Retirer cette radio de cette rangée. Elle continue d
 multi-open-pane = Ouvrir un autre volet avec une radio qui n'est pas à l'écran
 multi-pick-radio = Radio ▼
 multi-pick-radio-tip = Mettre une radio dans cette rangée. Les anneaux marquent les radios dont la liaison est ouverte.
+multi-resting-connection-tip = Connexion au repos : la choisir compose { $url }
 multi-new-radio = Nouvelle radio…
 multi-asked-station-another-radio = Demande à la station une autre radio…
 multi-client-cannot-open-connection = Ce client ne peut pas ouvrir de connexion.

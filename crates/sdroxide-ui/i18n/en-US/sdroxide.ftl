@@ -4756,6 +4756,7 @@ multi-take-radio-off-row = Take off row; keeps running
 multi-open-pane = New pane with hidden radio
 multi-pick-radio = Radio ▼
 multi-pick-radio-tip = Add radio to row; rings = link open
+multi-resting-connection-tip = Resting connection: picking dials { $url }
 multi-new-radio = New radio…
 multi-asked-station-another-radio = Asked the station for another radio…
 multi-client-cannot-open-connection = This client cannot open a connection.

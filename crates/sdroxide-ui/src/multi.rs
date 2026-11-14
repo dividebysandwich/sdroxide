@@ -126,6 +126,12 @@ enum StripAction {
         pane: usize,
         id: u32,
     },
+    /// "Pick radio ▼" on a resting connection: dial it, then as `Pick`.
+    #[cfg(not(target_arch = "wasm32"))]
+    Redial {
+        pane: usize,
+        id: u32,
+    },
     /// The "−" on a tab: take this radio off this pane's row. It keeps
     /// running; off is the rings.
     Unpick {
@@ -186,6 +192,19 @@ pub struct MultiApp {
     //      left, one tab on the right): "könnte man wenigstens die roten
     //      Rahmen ausrichten aneinander".
     strip_heights: Vec<f32>,
+    /// The arrangement last written to the roster, so it is written again
+    /// only when the operator changes it.
+    #[cfg(not(target_arch = "wasm32"))]
+    saved_layout: Option<sdroxide_config::PaneLayout>,
+    /// Connections to other stations' radios that were on no row when the
+    /// last session closed. Not dialled at start — a station that is off the
+    /// air would only complain about it — but offered under "Pick radio ▼",
+    /// which dials them.
+    #[cfg(not(target_arch = "wasm32"))]
+    resting: Vec<sdroxide_config::SavedConnection>,
+    /// The connections last written, so they are written again only on change.
+    #[cfg(not(target_arch = "wasm32"))]
+    saved_connections: Option<Vec<sdroxide_config::SavedConnection>>,
     factory: Option<RadioFactory>,
     /// How a station somewhere else is dialled — Settings → Remote. Present
     /// in every native session, including one that is itself a remote client:
@@ -243,6 +262,10 @@ impl MultiApp {
         factory: Option<RadioFactory>,
         remote: Option<RemoteFactory>,
     ) -> Self {
+        // Connections that were on a row come back before the tabs are built,
+        // under the ids the saved panes know them by.
+        #[cfg(not(target_arch = "wasm32"))]
+        let (radios, remote, resting) = redial_connections(&cc.egui_ctx, radios, remote);
         let shared_log = radios.len() > 1;
         let can_add = factory.is_some();
         let tabs: Vec<Tab> = radios
@@ -291,22 +314,45 @@ impl MultiApp {
         for (i, t) in tabs.iter_mut().enumerate() {
             t.app.set_focused_flag(i == 0);
         }
-        let panes = vec![tabs[0].id];
-        // Every radio on the one pane's row: a session opens looking exactly
-        // as the single strip always did.
-        let rows = vec![tabs.iter().map(|t| t.id).collect()];
+        // The panes and rows the last session closed with. Without any — a
+        // first start, a station from before they were kept — every radio is
+        // on the one pane's row: a session opens looking exactly as the single
+        // strip always did.
+        let ids: Vec<u32> = tabs.iter().map(|t| t.id).collect();
+        #[cfg(not(target_arch = "wasm32"))]
+        let saved = sdroxide_config::load_radios().layout;
+        #[cfg(not(target_arch = "wasm32"))]
+        let (panes, rows, focus) = restore_layout(&ids, &saved);
+        #[cfg(target_arch = "wasm32")]
+        let (panes, rows, focus) = (vec![ids[0]], vec![ids.clone()], None::<u32>);
+        let focused = focus.and_then(|id| ids.iter().position(|t| *t == id)).unwrap_or(0);
+        for (i, t) in tabs.iter_mut().enumerate() {
+            t.app.set_focused_flag(i == focused);
+        }
         MultiApp {
             tabs,
-            focused: 0,
+            focused,
             panes,
             rows,
+            #[cfg(not(target_arch = "wasm32"))]
+            saved_layout: Some(saved),
+            #[cfg(not(target_arch = "wasm32"))]
+            saved_connections: None,
             strip_heights: Vec::new(),
             factory,
             remote,
             wgpu: cc.wgpu_render_state.clone(),
             pending_add: None,
             pending_preset: None,
+            // A resting connection's address counts as opened: otherwise a
+            // sibling at the same station would open it behind the operator's
+            // back the moment that station answers.
+            #[cfg(not(target_arch = "wasm32"))]
+            peers_opened: resting.iter().map(|c| c.url.clone()).collect(),
+            #[cfg(target_arch = "wasm32")]
             peers_opened: std::collections::HashSet::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            resting,
             station_radio,
             #[cfg(not(target_arch = "wasm32"))]
             fitted: false,
@@ -542,6 +588,82 @@ impl MultiApp {
         }
     }
 
+    /// A resting connection picked: dial it under its saved id and put it on
+    /// this pane's row. A dial that fails puts it back to rest and says why.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn redial(&mut self, pane: usize, id: u32, ctx: &egui::Context) {
+        let Some(k) = self.resting.iter().position(|c| c.id == id) else { return };
+        let conn = self.resting.remove(k);
+        let Some(remote) = self.remote.as_mut() else {
+            self.resting.insert(k, conn);
+            return;
+        };
+        match remote(&conn.url, conn.id, ctx) {
+            Ok(mut r) => {
+                if !conn.name.trim().is_empty() {
+                    r.name = conn.name.clone();
+                }
+                self.append_tab(r, ctx);
+                self.pick(pane, id, ctx);
+            }
+            Err(e) => {
+                let focused = self.focused;
+                self.tabs[focused].app.show_notice(tr!(
+                    "multi-could-not-open",
+                    peer = conn.name.clone(),
+                    error = e.to_string()
+                ));
+                self.resting.insert(k, conn);
+            }
+        }
+    }
+
+    /// Write the panes, rows and focus to the roster when they have changed,
+    /// so the next session opens on them. Only a station's own radios count:
+    /// a screen showing nothing but somebody else's has no roster of its own
+    /// to write.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn remember_layout(&mut self) {
+        if self.tabs.iter().all(|t| t.remote) {
+            return;
+        }
+        // The connections: every one with a tab, and the resting ones.
+        let mut conns: Vec<sdroxide_config::SavedConnection> = self
+            .tabs
+            .iter()
+            .filter(|t| t.remote)
+            .filter_map(|t| {
+                t.app.peer_url().map(|url| sdroxide_config::SavedConnection {
+                    url,
+                    name: t.name.clone(),
+                    id: t.id,
+                })
+            })
+            .collect();
+        conns.extend(self.resting.iter().cloned());
+        if self.saved_connections.as_ref() != Some(&conns) {
+            if let Err(e) = sdroxide_config::save_connections(&conns) {
+                eprintln!("sdroxide: recording the connections: {e}");
+            }
+            self.saved_connections = Some(conns);
+        }
+        let known: Vec<u32> =
+            self.tabs.iter().map(|t| t.id).chain(self.resting.iter().map(|c| c.id)).collect();
+        let layout = sdroxide_config::PaneLayout {
+            panes: self.panes.clone(),
+            rows: self.rows.clone(),
+            focused: self.tabs.get(self.focused).map(|t| t.id),
+            known,
+        };
+        if self.saved_layout.as_ref() == Some(&layout) {
+            return;
+        }
+        if let Err(e) = sdroxide_config::save_pane_layout(&layout) {
+            eprintln!("sdroxide: recording the panes: {e}");
+        }
+        self.saved_layout = Some(layout);
+    }
+
     /// The pane the focused radio sits on — where "switch to radio X"
     /// requests land while the view is split.
     fn active_pane(&self) -> usize {
@@ -642,6 +764,14 @@ impl MultiApp {
     //      und Spalten-Eumel ausgeblendet, nur wenn ich irgendwo ein Radio vom
     //      Panel löse, kann ich eine neue Spalte oder einen neuen Selektor
     //      machen".
+    /// Whether a connection rests, waiting to be picked.
+    fn has_resting(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        return !self.resting.is_empty();
+        #[cfg(target_arch = "wasm32")]
+        return false;
+    }
+
     fn loose(&self) -> Vec<u32> {
         self.tabs
             .iter()
@@ -790,6 +920,8 @@ impl MultiApp {
             match act {
                 StripAction::Show { pane, id } => self.show_in_pane(pane, id, ctx),
                 StripAction::Pick { pane, id } => self.pick(pane, id, ctx),
+                #[cfg(not(target_arch = "wasm32"))]
+                StripAction::Redial { pane, id } => self.redial(pane, id, ctx),
                 StripAction::Unpick { pane, id } => self.unpick(pane, id, ctx),
                 StripAction::AddPane => self.add_pane(ctx),
                 StripAction::Mute { id, muted } => {
@@ -995,10 +1127,13 @@ impl MultiApp {
             // Only while a radio is loose — on no row — is there anything to
             // pick or to open a pane for; with every radio placed the row ends
             // at its last tab. A new radio is then added in Settings → Radio.
-            if self.loose().is_empty() {
+            if self.loose().is_empty() && !self.has_resting() {
                 return;
             }
             self.pick_menu(ui, pane, actions);
+            if self.loose().is_empty() {
+                return;
+            }
             // Another pane, with the first loose radio. Drawn as columns, not
             // "+": "+" adds a radio everywhere else.
             let h = crate::chrome::chip_height(ui, Some(13.0));
@@ -1075,6 +1210,23 @@ impl MultiApp {
                     .inner;
                 if picked {
                     actions.push(StripAction::Pick { pane, id: tab.id });
+                    ui.close();
+                }
+            }
+            // Resting connections: dialled when picked, dimmed until then.
+            #[cfg(not(target_arch = "wasm32"))]
+            for c in &self.resting {
+                let name = if c.name.trim().is_empty() { c.url.clone() } else { c.name.clone() };
+                let picked = ui
+                    .horizontal(|ui| {
+                        ui.allocate_exact_size(egui::vec2(18.0, 12.0), egui::Sense::hover());
+                        ui.add(egui::Button::new(RichText::new(name).weak()).frame(false))
+                            .on_hover_text(tr!("multi-resting-connection-tip", url = c.url.clone()))
+                            .clicked()
+                    })
+                    .inner;
+                if picked {
+                    actions.push(StripAction::Redial { pane, id: c.id });
                     ui.close();
                 }
             }
@@ -1722,6 +1874,8 @@ impl eframe::App for MultiApp {
         self.apply_strip_actions(actions, &ctx);
         self.handle_requests(reqs, &ctx);
         self.open_peer_radios(&ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.remember_layout();
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -1736,5 +1890,185 @@ impl eframe::App for MultiApp {
         for tab in &mut self.tabs {
             tab.app.shutdown_ctrl();
         }
+    }
+}
+
+/// The panes, rows and focus a session opens with: the saved ones, held
+/// against the radios there are now. A radio that has gone leaves its row; a
+/// pane left with nothing to show goes; a radio the saved layout never saw
+/// joins the first row. Nothing saved, or nothing left of it: one pane, every
+/// radio on its row.
+#[cfg(not(target_arch = "wasm32"))]
+fn restore_layout(
+    ids: &[u32],
+    saved: &sdroxide_config::PaneLayout,
+) -> (Vec<u32>, Vec<Vec<u32>>, Option<u32>) {
+    let fresh = || (vec![ids[0]], vec![ids.to_vec()], None);
+    let mut panes = Vec::new();
+    let mut rows: Vec<Vec<u32>> = Vec::new();
+    for (k, &shown) in saved.panes.iter().enumerate() {
+        let row: Vec<u32> = saved
+            .rows
+            .get(k)
+            .map_or_else(Vec::new, |r| r.iter().copied().filter(|id| ids.contains(id)).collect());
+        if !ids.contains(&shown) && row.is_empty() {
+            continue;
+        }
+        // A shown radio that has gone is left for `sanitize_panes`, which puts
+        // the next radio on the row in its place.
+        panes.push(shown);
+        rows.push(row);
+    }
+    if panes.is_empty() {
+        return fresh();
+    }
+    for &id in ids {
+        if !saved.known.contains(&id)
+            && !rows.iter().any(|r| r.contains(&id))
+            && !panes.contains(&id)
+        {
+            rows[0].push(id);
+        }
+    }
+    (panes, rows, saved.focused.filter(|id| ids.contains(id)))
+}
+
+/// The saved connections split for a start: those that were on a row, to be
+/// dialled, and the rest, to rest. Skipped: one already open — dialled on the
+/// command line, or numbered like a tab already there.
+#[cfg(not(target_arch = "wasm32"))]
+fn sort_connections(
+    saved: Vec<sdroxide_config::SavedConnection>,
+    layout: &sdroxide_config::PaneLayout,
+    open_ids: &[u32],
+    open_urls: &[String],
+) -> (Vec<sdroxide_config::SavedConnection>, Vec<sdroxide_config::SavedConnection>) {
+    let mut dial = Vec::new();
+    let mut rest: Vec<sdroxide_config::SavedConnection> = Vec::new();
+    for c in saved {
+        let taken = c.id < REMOTE_TAB_ID_BASE
+            || open_ids.contains(&c.id)
+            || open_urls.contains(&c.url)
+            || dial
+                .iter()
+                .chain(rest.iter())
+                .any(|d: &sdroxide_config::SavedConnection| d.id == c.id || d.url == c.url);
+        if taken {
+            continue;
+        }
+        if layout.on_a_row(c.id) { dial.push(c) } else { rest.push(c) }
+    }
+    (dial, rest)
+}
+
+/// Dial the connections the last session had on a row, before the tabs are
+/// built. Only where this window is a station of its own: a screen that only
+/// shows somebody else's radios keeps nothing (see `remember_layout`).
+#[cfg(not(target_arch = "wasm32"))]
+fn redial_connections(
+    ctx: &egui::Context,
+    mut radios: Vec<RadioTab>,
+    mut remote: Option<RemoteFactory>,
+) -> (Vec<RadioTab>, Option<RemoteFactory>, Vec<sdroxide_config::SavedConnection>) {
+    if radios.iter().all(|r| r.ctrl.engine_is_remote()) {
+        return (radios, remote, Vec::new());
+    }
+    let layout = sdroxide_config::load_radios().layout;
+    let open_ids: Vec<u32> = radios.iter().map(|r| r.id).collect();
+    let open_urls: Vec<String> = radios.iter().filter_map(|r| r.ctrl.peer_url()).collect();
+    let (dial, mut rest) =
+        sort_connections(sdroxide_config::load_connections(), &layout, &open_ids, &open_urls);
+    for c in dial {
+        let Some(f) = remote.as_mut() else {
+            rest.push(c);
+            continue;
+        };
+        match f(&c.url, c.id, ctx) {
+            Ok(mut r) => {
+                if !c.name.trim().is_empty() {
+                    r.name = c.name.clone();
+                }
+                radios.push(r);
+            }
+            Err(e) => {
+                eprintln!("sdroxide: dialling {} again: {e}", c.url);
+                rest.push(c);
+            }
+        }
+    }
+    (radios, remote, rest)
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod layout_tests {
+    use super::restore_layout;
+    use sdroxide_config::PaneLayout;
+
+    /// Two panes, a radio taken off with "−", the second pane focused: the
+    /// next start opens on exactly that.
+    #[test]
+    fn a_saved_layout_comes_back() {
+        let saved = PaneLayout {
+            panes: vec![0, 2],
+            rows: vec![vec![0, 1], vec![2]],
+            focused: Some(2),
+            known: vec![0, 1, 2, 3],
+        };
+        let (panes, rows, focus) = restore_layout(&[0, 1, 2, 3], &saved);
+        assert_eq!(panes, vec![0, 2]);
+        assert_eq!(rows, vec![vec![0, 1], vec![2]]);
+        assert_eq!(focus, Some(2));
+        assert!(!rows.iter().any(|r| r.contains(&3)), "radio 3 was taken off; it stays off");
+    }
+
+    /// Nothing saved is the strip as it always was: one pane, every radio.
+    #[test]
+    fn nothing_saved_is_one_pane_with_every_radio() {
+        let (panes, rows, focus) = restore_layout(&[4, 0, 1], &PaneLayout::default());
+        assert_eq!(panes, vec![4]);
+        assert_eq!(rows, vec![vec![4, 0, 1]]);
+        assert_eq!(focus, None);
+    }
+
+    /// Connections on a row are dialled, the rest rest; one already open is
+    /// left alone.
+    #[test]
+    fn connections_on_a_row_are_dialled_the_rest_rest() {
+        use super::{REMOTE_TAB_ID_BASE as B, sort_connections};
+        use sdroxide_config::SavedConnection as C;
+        let c = |id: u32, url: &str| C { url: url.into(), name: String::new(), id };
+        let layout = PaneLayout {
+            panes: vec![0],
+            rows: vec![vec![0, B]],
+            focused: Some(0),
+            known: vec![0, B, B + 1, B + 2],
+        };
+        let saved = vec![c(B, "ws://a/ws/0"), c(B + 1, "ws://a/ws/1"), c(B + 2, "ws://b/ws/0")];
+        let (dial, rest) = sort_connections(saved.clone(), &layout, &[0], &[]);
+        assert_eq!(dial, vec![saved[0].clone()]);
+        assert_eq!(rest, vec![saved[1].clone(), saved[2].clone()]);
+        // Already on screen (dialled on the command line): neither.
+        let (dial, rest) = sort_connections(saved.clone(), &layout, &[0], &["ws://a/ws/0".into()]);
+        assert!(dial.is_empty());
+        assert_eq!(rest.len(), 2);
+        // An id from the roster's range is never a connection.
+        let (dial, rest) = sort_connections(vec![c(3, "ws://x/ws/0")], &layout, &[0], &[]);
+        assert!(dial.is_empty() && rest.is_empty());
+    }
+
+    /// A radio added since joins the first row; one closed since leaves its
+    /// row, and a pane with nothing left goes with it.
+    #[test]
+    fn radios_added_and_closed_since() {
+        let saved = PaneLayout {
+            panes: vec![0, 5],
+            rows: vec![vec![0], vec![5]],
+            focused: Some(5),
+            known: vec![0, 5],
+        };
+        let (panes, rows, focus) = restore_layout(&[0, 7], &saved);
+        assert_eq!(panes, vec![0]);
+        assert_eq!(rows, vec![vec![0, 7]]);
+        assert_eq!(focus, None, "the focused radio is gone");
     }
 }

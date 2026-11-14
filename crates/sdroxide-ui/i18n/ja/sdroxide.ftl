@@ -4572,6 +4572,7 @@ multi-take-radio-off-row = この無線機をこの列から外します。動�
 multi-open-pane = 画面に出ていない無線機で別のペインを開く
 multi-pick-radio = 無線機 ▼
 multi-pick-radio-tip = この列に無線機を加えます。リングはリンクが開いている無線機を示します。
+multi-resting-connection-tip = 休止中の接続: 選ぶと { $url } に接続
 multi-new-radio = 新しい無線機…
 multi-asked-station-another-radio = ステーションに別の無線機を依頼しました…
 multi-client-cannot-open-connection = このクライアントは接続を開けません。
