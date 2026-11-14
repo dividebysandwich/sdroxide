@@ -5536,6 +5536,7 @@ elad-tx-input-mic = Mikrofon
 elad-tx-input-auto = Automatisch
 elad-tx-input-leave = Wie am Funkgerät eingestellt lassen
 tr-usdx-audio-one-cable = Ein Kabel (Audio im CAT-Strom)
+tr-usdx-audio-one-cable-mute = Ein Kabel (Audio im CAT-Strom), Lautsprecher stummschalten
 tr-usdx-audio-sound-card = USB-Soundkarte (3,5-mm-Buchse)
 spy-server-format-uint8 = 8 Bit (geringste Bandbreite)
 spy-server-format-int16 = 16 Bit
@@ -5931,7 +5932,7 @@ settings-ui-module-panadapter = Panadapter
 settings-ui-undock-all-hint = Setzt jedes Modul in ein eigenes Fenster – das Hauptfenster behält das Spektrum und die Decoder. Ein Modul ohne Inhalt, etwa das Bedienpanel in einer Sprachbetriebsart, öffnet kein Fenster.
 settings-ui-undock-hint =
     Abgedockt wandert dieses Modul in ein eigenes Fenster, und das Hauptfenster gibt den Platz an das Übrige zurück – legen Sie den Wasserfall auf einen zweiten Monitor oder die Bedienelemente auf einen dritten. Schließen des Fensters dockt es wieder an.
-    
+
     Unter Wayland kommt die Größe zurück, aber der Compositor entscheidet, wohin ein Fenster kommt: Machen Sie es schwebend und heften Sie es mit einer Fensterregel für die app-id „{ $app_id }“ an einen Monitor.
 settings-ui-undocked = Abgedockt — eigenes Fenster
 settings-ui-window-label = Fenster { $module }

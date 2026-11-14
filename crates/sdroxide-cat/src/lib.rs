@@ -1310,7 +1310,7 @@ fn make_protocol(cfg: &CatConfig) -> Box<dyn Protocol> {
         // The one family whose audio is *in* the byte stream: the serial
         // thread routes bytes to the profile's own demultiplexer rather than
         // expecting a sound card (see `Protocol::streams_audio`).
-        CatFamily::TrUsdx => Box::new(trusdx::TrUsdx::new(cfg.trusdx_audio.streams_audio())),
+        CatFamily::TrUsdx => Box::new(trusdx::TrUsdx::new(cfg.trusdx_audio)),
         CatFamily::Rigctld => Box::new(rigctld::Rigctld::new()),
         CatFamily::Flrig => Box::new(flrig::Flrig::new(cfg.flrig_addr.trim().to_string())),
     }

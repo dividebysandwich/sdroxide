@@ -5442,6 +5442,7 @@ elad-tx-input-mic = Microfone
 elad-tx-input-auto = Automático
 elad-tx-input-leave = Deixar como ajustado no rádio
 tr-usdx-audio-one-cable = Um cabo (áudio no fluxo CAT)
+tr-usdx-audio-one-cable-mute = Um cabo (áudio no fluxo CAT), alto-falante em mudo
 tr-usdx-audio-sound-card = Placa de som USB (conector de 3,5 mm)
 spy-server-format-uint8 = 8 bits (menor largura de banda)
 spy-server-format-int16 = 16 bits

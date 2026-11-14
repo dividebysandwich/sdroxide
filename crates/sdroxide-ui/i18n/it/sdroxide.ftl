@@ -5444,6 +5444,7 @@ elad-tx-input-mic = Microfono
 elad-tx-input-auto = Automatico
 elad-tx-input-leave = Lascia come impostato sulla radio
 tr-usdx-audio-one-cable = Un cavo (audio nel flusso CAT)
+tr-usdx-audio-one-cable-mute = Un cavo (audio nel flusso CAT), disattivazione dell'altoparlante
 tr-usdx-audio-sound-card = Scheda audio USB (jack 3,5 mm)
 spy-server-format-uint8 = 8 bit (minor larghezza di banda)
 spy-server-format-int16 = 16 bit

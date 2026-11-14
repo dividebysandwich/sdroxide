@@ -5386,6 +5386,7 @@ elad-tx-input-mic = マイク
 elad-tx-input-auto = 自動
 elad-tx-input-leave = 無線機の設定どおり
 tr-usdx-audio-one-cable = ワンケーブル（CAT ストリーム内の音声）
+tr-usdx-audio-one-cable-mute = ワンケーブル（CAT ストリーム内の音声）、スピーカーをミュート
 tr-usdx-audio-sound-card = USB サウンドカード（3.5 mm ジャック）
 spy-server-format-uint8 = 8 ビット（最も低い帯域）
 spy-server-format-int16 = 16 ビット

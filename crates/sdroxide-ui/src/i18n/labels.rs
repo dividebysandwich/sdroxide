@@ -190,6 +190,7 @@ impl Tr for TrUsdxAudio {
     fn tr(self) -> String {
         match self {
             TrUsdxAudio::OneCable => tr!("tr-usdx-audio-one-cable"),
+            TrUsdxAudio::OneCableMute => tr!("tr-usdx-audio-one-cable-mute"),
             TrUsdxAudio::SoundCard => tr!("tr-usdx-audio-sound-card"),
         }
     }

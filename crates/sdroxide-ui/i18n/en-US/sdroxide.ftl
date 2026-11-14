@@ -5623,6 +5623,7 @@ elad-tx-input-mic = Microphone
 elad-tx-input-auto = Auto
 elad-tx-input-leave = Leave as set on the radio
 tr-usdx-audio-one-cable = One cable (audio in the CAT stream)
+tr-usdx-audio-one-cable-mute = One cable (audio in the CAT stream), mute speaker
 tr-usdx-audio-sound-card = USB sound card (3.5 mm jack)
 spy-server-format-uint8 = 8-bit (lowest bandwidth)
 spy-server-format-int16 = 16-bit
@@ -6021,7 +6022,7 @@ settings-ui-module-panadapter = Panadapter
 settings-ui-undock-all-hint = Put every module in a window of its own — the main window is left as the spectrum and the decoders. A module with nothing to show, like the operating panel in a voice mode, opens no window.
 settings-ui-undock-hint =
     Undocked, this module moves into its own window and the main window gives the space back to what is left — put the waterfall on a second monitor, or the controls on a third. Closing its window docks it again.
-    
+
     On Wayland the size comes back but the compositor decides where a window goes: float it and pin it to a monitor with a window rule matching app-id "{ $app_id }".
 settings-ui-undocked = Undocked — its own window
 settings-ui-window-label = { $module } window

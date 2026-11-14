@@ -5433,6 +5433,7 @@ elad-tx-input-mic = Mikrofon
 elad-tx-input-auto = Otomatik
 elad-tx-input-leave = Radyoda ayarlandığı gibi bırak
 tr-usdx-audio-one-cable = Tek kablo (CAT akışındaki ses)
+tr-usdx-audio-one-cable-mute = Tek kablo (CAT akışındaki ses), hoparlörü sessize alma
 tr-usdx-audio-sound-card = USB ses kartı (3,5 mm jak)
 spy-server-format-uint8 = 8 bit (en düşük bant genişliği)
 spy-server-format-int16 = 16 bit

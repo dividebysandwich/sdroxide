@@ -5375,6 +5375,7 @@ elad-tx-input-mic = 话筒
 elad-tx-input-auto = 自动
 elad-tx-input-leave = 保持电台上的设置
 tr-usdx-audio-one-cable = 单根线缆（音频在 CAT 数据流中）
+tr-usdx-audio-one-cable-mute = 单根线缆（音频在 CAT 数据流中），扬声器静音
 tr-usdx-audio-sound-card = USB 声卡（3.5 mm 插孔）
 spy-server-format-uint8 = 8 位（最低带宽）
 spy-server-format-int16 = 16 位
