@@ -951,12 +951,14 @@ pub enum TrUsdxAudio {
     /// mode are not followed.
     #[default]
     OneCable,
-    /// The same as OneCable, but mutes the radio's speaker when in use
-    OneCableMute,
     /// Audio from an external USB sound card wired to the radio's 3.5 mm
     /// speaker/mic jack. Control still goes over the serial port, and the rig
     /// is polled and behaves as any other CAT rig.
     SoundCard,
+    /// The same as OneCable, but mutes the radio's speaker when in use.
+    /// Appended after `SoundCard`, not beside `OneCable`: postcard encodes the
+    /// variant by index, and an insert would renumber `SoundCard` on the wire.
+    OneCableMute,
 }
 
 impl TrUsdxAudio {

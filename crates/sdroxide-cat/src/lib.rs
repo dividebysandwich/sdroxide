@@ -3364,8 +3364,8 @@ fn serial_thread(
             // hear it — so without this the session would be silent, with a
             // control link that worked perfectly.
             // Re-arm the stream when no audio has arrived for a moment. The
-            // enable is `UA0;UA1;`, so it is safe to send over a healthy stream
-            // as well as a dead one — but the idle test is what keeps it off a
+            // enable is `UA0;UA1;` (`UA2;` with the speaker muted), so it is
+            // safe to send over a healthy stream as well as a dead one — but the idle test is what keeps it off a
             // healthy one, because a command written while the stream is
             // running is what kills this firmware in the first place.
             if streaming

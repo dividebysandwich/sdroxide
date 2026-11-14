@@ -84,10 +84,10 @@ const IF_TX_FLAG: usize = 26;
 const IF_BODY_LEN: usize = 35;
 
 pub struct TrUsdx {
-    /// Whether the audio rides the CAT link (`TrUsdxAudio::OneCable`) rather
-    /// than a sound card. Everything the profile does differently between the
-    /// two modes hangs off this one flag: only the in-band mode streams, and
-    /// only the in-band mode must send no polls.
+    /// How the audio travels. Everything the profile does differently hangs
+    /// off this: only the in-band modes ([`TrUsdxAudio::streams_audio`])
+    /// stream and must send no polls, and `OneCableMute` also turns the
+    /// radio's speaker off ([`TrUsdxAudio::mutes_speaker`]).
     audio_mode: TrUsdxAudio,
     /// Bytes arrived and not yet split into whole CAT frames.
     buf: Vec<u8>,
@@ -113,9 +113,9 @@ pub struct TrUsdx {
 }
 
 impl TrUsdx {
-    /// `one_cable` is [`sdroxide_types::TrUsdxAudio::OneCable`] or [`sdroxide_types::TrUsdxAudio::OneCableMute`] — audio inside
-    /// the CAT stream rather than over a sound card.
-    /// `mute_radio_speaker` is [`sdroxide_types::TrUsdxAudio::OneCableMute`] - radio speaker audio is muted
+    /// A profile for `audio_mode`: `OneCable` and `OneCableMute` carry the
+    /// audio inside the CAT stream, the latter with the radio's speaker muted;
+    /// `SoundCard` leaves it to a sound card on the 3.5 mm jack.
     pub fn new(audio_mode: TrUsdxAudio) -> Self {
         TrUsdx {
             audio_mode,

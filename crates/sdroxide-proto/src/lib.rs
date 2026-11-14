@@ -1715,7 +1715,10 @@ use sdroxide_types::{
 ///
 /// v209: SK boost. `RxState` gains `sk_filter_boost_db` after
 /// `sk_filter_after_nr`, and `Command::SetSkFilter` gains `boost_db`.
-pub const PROTO_VERSION: u16 = 209;
+///
+/// v210: truSDX `TrUsdxAudio::OneCableMute` appended, a new value inside
+/// `CatConfig` and so inside every `RadioConfig`.
+pub const PROTO_VERSION: u16 = 210;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
