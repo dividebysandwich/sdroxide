@@ -56,6 +56,8 @@ fn floor_of(power: &[f64]) -> Option<f64> {
 fn local_floors(power: &[f64], half: usize) -> Option<Vec<f64>> {
     let whole = floor_of(power)?;
     let n = power.len();
+    // A window wider than the row is the row: no bigger buffer, no overflow.
+    let half = half.min(n / 2);
     let mut win: Vec<f64> = Vec::with_capacity(2 * half + 1);
     Some(
         (0..n)
