@@ -6019,7 +6019,9 @@ pub struct SdrPlayConfig {
     //      the middle of every slice): "wenn du dir den Müll anschaust, den der
     //      Treiber derzeit produziert, siehst du die Artefakt-Nähte … im Panel
     //      wäre noch Platz für einen Chip zeroIF"; "im normalen Betrieb auch".
-    #[serde(default)]
+    // No field-level `#[serde(default)]`: that would read `false` for a
+    // `radio.json` written before the field, and keep existing setups at zero
+    // IF. The container default turns it on for them as well.
     pub low_if: bool,
 }
 
@@ -8182,7 +8184,12 @@ mod tests {
             // asking an RSPduo for a mode the operator never chose.
             assert!(!cfg.sdrplay.duo.enabled, "after loading {json}");
             assert!(!cfg.sdrplay.wants_dual_tuner());
+            assert!(cfg.sdrplay.low_if, "low IF by default after loading {json}");
         }
+        // A block written before `low_if` existed turns it on too.
+        let older: RadioConfig =
+            serde_json::from_str(r#"{"sdrplay": {"bias_tee": false}}"#).expect("parses");
+        assert!(older.sdrplay.low_if);
         // A configuration that *does* ask for it keeps the rest of the block's
         // defaults rather than zeroing them — a filter with no taps and no
         // adaptation rate would combine nothing at all. Written under the name
