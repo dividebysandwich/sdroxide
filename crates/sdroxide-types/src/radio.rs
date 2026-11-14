@@ -6001,6 +6001,26 @@ pub struct SdrPlayConfig {
     /// was called `diversity` when combining was all it could do.
     #[serde(alias = "diversity")]
     pub duo: SdrPlayDuo,
+    /// Run a single tuner at a low IF rather than at zero IF: the ADC at
+    /// 6 MHz, the signal on a 1.620 MHz IF, which the service mixes down to
+    /// 2 Msps (decimated further for narrower rates). Nothing of the band then
+    /// sits on the tuner's own LO, so the DC spike, the LO leakage and the
+    /// I/Q image at the centre of the span are gone — at the price of 2 Msps
+    /// and a 1.536 MHz filter at the most. SDRuno runs an RSP this way at
+    /// 2 Msps and below. An RSPduo running both tuners is at a low IF anyway.
+    ///
+    /// On by default, and obeyed up to [`Self::LOW_IF_MAX_HZ`]: a wider rate
+    /// runs at zero IF, the only arrangement that reaches it, so a
+    /// configuration set to 6 or 8 Msps keeps its span (see
+    /// [`Self::runs_low_if`]).
+    // Why: HDZ 2026-11-13 (pictures, zero IF beside low IF): "der Chip reicht,
+    //      das nervt, default mach mal low IF".
+    // Why: HDZ 2026-11-13 (picture, PANO 125–140 MHz on an RSP1A, a line in
+    //      the middle of every slice): "wenn du dir den Müll anschaust, den der
+    //      Treiber derzeit produziert, siehst du die Artefakt-Nähte … im Panel
+    //      wäre noch Platz für einen Chip zeroIF"; "im normalen Betrieb auch".
+    #[serde(default)]
+    pub low_if: bool,
 }
 
 impl Default for SdrPlayConfig {
@@ -6023,6 +6043,7 @@ impl Default for SdrPlayConfig {
             hdr_bw: SdrPlayHdrBw::default(),
             extended_if_gr: false,
             duo: SdrPlayDuo::default(),
+            low_if: true,
         }
     }
 }
@@ -6164,6 +6185,16 @@ impl SdrPlayConfig {
     /// `MAX_BB_GR`).
     pub const IF_GR_MIN: i32 = 20;
     pub const IF_GR_MAX: i32 = 59;
+    /// The widest rate a single tuner runs at a low IF: what the service's
+    /// downconverter delivers from the 1.620 MHz IF.
+    pub const LOW_IF_MAX_HZ: f64 = 2_000_000.0;
+
+    /// Whether a single tuner runs at the low IF: asked for, and at a rate it
+    /// reaches. (An RSPduo running both tuners is at a low IF regardless.)
+    pub fn runs_low_if(&self) -> bool {
+        self.low_if && self.sample_rate_hz <= Self::LOW_IF_MAX_HZ
+    }
+
     /// The floor with [`Self::extended_if_gr`] on (`EXTENDED_MIN_GR`).
     pub const IF_GR_MIN_EXTENDED: i32 = 0;
 

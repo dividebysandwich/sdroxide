@@ -1709,7 +1709,10 @@ use sdroxide_types::{
 ///
 /// v207: PANO pause. `ScannerConfig` gains `pano_pause_s` after `pano_usable`,
 /// which changes the layout of `SetScannerConfig` and of the scanner echo.
-pub const PROTO_VERSION: u16 = 207;
+///
+/// v208: SDRplay low IF. `SdrPlayConfig` gains `low_if` at its tail, which
+/// changes the layout of every `RadioConfig` sent.
+pub const PROTO_VERSION: u16 = 208;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

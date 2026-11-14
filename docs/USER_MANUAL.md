@@ -10848,6 +10848,22 @@ unplug the receiver and plug it back in.
 - **IF bandwidth** — the tuner's analog filter. *Auto* picks the widest one
   that fits the sample rate, which is what you want unless a strong
   off-channel neighbour argues otherwise.
+- **Low IF** — run the tuner at a low IF instead of zero IF: the ADC at
+  6 MHz, the band on a 1.620 MHz IF, which the service mixes down to 2 Msps
+  (and decimates further for a narrower rate). At zero IF the tuner's own LO
+  sits in the middle of the span, and what it leaves there — a DC spike, LO
+  leakage, the image of a strong signal mirrored across the centre — reads
+  like a station; on a PANO sweep it puts a line in the middle of every
+  slice. At a low IF none of it falls into the band. The price is 2 Msps and
+  a 1.536 MHz filter at the most, so it is **on by default up to 2 Msps**,
+  the way SDRuno runs an RSP; a wider sample rate runs at zero IF, the only
+  arrangement that reaches it, and keeps its span. At a low IF the IF
+  bandwidth list offers no filter wider than 1.536 MHz. The same switch sits
+  in the RX box as the **ZERO IF / LOW IF** chip beside **DEC**, named as it
+  stands; a click switches, saves and reopens the radio, and from a rate
+  wider than 2 Msps it goes to 2 Msps at the low IF. An RSPduo running both
+  tuners is at a low IF anyway, and the chip shows LOW IF greyed. Takes
+  effect on **Apply / reconnect**.
 - **AGC** — the RSP's own hardware IF-gain loop, run by the service at 5, 50
   or 100 Hz, with an adjustable **set point** in dBFS. *Off* hands the IF gain
   slider back to you — the setting for measurement and weak-signal digital

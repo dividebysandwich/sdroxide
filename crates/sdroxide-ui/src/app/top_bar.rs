@@ -2555,6 +2555,9 @@ impl SdroxideApp {
         if self.elad_bw_applies() {
             front.push(&["SPAN 6144k"]);
         }
+        if self.sdrplay_if_applies() {
+            front.push(&["ZERO IF", "LOW IF"]);
+        }
         rx_rows(
             ui,
             &rails,
@@ -2791,6 +2794,56 @@ impl SdroxideApp {
         }
     }
 
+    /// Whether the radio is an SDRplay RSP, whose single tuner can run at zero
+    /// IF or at a low IF ([`sdroxide_types::SdrPlayConfig::low_if`]).
+    fn sdrplay_if_applies(&self) -> bool {
+        self.caps.as_ref().is_some_and(|c| c.driver == "sdrplay")
+    }
+
+    /// ZERO IF / LOW IF: the RSP's IF arrangement, named as it stands. A click
+    /// switches to the other one, saves it and reopens the radio, as Apply in
+    /// Settings does: the service takes a new IF only at the start of a
+    /// session. From a rate wider than the low IF reaches, the click goes to
+    /// 2 Msps at the low IF. Greyed at LOW IF while an RSPduo runs both
+    /// tuners, which are at a low IF anyway.
+    // Why: HDZ 2026-11-13: "im Panel wäre noch Platz für einen Chip zeroIF".
+    fn sdrplay_if_chip(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        if !self.sdrplay_if_applies() {
+            return;
+        }
+        if self.radio_cfg.is_none() {
+            self.radio_cfg = self.ctrl.radio_config();
+        }
+        let Some(sp) = self.radio_cfg.as_ref().map(|r| r.sdrplay.clone()) else { return };
+        let dual = sp.wants_dual_tuner();
+        let low = dual || sp.runs_low_if();
+        let label = if low { "LOW IF" } else { "ZERO IF" };
+        let resp = ui
+            .add_enabled_ui(!dual, |ui| crate::chrome::chip(ui, low, label))
+            .inner
+            // At zero IF the hint says what to do about it.
+            // Why: HDZ 2026-11-13: "mach das Tooltip mit reduce bandwidth to 2
+            //      to use low IF, avoiding signal artifacts".
+            .on_hover_text(if low {
+                tr!("topbar-sdrplay-if-low-hint")
+            } else {
+                tr!("topbar-sdrplay-if-zero-hint")
+            })
+            .on_disabled_hover_text(tr!("topbar-sdrplay-if-dual"));
+        if resp.clicked()
+            && let Some(cfg) = self.radio_cfg.as_mut()
+        {
+            if low {
+                cfg.sdrplay.low_if = false;
+            } else {
+                cfg.sdrplay.low_if = true;
+                cfg.sdrplay.sample_rate_hz =
+                    cfg.sdrplay.sample_rate_hz.min(sdroxide_types::SdrPlayConfig::LOW_IF_MAX_HZ);
+            }
+            cmds.push(Command::SetRadioConfig { cfg: Box::new(cfg.clone()), reopen: true });
+        }
+    }
+
     /// The receiver and filter/noise controls — the body of the RX box, and of
     /// the RX menu. See [`crate::chrome::control_row`] for `narrow`.
     ///
@@ -2911,6 +2964,7 @@ impl SdroxideApp {
             }
             self.decim_chip(ui, cmds);
             self.elad_bw_chip(ui, cmds);
+            self.sdrplay_if_chip(ui, cmds);
             // A cycling chip rather than a combo: a combo inside a menu
             // opens a second popup layer, and clicking it counts as
             // "outside" and closes the menu it was opened from. Four
