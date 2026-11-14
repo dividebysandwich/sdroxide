@@ -28,6 +28,14 @@ const ATU_POLL: Duration = Duration::from_secs(1);
 /// How long after a click the tuner is read back: long enough for its relays
 /// to settle, so the read confirms the change instead of showing the old state.
 const ATU_SETTLE: Duration = Duration::from_millis(300);
+/// How often `HRAP` is asked again while no tuner has been seen. Asked once
+/// only, a single missed answer (a busy amplifier just after the link was
+/// reopened, a byte lost on the USB lead) hid the tuner and its buttons until
+/// SDROxide was restarted (AJ3G, Nov 2026).
+#[cfg(not(test))]
+const ATU_PROBE: Duration = Duration::from_secs(5);
+#[cfg(test)]
+const ATU_PROBE: Duration = Duration::from_millis(50);
 /// How often the temperature is read with `HRTP`. Its value is the one the
 /// amplifier's own screen shows, and it carries the scale letter; the status
 /// frame's temperature lagged it by several degrees after a C/F toggle (AJ3G,
@@ -286,6 +294,10 @@ fn worker(cfg: AmpConfig, rx: Receiver<Msg>, status: Arc<Mutex<AmpStatus>>) {
         return;
     }
     let mut backoff = Duration::from_secs(1);
+    // Whether this amplifier has been seen with a tuner. Kept across a
+    // reopened link: the ATU-500 does not come and go while the amplifier is
+    // on, and a missed `HRAP` answer after a reconnect must not lose it.
+    let mut atu_seen = false;
     loop {
         match open(&cfg) {
             Ok(amp) => {
@@ -295,7 +307,7 @@ fn worker(cfg: AmpConfig, rx: Receiver<Msg>, status: Arc<Mutex<AmpStatus>>) {
                     s.connected = true;
                     s.error = None;
                 });
-                if !run(amp, &rx, &status, cfg.model.limits()) {
+                if !run(amp, &rx, &status, cfg.model.limits(), &mut atu_seen) {
                     return;
                 }
                 set(&status, |s| {
@@ -333,9 +345,12 @@ fn run<P: std::io::Read + std::io::Write>(
     rx: &Receiver<Msg>,
     status: &Mutex<AmpStatus>,
     limits: AmpLimits,
+    atu_seen: &mut bool,
 ) -> bool {
-    let has_atu = matches!(amp.query(&Command::AtuPresent), Ok(Response::AtuPresent(true)));
+    let mut has_atu = *atu_seen || atu_present(&mut amp);
+    *atu_seen |= has_atu;
     set(status, |s| s.atu = has_atu.then(AtuReadout::default));
+    let mut next_probe = Instant::now() + ATU_PROBE;
     let mut celsius: Option<bool> = None;
     let mut misses = 0;
     let mut next_atu = Instant::now();
@@ -488,6 +503,20 @@ fn run<P: std::io::Read + std::io::Write>(
             }
         }
 
+        // No tuner seen yet: keep asking, in case the first answer was missed.
+        if !has_atu && Instant::now() >= next_probe {
+            next_probe = Instant::now() + ATU_PROBE;
+            if atu_present(&mut amp) {
+                info!("hardrock: tuner found");
+                has_atu = true;
+                *atu_seen = true;
+                next_atu = Instant::now();
+                set(status, |st| {
+                    st.atu.get_or_insert_with(AtuReadout::default);
+                });
+            }
+        }
+
         if has_atu && (was_tuning || Instant::now() >= next_atu) {
             next_atu = Instant::now() + ATU_POLL;
             let tuning = matches!(amp.query(&Command::IsTuning), Ok(Response::Tuning(true)));
@@ -523,6 +552,11 @@ fn run<P: std::io::Read + std::io::Write>(
             });
         }
     }
+}
+
+/// Whether the amplifier says it has a tuner (`HRAP`).
+fn atu_present<P: std::io::Read + std::io::Write>(amp: &mut Amp<P>) -> bool {
+    matches!(amp.query(&Command::AtuPresent), Ok(Response::AtuPresent(true)))
 }
 
 fn network_of(p: AtuParams) -> AtuNetwork {
@@ -651,6 +685,89 @@ fn fresh_temp(screen: Option<(f32, Instant)>, now: Instant) -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
+    use std::io;
+
+    /// A fake amplifier that answers by what was written: `HRST` with a
+    /// reading every time, `HRAP` from `hrap` in turn (`None` is silence, and
+    /// the last entry repeats), anything else not at all.
+    struct Scripted {
+        hrap: VecDeque<Option<&'static str>>,
+        out: VecDeque<u8>,
+    }
+
+    impl io::Read for Scripted {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.out.is_empty() {
+                return Err(io::ErrorKind::TimedOut.into());
+            }
+            let n = buf.len().min(self.out.len());
+            for b in buf.iter_mut().take(n) {
+                *b = self.out.pop_front().unwrap_or_default();
+            }
+            Ok(n)
+        }
+    }
+
+    impl io::Write for Scripted {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            let reply = match buf {
+                b"HRST;" => Some("HRST-100-002-020-011-058-008-30-1-07-1-;"),
+                b"HRAP;" => {
+                    let r = self.hrap.front().copied().flatten();
+                    if self.hrap.len() > 1 {
+                        self.hrap.pop_front();
+                    }
+                    r
+                }
+                _ => None,
+            };
+            self.out.extend(reply.unwrap_or_default().bytes());
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Runs the link against `hrap` for a while and returns the tuner as the
+    /// panel would see it.
+    fn run_for(hrap: &[Option<&'static str>], atu_seen: bool) -> (Option<AtuReadout>, bool) {
+        let amp = Amp::new(Scripted { hrap: hrap.iter().copied().collect(), out: VecDeque::new() })
+            .with_timeout(Duration::from_millis(5));
+        let status = Arc::new(Mutex::new(AmpStatus::default()));
+        let (tx, rx) = bounded(1);
+        let st = status.clone();
+        let t = thread::spawn(move || {
+            let mut seen = atu_seen;
+            let lost = run(amp, &rx, &st, sdroxide_types::AmpModel::Hr500.limits(), &mut seen);
+            (lost, seen)
+        });
+        thread::sleep(Duration::from_millis(800));
+        drop(tx);
+        let (lost, seen) = t.join().unwrap();
+        assert!(!lost, "the fake amplifier always answers HRST");
+        let atu = status.lock().unwrap().atu.clone();
+        (atu, seen)
+    }
+
+    #[test]
+    fn a_missed_tuner_answer_is_asked_again() {
+        let (atu, seen) = run_for(&[None, Some("HRAP1;")], false);
+        assert!(atu.is_some() && seen);
+    }
+
+    #[test]
+    fn a_tuner_seen_before_a_reconnect_stays() {
+        let (atu, seen) = run_for(&[None], true);
+        assert!(atu.is_some() && seen);
+    }
+
+    #[test]
+    fn no_tuner_is_still_no_tuner() {
+        let (atu, seen) = run_for(&[Some("HRAP0;")], false);
+        assert!(atu.is_none() && !seen);
+    }
 
     #[test]
     fn a_peak_past_a_trip_level_is_not_a_trip() {
