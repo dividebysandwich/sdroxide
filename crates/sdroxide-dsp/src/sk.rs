@@ -34,6 +34,8 @@
 //      core; at 0.1 s the pauses went from 5.8 to 12.9 dB below the speech.
 
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
+use rustfft::num_complex::Complex32;
+use std::sync::Arc;
 
 /// Where [`boost`]'s soft limiter starts to bend, as a share of full scale.
 const BOOST_KNEE: f32 = 0.7;
@@ -61,8 +63,6 @@ pub fn boost(audio: &mut [f32], db: f32) {
         };
     }
 }
-use rustfft::num_complex::Complex32;
-use std::sync::Arc;
 
 /// Kurtosis at and below which a bin is noise and gets [`FLOOR_DB`].
 pub const SK_NOISE: f32 = 1.3;
