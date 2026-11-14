@@ -197,12 +197,14 @@ struct RatePlan {
 impl RatePlan {
     /// `dual` is what the device *opened* as, not what was asked for: a
     /// diversity setting left behind by an RSPduo must not put an RSP1A into
-    /// a low IF and a 2 Msps ceiling it has no reason to be in.
+    /// a low IF and a 2 Msps ceiling it has no reason to be in. A single
+    /// tuner goes to the same low IF at the rates it reaches
+    /// ([`SdrPlayConfig::runs_low_if`]).
     fn for_device(cfg: &SdrPlayConfig, dual: bool) -> RatePlan {
-        if dual {
+        if dual || cfg.runs_low_if() {
             let decim = device::dual_decim(cfg.sample_rate_hz);
             RatePlan {
-                dual: true,
+                dual,
                 fs_hz: device::DUAL_FS_HZ,
                 decim,
                 out_hz: device::DUAL_OUT_HZ / f64::from(decim),
@@ -368,7 +370,8 @@ fn run(
     }
 
     let effective = plan.out_hz;
-    let bw = device::bw_khz_for(cfg.bw_khz, effective, dual);
+    // The low IF leaves room for 1.536 MHz at the most, two tuners or one.
+    let bw = device::bw_khz_for(cfg.bw_khz, effective, plan.if_type != ffi::IF_ZERO);
     let center = center_hz.clamp(MIN_RF_HZ, MAX_RF_HZ);
     let hiz = device::antenna_is_hiz(model, &cfg.antenna);
     let hdr = cfg.hdr && model.has_hdr();
@@ -1211,5 +1214,46 @@ unsafe extern "C" fn event_cb(
     if panicked {
         let shared = &unsafe { &*ctx }.shared;
         shared.alive.store(false, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// By default one tuner runs at the low IF wherever the rate allows it.
+    #[test]
+    fn a_single_tuner_runs_at_low_if_by_default() {
+        let p = RatePlan::for_device(&SdrPlayConfig::default(), false);
+        assert_eq!((p.if_type, p.fs_hz, p.out_hz), (ffi::IF_1_620, 6_000_000.0, 2_000_000.0));
+    }
+
+    /// A rate the low IF cannot reach runs at zero IF and keeps its span,
+    /// rather than being cut to 2 Msps; switched off, zero IF at any rate.
+    #[test]
+    fn a_wide_rate_or_low_if_off_runs_at_zero_if() {
+        let wide = SdrPlayConfig { sample_rate_hz: 4_000_000.0, ..SdrPlayConfig::default() };
+        let p = RatePlan::for_device(&wide, false);
+        assert_eq!((p.if_type, p.fs_hz, p.out_hz), (ffi::IF_ZERO, 4_000_000.0, 4_000_000.0));
+        let off = SdrPlayConfig { low_if: false, ..SdrPlayConfig::default() };
+        let p = RatePlan::for_device(&off, false);
+        assert_eq!((p.if_type, p.out_hz), (ffi::IF_ZERO, 2_000_000.0));
+    }
+
+    /// At a low IF one tuner takes the dual-tuner arrangement: 6 MHz, a
+    /// 1.620 MHz IF, 2 Msps out, decimated for a narrower rate — and stays a
+    /// single-tuner session.
+    #[test]
+    fn a_single_tuner_at_low_if_runs_at_1620_khz() {
+        let two =
+            SdrPlayConfig { sample_rate_hz: 2_000_000.0, low_if: true, ..SdrPlayConfig::default() };
+        let p = RatePlan::for_device(&two, false);
+        assert_eq!(
+            (p.if_type, p.fs_hz, p.out_hz, p.dual),
+            (ffi::IF_1_620, 6_000_000.0, 2_000_000.0, false)
+        );
+        let narrow = SdrPlayConfig { sample_rate_hz: 500_000.0, ..two };
+        let p = RatePlan::for_device(&narrow, false);
+        assert_eq!((p.if_type, p.decim, p.out_hz), (ffi::IF_1_620, 4, 500_000.0));
     }
 }

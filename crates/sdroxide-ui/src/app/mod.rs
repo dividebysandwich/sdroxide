@@ -42,6 +42,9 @@ pub(in crate::app) mod playback;
 pub(in crate::app) mod publicsdr;
 pub(in crate::app) mod qo100;
 pub(in crate::app) mod rds;
+/// Scanner → PANO: the full-band strip recorded into SQLite.
+#[cfg(not(target_arch = "wasm32"))]
+mod recorder_tab;
 pub(in crate::app) mod sat;
 pub(in crate::app) mod save_text;
 pub(in crate::app) mod scanner;
@@ -163,6 +166,9 @@ pub struct SdroxideApp {
     wide_guide: Option<std::sync::Arc<crate::mean_spectrum::Guide>>,
     /// Scrolling history behind the full-band strip.
     wide_wf: crate::widgets::wide_spectrum::WideWaterfall,
+    /// The strip's recorder and its inventory (Scanner → PANO).
+    #[cfg(not(target_arch = "wasm32"))]
+    rec_tab: recorder_tab::RecTab,
     meters: Option<Meters>,
     /// The last SWR the radio reported while on the air — kept after the over
     /// ends, so the tune box can still show what the antenna was matched to.
@@ -1295,6 +1301,12 @@ pub struct SdroxideApp {
     /// [`crate::multi::MultiApp`] after the frame — the same arrangement the
     /// solar window's LOCK button uses.
     radio_tab_requests: Vec<RadioTabRequest>,
+    /// Whether another radio is open to paste onto; set by the shell each
+    /// frame, so the 📋 chip only shows where it can do something.
+    clip_peers: bool,
+    /// What the shell's clipboard holds, if anything (chip lit on every
+    /// radio while it does; the tooltip names it).
+    clip: Option<Clip>,
     /// The radio rename in progress on the settings page: (radio id, text as
     /// typed). UI-owned until the edit commits — the roster republishes every
     /// frame, and a field bound straight to it would fight the keyboard —
@@ -1458,6 +1470,37 @@ pub(crate) enum RadioTabRequest {
     /// connection stays where it was put for the session and comes back at the
     /// end of the strip next time.
     Reorder(Vec<u32>),
+    /// The clipboard (📋): copy this radio's frequency, mode and filter into
+    /// the shell's clipboard, paste the clipboard onto this radio, or empty
+    /// it. The shell holds the clipboard; it stays filled while the operator
+    /// moves between radios, so one copy can be pasted onto several.
+    Clip(ClipAct),
+}
+
+/// What a click on the clipboard chip asks the shell to do.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum ClipAct {
+    /// Fill the clipboard from this radio.
+    Copy(Clip),
+    /// Lay the clipboard on this radio; the clipboard stays filled.
+    Paste,
+    /// Empty the clipboard.
+    Clear,
+}
+
+/// What the clipboard carries from one radio to another: the dial, the mode
+/// and the passband.
+// Why: HDZ 2026-11-12: "eine Funktion für die Übertragung von Frequenzen
+//      zusammen mit dem Betriebsmode … kopieren nur im Programm selber, meist
+//      von einem Empfänger zum anderen"; "wenn ich zum ersten Mal klicke,
+//      sollte ein kleines Clipboard gefüllt werden, was, wenn ich das Radio
+//      wechsle, gefüllt bleibt".
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Clip {
+    pub hz: f64,
+    pub mode: sdroxide_types::Mode,
+    pub lo: f32,
+    pub hi: f32,
 }
 
 /// The pure half of [`SdroxideApp::tx_chrome_ok`], so the rule can be tested
@@ -1554,6 +1597,8 @@ impl SdroxideApp {
             wide_grid: None,
             wide_guide: None,
             wide_wf: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            rec_tab: Default::default(),
             meters: None,
             last_swr: None,
             memories: Vec::new(),
@@ -1973,6 +2018,8 @@ impl SdroxideApp {
             // was given a factory.
             can_add_radio: false,
             radio_tab_requests: Vec::new(),
+            clip_peers: false,
+            clip: None,
             radio_name_edit: None,
         }
     }
@@ -2081,6 +2128,30 @@ impl SdroxideApp {
     /// button and the tab strip's mute chip show.
     pub(crate) fn tab_muted(&self) -> bool {
         self.state.rx[0].muted
+    }
+
+    /// The shell's word on the clipboard: whether another radio is open, and
+    /// what the clipboard holds.
+    pub(crate) fn set_clip(&mut self, peers: bool, clip: Option<Clip>) {
+        self.clip_peers = peers;
+        self.clip = clip;
+    }
+
+    /// What a copy takes from here: the active VFO's dial, the main
+    /// receiver's mode and passband.
+    pub(crate) fn clip_load(&self) -> Clip {
+        let rx = &self.state.rx[0];
+        Clip { hz: self.state.active_freq_hz(), mode: rx.mode, lo: rx.filter_lo, hi: rx.filter_hi }
+    }
+
+    /// Paste the clipboard on this radio: the mode first (it brings that
+    /// mode's own settings and default passband), then the clipboard's
+    /// passband over it, then the dial, on whichever VFO is active here.
+    pub(crate) fn apply_clip(&mut self, c: Clip) {
+        use sdroxide_types::{Command, RxId};
+        self.ctrl.send(Command::SetMode { rx: RxId::Main, mode: c.mode });
+        self.ctrl.send(Command::SetFilter { rx: RxId::Main, lo: c.lo, hi: c.hi });
+        self.ctrl.send(Command::SetVfo { vfo: self.state.active_vfo, hz: c.hz });
     }
 
     /// The tab strip's mute toggle: the same per-receiver mute the MUTE

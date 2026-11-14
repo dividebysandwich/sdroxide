@@ -1723,15 +1723,6 @@ settings-radio-corrects-reference-oscillator-applied-when = 校正参考振荡�
 settings-radio-receive-only-below-adc-s = 仅接收。在 ADC 的奈奎斯特极限以下，天线被直接采样，重新调谐是即时的，因为没有硬件下变频器——完整的 ADC 数据流由主机转换为基带。在其以上，接收机会自动切换到其 R828D 调谐器和 VHF SMA，因此两根天线都需要接好。VHF 需要 32.4 Msps 或更高的 ADC 时钟，才能使调谐器的中频放得下；在低于 48 Msps 的时钟下，两个范围之间存在无法覆盖的间隙。此处的每项设置都会立即生效——没有需要按下的“应用”按钮。
 settings-radio-device = 设备
 settings-radio-no-devices-press-rescan = 没有设备——请按“重新扫描”
-settings-radio-six-rates-are-six-different =
-    这六种速率是六种不同的 FPGA 镜像，而不是一个寄存器——这就是为什么 ELAD 的协议中没有任何东西可以在它们之间进行选择，也是为什么此设置的含义取决于型号。
-
-    FDM-S1 / FDM-S2：是一条命令。它们的 FPGA 在每次上电时都由计算机加载，sdroxide 会运行 ELAD 自己的 elad-firmware 加载器，将此速率的镜像载入。若未安装该加载器，采样器根本不发送任何采样，sdroxide 会在屏幕上说明这一点。
-
-    FDM-DUO：不是命令。电台自行加载其 FPGA，并以其上电时或 FDM-SW2 上次留下的任何速率启动（新机为 192 kHz）；此处的设置仅说明如何*读取*数据流。若设错，全景图的宽度就会不对，其中每个频率都会被相应地缩放。
-
-    数据流的实际速率在开始后几秒钟测得，不匹配会在屏幕上报告。在“应用”后生效。
-settings-radio-fdm-s-fpga-image-loaded = FDM-S：加载的 FPGA 镜像——FDM-DUO：数据流的读取方式
 settings-radio-receiver-s-input-pad-one = 接收机的输入衰减器——一步，加入或取消。与主窗口的增益滑块为同一控件。
 settings-radio-pre-selection-filters = 预选滤波器
 settings-radio-low-pass-bank-front-adc = ADC 之前的低通滤波器组。将其旁路可获得最宽的视野，但在强带外信号附近表现最差——几英里外的广播发射机会在频段上产生镜像。除非你有意收听滤波范围之外的内容，否则请保持开启。
@@ -1858,7 +1849,13 @@ settings-radio-no-rsps-press-rescan-needs = 没有 RSP——请按“重新扫�
 settings-radio-both-tuners-running-api-fixes = 当两个调谐器都运行时，API 将 ADC 固定在 6 MHz，并从低中频返回 2 Msps——因此 2 Msps 是最宽的跨度，较窄的跨度则是对它进行抽取得到的。在“应用”后生效。
 settings-radio-rates-below-2-msps-run = 低于 2 Msps 的速率会让 ADC 以 2 Msps 运行，并在服务中进行抽取。在“应用”后生效。
 settings-radio-reduced-adc-resolution = {"  "}（降低的 ADC 分辨率）
+topbar-sdrplay-if-hint = 单调谐器以低中频 (1.620 MHz) 代替零中频运行：中心无直流尖峰、本振泄漏和镜像。2 Msps 以下默认开启；更高速率以零中频运行，在此点击将切换为低中频 2 Msps。切换会重新打开电台。
+topbar-sdrplay-if-low-hint = 低中频 (1.620 MHz)：中心无直流尖峰、本振泄漏和镜像。点击：零中频，用于 2 Msps 以上。
+topbar-sdrplay-if-zero-hint = 零中频：中心的直流尖峰、本振泄漏和镜像看起来像信号。将带宽降到 2 Msps 以使用低中频、避免这些伪影：点击。
+topbar-sdrplay-if-dual = 双调谐器运行的 RSPduo 本来就是低中频
 settings-radio-if-bandwidth = 中频带宽
+settings-radio-low-if = 低中频
+settings-radio-low-if-check = 2 Msps 以下中频 1.620 MHz（同 SDRuno）；更高速率为零中频
 settings-radio-tuner-s-analog-filter-auto = 调谐器的模拟滤波器。“自动”会选择适合该采样率的最宽的一个。在“应用”后生效。
 settings-radio-rsp-s-own-if-gain = RSP 自身的中频增益环路，由 API 服务运行。关闭则把中频增益滑块交还给你——这是用于测量和弱信号数字模式的设置。
 settings-radio-agc-set-point = AGC 设定点
@@ -2015,6 +2012,8 @@ topbar-bar-trace = 条形 / 轨迹
 topbar-needle-bar-trace = 指针 / 条形 / 轨迹
 topbar-swap-vfos = 交换 VFO
 topbar-copy-b = 将 A 复制到 B
+topbar-clip = 剪贴板：左键复制／右键清空
+topbar-clip-full = 剪贴板：左键粘贴 { $freq }（{ $mode }）／右键清空
 topbar-second-receiver-right-ear-tunes = 第二台接收机，在右耳中收听。它独立于 A/B 进行调谐——其控件出现在 SUB 模块中，其通带显示在瀑布图上。
 topbar-band-plan = ，来自频段计划
 topbar-repeater-shift-following-band-plan = 中继偏移：跟随频段计划，而该频率在频段计划中没有偏移——即单工
@@ -2195,6 +2194,7 @@ topbar-how-many-signals-model-reads = 模型一次读取多少个信号。其余
 topbar-spots = 信号列表
 topbar-save-skimmer-s-spot-list = 将 skimmer 的信号列表保存到文件
 topbar-show-hide-full-band-waterfall = 显示/隐藏全景图上方的全频段瀑布图条带——即此接收机能一次看到的全部内容
+    窄带接收机：SCAN → PANO 扫描一个范围，在此生成概览。
 topbar-spectrum-waterfall-either-layer-both = 频谱和瀑布图——任选一层、两层或都不选。两者都显示时亮起。
 topbar-spectrum = 频谱
 topbar-show-spectrum = 显示频谱
@@ -3940,8 +3940,11 @@ logbook-no-qsos-yet-run-ft8 = 尚无通联——请运行 FT8/FT4，或添加手
 scanner-scanner = 扫描器
 scanner-work-through-stored-memory-channels = 依次扫描已存储的记忆信道
 scanner-work-through-slice-band-channel = 按信道网格依次扫描频段的一个片段
+scanner-sweep-range-into-panorama = 不停顿地扫描一个范围，拼成全景图
+scanner-panorama-hint = 不停顿扫描；每完成一次扫描即为全频段条带（WIDE）中的一行。
 scanner-stop = 停止
 scanner-start = 开始
+scanner-band = 频段
 scanner-from = 起始
 scanner-step = 步进
 scanner-mode = 模式
@@ -3964,9 +3967,77 @@ scanner-unfiled = 未归档
 scanner-nothing-filed-under-folders-you = 你所选文件夹中没有任何归档内容。
 scanner-stops = 停止条件
 scanner-use-receiver-s-own-squelch = 使用接收机自己的静噪，使扫描恰好在音频会打开的地方停止
+scanner-stop-snr = 在信道高出周围噪声底这么多时停止；随增益和频段噪声变化。
 scanner-squelch-off-scan-will-stop = 静噪已关闭——扫描会在它检查的第一个内容上停止
 scanner-channel-power-signal-has-reach = 信号必须达到的信道功率，才能使扫描停止
 scanner-listens = 收听时间
+scanner-settles = 每段等待
+scanner-settles-hint = 重新调谐后、读取频谱前的等待。越长画面越稳，扫描越慢。
+scanner-pano-width = 分段宽度
+scanner-pano-width-hint = 每段使用的接收带宽比例。小：避开边缘滚降；大：扫描更快。相邻分段重叠 10 %。
+scanner-pano-pause = 每行后暂停
+scanner-pano-pause-hint = 每次完整扫描后、下一次开始前的等待时间。0：不暂停。
+scanner-pano-now = 当前
+scanner-pano-now-at = { $mhz } MHz ({ $pct } %) · 第 { $n } 次扫描
+scanner-pano-strip = 条带
+scanner-pano-strip-is = 每 { $row } 秒一行 = 每条带 { $strip }
+scanner-pano-strip-hint = 实测：上次扫描加暂停，乘以 { $rows } 行
+scanner-pano-strip-first = 首次扫描后
+rec-db-error = 录制数据库不可用：{ $err }
+rec-retry = 重试
+rec-live = 实时
+rec-live-hint = 返回实时条带
+rec-stop = ■ 停止
+rec-record = ● REC
+rec-record-hint = 录制全频段条带 (WIDE)，从条带上已有的扫描开始：
+    PANO 下每次扫描一行，否则每个间隔一行（最强电平）
+rec-desktop-only = 仅限桌面应用：录制数据库位于桌面应用中。
+rec-interval = 间隔
+rec-interval-hint = 保存行之间的时间，1 秒起。
+    120 行填满一个条带。
+rec-interval-locked = 录制时固定
+rec-strip-span = = 每条带 { $min } 分钟
+rec-status-recording = 会话 { $id } · { $rows } 行 · 条带 { $strip } · { $time }
+rec-status-ready = 就绪：录制 { $radio } 的全频段条带
+rec-status-first-sweep = 就绪：{ $radio } · 首次扫描进行中 …
+rec-status-no-strip = 无全频段条带：启动 SCAN → PANO，或使用支持 WIDE 的接收机
+rec-db-summary = 数据库 { $size } · { $n } 个会话
+rec-init = DB INIT
+rec-init-hint = 删除所有会话
+rec-init-locked = 请先停止录制
+rec-init-sure = 全部删除？
+rec-init-armed-hint = 再按一次：所有会话将被永久删除
+rec-init-warning = ⚠ 删除全部 { $n } 个会话（{ $size }）。无法撤销。
+rec-cancel = 取消
+rec-empty = 尚无录制的会话。
+rec-col-when = 开始
+rec-col-radio = 电台
+rec-col-bands = 频段
+rec-col-mhz = MHz
+rec-col-length = 时长
+rec-col-size = 大小
+rec-col-strips = 条带
+rec-open-strips = 显示此会话的条带
+rec-every = 每 { $s } 秒一行
+rec-delete = 删除
+rec-delete-hint = 删除会话
+rec-delete-sure = 确定？
+rec-delete-armed-hint = 再按一次：会话将被永久删除
+rec-rows = { $n } 行
+rec-load = 加载
+rec-load-hint = 在全频段条带中显示
+rec-load-sure = 停止并加载？
+rec-load-armed-hint = 再按一次：停止录制并加载条带
+rec-load-warning = ⚠ 加载将停止正在进行的录制（会话 { $id }）。
+rec-viewing = 会话 { $id }，条带 { $strip }：{ $from }–{ $to }
+rec-store = 保存当前
+rec-store-hint = 将条带原样保存为会话：
+    每次扫描一行，按其时间
+rec-store-recording = 录制已包含条带
+rec-store-loaded = 条带正在显示已加载的录制
+rec-store-empty = 条带为空
+rec-status-ready-strip = 就绪：{ $radio } · 自 { $since } 起条带上有 { $n } 次扫描
+rec-every-sweep = 每次扫描一行，平均每 { $s } 秒
 scanner-how-long-stay-candidate-before = 在判断候选信道之前在其上停留多久。低于约十分之一秒时，电平表尚未稳定，弱信号会被漏掉
 scanner-resumes = 恢复
 scanner-carry-once-signal-drops = 信号消失后继续
@@ -3975,8 +4046,6 @@ scanner-stay-until-you-press-next = 停留直到你按下“下一个”
 scanner-how-long-stay = 停留时长
 scanner-how-long-wait-after-signal = 信号消失后等待多久
 scanner-move-don-t-stop-channel = 继续前进，并且不再在此信道上停止
-scanner-next = 下一个
-scanner-move-now = 立即继续
 
 ## ADS-B（src/app/panels/adsb.rs）
 
@@ -4493,6 +4562,7 @@ multi-take-radio-off-row = 把这台电台移出这一行。它继续运行；�
 multi-open-pane = 用一台未在屏幕上的电台打开另一个窗格
 multi-pick-radio = 电台 ▼
 multi-pick-radio-tip = 把一台电台放进这一行。圆环标出连接已打开的电台。
+multi-resting-connection-tip = 休眠连接：选择后连接 { $url }
 multi-new-radio = 新电台…
 multi-asked-station-another-radio = 已向电台站点请求另一台电台……
 multi-client-cannot-open-connection = 此客户端无法打开连接。
@@ -5141,6 +5211,12 @@ sat-norad-2 = NORAD { $norad_id }
 
 scanner-holding-mhz = 停留在 { $here } MHz
 scanner-scanning-mhz = 扫描中 · { $here } MHz
+scanner-pano-first = 全景 { $range } MHz · 首次扫描中 …
+scanner-pano-sweeps = 全景 { $range } MHz · 第 { $n } 次扫描 · { $secs } 秒
+scanner-pano-clear = 丢弃全景并重新扫描
+scanner-pano-plus-pause = + 暂停 { $secs } 秒
+scanner-forward = 前进：继续向上
+scanner-backward = 后退：掉头继续向下
 
 ## 频谱：带数值的消息（src/app/spectrum.rs）
 
@@ -5299,6 +5375,7 @@ elad-tx-input-mic = 话筒
 elad-tx-input-auto = 自动
 elad-tx-input-leave = 保持电台上的设置
 tr-usdx-audio-one-cable = 单根线缆（音频在 CAT 数据流中）
+tr-usdx-audio-one-cable-mute = 单根线缆（音频在 CAT 数据流中），扬声器静音
 tr-usdx-audio-sound-card = USB 声卡（3.5 mm 插孔）
 spy-server-format-uint8 = 8 位（最低带宽）
 spy-server-format-int16 = 16 位
@@ -5588,6 +5665,7 @@ rifp-encoding-group4 = G4
 rifp-encoding-group3 = G3
 scan-kind-memories = 记忆
 scan-kind-range = 范围
+scan-kind-panorama = 全景
 scan-resume-carrier = 载波
 scan-resume-timed = 定时
 scan-resume-manual = 手动
@@ -5895,3 +5973,7 @@ textmodem-psk-coded-hint =
             [one] 个载波
            *[other] 个载波
         }，{ $code }，带宽 { $bw } Hz
+
+topbar-sk-filter-after-nr-hint = SK 位于 RNN/DFNR 之后——因而也在 AGC 之后：滤波器削去的电平不会恢复（见旁边的提升）；关闭：位于恢复电平的 AGC 之前
+topbar-sk-filter-boost-hint = SK 滤波后的提升 0–18 dB（5 dB），在满刻度以下软限幅：NR 之后没有任何环节恢复滤波器削去的电平
+topbar-sk-filter-boost-before-nr = NR 之前由 AGC 恢复电平；提升仅在 NR 之后生效

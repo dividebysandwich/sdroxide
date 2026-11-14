@@ -444,6 +444,13 @@ The **VFO** module has:
   ([§2.7](#27-receiver-controls)).
 - **Swap VFOs** — exchange A and B.
 - **Copy A to B** — copy the active VFO to the other.
+- **📋** (the clipboard) — with more than one radio open, carry this radio's
+  frequency, mode and filter to another. A left click on an empty clipboard
+  fills it and lights the chip on every radio; it stays filled when you switch
+  radios. While it is filled, a left click on any radio pastes it there — mode
+  first, then filter, then the dial on whichever VFO is active — and the
+  clipboard stays filled, so one copy can go to several radios; the tooltip
+  shows what it holds. A right click empties it without pasting.
 - **SPLIT** — transmit on one VFO and receive on the other.
 - **SUB** — enable a second receiver, routed to the right ear.
 
@@ -770,7 +777,12 @@ menu. Ordinary dragging and keyboard adjustment still work.
     curve. It delays the audio by about 21 ms and runs behind the NR engine
     (**after NR**, on to start with), where it takes what RNN or DFNR left and
     lifts the formants they found; with after NR off it runs ahead of HUM and
-    the AGC.
+    the AGC. The place matters even with no NR engine chosen: after NR is
+    also after the AGC. The filter only takes level away, so ahead of the AGC
+    the AGC puts it back, and behind it nothing does — the result can be
+    quiet. The **+dB** field beside after NR lifts it again, 0 to 18 dB
+    (+5 dB to start with), softly limited so a peak stays under full scale; it
+    greys out with after NR off, where the AGC does that job.
   - **FM-DECRACKLE** (NFM only, greyed out in other modes) — a row of its own
     for the crackle of a weak FM signal. Below the FM threshold the noise now
     and then swings the received phase a whole turn round, and a plain
@@ -1067,7 +1079,8 @@ mode: a little noise reduction helps a weak SSB voice and only gets in the way
 of an FT8 decoder, and a slow AGC is kinder to a signal sitting in the noise
 than the fast one that sounds right on a strong local. So each mode carries a
 set of starting values for **AGC**, **Man**, **SQL**, **NR**, **ANC**, **BIN**
-and WFM's **ST**, and selecting a mode — here, or on a CAT rig's own controls —
+and WFM's **ST**, and for the NR menu's filters (**HUM**, the **SK** post-filter
+with its τ, width and place, NFM's **FM-DECRACKLE**), and selecting a mode — here, or on a CAT rig's own controls —
 lays its own on the receiver.
 
 The built-in defaults are deliberately plain. A slow AGC on the weak-signal
@@ -1100,7 +1113,7 @@ them all at once.
 
 **Display module:**
 
-- **☀ 3D** — open the [solar system 3D view](#7-solar-system-3d-view): a second
+- **SOLAR** (System box, among the window chips) — open the [solar system 3D view](#7-solar-system-3d-view): a second
   window in the native app, a second browser tab in the web client.
 - **SPEC** — opens the **spectrum popup**: everything about the spectrum line
   across the top of the panadapter. The button is lit while the spectrum is
@@ -1247,7 +1260,8 @@ them all at once.
   amateur, broadcast, CB and AM — without labels. The button appears
   only on receivers that produce a full-band view — a direct-sampling front end
   such as the RX-888, a KiwiSDR, a SpyServer; on an RTL-SDR, HPSDR or TCI radio
-  the panadapter span is all the hardware delivers — and the setting is
+  the panadapter span is all the hardware delivers, until a **PANO** scan
+  ([Scanning](#213-scanning)) sweeps a range for it — and the setting is
   remembered between sessions.
 
   With the **S/N** or **SK** line on, the strip carries them too, across the
@@ -1259,7 +1273,17 @@ them all at once.
   the strip shows the S/N and SK under the cursor below the frequency, in
   their lines' colours, as on the panadapter. One of the
   strip's cells is several kilohertz wide, so a weak SSB signal is diluted in
-  it: the line finds the middling and strong ones.
+  it: the line finds the middling and strong ones. On the strip the noise
+  floor is read **locally**, the lowest tenth of the cells around each
+  frequency — under a PANO scan within one segment's width (what one slice of
+  the sweep sees, with its own gain), otherwise within a sixteenth of the
+  strip: a whole band's floor is rarely level
+  (on an RTL-SDR in direct sampling it falls by tens of dB from 0 to 30 MHz),
+  and one floor for all of it would draw the slope of the noise rather than
+  how far a signal stands out of the noise around it. Where a band is full of
+  stations in every cell, as medium wave at night, the floor there is the
+  stations, and the line reads low. A PANO row is a whole sweep, so the
+  strip's lines count it from the first sweep on, without the 2 s lead-in.
 
   On such a receiver the **main panadapter can be zoomed out into the strip's
   window too**, past the I/Q the front end is streaming: keep zooming and it
@@ -2158,13 +2182,78 @@ waterfall, as `Mem: folder / name` — see
 ### 2.13 Scanning
 
 Open **SCAN** (System module) to work through channels and stop where somebody
-is transmitting. Two kinds:
+is transmitting. Three kinds:
 
 - **MEM** — the stored memory channels, each in its own mode and filter. Mark
   any of them **SKIP** to pass it over; a channel that is always busy with
   something you do not want to hear is what that is for.
-- **RANGE** — a slice of a band on a channel grid. Give it a **From** and a
-  **to** in MHz, a **Step** (5 / 6.25 / 8.33 / 10 / 12.5 / 25 kHz) and a mode.
+- **RANGE** — a slice of a band on a channel grid. Pick a **Band** from the
+  list — every amateur band of your region plus the broadcast, CB and AM
+  allocations — or give it a **From** and a **to** in MHz, a **Step** (5 / 6.25 / 8.33 / 10 / 12.5 / 25 kHz) and a mode.
+- **PANO** — a panorama: a range swept without stopping. Pick a **Band** or
+  give it a **From** and a **to** in MHz; nothing else applies, because it
+  stops nowhere. A new range starts the panorama afresh; **CLR** does the same
+  on the range it has, throwing the picture away. Its status line names the
+  range, the sweeps so far and how long the last one took. The radio tunes
+  slice after slice across the range, as a range scan does, and stitches what
+  each slice sees — the middle of it, clear of the roll-off at the edges and
+  of the front end's own spike at DC — into one spectrum across the whole
+  range. Each finished sweep is one row of the **full-band strip** (**WIDE**),
+  so a receiver that only sees a couple of megahertz at a time, an RTL-SDR for
+  one, gets the same band-wide waterfall a direct-sampling receiver has.
+  The two times stand on top, since together they set how far apart the
+  strip's rows are. **Settles for** is how long each slice waits after
+  retuning before it is read: longer is a steadier picture and a slower
+  sweep. **Pause after each line** is how long the panorama waits after each
+  full sweep before it starts the next, 0 s by default: for a recording over
+  hours, rows at a steady spacing you choose rather than as fast as the front
+  end sweeps. The status line shows the sweep time and the pause beside it.
+  Below the two times, **Now** says where the sweep is (MHz, per cent of the
+  range, which sweep), and **Strip** how long a strip of 120 rows comes out
+  at, measured: the last sweep's own time plus the pause, a row every so many
+  seconds.
+  **Slice width** is
+  how much of the receiver's span each slice uses, 50–95 % (80 % by default):
+  less keeps clear of the roll-off at the edges, more sweeps faster;
+  neighbouring slices overlap by a tenth of the span. The span is the one
+  after decimation, so **DEC /8** makes every slice an eighth as wide. Where
+  the front end's gain moves between two slices — an AGC on the tuner or the
+  RTL chip, an overload loop — the overlap shows it as a step, and the
+  panorama lowers or raises the new slice by it (steps under 1 dB are left
+  alone); for a panorama whose levels can be compared from one evening to the
+  next, run the front end on a fixed gain. A range from 0 to 30 MHz on an
+  RTL-SDR needs direct sampling (its settings, *Auto* does it); a slice the
+  front end cannot reach is drawn from its neighbours.
+
+  ![PANO on an RTL-SDR in direct sampling: 1–16 MHz as one strip, S/N line on](images/pano-rtlsdr-hf.jpg)
+
+  **Recording a panorama.** Below the PANO settings, **● REC** (desktop app
+  only) records whatever feeds the strip — a PANO sweep, or the full-band lane of a direct-sampling receiver —
+  into a database on this computer (`recordings.sqlite` in the configuration
+  folder). Under a running PANO scan it keeps **one row per sweep**: the two
+  times on top already space the rows, and **Strip** there says how long a
+  strip becomes. From a wideband receiver's own lane, which delivers several
+  frames a second, it keeps one row **every** so many seconds instead (1 s at
+  the least, 10 s by default, no upper limit; the field appears beside ● REC
+  only then), and every frame inside the interval is folded into its row,
+  column by column, keeping the strongest level, so a carrier that was up for
+  one frame is still there. The recording starts with the sweeps already
+  on the strip (up to 120, each at the time it arrived; the status line says
+  how many and since when), so pressing ● REC halfway through a scan keeps
+  what was scanned so far; to start empty, press **CLR** first. **STORE CURRENT**, beside ● REC,
+  keeps the strip as it is as a finished session, one row per sweep at its
+  own time, nothing folded — for a scan that is done and only wants keeping;
+  loaded back, it looks as it did. A recording is a **session**; sessions are
+  cut into **strips** of 120 rows, the height of the strip on screen — at
+  10 s, twenty minutes a strip. The list below shows each session's start,
+  radio, bands, MHz range, length, size and strips, and the database's size
+  on top. Click a session's date to open its strips; **LOAD** puts one into
+  the full-band strip and holds it there until **LIVE**; while a session
+  records, LOAD warns first and stops it on the second press, and **● REC**
+  brings the strip back to live. **DEL** deletes a session, **DB INIT** every session; both
+  ask a second press, and DB INIT says how much goes. The file is plain
+  SQLite: tables `session` and `row`, one row's levels a 1024-byte blob
+  scaled between its `db_floor` and `db_ceil`.
 
 **A range scan is fast**, and not in the way a handheld scanner is. A scanner
 has one receiver and has to visit each channel in turn, which is why sweeping
@@ -2219,8 +2308,14 @@ receiver's centre, where a zero-IF front end's own local oscillator is. A CAT
 rig feeding demodulated audio has no spectrum to read, so the button is greyed
 there and its memory scan visits every channel as before.
 
-**Stops at** is how loud a channel has to be. Either give a level directly, or
-press **SQL** to use the receiver's own squelch, which makes the scan stop
+**Stops at** is how loud a channel has to be, judged one of three ways. **dBFS**
+gives a level directly, on a slider with its own number box. **S/N** asks how
+far a channel stands above the noise floor around it — the median of the
+spectrum in view, taken over one channel's width — again on a slider, 0 to
+40 dB; it follows the front end's gain and the band's noise on its own, so a
+gain change or a noisier evening does not leave the scan stopping everywhere
+or nowhere, and each memory channel is judged against a floor for its own
+width. Or press **SQL** to use the receiver's own squelch, which makes the scan stop
 exactly where the audio would have opened — one control instead of two. Note
 that with the squelch slider at `off` the scan will stop on the first channel it
 looks at, since every channel then counts as busy. The squelch is one of the
@@ -2241,10 +2336,12 @@ missed; the default 150 ms is a reasonable balance.
   seconds is a good starting point.
 - **TIMED** — carry on after a fixed time whether or not the signal is still
   there. Useful on a channel somebody is sitting on.
-- **MANUAL** — stay until you press **NEXT**.
+- **MANUAL** — stay until you press **▶** or **◀**.
 
-While a scan is running, **NEXT** moves on now and **SKIP** moves on and adds
-the channel to the skip list. Touching the dial, changing band, recalling a
+While a scan is running, **▶** moves on now, upwards, and **◀** turns the scan
+round and moves on downwards — the two arrows of a radio's scan key; the scan
+keeps the direction last pressed, wrapping round at either end of the range or
+list. **SKIP** moves on and adds the channel to the skip list. Touching the dial, changing band, recalling a
 memory or transmitting all stop the scan where it is — as on any scanner, and so
 that the radio is not fighting you for the VFO.
 
@@ -6892,9 +6989,10 @@ a typed line does. Every transfer is block-CRC-ARQ: missing blocks are
 requested back and resent until the file checks out, so a transfer that
 survives fades and drop-outs rather than one that has to be started over.
 
-A received file is written under a `received/` folder — created next to
-wherever sdroxide was started from — named `<transfer-id>_<filename>`, so two
-stations sending a file with the same name never collide.
+A received file is written to `~/.config/sdroxide/atchat_received/` (the
+configuration directory, [§13](#13-configuration-files)), named
+`<transfer-id>_<filename>`, so two stations sending a file with the same name
+never collide.
 
 ### 3.18 ACARS (airline datalink on airband)
 
@@ -6914,7 +7012,7 @@ ACARS is also carried over VDL2 on higher frequencies — see [3.15](#315-vdl2-w
 
 HFDL (High Frequency Data Link, ARINC 635) is the datalink airliners use where nothing else reaches: the oceans and the poles. A handful of ground stations spread around the world transmit on assigned shortwave channels between 2.8 and 22 MHz, aircraft answer on the same channel, and the exchange carries squitters, logons, position and performance reports, frequency data, and ACARS messages riding inside it. It is slow — 300 to 1800 bits per second of PSK on a 2.8 kHz single-sideband channel — and it is the only aircraft datalink you can hear from the other side of an ocean.
 
-Choose **HFDL** from the end of the **DIGITAL** row, or press the **HFDL** chip in the System box. The panel docks under the waterfall: the decode log on the left, an aircraft map on the right, with a draggable divider between them that is remembered with the rest of the layout.
+Choose **HFDL** from the end of the **DIGITAL** row, or press the **HFDL** chip in the Display box, beside SKIM. The panel docks under the waterfall: the decode log on the left, an aircraft map on the right, with a draggable divider between them that is remembered with the rest of the layout.
 
 **One channel at a time, and you choose which.** This is the difference between HFDL and the other aircraft lanes. ADS-B has exactly one frequency and AIS and VDL2 cover all of their channels at once, because theirs sit next to each other. HFDL's do not — they are scattered across the whole shortwave spectrum — so the decoder listens to one 24 kHz lane and the frequency is yours to pick.
 
@@ -10765,6 +10863,22 @@ unplug the receiver and plug it back in.
 - **IF bandwidth** — the tuner's analog filter. *Auto* picks the widest one
   that fits the sample rate, which is what you want unless a strong
   off-channel neighbour argues otherwise.
+- **Low IF** — run the tuner at a low IF instead of zero IF: the ADC at
+  6 MHz, the band on a 1.620 MHz IF, which the service mixes down to 2 Msps
+  (and decimates further for a narrower rate). At zero IF the tuner's own LO
+  sits in the middle of the span, and what it leaves there — a DC spike, LO
+  leakage, the image of a strong signal mirrored across the centre — reads
+  like a station; on a PANO sweep it puts a line in the middle of every
+  slice. At a low IF none of it falls into the band. The price is 2 Msps and
+  a 1.536 MHz filter at the most, so it is **on by default up to 2 Msps**,
+  the way SDRuno runs an RSP; a wider sample rate runs at zero IF, the only
+  arrangement that reaches it, and keeps its span. At a low IF the IF
+  bandwidth list offers no filter wider than 1.536 MHz. The same switch sits
+  in the RX box as the **ZERO IF / LOW IF** chip beside **DEC**, named as it
+  stands; a click switches, saves and reopens the radio, and from a rate
+  wider than 2 Msps it goes to 2 Msps at the low IF. An RSPduo running both
+  tuners is at a low IF anyway, and the chip shows LOW IF greyed. Takes
+  effect on **Apply / reconnect**.
 - **AGC** — the RSP's own hardware IF-gain loop, run by the service at 5, 50
   or 100 Hz, with an adjustable **set point** in dBFS. *Off* hands the IF gain
   slider back to you — the setting for measurement and weak-signal digital
@@ -12076,15 +12190,36 @@ in ELAD's vendor protocol selects between them, and why their own GNU Radio
 module takes the rate as a parameter without ever sending it. On an FDM-S1 or
 FDM-S2 this setting therefore *is* a command: it chooses the image loaded above.
 
-**On an FDM-DUO it is not.** The radio boots its own FPGA and has no front-panel
-menu for the rate, so it arrives at whatever it powered up in — 192 kHz on a
-fresh one — or whatever FDM-SW2 last left it in, and this setting says which one
-that is. Set it wrong and you still get samples: the panadapter is simply the
-wrong width, with every frequency inside it scaled to match. sdroxide measures
-the real throughput a couple of seconds after the stream starts and tells you on
-screen when the two disagree, naming the rate to pick. The one exception is
-6144 kHz, where the samples themselves are half as wide — a wrong guess there is
-noise rather than a mis-scaled spectrum.
+**On an FDM-DUO it is a command too, by another route.** The radio boots its
+own FPGA, which streams at 192 kHz — its stand-alone mode. For any wider rate
+sdroxide uploads the matching "remote" image over the receive cable when it
+opens the radio, the way FDM-SW2 and SDR Console do. It takes about seven
+seconds, and the radio's display shows *SP* while it is on a wide image.
+Choosing 192 kHz again, or closing sdroxide, puts the radio back in stand-alone
+(*STD ALONE* on its display); that takes about four seconds, so the window may
+take a moment to close. Nothing is loaded or restored while transmitting.
+
+The images are not shipped with sdroxide. They are read, as data, out of ELAD's
+`ExtIOmc_ELAD_FDMDUO.dll`, which SDR Console or FDM-SW2 installs on Windows;
+the file is never loaded as code, and each image is checked against a known
+hash before it is sent. On Linux or macOS, copy that file into sdroxide's
+configuration folder (or next to the program, or point `SDROXIDE_ELAD_DLL` at
+it). Without it the DUO stays at 192 kHz and sdroxide says why on screen.
+
+If another program left the DUO on a wide image and this setting says 192 kHz,
+sdroxide notices from the stream's throughput a couple of seconds after it
+starts, puts the radio back in stand-alone and reopens it, once per session.
+
+**The SPAN chip.** With an ELAD connected, the RX box carries a **SPAN** chip
+beside **DEC**, showing the rate the radio is streaming (*SPAN 192k*). It is
+shown only when the radio is an ELAD. Click it for the next wider rate and
+right-click for the next narrower. Either saves the setting and reopens the
+radio, exactly as changing **Sample rate** here and pressing Apply does; on an
+FDM-DUO that loads the wide image, or puts the radio back in stand-alone.
+Expect a short pause each time: the radio is closed and reopened, a wide image
+takes about 6.5 s to send over USB and be checked by the radio, and going back
+to stand-alone takes about 3.5 s while the radio reboots its own 192 kHz image.
+The waterfall resumes on its own when the radio is ready.
 
 **Attenuator and pre-selection filters.** The pad is the same control as the main
 window's Gain slider. The filters are the low-pass bank in front of the ADC:
@@ -14438,7 +14573,7 @@ remote or browser client sees, saves and applies the same list.
 
 ## 7. Solar system 3D view
 
-The **☀ 3D** button in the Display module opens the solar system in three
+The **SOLAR** button in the System module opens the solar system in three
 dimensions — the Sun, the Earth and the Moon, the other seven planets and
 eighteen of their moons — with live solar imagery, sunspot regions and
 coronal-mass-ejection trajectories. This enables operators to see if anything is
@@ -15529,7 +15664,7 @@ mean the station, so it names it and asks before making one — and the **×** o
 radio's button offers **Close it on** *station* to take one out again. A radio
 added this way opens as another browser tab of the same page within a second,
 exactly as the station's other radios do.
-The [solar system 3D view](#7-solar-system-3d-view) works too: **☀ 3D**
+The [solar system 3D view](#7-solar-system-3d-view) works too: **SOLAR**
 opens it in a new tab, which connects to a separate read-only endpoint and so
 does not consume the single control connection — though it is challenged for the
 same sign-in, since it is shown your QTH and everything the station is decoding.
@@ -15633,11 +15768,11 @@ row of menu buttons:
 | --- | --- |
 | **PTT** | Keys the transmitter. Hold it down to talk, or click it with a mouse to latch it on. |
 | **RX** | Volume, front-end gain, AGC, squelch, the filter width and edges, NB, ANC, NR, BIN |
-| **VFO** | A↔B, A→B, SPLIT, SUB, and the RIT/XIT offsets |
+| **VFO** | A↔B, A→B, 📋 (with more than one radio), SPLIT, SUB, and the RIT/XIT offsets |
 | **SUB** | The second receiver's frequency, mode, filter and level (only while it is running) |
 | **TX** | TUNE, the voice keyer, and the drive, tune and mic levels |
-| **DISP** | ☀ 3D, WIDE, FIT, CTR, the panadapter boxes (the spectrum and waterfall switches, peak hold, their speeds and the detail), the skimmers, and the spectrum floor/ceiling and FFT size |
-| **SYS** | LOG, SPOTS, AWARDS, BANDS, SAT, ISM, PUBLIC SDR, MAIL, MEM, SCAN, SETTINGS, HELP |
+| **DISP** | FFT, SPEC, FIT, WIDE, CTR, HFDL, the panadapter boxes (the spectrum and waterfall switches, peak hold, their speeds and the detail), the skimmers, and the spectrum floor/ceiling and FFT size |
+| **SYS** | LOG, SPOTS, AWARDS, BANDS, SAT, ISM, PUBLIC SDR, MAIL, MEM, SCAN, SOLAR, SETTINGS, HELP |
 
 A menu stays open until you tap outside it or tap its button again — the top-bar
 popups do not fade away on a touch screen the way they do under a mouse, because
@@ -15833,7 +15968,10 @@ Spots then appear two ways:
   of the list. A click on a picked dot, or
   a right-click anywhere on the map, lets them all go. The map fills the window: resize the
   window to make it larger (it grows no taller than it is wide). A broadcast transmitter's dot grows with
-  its power on a logarithmic scale, from the plain size at 1 kW to about three
+  its power (EiBi gives none; it is taken from Aoki's list once that is
+  imported under Settings → UI, the entry on the air within 500 Hz, of the same country where
+  there is one; a station the schedule gives no site also takes its site and
+  coordinates from that Aoki entry, marked "(Aoki)") on a logarithmic scale, from the plain size at 1 kW to about three
   times as wide at 1000 kW. **NAMES** writes the names beside the
   dots (on to start with), **CITIES** the cities on this map; the status line says how many spots have no location and so no dot.
 
@@ -16512,6 +16650,7 @@ and not the station's.
 | `speech_voices/` | dir | Extra voices for the spoken announcements: a Piper `.onnx` model and its `.onnx.json` config, side by side. Absent until you create it — the shipped voice lives with the program, not here. Note this is *not* `voice/`, which is the voice keyer. |
 | `sstv_tx/` | dir | The ten SSTV transmit-image slots (`slot0.png`…`slot9.png`). |
 | `sstv_rx/` | dir | Received SSTV and RIFP pictures, kept for the gallery. |
+| `atchat_received/` | dir | Files received over AtCHAT NET ([§3.17](#317-atchat-net)), named `<transfer-id>_<filename>`. |
 | `wefax_rx/` | dir | Weather-fax charts received by an earlier version. Charts now go to `~/Pictures/sdroxide/wefax/`, but this is still read so an existing collection stays in the gallery. |
 | `solar/` | dir | Cached solar imagery, space-weather JSON and subscribed element-set listings for the 3D view, with an index of HTTP validators so refreshes stay cheap. Safe to delete; it is re-fetched on demand. |
 | `radios.json` | JSON | The roster of configured radios ([§2.17](#217-running-more-than-one-radio)): each radio's id, the name you gave it (empty = named after its interface) and whether it is switched on (`enabled`, absent = on). Absent until you add a second radio. Written by the GUI, and — on a machine running `--server` — by a signed-in remote client adding or closing a radio ([§8.1](#81-start-the-server)). |

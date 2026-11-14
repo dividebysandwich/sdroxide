@@ -1739,15 +1739,6 @@ settings-radio-corrects-reference-oscillator-applied-when = Corrigeert de refere
 settings-radio-receive-only-below-adc-s = Alleen ontvangen. Onder de Nyquist-grens van de ADC wordt de antenne rechtstreeks bemonsterd en is hertunen direct, omdat er geen hardware-downconverter is — de volledige ADC-stroom wordt op de host naar basisband omgezet. Erboven schakelt de ontvanger automatisch over naar zijn R828D-tuner en de VHF-SMA, dus beide antennes moeten aangesloten zijn. VHF heeft een ADC-klok van 32,4 Msps of meer nodig, zodat de IF van de tuner past, en bij klokken onder 48 Msps is er een gat tussen de twee bereiken dat niets kan bereiken. Elke instelling hier werkt meteen — er is geen knop Toepassen om op te drukken.
 settings-radio-device = Apparaat
 settings-radio-no-devices-press-rescan = geen apparaten — druk op Opnieuw zoeken
-settings-radio-six-rates-are-six-different =
-    De zes snelheden zijn zes verschillende FPGA-images, geen register — daarom kiest niets in het protocol van ELAD tussen hen, en betekent wat deze instelling inhoudt iets anders per model.
-
-    FDM-S1 / FDM-S2: een commando. Hun FPGA wordt bij elke inschakeling door de computer geladen, en sdroxide draait de eigen elad-firmwarelader van ELAD om het image van deze snelheid erin te zetten. Zonder die lader geïnstalleerd stuurt een sampler helemaal geen samples, en sdroxide zegt dat op het scherm.
-
-    FDM-DUO: geen commando. De radio start zijn eigen FPGA en komt op welke snelheid hij bij het inschakelen had of FDM-SW2 laatst achterliet (192 kHz op een nieuwe), en dit zegt alleen hoe de stroom GELEZEN wordt. Gaat dat mis, dan is het panadapter gewoon de verkeerde breedte, met elke frequentie erin evenredig geschaald.
-
-    De werkelijke snelheid van de stroom wordt een paar seconden na de start gemeten, en een afwijking wordt op het scherm gemeld. Werkt bij Toepassen.
-settings-radio-fdm-s-fpga-image-loaded = FDM-S: het FPGA-image dat geladen wordt — FDM-DUO: hoe de stroom gelezen wordt
 settings-radio-receiver-s-input-pad-one = De ingangsverzwakker van de ontvanger — één stap, omhoog of omlaag. Dezelfde regelaar als de schuif Gain van het hoofdvenster.
 settings-radio-pre-selection-filters = Voorselectiefilters
 settings-radio-low-pass-bank-front-adc = De laagdoorlaatbank vóór de ADC. Die te omzeilen geeft de breedste weergave en het slechtste gedrag bij sterke signalen buiten de band — een omroepzender een paar mijl verderop zet beelden over de band. Laat hem aan, tenzij je bewust buiten het gefilterde bereik luistert.
@@ -1874,7 +1865,13 @@ settings-radio-no-rsps-press-rescan-needs = geen RSP's — druk op Opnieuw zoeke
 settings-radio-both-tuners-running-api-fixes = Met beide tuners in bedrijf zet de API de ADC vast op 6 MHz en levert 2 Msps uit een lage IF — dus 2 Msps is het breedste bereik, en de smallere zijn daarvan gedecimeerd. Werkt bij Toepassen.
 settings-radio-rates-below-2-msps-run = Snelheden onder 2 Msps draaien de ADC op 2 Msps en decimeren in de service. Werkt bij Toepassen.
 settings-radio-reduced-adc-resolution = {"  "}(verlaagde ADC-resolutie)
+topbar-sdrplay-if-hint = Eén tuner op lage MF (1,620 MHz) in plaats van nul-MF: geen DC-piek, LO-lek of spiegel in het midden. Standaard aan tot 2 Msps; een bredere snelheid draait op nul-MF, een klik daar gaat naar 2 Msps op lage MF. Omschakelen opent de radio opnieuw.
+topbar-sdrplay-if-low-hint = Lage MF (1,620 MHz): geen DC-piek, LO-lek of spiegel in het midden. Klik: nul-MF, voor meer dan 2 Msps.
+topbar-sdrplay-if-zero-hint = Nul-MF: DC-piek, LO-lek en spiegel in het midden lijken signalen. Verlaag de bandbreedte naar 2 Msps om lage MF zonder deze artefacten te gebruiken: klik.
+topbar-sdrplay-if-dual = Een RSPduo met beide tuners draait al op lage MF
 settings-radio-if-bandwidth = IF-bandbreedte
+settings-radio-low-if = Lage MF
+settings-radio-low-if-check = MF 1,620 MHz tot 2 Msps (zoals SDRuno); bredere snelheden op nul-MF
 settings-radio-tuner-s-analog-filter-auto = Het analoge filter van de tuner. Automatisch kiest het breedste dat past bij de samplefrequentie. Werkt bij Toepassen.
 settings-radio-rsp-s-own-if-gain = De eigen IF-gainlus van de RSP, gedraaid door de API-service. Uit geeft de IF-gainschuif weer aan jou — de instelling voor metingen en digitale modi op zwakke signalen.
 settings-radio-agc-set-point = AGC-setpoint
@@ -2031,6 +2028,8 @@ topbar-bar-trace = staaf / spoor
 topbar-needle-bar-trace = naald / staaf / spoor
 topbar-swap-vfos = VFO's wisselen
 topbar-copy-b = A naar B kopiëren
+topbar-clip = Klembord: links vullen / rechts legen
+topbar-clip-full = Klembord: links plakken { $freq } ({ $mode }) / rechts legen
 topbar-second-receiver-right-ear-tunes = Tweede ontvanger, in het rechteroor. Hij stemt onafhankelijk van A/B af — zijn regelaars staan in de module SUB, en zijn doorlaatband op de waterval.
 topbar-band-plan = , uit het bandplan
 topbar-repeater-shift-following-band-plan = Repeaterverschuiving: volgt het bandplan, dat voor deze frequentie geen verschuiving heeft — simplex
@@ -2211,6 +2210,7 @@ topbar-how-many-signals-model-reads = Hoeveel signalen het model tegelijk leest.
 topbar-spots = SPOTS
 topbar-save-skimmer-s-spot-list = De spotlijst van de skimmer naar een bestand opslaan
 topbar-show-hide-full-band-waterfall = De waterfall-strook over de hele band boven het panadapter tonen/verbergen — alles wat deze ontvanger tegelijk kan zien
+    Smalbandige ontvanger: SCAN → PANO sweept een bereik en bouwt hier een overzicht.
 topbar-spectrum-waterfall-either-layer-both = Spectrum en waterval — één laag, beide, of geen. Brandt terwijl beide getoond worden.
 topbar-spectrum = SPECTRUM
 topbar-show-spectrum = SPECTRUM TONEN
@@ -3962,8 +3962,11 @@ logbook-no-qsos-yet-run-ft8 = nog geen QSO's — draai FT8/FT4 of voeg een handm
 scanner-scanner = Scanner
 scanner-work-through-stored-memory-channels = De opgeslagen geheugenkanalen doorlopen
 scanner-work-through-slice-band-channel = Een stuk van een band doorlopen op een kanaalraster
+scanner-sweep-range-into-panorama = Een bereik zonder stoppen tot een panorama doorlopen
+scanner-panorama-hint = Doorloopt zonder stoppen; elke volledige sweep is een rij in de volbandstrook (WIDE).
 scanner-stop = STOP
 scanner-start = START
+scanner-band = Band
 scanner-from = Van
 scanner-step = Stap
 scanner-mode = Modus
@@ -3986,9 +3989,77 @@ scanner-unfiled = Niet ingedeeld
 scanner-nothing-filed-under-folders-you = Er staat niets in de mappen die je koos.
 scanner-stops = Stopt bij
 scanner-use-receiver-s-own-squelch = De eigen squelch van de ontvanger gebruiken, zodat de scan precies stopt waar de audio zou openen
+scanner-stop-snr = Stopt waar een kanaal zoveel boven de ruisvloer eromheen uitsteekt; volgt versterking en bandruis.
 scanner-squelch-off-scan-will-stop = squelch staat uit — de scan stopt op het eerste waar hij naar kijkt
 scanner-channel-power-signal-has-reach = Kanaalvermogen dat een signaal moet bereiken om de scan te stoppen
 scanner-listens = Luistert naar
+scanner-settles = Wacht per stuk
+scanner-settles-hint = Wachttijd na het afstemmen, voordat het spectrum gelezen wordt. Langer: rustiger beeld, tragere sweep.
+scanner-pano-width = Stukbreedte
+scanner-pano-width-hint = Deel van de ontvangerbreedte per stuk. Minder: vrij van de randafval; meer: snellere sweep. Stukken overlappen 10 %.
+scanner-pano-pause = Pauze na elke regel
+scanner-pano-pause-hint = Wachttijd na elke volledige sweep voordat de volgende begint. 0: zonder pauze.
+scanner-pano-now = Nu
+scanner-pano-now-at = op { $mhz } MHz ({ $pct } %) · sweep { $n }
+scanner-pano-strip = Strook
+scanner-pano-strip-is = een rij elke { $row } s = { $strip } per strook
+scanner-pano-strip-hint = Gemeten: laatste sweep plus pauze, maal { $rows } rijen
+scanner-pano-strip-first = na de eerste sweep
+rec-db-error = Opnamedatabase niet beschikbaar: { $err }
+rec-retry = Opnieuw
+rec-live = LIVE
+rec-live-hint = Terug naar de live strook
+rec-stop = ■ STOP
+rec-record = ● REC
+rec-record-hint = Volledige-bandstrook (WIDE) opnemen, te beginnen met de sweeps die er al op staan:
+    onder PANO één rij per sweep, anders één per interval (sterkste niveau)
+rec-desktop-only = Alleen in de desktop-app: daar staat de opnamedatabase.
+rec-interval = Elke
+rec-interval-hint = Tijd tussen opgeslagen rijen, vanaf 1 s.
+    120 rijen vullen één strook.
+rec-interval-locked = Vast tijdens opname
+rec-strip-span = = { $min } min per strook
+rec-status-recording = Sessie { $id } · { $rows } rijen · strook { $strip } · { $time }
+rec-status-ready = Klaar: neemt de volledige-bandstrook van { $radio } op
+rec-status-first-sweep = Klaar: { $radio } · eerste sweep loopt …
+rec-status-no-strip = Geen volledige-bandstrook: start SCAN → PANO, of een ontvanger met WIDE
+rec-db-summary = Database { $size } · { $n } sessies
+rec-init = DB INIT
+rec-init-hint = Alle sessies verwijderen
+rec-init-locked = Eerst opname stoppen
+rec-init-sure = ALLES WISSEN?
+rec-init-armed-hint = Nogmaals drukken: alle sessies definitief weg
+rec-init-warning = ⚠ Wist alle { $n } sessies ({ $size }). Kan niet ongedaan worden.
+rec-cancel = Annuleren
+rec-empty = Nog geen sessies opgenomen.
+rec-col-when = Start
+rec-col-radio = Radio
+rec-col-bands = Banden
+rec-col-mhz = MHz
+rec-col-length = Duur
+rec-col-size = Grootte
+rec-col-strips = Stroken
+rec-open-strips = Stroken van deze sessie tonen
+rec-every = Eén rij elke { $s } s
+rec-delete = DEL
+rec-delete-hint = Sessie verwijderen
+rec-delete-sure = ZEKER?
+rec-delete-armed-hint = Nogmaals drukken: sessie definitief weg
+rec-rows = { $n } rijen
+rec-load = LADEN
+rec-load-hint = Strook in volledige-bandstrook tonen
+rec-load-sure = STOP + LADEN?
+rec-load-armed-hint = Nogmaals drukken: opname stopt, strook laadt
+rec-load-warning = ⚠ Laden stopt de lopende opname (sessie { $id }).
+rec-viewing = Sessie { $id }, strook { $strip }: { $from }–{ $to }
+rec-store = BEWAAR HUIDIGE
+rec-store-hint = Strook zoals hij is als sessie bewaren:
+    één rij per sweep, op zijn eigen tijd
+rec-store-recording = De opname neemt de strook al mee
+rec-store-loaded = Strook toont een geladen opname
+rec-store-empty = Strook is leeg
+rec-status-ready-strip = Klaar: { $radio } · { $n } sweeps op de strook sinds { $since }
+rec-every-sweep = Eén rij per sweep, gemiddeld elke { $s } s
 scanner-how-long-stay-candidate-before = Hoe lang op een kandidaat te blijven voordat hij beoordeeld wordt. Onder ongeveer een tiende seconde heeft de niveaumeter zich nog niet gezet en worden zwakke signalen gemist
 scanner-resumes = Hervat
 scanner-carry-once-signal-drops = Doorgaan zodra het signaal wegvalt
@@ -3997,8 +4068,6 @@ scanner-stay-until-you-press-next = Blijven tot je VOLGENDE indrukt
 scanner-how-long-stay = Hoe lang blijven
 scanner-how-long-wait-after-signal = Hoe lang wachten nadat het signaal wegvalt
 scanner-move-don-t-stop-channel = Doorgaan, en op dit kanaal niet opnieuw stoppen
-scanner-next = VOLGENDE
-scanner-move-now = Nu doorgaan
 
 ## adsb (src/app/panels/adsb.rs)
 
@@ -4516,6 +4585,7 @@ multi-take-radio-off-row = Deze radio uit deze rij halen. Hij blijft draaien; de
 multi-open-pane = Een volgend paneel openen met een radio die niet in beeld is
 multi-pick-radio = Radio ▼
 multi-pick-radio-tip = Een radio in deze rij zetten. De ringen markeren radio's waarvan de verbinding open is.
+multi-resting-connection-tip = Rustende verbinding: kiezen belt { $url }
 multi-new-radio = Nieuwe radio…
 multi-asked-station-another-radio = Het station om nog een radio gevraagd…
 multi-client-cannot-open-connection = Deze client kan geen verbinding openen.
@@ -5199,6 +5269,12 @@ sat-norad-2 = NORAD { $norad_id }
 
 scanner-holding-mhz = vasthouden op { $here } MHz
 scanner-scanning-mhz = scannen · { $here } MHz
+scanner-pano-first = Panorama { $range } MHz · eerste sweep …
+scanner-pano-sweeps = Panorama { $range } MHz · sweep { $n } · { $secs } s
+scanner-pano-clear = Panorama wissen en opnieuw sweepen
+scanner-pano-plus-pause = + pauze { $secs } s
+scanner-forward = Vooruit: omhoog verder
+scanner-backward = Achteruit: omkeren en omlaag verder
 
 ## spectrum: messages with values (src/app/spectrum.rs)
 
@@ -5357,6 +5433,7 @@ elad-tx-input-mic = Microfoon
 elad-tx-input-auto = Automatisch
 elad-tx-input-leave = Laten zoals ingesteld op de radio
 tr-usdx-audio-one-cable = Eén kabel (audio in de CAT-stroom)
+tr-usdx-audio-one-cable-mute = Eén kabel (audio in de CAT-stroom), luidspreker dempen
 tr-usdx-audio-sound-card = USB-geluidskaart (3,5 mm-jack)
 spy-server-format-uint8 = 8-bit (laagste bandbreedte)
 spy-server-format-int16 = 16-bit
@@ -5647,6 +5724,7 @@ rifp-encoding-group4 = G4
 rifp-encoding-group3 = G3
 scan-kind-memories = GEH
 scan-kind-range = BEREIK
+scan-kind-panorama = PANO
 scan-resume-carrier = DRAAGGOLF
 scan-resume-timed = MET TIMER
 scan-resume-manual = HANDMATIG
@@ -5954,3 +6032,7 @@ textmodem-psk-coded-hint =
             [one] draaggolf
            *[other] draaggolven
         }, { $code }, { $bw } Hz breed
+
+topbar-sk-filter-after-nr-hint = SK achter RNN/DFNR — en dus achter de AGC: wat het filter wegneemt blijft weg (zie de boost ernaast); uit: vóór de AGC, die het niveau herstelt
+topbar-sk-filter-boost-hint = Versterking na het SK-filter, 0–18 dB (5 dB), zacht begrensd onder volle schaal: achter NR herstelt niets het niveau dat het filter wegneemt
+topbar-sk-filter-boost-before-nr = Vóór NR herstelt de AGC het niveau; de boost werkt alleen achter NR

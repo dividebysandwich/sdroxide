@@ -1281,6 +1281,8 @@ pub enum Command {
         close_s: f32,
         width: u8,
         after_nr: bool,
+        /// Gain right after the filter, dB (see `RxState::sk_filter_boost_db`).
+        boost_db: f32,
     },
     /// The panadapter shows (true) or no longer shows (false) a stretch outside
     /// the I/Q window while it draws from the I/Q — a hole in the picture. A
@@ -1316,4 +1318,8 @@ pub enum Command {
     /// echoed back in [`crate::RadioState::sonde`]. Appended last, for the
     /// usual reason.
     SetSondeConfig(crate::SondeSettings),
+    /// Turn the scan round and carry on downwards — the ◀ beside ▶ (which is
+    /// [`Command::ScanNext`], and turns it back upwards). Appended: postcard
+    /// numbers variants by position.
+    ScanBack,
 }

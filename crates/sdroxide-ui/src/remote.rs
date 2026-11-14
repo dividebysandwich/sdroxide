@@ -87,6 +87,13 @@ fn dial(
     Ok((sender, receiver, refused))
 }
 
+/// Whether the engine's TX Audio test is reading the microphone: recording
+/// the test phrase, or the live microphone through the chain for the meters
+/// (and the speakers). Playing a phrase back reads nothing.
+fn mic_under_test(t: sdroxide_types::TxVoiceTest) -> bool {
+    t == sdroxide_types::TxVoiceTest::Recording || t.is_live()
+}
+
 /// Outbound gate: nothing the UI produces reaches the socket until the
 /// handshake has finished, because the UI starts issuing commands (a
 /// first-frame `SetSpectrumCfg`, with no debounce) long before it has.
@@ -192,6 +199,11 @@ pub struct RemoteController {
     /// microphone, so the uplink has to run for this too — otherwise a remote
     /// operator's recording comes back silent.
     voice_recording: bool,
+    /// The TX Audio window's test is recording the microphone or putting it
+    /// live through the chain (METERS, LIVE). Same microphone, same uplink:
+    /// without it a remote operator's meters stay dead and the recording comes
+    /// back silent (#809).
+    mic_testing: bool,
     mic_buf: Vec<f32>,
     mic_seq: u32,
     /// The engine host's `radio.json` as last announced, with whatever the
@@ -324,6 +336,7 @@ impl RemoteController {
             mic_was_active: false,
             transmitting: false,
             voice_recording: false,
+            mic_testing: false,
             mic_buf: Vec::new(),
             mic_seq: 0,
             radio_cfg: None,
@@ -368,6 +381,7 @@ impl RemoteController {
                 for msg in queued {
                     self.write(&msg);
                 }
+                self.mic_testing = mic_under_test(state.tx.voice_test);
                 self.pending.push_back(RadioEvent::Capabilities(caps));
                 self.pending.push_back(RadioEvent::State(state));
             }
@@ -378,6 +392,7 @@ impl RemoteController {
             ServerMsg::AuthRejected(why) => self.auth = AuthPhase::Prompt(Some(why)),
             ServerMsg::State(s) => {
                 self.transmitting = s.tx.ptt || s.tx.tune;
+                self.mic_testing = mic_under_test(s.tx.voice_test);
                 self.pending.push_back(RadioEvent::State(s));
             }
             ServerMsg::Spectrum(f) => self.pending.push_back(RadioEvent::Spectrum(f)),
@@ -610,7 +625,7 @@ impl RemoteController {
 
     fn pump_mic(&mut self) {
         let Some(bridge) = self.audio.as_mut() else { return };
-        let active = self.transmitting || self.voice_recording;
+        let active = self.transmitting || self.voice_recording || self.mic_testing;
         bridge.set_mic_active(active);
         if !active {
             // **Do not drain the capture ring here.** The page has one
@@ -885,6 +900,7 @@ impl RadioController for RemoteController {
         self.tx_codec = None;
         self.transmitting = false;
         self.voice_recording = false;
+        self.mic_testing = false;
         self.mic_buf.clear();
         self.mic_seq = 0;
         // ...and the roster, which the new session announces afresh: the
@@ -961,6 +977,19 @@ impl RadioController for RemoteController {
 mod tests {
     use super::*;
     use sdroxide_types::SpectrumConfig;
+
+    /// The TX Audio test reads the remote operator's microphone while it
+    /// records and while METERS or LIVE runs, so the uplink has to run then —
+    /// and not while a recorded phrase plays back, which reads nothing (#809).
+    #[test]
+    fn the_tx_audio_test_streams_the_microphone_only_while_it_reads_one() {
+        use sdroxide_types::TxVoiceTest::*;
+        assert!(mic_under_test(Recording));
+        assert!(mic_under_test(Metering));
+        assert!(mic_under_test(Monitoring));
+        assert!(!mic_under_test(Playing));
+        assert!(!mic_under_test(Idle));
+    }
 
     /// A station's other radios are dialled from the address this connection
     /// is already on — whatever shape the operator gave it.

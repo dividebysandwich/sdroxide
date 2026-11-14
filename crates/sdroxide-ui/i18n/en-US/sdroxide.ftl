@@ -1625,6 +1625,11 @@ settings-radio-streams-radio-s-own-475 = Streams the radio's own 475-bin sweep. 
 settings-radio-how-wide-sweep-only-wide = How wide to sweep it. This is the only wide view an Icom has, and the radio keeps whatever span was last chosen on its own screen — often a few kHz, which is why the strip can come up no wider than the panadapter under it. Setting a span here also puts the scope into centre mode, so it follows the dial. It changes the radio's own display too; "As set on the radio" leaves it alone.
 settings-radio-switch-modulation-input-lan = Switch modulation input to LAN
 settings-radio-transmit-audio-only-heard-when = Transmit audio is only heard when the radio's MOD input is set to LAN. sdroxide can write that on a model whose menu numbering it knows; on any other it says so and leaves the menu alone. It is a loan: whatever the radio held there is read first and put back when the session ends, so a rig used on its own afterwards still hears its own microphone.
+settings-radio-elad-own-signal = Your own signal
+settings-radio-elad-mute-radio-ptt = Mute the speakers when keyed at the radio (mic PTT)
+settings-radio-elad-mute-radio-ptt-hint = The receiver keeps running while the FDM-DUO transmits, so an over keyed from its microphone, a foot switch or another program is heard through your speakers. With this on, sdroxide asks the radio over CAT whether it is transmitting and mutes receive audio for the length of the over. Needs the CAT serial port. Takes effect at once; also the MIC A button right of REC.
+settings-radio-elad-hear-own-tx = Hear your own signal when sdroxide transmits (digital modes, TUNE, PTT)
+settings-radio-elad-hear-own-tx-hint = Keep receiving through an over sdroxide keyed, so you hear your own transmission as the receiver picks it up. Off pauses receive for the over. Takes effect from the next over; also the DIG A button under the TX power buttons.
 settings-radio-copy-diagnostic-report = Copy diagnostic report
 settings-radio-copies-radio-s-last-session = Copies this radio's last session — its handshake and CI-V trace — to the clipboard, for a bug report. This radio's, not the station's: with two Icoms on the LAN each tab answers about its own address.
 settings-radio-control-audio-radio-s-own = Control, audio and the radio's own scope over one network connection — no serial cable and no sound card. Press "Apply / reconnect" to switch without a restart.
@@ -1767,10 +1772,10 @@ settings-radio-six-rates-are-six-different =
 
     FDM-S1 / FDM-S2: a command. Their FPGA is loaded by the computer at every power-up, and sdroxide runs ELAD's own elad-firmware loader to put this rate's image in. Without that loader installed a sampler sends no samples at all, and sdroxide says so on screen.
 
-    FDM-DUO: not a command. The radio boots its own FPGA and arrives at whatever rate it powered up in or FDM-SW2 last left it in (192 kHz on a fresh one), and this only says how the stream is READ. Get it wrong and the panadapter is simply the wrong width, with every frequency inside it scaled to match.
+    FDM-DUO: also a command. The radio boots its own 192 kHz image; for any wider rate sdroxide uploads the matching "remote" image from ELAD's ExtIO DLL (installed with FDM-SW2 or SDR Console) when the radio opens, which takes about 7 seconds, and puts the radio back in stand-alone at 192 kHz when you choose 192 kHz again or close sdroxide. Nothing is loaded while transmitting.
 
     The stream's real rate is measured a couple of seconds after it starts, and a mismatch is reported on screen. Takes effect on Apply.
-settings-radio-fdm-s-fpga-image-loaded = FDM-S: the FPGA image loaded — FDM-DUO: how the stream is read
+settings-radio-fdm-s-fpga-image-loaded = FDM-S: the FPGA image loaded — FDM-DUO: the wide image loaded at open (192 kHz is the radio's own)
 settings-radio-receiver-s-input-pad-one = The receiver's input pad — one step, in or out. The same control as the main window's Gain slider.
 settings-radio-pre-selection-filters = Pre-selection filters
 settings-radio-low-pass-bank-front-adc = The low-pass bank in front of the ADC. Bypassing it gives the widest view and the worst behaviour near strong out-of-band signals — a broadcast transmitter a few miles away will put images across the band. Leave it on unless you are deliberately listening outside the filtered range.
@@ -1898,6 +1903,8 @@ settings-radio-both-tuners-running-api-fixes = With both tuners running, the API
 settings-radio-rates-below-2-msps-run = Rates below 2 Msps run the ADC at 2 Msps and decimate in the service. Takes effect on Apply.
 settings-radio-reduced-adc-resolution = {"  "}(reduced ADC resolution)
 settings-radio-if-bandwidth = IF bandwidth
+settings-radio-low-if = Low IF
+settings-radio-low-if-check = 1.620 MHz IF up to 2 Msps (as SDRuno); wider rates at zero IF
 settings-radio-tuner-s-analog-filter-auto = The tuner's analog filter. Auto picks the widest one that fits the sample rate. Takes effect on Apply.
 settings-radio-rsp-s-own-if-gain = The RSP's own IF-gain loop, run by the API service. Off hands the IF gain slider back to you — the setting for measurement and weak-signal digital modes.
 settings-radio-agc-set-point = AGC set point
@@ -2054,6 +2061,8 @@ topbar-bar-trace = bar / trace
 topbar-needle-bar-trace = needle / bar / trace
 topbar-swap-vfos = Swap VFOs
 topbar-copy-b = Copy A to B
+topbar-clip = Clipboard: left fills / right clears
+topbar-clip-full = Clipboard: left pastes { $freq } ({ $mode }) / right clears
 topbar-second-receiver-right-ear-tunes = Second receiver, in the right ear. It tunes independently of A/B — its controls appear in the SUB module, and its passband on the waterfall.
 topbar-band-plan = , from the band plan
 topbar-repeater-shift-following-band-plan = Repeater shift: following the band plan, which has no shift for this frequency — simplex
@@ -2085,6 +2094,11 @@ topbar-hide-band-chip-brings-back = Hide — the band chip brings it back
 topbar-undock = UNDOCK
 topbar-return-selector-top-bar-popup = Return the selector to the top-bar popup
 topbar-dec-off = DEC off
+topbar-elad-bw-hint = ELAD span (not the BW receive filter): the radio streams { $khz } kHz, the width of the whole panadapter. Click for the next wider rate, right-click for the next narrower; either saves it and reopens the radio, like Sample rate in Settings → Radio. On an FDM-DUO every rate above 192 kHz loads ELAD's wide image (about 7 s, from the driver FDM-SW2 or SDR Console installs), and 192 kHz puts the radio back in stand-alone.
+topbar-sdrplay-if-hint = Single tuner at a low IF (1.620 MHz) instead of zero IF: no DC spike, LO leakage or image at the centre. On by default up to 2 Msps; a wider rate runs at zero IF, and a click there goes to 2 Msps at the low IF. Switching reopens the radio.
+topbar-sdrplay-if-low-hint = Low IF (1.620 MHz): no DC spike, LO leakage or image mid-span. Click: zero IF, for rates above 2 Msps.
+topbar-sdrplay-if-zero-hint = Zero IF: DC spike, LO leakage and image mid-span look like signals. Reduce bandwidth to 2 Msps to use low IF, avoiding these artifacts: click.
+topbar-sdrplay-if-dual = An RSPduo running both tuners is at a low IF anyway
 topbar-vol = Vol
 topbar-counted-steps-not-decibels-what =
     {""}
@@ -2184,7 +2198,9 @@ topbar-sk-filter-close-hint = Close: how fast it shuts afterwards; short = less 
 topbar-sk-filter-width = width
 topbar-sk-filter-width-hint = Mask smoothing, ± bins of 47 Hz; wider = less ringing, coarser
 topbar-sk-filter-after-nr = after NR
-topbar-sk-filter-after-nr-hint = SK behind RNN/DFNR instead of ahead of the AGC (variant B)
+topbar-sk-filter-after-nr-hint = SK behind RNN/DFNR — and behind the AGC, so what the filter takes away stays away (see the boost beside it); off: ahead of the AGC, which restores the level
+topbar-sk-filter-boost-hint = Boost after the SK filter, 0–18 dB (5 dB), softly limited under full scale: behind NR nothing restores the level the filter takes
+topbar-sk-filter-boost-before-nr = Ahead of NR the AGC restores the level; the boost applies behind NR only
 topbar-sk-filter-caption = SK POST-FILTER
 topbar-sk-filter-reset-hint = SK back to defaults: τ 0.1 s, open 0.01 s, close 1 s, width ±1, ahead of NR
 topbar-sk-filter-before-nr = ahead of NR
@@ -2261,6 +2277,7 @@ topbar-how-many-signals-model-reads = How many signals the model reads at once. 
 topbar-spots = SPOTS
 topbar-save-skimmer-s-spot-list = Save the skimmer's spot list to a file
 topbar-show-hide-full-band-waterfall = Show/hide the full-band waterfall strip above the panadapter — everything this receiver can see at once
+    Narrow-band receiver: SCAN → PANO sweeps a range into this strip as an overview.
 topbar-spectrum-waterfall-either-layer-both = Spectrum: the line, peak hold, S/N, 3D and how fast it follows. Lit while the spectrum is shown.
 topbar-spectrum = SPECTRUM
 topbar-show-spectrum = SHOW SPECTRUM
@@ -4102,8 +4119,11 @@ logbook-no-qsos-yet-run-ft8 = no QSOs yet — run FT8/FT4 or add a manual entry
 scanner-scanner = Scanner
 scanner-work-through-stored-memory-channels = Work through the stored memory channels
 scanner-work-through-slice-band-channel = Work through a slice of a band on a channel grid
+scanner-sweep-range-into-panorama = Sweep a range without stopping into a panorama
+scanner-panorama-hint = Sweeps without stopping; each full sweep is one row of the full-band strip (WIDE).
 scanner-stop = STOP
 scanner-start = START
+scanner-band = Band
 scanner-from = From
 scanner-step = Step
 scanner-mode = Mode
@@ -4126,9 +4146,77 @@ scanner-unfiled = Unfiled
 scanner-nothing-filed-under-folders-you = Nothing is filed under the folders you picked.
 scanner-stops = Stops at
 scanner-use-receiver-s-own-squelch = Use the receiver's own squelch, so the scan stops exactly where the audio would open
+scanner-stop-snr = Stop where a channel stands this far above the noise floor around it; follows gain and band noise.
 scanner-squelch-off-scan-will-stop = squelch is off — the scan will stop on the first thing it looks at
 scanner-channel-power-signal-has-reach = Channel power a signal has to reach to stop the scan
 scanner-listens = Listens for
+scanner-settles = Settles for
+scanner-settles-hint = Wait per slice after retuning, before the spectrum is read. Longer: steadier picture, slower sweep.
+scanner-pano-width = Slice width
+scanner-pano-width-hint = Share of the receiver's span each slice uses. Less: clear of the edge roll-off; more: faster sweep. Slices overlap by 10 %.
+scanner-pano-pause = Pause after each line
+scanner-pano-pause-hint = Wait after each full sweep before the next one starts. 0: sweep without a break.
+scanner-pano-now = Now
+scanner-pano-now-at = at { $mhz } MHz ({ $pct } %) · sweep { $n }
+scanner-pano-strip = Strip
+scanner-pano-strip-is = a row every { $row } s = { $strip } per strip
+scanner-pano-strip-hint = Measured: last sweep plus pause, times { $rows } rows
+scanner-pano-strip-first = after the first sweep
+rec-db-error = Recording database unavailable: { $err }
+rec-retry = Retry
+rec-live = LIVE
+rec-live-hint = Back to the live strip
+rec-stop = ■ STOP
+rec-record = ● REC
+rec-record-hint = Record full-band strip (WIDE), starting with the sweeps already on it:
+    under PANO one row per sweep, otherwise one per interval (strongest level)
+rec-desktop-only = Desktop app only: the recording database lives there.
+rec-interval = Every
+rec-interval-hint = Time between stored rows, 1 s and up.
+    120 rows fill one strip.
+rec-interval-locked = Fixed while recording
+rec-strip-span = = { $min } min per strip
+rec-status-recording = Session { $id } · { $rows } rows · strip { $strip } · { $time }
+rec-status-ready = Ready: records the full-band strip of { $radio }
+rec-status-first-sweep = Ready: { $radio } · first sweep under way …
+rec-status-no-strip = No full-band strip: start SCAN → PANO, or a receiver with WIDE
+rec-db-summary = Database { $size } · { $n } sessions
+rec-init = DB INIT
+rec-init-hint = Delete all sessions
+rec-init-locked = Stop recording first
+rec-init-sure = DELETE ALL?
+rec-init-armed-hint = Press again: all sessions go for good
+rec-init-warning = ⚠ Deletes all { $n } sessions ({ $size }). This cannot be undone.
+rec-cancel = Cancel
+rec-empty = No sessions recorded yet.
+rec-col-when = Start
+rec-col-radio = Radio
+rec-col-bands = Bands
+rec-col-mhz = MHz
+rec-col-length = Length
+rec-col-size = Size
+rec-col-strips = Strips
+rec-open-strips = Show this session's strips
+rec-every = One row every { $s } s
+rec-delete = DEL
+rec-delete-hint = Delete session
+rec-delete-sure = SURE?
+rec-delete-armed-hint = Press again: session goes for good
+rec-rows = { $n } rows
+rec-load = LOAD
+rec-load-hint = Show strip in full-band strip
+rec-load-sure = STOP + LOAD?
+rec-load-armed-hint = Press again: recording stops, strip loads
+rec-load-warning = ⚠ Loading stops the running recording (session { $id }).
+rec-viewing = Showing session { $id }, strip { $strip }: { $from }–{ $to }
+rec-store = STORE CURRENT
+rec-store-hint = Keep strip as it is as a session:
+    one row per sweep, at its own time
+rec-store-recording = Recording takes the strip along anyway
+rec-store-loaded = Strip shows a loaded recording
+rec-store-empty = Strip is empty
+rec-status-ready-strip = Ready: { $radio } · { $n } sweeps on the strip since { $since }
+rec-every-sweep = One row per sweep, every { $s } s on average
 scanner-how-long-stay-candidate-before = How long to stay on a candidate before judging it. Below about a tenth of a second the level meter has not settled and weak signals get missed
 scanner-resumes = Resumes
 scanner-carry-once-signal-drops = Carry on once the signal drops
@@ -4137,8 +4225,6 @@ scanner-stay-until-you-press-next = Stay until you press NEXT
 scanner-how-long-stay = How long to stay
 scanner-how-long-wait-after-signal = How long to wait after the signal drops
 scanner-move-don-t-stop-channel = Move on, and don't stop on this channel again
-scanner-next = NEXT
-scanner-move-now = Move on now
 
 ## adsb (src/app/panels/adsb.rs)
 
@@ -4675,6 +4761,7 @@ multi-take-radio-off-row = Take off row; keeps running
 multi-open-pane = New pane with hidden radio
 multi-pick-radio = Radio ▼
 multi-pick-radio-tip = Add radio to row; rings = link open
+multi-resting-connection-tip = Resting connection: picking dials { $url }
 multi-new-radio = New radio…
 multi-asked-station-another-radio = Asked the station for another radio…
 multi-client-cannot-open-connection = This client cannot open a connection.
@@ -5372,6 +5459,12 @@ sat-norad-2 = NORAD { $norad_id }
 
 scanner-holding-mhz = holding { $here } MHz
 scanner-scanning-mhz = scanning · { $here } MHz
+scanner-pano-first = Panorama { $range } MHz · first sweep …
+scanner-pano-sweeps = Panorama { $range } MHz · sweep { $n } · { $secs } s
+scanner-pano-clear = Discard the panorama and sweep afresh
+scanner-pano-plus-pause = + pause { $secs } s
+scanner-forward = Forward: carry on upwards
+scanner-backward = Backward: turn round and carry on downwards
 
 ## spectrum: messages with values (src/app/spectrum.rs)
 
@@ -5530,6 +5623,7 @@ elad-tx-input-mic = Microphone
 elad-tx-input-auto = Auto
 elad-tx-input-leave = Leave as set on the radio
 tr-usdx-audio-one-cable = One cable (audio in the CAT stream)
+tr-usdx-audio-one-cable-mute = One cable (audio in the CAT stream), mute speaker
 tr-usdx-audio-sound-card = USB sound card (3.5 mm jack)
 spy-server-format-uint8 = 8-bit (lowest bandwidth)
 spy-server-format-int16 = 16-bit
@@ -5822,6 +5916,7 @@ rifp-encoding-group4 = G4
 rifp-encoding-group3 = G3
 scan-kind-memories = MEM
 scan-kind-range = RANGE
+scan-kind-panorama = PANO
 scan-resume-carrier = CARRIER
 scan-resume-timed = TIMED
 scan-resume-manual = MANUAL
@@ -5927,7 +6022,7 @@ settings-ui-module-panadapter = Panadapter
 settings-ui-undock-all-hint = Put every module in a window of its own — the main window is left as the spectrum and the decoders. A module with nothing to show, like the operating panel in a voice mode, opens no window.
 settings-ui-undock-hint =
     Undocked, this module moves into its own window and the main window gives the space back to what is left — put the waterfall on a second monitor, or the controls on a third. Closing its window docks it again.
-    
+
     On Wayland the size comes back but the compositor decides where a window goes: float it and pin it to a monitor with a window rule matching app-id "{ $app_id }".
 settings-ui-undocked = Undocked — its own window
 settings-ui-window-label = { $module } window

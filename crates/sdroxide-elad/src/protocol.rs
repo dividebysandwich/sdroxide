@@ -168,6 +168,10 @@ pub enum DuoSub {
     /// `0xF1` — write a 16-byte ASCII CAT command into the radio's own command
     /// buffer, the same commands the CAT serial port takes.
     CatWrite = 0xF1,
+    /// `0xF0` — read the radio's answer to the last CAT query: eighteen bytes,
+    /// `F0`, then the answer in ASCII up to its `;`. Read once the status's
+    /// [`STATUS_CAT_REPLY`] bit is set.
+    CatRead = 0xF0,
     /// `0xF2` — write the DDC tuning word. The low sixteen bits go in `wValue`
     /// and the next eight in the *low* byte of `wIndex`, beside this code.
     Tune = 0xF2,
@@ -178,6 +182,20 @@ pub enum DuoSub {
     /// `0xFC` — read three status bytes. Bit 2 of the third says the CAT
     /// command buffer is still busy with the last command.
     Status = 0xFC,
+    /// `0xF6`, `0xF9` — read one and two bytes before a remote image is
+    /// loaded. They answer `F6` and `F9 00`; what they report is not known,
+    /// they are sent because SDR Console sends them. See [`crate::remote`].
+    PreLoadA = 0xF6,
+    PreLoadB = 0xF9,
+    /// `0xE3` — begin loading a remote FPGA image (`wValue` 1). Answers `E3`.
+    LoadBegin = 0xE3,
+    /// `0xE4` — one piece of the image, `wValue` its length.
+    LoadData = 0xE4,
+    /// `0xE5` — the load is finished. Answers `E5 10`.
+    LoadEnd = 0xE5,
+    /// `0xFD` — read three bytes after a load; answers `FD 32 31`, which reads
+    /// as "21" and may be the image's version.
+    PostLoad = 0xFD,
 }
 
 impl DuoSub {
@@ -190,6 +208,39 @@ impl DuoSub {
 /// Bit 2 of the third status byte: the CAT buffer has not finished the previous
 /// command. Writing another one before this clears loses it.
 pub const STATUS_CAT_BUSY: u8 = 0x04;
+
+/// Bit 3 of the third status byte: an answer to a CAT query is waiting for
+/// [`DuoSub::CatRead`]. SDR Console waits for it (`FC 25 09`) before reading.
+pub const STATUS_CAT_REPLY: u8 = 0x08;
+
+/// Bytes in a [`DuoSub::CatRead`] reply.
+pub const CAT_REPLY_LEN: u16 = 18;
+
+/// The ASCII answer in a [`DuoSub::CatRead`] reply, up to and including its
+/// `;`. Empty when the reply is not one.
+pub fn decode_cat_reply(reply: &[u8]) -> String {
+    if reply.first() != Some(&(DuoSub::CatRead as u8)) {
+        return String::new();
+    }
+    let body = &reply[1..];
+    let end = body.iter().position(|&b| b == b';').map_or(0, |i| i + 1);
+    String::from_utf8_lossy(&body[..end]).into_owned()
+}
+
+/// Whether a `GI` answer says the radio is transmitting (P4: 0 receive, 1
+/// transmit, 2 tune; CAT manual v2.13 p50). `None` for anything that is not a
+/// `GI` answer.
+pub fn gi_transmitting(answer: &str) -> Option<bool> {
+    let b = answer.as_bytes();
+    if !answer.starts_with("GI") || b.len() < 8 || !answer.ends_with(';') {
+        return None;
+    }
+    match b[7] {
+        b'0' => Some(false),
+        b'1' | b'2' => Some(true),
+        _ => None,
+    }
+}
 
 /// Longest a CAT command written through the USB gateway may be. Fixed-length:
 /// the request always carries sixteen bytes whatever the command is.
@@ -353,9 +404,14 @@ pub fn tuning_word(hz: f64, clock_hz: f64) -> u32 {
 /// the high byte of `wIndex` is the [`DuoSub::Tune`] selector and only eight
 /// bits of the word fit beside it. The remaining byte travels in the payload on
 /// both.
-pub fn tune_request(model: Model, word: u32) -> (u16, u16, [u8; 2]) {
+///
+/// `remote` is a DUO running a host-loaded image ([`crate::remote`]), where the
+/// payload's second byte is `0x02` rather than `0x00` — as SDR Console sends
+/// it. What the byte means is not known.
+pub fn tune_request(model: Model, word: u32, remote: bool) -> (u16, u16, [u8; 2]) {
     let value = (word & 0xFFFF) as u16;
-    let data = [((word >> 24) & 0xFF) as u8, 0];
+    let mode = if remote && model == Model::Duo { 0x02 } else { 0x00 };
+    let data = [((word >> 24) & 0xFF) as u8, mode];
     let index = match model {
         Model::Duo => DuoSub::Tune.index() | ((word >> 16) & 0xFF) as u16,
         Model::S1 | Model::S2 => ((word >> 16) & 0xFFFF) as u16,
@@ -525,12 +581,12 @@ mod tests {
     #[test]
     fn the_duo_and_the_samplers_pack_the_tuning_word_differently() {
         let word = 0x1234_5678u32;
-        let (v, i, d) = tune_request(Model::S2, word);
+        let (v, i, d) = tune_request(Model::S2, word, false);
         assert_eq!(v, 0x5678);
         assert_eq!(i, 0x1234);
         assert_eq!(d, [0x12, 0x00]);
 
-        let (v, i, d) = tune_request(Model::Duo, word);
+        let (v, i, d) = tune_request(Model::Duo, word, false);
         assert_eq!(v, 0x5678);
         // 0xF2 in the high byte — the sub-command — and only bits 23..16 of the
         // word beside it.
@@ -539,7 +595,21 @@ mod tests {
         assert_eq!(d, [0x12, 0x00]);
 
         // The S1 packs like the S2, not like the DUO.
-        assert_eq!(tune_request(Model::S1, word), tune_request(Model::S2, word));
+        assert_eq!(tune_request(Model::S1, word, false), tune_request(Model::S2, word, false));
+    }
+
+    /// Two tunes from the SDR Console capture of a DUO in remote mode: 10 MHz
+    /// and 7.076018 MHz. Both words fit a clock 1 Hz under nominal, not the
+    /// 2678 Hz correction above, so SDR Console calibrates its own way.
+    #[test]
+    fn a_remote_duo_tunes_with_0x02_in_the_payload() {
+        let clock = 122_880_000.0 - 1.0;
+        let (v, i, d) = tune_request(Model::Duo, tuning_word(10_000_000.0, clock), true);
+        assert_eq!((v, i, d), (0x5558, 0xF2D5, [0x14, 0x02]));
+        let (v, i, d) = tune_request(Model::Duo, tuning_word(7_076_018.0, clock), true);
+        assert_eq!((v, i, d), (0xE055, 0xF2BD, [0x0E, 0x02]));
+        // Only the DUO has a remote mode.
+        assert_eq!(tune_request(Model::S2, 1, true).2, [0, 0]);
     }
 
     #[test]
@@ -650,5 +720,26 @@ mod tests {
         // A device that has not been opened has no serial, so it cannot be the
         // one that was pinned.
         assert!(!serial_matches("123456", None));
+    }
+
+    #[test]
+    fn a_cat_answer_is_read_up_to_its_semicolon() {
+        let mut r = vec![0xF0];
+        r.extend_from_slice(b"GI0018002110000;");
+        r.push(0x09);
+        assert_eq!(decode_cat_reply(&r), "GI0018002110000;");
+        assert_eq!(decode_cat_reply(&[0xFC, 0x25, 0x09]), "");
+        assert_eq!(decode_cat_reply(&[]), "");
+    }
+
+    #[test]
+    fn gi_says_whether_the_radio_transmits() {
+        // SDR Console's capture, receiving at a wide rate.
+        assert_eq!(gi_transmitting("GI0018002110000;"), Some(false));
+        assert_eq!(gi_transmitting("GI0018012110000;"), Some(true));
+        assert_eq!(gi_transmitting("GI0018022110000;"), Some(true));
+        assert_eq!(gi_transmitting("RX0;"), None);
+        assert_eq!(gi_transmitting("GI00;"), None);
+        assert_eq!(gi_transmitting(""), None);
     }
 }

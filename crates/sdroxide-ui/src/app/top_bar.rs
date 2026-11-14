@@ -113,6 +113,10 @@ const CHIP_STRETCH_FACTOR: f32 = 2.0;
 /// The VFO/RIT box's utility chips — the labels its top row is measured and
 /// drawn from.
 const VFO_CHIPS: [&str; 4] = ["A↔B", "A→B", "SPLIT", "SUB"];
+
+/// The clipboard chip, after A→B: A→B copies within this radio, the
+/// clipboard to another. Only drawn while another radio is open.
+const CLIP_CHIP: &str = "📋";
 /// The repeater chips that follow them on the same row: the transmit shift and
 /// the tone that goes out under it.
 ///
@@ -1925,7 +1929,7 @@ impl SdroxideApp {
     fn vfo_rit_module(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, w: f32) {
         let tx_capable = self.tx_chrome_ok();
         let inner = w - 2.0 * crate::chrome::MODULE_MARGIN_X - 4.0;
-        let chips = vfo_chip_labels(tx_capable);
+        let chips = vfo_chip_labels(tx_capable, self.clip_peers);
         let extra1 = ((inner - chip_row_w(ui, &chips)) / chips.len() as f32).max(0.0);
         let fields = if tx_capable { 2.0 } else { 1.0 };
         let extra2 = ((inner - vfo_offsets_w(ui, tx_capable)) / fields).max(0.0);
@@ -1947,6 +1951,19 @@ impl SdroxideApp {
         }
         if chip_stretched(ui, false, copy, extra).on_hover_text(tr!("topbar-copy-b")).clicked() {
             cmds.push(Command::CopyAtoB);
+        }
+        if self.clip_peers {
+            let full = self.clip.is_some();
+            let hint = match self.clip {
+                None => tr!("topbar-clip"),
+                Some(c) => tr!("topbar-clip-full", freq = clip_mhz(c.hz), mode = c.mode.label()),
+            };
+            let r = chip_stretched(ui, full, CLIP_CHIP, extra).on_hover_text(hint);
+            let act = clip_click(full, r.clicked(), r.secondary_clicked())
+                .map(|k| k.into_act(|| self.clip_load()));
+            if let Some(act) = act {
+                self.radio_tab_requests.push(super::RadioTabRequest::Clip(act));
+            }
         }
         if chip_stretched(ui, self.state.split, split, extra).clicked() {
             cmds.push(Command::SetSplit(!self.state.split));
@@ -2354,7 +2371,8 @@ impl SdroxideApp {
     /// receive-only rig has no XIT, and stops paying for it.
     fn vfo_rows_w(&self, ui: &egui::Ui) -> f32 {
         let tx_capable = self.tx_chrome_ok();
-        chip_row_w(ui, &vfo_chip_labels(tx_capable)).max(vfo_offsets_w(ui, tx_capable))
+        chip_row_w(ui, &vfo_chip_labels(tx_capable, self.clip_peers))
+            .max(vfo_offsets_w(ui, tx_capable))
             + 2.0 * crate::chrome::MODULE_MARGIN_X
             + 4.0
     }
@@ -2532,7 +2550,14 @@ impl SdroxideApp {
     fn rx_rows(&self, ui: &egui::Ui) -> RxRows {
         let rails: Vec<String> =
             self.bar_gains().iter().map(|g| gain_label(&g.name, self.bar_gains().len())).collect();
-        let front: Vec<&[&str]> = self.front_chips().iter().map(|c| c.labels).collect();
+        let mut front: Vec<&[&str]> = self.front_chips().iter().map(|c| c.labels).collect();
+        // The ELAD SPAN chip rides the same row, priced at its widest label.
+        if self.elad_bw_applies() {
+            front.push(&["SPAN 6144k"]);
+        }
+        if self.sdrplay_if_applies() {
+            front.push(&["ZERO IF", "LOW IF"]);
+        }
         rx_rows(
             ui,
             &rails,
@@ -2540,6 +2565,7 @@ impl SdroxideApp {
             self.decim_range().is_some(),
             self.state.rx[0].agc == AgcMode::Off,
             self.state.rx[0].mode,
+            self.elad_monitor_chips(),
         )
     }
 
@@ -2724,6 +2750,101 @@ impl SdroxideApp {
         }
     }
 
+    /// Whether the radio is an ELAD, whose stream rate — the width of the
+    /// whole panadapter — has a chip of its own beside DEC.
+    fn elad_bw_applies(&self) -> bool {
+        self.caps.as_ref().is_some_and(|c| c.driver == "elad")
+    }
+
+    /// The ELAD's bandwidth: which of its six stream rates sdroxide reads it at.
+    ///
+    /// The same setting as Settings → Radio → Sample rate, put where it can be
+    /// reached without opening Settings, because on an FDM-DUO it has to
+    /// follow whatever mode the radio was last left in (by ELAD's own software,
+    /// for one). Cycling, like DEC beside it and for the same reason: a combo
+    /// inside the RX menu closes the menu. Click goes one rate wider,
+    /// right-click one narrower; either saves the setting and reopens the
+    /// radio, which is what Apply in Settings does for it.
+    fn elad_bw_chip(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        use sdroxide_types::ELAD_SAMPLE_RATES;
+        if !self.elad_bw_applies() {
+            return;
+        }
+        if self.radio_cfg.is_none() {
+            self.radio_cfg = self.ctrl.radio_config();
+        }
+        let Some(now) = self.radio_cfg.as_ref().map(|r| r.elad.sample_rate_hz) else { return };
+        let label = format!("SPAN {}k", now / 1000);
+        let hint = tr!("topbar-elad-bw-hint", khz = (now / 1000).to_string());
+        let resp = crate::chrome::chip(ui, false, label).on_hover_text(hint);
+        let at = ELAD_SAMPLE_RATES.iter().position(|&r| r == now);
+        let n = ELAD_SAMPLE_RATES.len();
+        let next = if resp.clicked() {
+            Some(ELAD_SAMPLE_RATES[at.map_or(0, |i| (i + 1) % n)])
+        } else if resp.secondary_clicked() {
+            Some(ELAD_SAMPLE_RATES[at.map_or(0, |i| (i + n - 1) % n)])
+        } else {
+            None
+        };
+        if let Some(rate) = next
+            && rate != now
+            && let Some(cfg) = self.radio_cfg.as_mut()
+        {
+            cfg.elad.sample_rate_hz = rate;
+            cmds.push(Command::SetRadioConfig { cfg: Box::new(cfg.clone()), reopen: true });
+        }
+    }
+
+    /// Whether the radio is an SDRplay RSP, whose single tuner can run at zero
+    /// IF or at a low IF ([`sdroxide_types::SdrPlayConfig::low_if`]).
+    fn sdrplay_if_applies(&self) -> bool {
+        self.caps.as_ref().is_some_and(|c| c.driver == "sdrplay")
+    }
+
+    /// ZERO IF / LOW IF: the RSP's IF arrangement, named as it stands. A click
+    /// switches to the other one, saves it and reopens the radio, as Apply in
+    /// Settings does: the service takes a new IF only at the start of a
+    /// session. From a rate wider than the low IF reaches, the click goes to
+    /// 2 Msps at the low IF. Greyed at LOW IF while an RSPduo runs both
+    /// tuners, which are at a low IF anyway.
+    // Why: HDZ 2026-11-13: "im Panel wäre noch Platz für einen Chip zeroIF".
+    fn sdrplay_if_chip(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        if !self.sdrplay_if_applies() {
+            return;
+        }
+        if self.radio_cfg.is_none() {
+            self.radio_cfg = self.ctrl.radio_config();
+        }
+        let Some(sp) = self.radio_cfg.as_ref().map(|r| r.sdrplay.clone()) else { return };
+        let dual = sp.wants_dual_tuner();
+        let low = dual || sp.runs_low_if();
+        let label = if low { "LOW IF" } else { "ZERO IF" };
+        let resp = ui
+            .add_enabled_ui(!dual, |ui| crate::chrome::chip(ui, low, label))
+            .inner
+            // At zero IF the hint says what to do about it.
+            // Why: HDZ 2026-11-13: "mach das Tooltip mit reduce bandwidth to 2
+            //      to use low IF, avoiding signal artifacts".
+            .on_hover_text(if low {
+                tr!("topbar-sdrplay-if-low-hint")
+            } else {
+                tr!("topbar-sdrplay-if-zero-hint")
+            })
+            .on_disabled_hover_text(tr!("topbar-sdrplay-if-dual"));
+        if resp.clicked()
+            && let Some(cfg) = self.radio_cfg.as_mut()
+        {
+            if low {
+                cfg.sdrplay.low_if = false;
+            } else {
+                cfg.sdrplay.low_if = true;
+                cfg.sdrplay.sample_rate_hz =
+                    cfg.sdrplay.sample_rate_hz.min(sdroxide_types::SdrPlayConfig::LOW_IF_MAX_HZ);
+            }
+            cmds.push(Command::SetRadioConfig { cfg: Box::new(cfg.clone()), reopen: true });
+        }
+    }
+
     /// The receiver and filter/noise controls — the body of the RX box, and of
     /// the RX menu. See [`crate::chrome::control_row`] for `narrow`.
     ///
@@ -2735,7 +2856,7 @@ impl SdroxideApp {
         let rx_gains = self.rx_gains();
         let bar_gains = self.bar_gains();
         let front_chips = self.front_chips();
-        let chips = rx_chips(self.state.rx[0].mode);
+        let chips = rx_chips(self.state.rx[0].mode, self.elad_monitor_chips());
         // A menu column wraps its rows and is as wide as the menu around it,
         // so there is nothing to balance there: the run stays whole, under the
         // squelch rail, in the order it has always had.
@@ -2843,6 +2964,8 @@ impl SdroxideApp {
                 self.front_chip(ui, cmds, c);
             }
             self.decim_chip(ui, cmds);
+            self.elad_bw_chip(ui, cmds);
+            self.sdrplay_if_chip(ui, cmds);
             // A cycling chip rather than a combo: a combo inside a menu
             // opens a second popup layer, and clicking it counts as
             // "outside" and closes the menu it was opened from. Four
@@ -3200,6 +3323,23 @@ impl SdroxideApp {
                     );
                 }
                 self.rec_popup(ui, cmds, &rec);
+            }
+            RxChip::Mic => {
+                // Lit while the operator hears their own microphone over:
+                // the inverse of `CatConfig::elad_mute_on_radio_ptt`. Saved
+                // without a reopen; the engine reads it live.
+                let lit = self.radio_cfg.as_ref().is_some_and(|r| !r.cat.elad_mute_on_radio_ptt);
+                let resp = crate::chrome::chip(ui, lit, super::duo_power::MIC_CHIP)
+                    .on_hover_text(super::duo_power::monitor_hover(0, lit));
+                if resp.clicked()
+                    && let Some(cfg) = self.radio_cfg.as_mut()
+                {
+                    cfg.cat.elad_mute_on_radio_ptt = lit;
+                    cmds.push(Command::SetRadioConfig {
+                        cfg: Box::new(cfg.clone()),
+                        reopen: false,
+                    });
+                }
             }
             RxChip::Stereo => {
                 // WFM broadcast stereo: lit while a 19 kHz pilot is locked,
@@ -4086,6 +4226,7 @@ impl SdroxideApp {
                     close_s: r.sk_filter_close_s,
                     width: r.sk_filter_width,
                     after_nr: r.sk_filter_after_nr,
+                    boost_db: r.sk_filter_boost_db,
                 })
             };
             if crate::chrome::chip(ui, rx.sk_filter, "SK")
@@ -4169,6 +4310,30 @@ impl SdroxideApp {
                     let r = self.state.rx[0];
                     send(cmds, true, &r);
                 }
+                // The boost: behind NR the filter sits behind the AGC too, and
+                // what it takes away stays away. Ahead of the AGC the AGC puts
+                // it back, so the field greys out there.
+                // Why: HDZ 2026-11-13: "beim SK würde ich gerne einen kleinen
+                //      Lautstärke-Booster noch dazu haben".
+                let (lo, hi) = sdroxide_types::SK_FILTER_BOOST_RANGE_DB;
+                let mut b = rx.sk_filter_boost_db;
+                let resp = ui
+                    .add_enabled(
+                        after,
+                        DragValue::new(&mut b)
+                            .range(lo..=hi)
+                            .speed(0.2)
+                            .fixed_decimals(0)
+                            .prefix("+")
+                            .suffix(" dB"),
+                    )
+                    .on_hover_text(tr!("topbar-sk-filter-boost-hint"))
+                    .on_disabled_hover_text(tr!("topbar-sk-filter-boost-before-nr"));
+                if resp.changed() {
+                    self.state.rx[0].sk_filter_boost_db = b; // optimistic echo
+                    let r = self.state.rx[0];
+                    send(cmds, true, &r);
+                }
                 // Back to the recipe the filter started from: τ 0.1 s, open
                 // 0.01 s, close 1 s, width ±1, ahead of NR.
                 // Why: HDZ 2026-11-10: "mach einen Reset dran für Defaults".
@@ -4183,6 +4348,7 @@ impl SdroxideApp {
                     r.sk_filter_close_s = sdroxide_types::SK_FILTER_DEFAULT_CLOSE_S;
                     r.sk_filter_width = sdroxide_types::SK_FILTER_DEFAULT_WIDTH;
                     r.sk_filter_after_nr = sdroxide_types::SK_FILTER_DEFAULT_AFTER_NR;
+                    r.sk_filter_boost_db = sdroxide_types::SK_FILTER_DEFAULT_BOOST_DB;
                     let r = *r;
                     send(cmds, true, &r);
                 }
@@ -5111,10 +5277,16 @@ impl SdroxideApp {
     }
 
     /// The Drive label + rail + readout.
-    fn tx_drive(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+    ///
+    /// `pad` is room left after the label, so the condensed box can start its
+    /// Drive and Tune rails at the same place (0 elsewhere).
+    fn tx_drive(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, pad: f32) {
         let mut drive = self.state.tx.drive;
         let hover = self.drive_hover();
         ui.label(tr!("topbar-drive")).on_hover_text(&hover);
+        if pad > 0.0 {
+            ui.add_space(pad);
+        }
         if crate::chrome::slider_wheel(
             crate::chrome::slider_readout(
                 ui,
@@ -5175,6 +5347,13 @@ impl SdroxideApp {
                 && c.label == format!("{} (CAT)", sdroxide_types::CatFamily::Elad.label()))
     }
 
+    /// Whether MIC A and DIG A are offered: the power buttons' radio, but
+    /// over the ELAD backend only. The engine follows both choices for that
+    /// driver alone, so on a CAT rig of the ELAD family they would do nothing.
+    pub(in crate::app) fn elad_monitor_chips(&self) -> bool {
+        self.duo_presets_apply() && self.caps.as_ref().is_some_and(|c| c.driver == "elad")
+    }
+
     /// What the presets column costs beside the TX rows, its gap included; 0
     /// where it is not drawn.
     fn tx_duo_col_w(&self, ui: &egui::Ui) -> f32 {
@@ -5182,18 +5361,19 @@ impl SdroxideApp {
             return 0.0;
         }
         let labels: Vec<&str> = super::duo_power::PRESETS.iter().map(|&(l, _)| l).collect();
-        let caption = crate::chrome::text_width(
-            ui,
-            &DUO_PRESETS_CAPTION.to_uppercase(),
-            egui::FontId::proportional(9.5),
-        );
-        MODULE_ROW_SPACING + chip_row_w(ui, &labels).max(caption)
+        let caption_w = |c: &str| {
+            crate::chrome::text_width(ui, &c.to_uppercase(), egui::FontId::proportional(9.5))
+        };
+        MODULE_ROW_SPACING + chip_row_w(ui, &labels).max(caption_w(DUO_PRESETS_CAPTION))
     }
 
     /// The FDM-DUO's power buttons, captioned underneath so an operator can
     /// tell they are the radio's own and not the amplifier's. Each puts the
     /// DUO's menu 34 on that setting now and saves it, so it is sent again at
     /// every connect; see [`super::duo_power`].
+    ///
+    /// DIG A sits under the caption, centred under 3W and 5W (AJ3G, 13 Nov
+    /// 2026): [`Self::tx_dig_chip`].
     fn tx_duo_presets(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let current = self.radio_cfg.as_ref().map(|r| r.cat.elad_tx_power);
         ui.vertical(|ui| {
@@ -5216,30 +5396,56 @@ impl SdroxideApp {
                     }
                 }
             });
-            // In the chips' own ink and centred under the row, so it reads as
-            // the name of the four buttons rather than a separate menu heading.
-            let ink = ui.visuals().widgets.inactive.fg_stroke.color;
             let w = row.response.rect.width();
+            // The caption straight under the buttons it names, then DIG A,
+            // both centred under the row, which puts DIG A under 3W and 5W
+            // (AJ3G, 13 Nov 2026: "move the ELAD FDM-DUO PWR above DIG A").
             ui.allocate_ui_with_layout(
                 egui::vec2(w, 0.0),
                 egui::Layout::top_down(egui::Align::Center),
                 |ui| {
                     ui.set_min_width(w);
+                    ui.spacing_mut().item_spacing = egui::vec2(MODULE_ROW_SPACING, 2.0);
+                    let ink = ui.visuals().widgets.inactive.fg_stroke.color;
                     ui.label(
                         RichText::new(DUO_PRESETS_CAPTION.to_uppercase())
                             .size(9.5)
                             .strong()
                             .color(ink),
                     );
+                    if self.elad_monitor_chips() {
+                        self.tx_dig_chip(ui, cmds);
+                    }
                 },
             );
         });
     }
 
-    /// The tune-carrier level: label + rail + readout.
-    fn tx_tune_level(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+    /// DIG A, under the TX power buttons (AJ3G, 13 Nov 2026): lit when the
+    /// operator hears their own signal on an over sdroxide keyed (the digital
+    /// modes, TUNE, PTT). Saved without a reopen and taken at the next
+    /// key-down. Its partner for the radio's own microphone is
+    /// [`RxChip::Mic`], right of REC. FDM-DUO only, like the power buttons.
+    fn tx_dig_chip(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        let lit = self.radio_cfg.as_ref().is_some_and(|r| r.elad.hear_own_tx);
+        let resp = crate::chrome::chip(ui, lit, super::duo_power::DIGI_CHIP)
+            .on_hover_text(super::duo_power::monitor_hover(1, lit));
+        if resp.clicked()
+            && let Some(cfg) = self.radio_cfg.as_mut()
+        {
+            cfg.elad.hear_own_tx = !lit;
+            cmds.push(Command::SetRadioConfig { cfg: Box::new(cfg.clone()), reopen: false });
+        }
+    }
+
+    /// The tune-carrier level: label + rail + readout. `pad` as for
+    /// [`Self::tx_drive`].
+    fn tx_tune_level(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, pad: f32) {
         let mut tune_drive = self.state.tx.tune_drive;
         ui.label(tr!("topbar-tune-2"));
+        if pad > 0.0 {
+            ui.add_space(pad);
+        }
         if crate::chrome::slider_wheel(
             crate::chrome::slider_readout(
                 ui,
@@ -5551,11 +5757,11 @@ impl SdroxideApp {
         let mic = self.state.rx[0].mode.allows_voice_keyer() || !level;
         crate::chrome::control_row(ui, narrow, |ui| {
             self.tx_keyer_chip(ui);
-            self.tx_drive(ui, cmds);
+            self.tx_drive(ui, cmds, 0.0);
             if self.duo_presets_apply() {
                 self.tx_duo_presets(ui, cmds);
             }
-            self.tx_tune_level(ui, cmds);
+            self.tx_tune_level(ui, cmds, 0.0);
             if mic {
                 self.tx_mic(ui, cmds);
             }
@@ -5575,11 +5781,8 @@ impl SdroxideApp {
     /// The condensed TX box's natural width — [`tx_rows_w_for`] with the
     /// voice keyer's presence read off the current mode.
     fn tx_rows_w(&self, ui: &egui::Ui) -> f32 {
-        tx_rows_w_for(
-            ui,
-            self.state.rx[0].mode.allows_voice_keyer(),
-            self.tx_side_col_w() + self.tx_duo_col_w(ui),
-        )
+        let keyer = self.state.rx[0].mode.allows_voice_keyer();
+        tx_rows_w_for(ui, keyer, self.tx_side_col_w() + self.tx_duo_col_w(ui))
     }
 
     /// What the condensed TX box's right-hand columns cost: the transmit-audio
@@ -5612,8 +5815,12 @@ impl SdroxideApp {
         let (fixed1, fixed2) = tx_rows_fixed_w(ui, keyer);
         let inner = w - 2.0 * crate::chrome::MODULE_MARGIN_X - 4.0;
         let rows_w = inner - TX_MIC_GAP - side_w;
-        let (rail1, rail2) =
-            ((rows_w - fixed1).max(STRIP_RAIL_W), (rows_w - fixed2).max(STRIP_RAIL_W));
+        // One rail length for both rows (AJ3G, 13 Nov 2026: the Tune slider
+        // the same length as Drive's). The shorter row's label is padded, so
+        // the rails start together and the readouts still end flush.
+        let rail = (rows_w - fixed1.max(fixed2)).max(STRIP_RAIL_W);
+        let (rail1, rail2) = (rail, rail);
+        let (pad1, pad2) = ((fixed2 - fixed1).max(0.0), (fixed1 - fixed2).max(0.0));
         crate::chrome::module_bare_h(ui, w, crate::chrome::MODULE_TALL_H, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(MODULE_ROW_SPACING, MODULE_ROW_SPACING);
             ui.vertical(|ui| {
@@ -5621,12 +5828,12 @@ impl SdroxideApp {
                     ui.spacing_mut().slider_width = rail1;
                     self.tx_ptt_chip(ui, cmds);
                     self.tx_keyer_chip(ui);
-                    self.tx_drive(ui, cmds);
+                    self.tx_drive(ui, cmds, pad1);
                 });
                 ui.horizontal(|ui| {
                     ui.spacing_mut().slider_width = rail2;
                     self.tx_tune_chip(ui, cmds);
-                    self.tx_tune_level(ui, cmds);
+                    self.tx_tune_level(ui, cmds, pad2);
                 });
             });
             if duo {
@@ -5663,7 +5870,7 @@ impl SdroxideApp {
     /// SNR a track must reach before it earns a box on the waterfall. Fades out
     /// on its own like the band/mode popup.
     fn skimmer_button(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, extra: f32) {
-        let [_, _, skim, _] = DISPLAY_TOOL_CHIPS;
+        let [_, skim, _] = DISPLAY_TOOL_CHIPS;
         let btn = chip_stretched(ui, self.state.skimmer.any_enabled(), skim, extra)
             .on_hover_text(tr!("topbar-cw-psk-rtty-skimmers-decode"));
         let popup_id = egui::Popup::default_response_id(&btn);
@@ -5809,7 +6016,7 @@ impl SdroxideApp {
     /// exactly as for SKIM and FFT below — so the menu leaves the chip out here
     /// and [`Self::display_controls`] inlines its contents instead.
     fn display_view_chips(&mut self, ui: &mut egui::Ui, narrow: bool, extra: f32) {
-        let [_, spec, wide] = DISPLAY_VIEW_CHIPS;
+        let [fft, spec, fit, wide] = DISPLAY_VIEW_CHIPS;
         // Only a front end with a full-band lane has ever sent one of these, so
         // its presence is what says the strip is on offer at all — there is no
         // capability flag for it, and inventing one would mean a wire-format
@@ -5818,9 +6025,28 @@ impl SdroxideApp {
         // A phone draws the waterfall alone, so the two chips that choose what
         // else is drawn have nothing to control there.
         let picks_layers = !crate::layout::tier(ui.ctx()).waterfall_only();
-        self.solar_button(ui, extra);
+        // FFT and SPEC side by side, the waterfall's and the spectrum's
+        // popups; a menu inlines both below instead.
+        // Why: HDZ 2026-11-09: "Knöpfe SPEC und FIT tauschen, weil FFT und
+        //      SPEC gehören zusammen".
+        if !narrow {
+            self.fft_button(ui, fft, extra);
+        }
         if picks_layers && !narrow {
             self.layers_button(ui, spec, extra);
+        }
+        // FIT, the switch that keeps the floor and ceiling set by itself.
+        // Lit while the floor/ceiling are kept fitted by themselves. Switching
+        // it on fits immediately, which is also how a one-off fit is asked for:
+        // click it off and on again.
+        if chip_stretched(ui, self.view.auto_fit, fit, extra)
+            .on_hover_text(tr!("topbar-keep-floor-ceiling-set-best"))
+            .clicked()
+        {
+            self.view.auto_fit = !self.view.auto_fit;
+            if self.view.auto_fit {
+                self.fit_levels_now(ui.input(|i| i.time));
+            }
         }
         if picks_layers
             && has_wide
@@ -5833,6 +6059,9 @@ impl SdroxideApp {
             // block of minutes-old band, drawn as if it were the last few
             // seconds. Start it again from now instead.
             self.wide_wf.clear();
+            // A loaded recording goes with it: the strip comes back live.
+            #[cfg(not(target_arch = "wasm32"))]
+            self.rec_tab.forget_view();
         }
     }
 
@@ -6157,19 +6386,7 @@ impl SdroxideApp {
         narrow: bool,
         extra: f32,
     ) {
-        let [fit, ctr, _, fft] = DISPLAY_TOOL_CHIPS;
-        // Lit while the floor/ceiling are kept fitted by themselves. Switching
-        // it on fits immediately, which is also how a one-off fit is asked for:
-        // click it off and on again.
-        if chip_stretched(ui, self.view.auto_fit, fit, extra)
-            .on_hover_text(tr!("topbar-keep-floor-ceiling-set-best"))
-            .clicked()
-        {
-            self.view.auto_fit = !self.view.auto_fit;
-            if self.view.auto_fit {
-                self.fit_levels_now(ui.input(|i| i.time));
-            }
-        }
+        let [ctr, _, _] = DISPLAY_TOOL_CHIPS;
         // FIT's twin for the frequency axis (issue #174): lit while the window
         // follows the dial, so the tuned frequency stays in the middle of the
         // picture and the band scrolls past it instead of the picture jumping a
@@ -6182,13 +6399,18 @@ impl SdroxideApp {
         {
             self.view.center_on_vfo = !self.view.center_on_vfo;
         }
-        // In a box these two hang off chips of their own. A menu inlines
+        // In a box the skimmers hang off a chip of their own; a menu inlines
         // them below instead: a popup opened from a popup counts as a click
-        // outside the first and closes it.
-        if narrow {
-            return;
+        // outside the first and closes it. HFDL is a plain chip, so it stays.
+        if !narrow {
+            self.skimmer_button(ui, cmds, extra);
         }
-        self.skimmer_button(ui, cmds, extra);
+        self.hfdl_chip(ui, cmds, extra);
+    }
+
+    /// The FFT chip and its popup: the waterfall's controls, lit while the
+    /// waterfall is drawn. First in the Display box's top row, beside SPEC.
+    fn fft_button(&mut self, ui: &mut egui::Ui, fft: &str, extra: f32) {
         // The waterfall's controls live in a popup off this button, lit while
         // the waterfall is drawn.
         let fft_btn = chip_stretched(ui, self.view.waterfall_visible(), fft, extra)
@@ -6211,6 +6433,49 @@ impl SdroxideApp {
             if r.response.contains_pointer() {
                 self.fft_popup_since = Some(now);
             }
+        }
+    }
+
+    /// The HFDL chip, in the Display box beside SKIM: like SKIM it shows a
+    /// decoder running. It opens HFDL's own mode, whose panel docks under the
+    /// waterfall.
+    fn hfdl_chip(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, extra: f32) {
+        let hfdl_label = tr!("topbar-chip-hfdl");
+        // HFDL: shortwave aircraft ground network. It opens HFDL's own mode,
+        // whose panel docks under the waterfall; accented while the decoder
+        // runs, like the ISM chip, because it spends a downconverter and a
+        // worker thread whether or not the panel is on screen.
+        let hfdl_mode = self.state.rx[0].mode.is_hfdl();
+        let hfdl_running = self.state.hfdl.enabled;
+        let hfdl_chip = if hfdl_running {
+            accent_chip_stretched(
+                ui,
+                true,
+                &hfdl_label,
+                crate::theme::GREEN(),
+                crate::theme::INK_ON_BRIGHT(),
+                extra,
+            )
+        } else {
+            chip_stretched(ui, hfdl_mode, &hfdl_label, extra)
+        };
+        if hfdl_chip
+            .on_hover_text(if hfdl_mode {
+                tr!("topbar-hfdl-ground-network-decode-log")
+            } else if hfdl_running {
+                tr!("topbar-hfdl-ground-network-decoding-now")
+            } else {
+                tr!("topbar-hfdl-ground-network-aircraft-shortwave")
+            })
+            .clicked()
+        {
+            // The lane follows its own chosen frequency; bring the dial with it
+            // so the panadapter shows the signal being decoded.
+            cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Hfdl });
+            cmds.push(Command::SetVfo {
+                vfo: self.state.active_vfo,
+                hz: self.state.hfdl.frequency_hz,
+            });
         }
     }
 
@@ -6237,7 +6502,7 @@ impl SdroxideApp {
     /// rows plus the box margins.
     fn display_rows_w(&self, ui: &egui::Ui) -> f32 {
         let row1: &[&str] =
-            if self.wide_frame.is_some() { &DISPLAY_VIEW_CHIPS } else { &DISPLAY_VIEW_CHIPS[..2] };
+            if self.wide_frame.is_some() { &DISPLAY_VIEW_CHIPS } else { &DISPLAY_VIEW_CHIPS[..3] };
         chip_row_w(ui, row1).max(chip_row_w(ui, &DISPLAY_TOOL_CHIPS))
             + 2.0 * crate::chrome::MODULE_MARGIN_X
     }
@@ -6247,7 +6512,7 @@ impl SdroxideApp {
     fn display_condensed(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, w: f32) {
         let inner = w - 2.0 * crate::chrome::MODULE_MARGIN_X;
         let row1: &[&str] =
-            if self.wide_frame.is_some() { &DISPLAY_VIEW_CHIPS } else { &DISPLAY_VIEW_CHIPS[..2] };
+            if self.wide_frame.is_some() { &DISPLAY_VIEW_CHIPS } else { &DISPLAY_VIEW_CHIPS[..3] };
         let extra1 = ((inner - chip_row_w(ui, row1)) / row1.len() as f32).max(0.0);
         let extra2 = ((inner - chip_row_w(ui, &DISPLAY_TOOL_CHIPS))
             / DISPLAY_TOOL_CHIPS.len() as f32)
@@ -6712,8 +6977,8 @@ impl SdroxideApp {
     }
 
     /// The remaining window chips — the condensed System box's bottom row.
-    fn system_chips_bottom(&mut self, ui: &mut egui::Ui, extra: f32, cmds: &mut Vec<Command>) {
-        let [mail, mem, scan_label, hfdl_label, grid_label, amp_label, settings, help] =
+    fn system_chips_bottom(&mut self, ui: &mut egui::Ui, extra: f32, _cmds: &mut Vec<Command>) {
+        let [mail, mem, scan_label, _solar, grid_label, amp_label, settings, help] =
             system_chip_labels_bottom_amp();
         let has_amp = self.has_amp();
         if chip_stretched(ui, self.mail.open, &mail, extra)
@@ -6755,42 +7020,11 @@ impl SdroxideApp {
         {
             self.show_scanner = !self.show_scanner;
         }
-        // HFDL: shortwave aircraft ground network. It opens HFDL's own mode,
-        // whose panel docks under the waterfall; accented while the decoder
-        // runs, like the ISM chip, because it spends a downconverter and a
-        // worker thread whether or not the panel is on screen.
-        let hfdl_mode = self.state.rx[0].mode.is_hfdl();
-        let hfdl_running = self.state.hfdl.enabled;
-        let hfdl_chip = if hfdl_running {
-            accent_chip_stretched(
-                ui,
-                true,
-                &hfdl_label,
-                crate::theme::GREEN(),
-                crate::theme::INK_ON_BRIGHT(),
-                extra,
-            )
-        } else {
-            chip_stretched(ui, hfdl_mode, &hfdl_label, extra)
-        };
-        if hfdl_chip
-            .on_hover_text(if hfdl_mode {
-                tr!("topbar-hfdl-ground-network-decode-log")
-            } else if hfdl_running {
-                tr!("topbar-hfdl-ground-network-decoding-now")
-            } else {
-                tr!("topbar-hfdl-ground-network-aircraft-shortwave")
-            })
-            .clicked()
-        {
-            // The lane follows its own chosen frequency; bring the dial with it
-            // so the panadapter shows the signal being decoded.
-            cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Hfdl });
-            cmds.push(Command::SetVfo {
-                vfo: self.state.active_vfo,
-                hz: self.state.hfdl.frequency_hz,
-            });
-        }
+        // The solar view, where HFDL stood: a window chip among the window
+        // chips. HFDL went to the Display box beside SKIM.
+        // Why: HDZ 2026-11-08: "der HFDL würde ich mit dem Knopf SOLAR
+        //      tauschen, da der HFDL wie der SKIM-Knopf eine Betriebsanzeige ist".
+        self.solar_button(ui, extra);
         // Grid tracker: the worked squares on a map, with a HEARD layer for
         // what is on the air now.
         if chip_stretched(ui, self.show_grid, &grid_label, extra)
@@ -7027,7 +7261,7 @@ fn system_chip_labels_bottom_amp() -> [String; 8] {
         tr!("topbar-chip-mail"),
         tr!("topbar-chip-mem"),
         tr!("topbar-chip-scan"),
-        tr!("topbar-chip-hfdl"),
+        SOLAR_CHIP.to_string(),
         tr!("topbar-chip-grid"),
         tr!("topbar-chip-amp"),
         tr!("topbar-chip-settings"),
@@ -7044,11 +7278,11 @@ fn system_chip_labels_bottom_amp() -> [String; 8] {
 /// is out of this window, so the ordinary arrangement pays no width for it (see
 /// [`SdroxideApp::module_windows_chip_wanted`]).
 fn system_chips_bottom_row(has_amp: bool, windows: bool) -> Vec<String> {
-    let [mail, mem, scan, hfdl, grid, amp, settings, help] = system_chip_labels_bottom_amp();
+    let [mail, mem, scan, solar, grid, amp, settings, help] = system_chip_labels_bottom_amp();
     let mut row = if has_amp {
-        vec![mail, mem, scan, hfdl, grid, amp, settings]
+        vec![mail, mem, scan, solar, grid, amp, settings]
     } else {
-        vec![mail, mem, scan, hfdl, grid, settings]
+        vec![mail, mem, scan, solar, grid, settings]
     };
     if windows {
         row.push(MODULE_WINDOWS_CHIP.to_string());
@@ -7061,18 +7295,23 @@ fn system_chips_bottom_row(has_amp: bool, windows: bool) -> Vec<String> {
 /// program ships carries.
 const MODULE_WINDOWS_CHIP: &str = "▣";
 
-/// The Display box's top row: the solar view, then the chips that choose what
-/// the panadapter draws — the last of those only on a front end with a
-/// full-band lane. Peak hold used to stand here too and now lives in SPEC's
-/// popup, beside the spectrum line it is drawn over. Visible to the app module
-/// because [`SdroxideApp::solar_button`], which draws its first chip, lives in
-/// `app::solar`.
-pub(in crate::app) const DISPLAY_VIEW_CHIPS: [&str; 3] = ["☀ 3D", "SPEC", "WIDE"];
+/// The Display box's top row: the FFT popup and SPEC beside it (the
+/// waterfall's and the spectrum's settings), the level fit, then the full-band
+/// lane, only on a front end that has one. Everything on it changes the
+/// picture.
+// Why: HDZ 2026-11-07: "tausche FFT mit SOLAR, dann sind oben wenigstens nur
+//      optische Sachen"; 2026-11-09: "Knöpfe SPEC und FIT tauschen, weil FFT
+//      und SPEC gehören zusammen".
+pub(in crate::app) const DISPLAY_VIEW_CHIPS: [&str; 4] = ["FFT", "SPEC", "FIT", "WIDE"];
 
-/// The Display box's bottom row: the level fit, centre tuning, the skimmers,
-/// and the FFT/levels popup. Read by the measurement and by each chip's own
-/// draw site.
-const DISPLAY_TOOL_CHIPS: [&str; 4] = ["FIT", "CTR", "SKIM", "FFT"];
+/// The Display box's bottom row: centre tuning and the two decoders that run
+/// in the background, the skimmers and HFDL, each lit while it runs.
+pub(in crate::app) const DISPLAY_TOOL_CHIPS: [&str; 3] = ["CTR", "SKIM", "HFDL"];
+
+/// The solar view's chip, in the System box among the window chips since HFDL
+/// took its place in the Display box. SOLAR, not "☀ 3D": "3D" is also the
+/// spectrum's receding surface in SPEC.
+pub(in crate::app) const SOLAR_CHIP: &str = "SOLAR";
 
 /// The caption under the FDM-DUO's power presets (AJ3G, 18 Oct 2026).
 const DUO_PRESETS_CAPTION: &str = "ELAD FDM-DUO TX PWR";
@@ -7513,6 +7752,9 @@ enum RxChip {
     Bin,
     Mute,
     Rec,
+    /// ELAD FDM-DUO only: hear an over keyed at the radio's own microphone
+    /// (AJ3G, 13 Nov 2026: right of REC on the VOL/SQL bar).
+    Mic,
     /// WFM's stereo pilot.
     Stereo,
     /// WFM's RDS subcarrier.
@@ -7567,6 +7809,7 @@ impl RxChip {
             Self::Bin => "BIN",
             Self::Mute => return tr!("topbar-mute").into(),
             Self::Rec => "REC",
+            Self::Mic => super::duo_power::MIC_CHIP,
             Self::Stereo => "ST",
             Self::Rds => "RDS",
             Self::Drm => "DRM",
@@ -7738,13 +7981,18 @@ fn bw_chip_hint(mode: Mode, lo: f32, hi: f32) -> String {
 
 /// The RX box's chip run in a mode: the six every mode carries, then whatever
 /// the mode itself brings — a subcarrier to read, a tone to gate on.
-fn rx_chips(mode: Mode) -> Vec<RxChip> {
+///
+/// `mic` adds the FDM-DUO's MIC A chip right of REC (see [`RxChip::Mic`]).
+fn rx_chips(mode: Mode, mic: bool) -> Vec<RxChip> {
     // MONO is not among them: it is the *recording's* channel layout, and it
     // now sits beside the recording controls it belongs to, inside the REC
     // popup (issue #217). That is also one chip fewer on a strip that has to
     // fit on a 1366-pixel screen (issue #211).
     let mut chips =
         vec![RxChip::Bw, RxChip::Nb, RxChip::Anc, RxChip::Nr, RxChip::Mute, RxChip::Rec];
+    if mic {
+        chips.push(RxChip::Mic);
+    }
     // No auto-notch on broadcast audio, where what it cancels is the programme
     // (issue #434).
     if !mode.auto_notch_applies() {
@@ -7826,6 +8074,7 @@ fn rx_rows(
     decim: bool,
     agc_off: bool,
     mode: Mode,
+    mic: bool,
 ) -> RxRows {
     let g = MODULE_ROW_SPACING;
     // The Vol and SQL rails, which is what the box's stretch lengthens — so
@@ -7874,7 +8123,7 @@ fn rx_rows(
     // Then the run itself. Each chip is priced at its widest label, so the box
     // does not breathe as a decode comes and goes (see [`RxChip::width_label`])
     // and the run does not re-break under the operator's cursor.
-    let chips: Vec<f32> = rx_chips(mode).iter().map(|c| g + c.width(ui)).collect();
+    let chips: Vec<f32> = rx_chips(mode, mic).iter().map(|c| g + c.width(ui)).collect();
     let all: f32 = chips.iter().sum();
     // Ties keep a chip where it is, so the layout every rig has always had —
     // the whole run under the SQL rail — is what comes back unless lifting a
@@ -7942,13 +8191,56 @@ fn band_mode_h(ui: &egui::Ui) -> f32 {
     (base + BAND_MODE_EXTRA_H).min(ui.available_height().max(base))
 }
 
-/// The labels on the VFO box's top row, in the order they are drawn.
+/// What a click on the clipboard chip does, before it reaches the shell.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ClipClick {
+    Copy,
+    Paste,
+    Clear,
+}
+
+impl ClipClick {
+    fn into_act(self, load: impl FnOnce() -> super::Clip) -> super::ClipAct {
+        match self {
+            ClipClick::Copy => super::ClipAct::Copy(load()),
+            ClipClick::Paste => super::ClipAct::Paste,
+            ClipClick::Clear => super::ClipAct::Clear,
+        }
+    }
+}
+
+/// The clipboard chip's rule: left click fills the clipboard when it is
+/// empty and pastes it when it is filled; right click empties it without
+/// pasting.
+// Why: HDZ 2026-11-12: "mit Rechtsklick wird es unverrichteter Dinge
+//      gelöscht, links füllt auf oder überträgt".
+fn clip_click(full: bool, left: bool, right: bool) -> Option<ClipClick> {
+    if right {
+        return full.then_some(ClipClick::Clear);
+    }
+    left.then_some(if full { ClipClick::Paste } else { ClipClick::Copy })
+}
+
+/// The clipboard's dial for its tooltip: MHz to the hertz, trailing zeros
+/// dropped down to kHz, so `14.230 MHz`, `145.5375 MHz`.
+fn clip_mhz(hz: f64) -> String {
+    let s = format!("{:.6}", hz / 1e6);
+    let (int, frac) = s.split_once('.').unwrap_or((&s, ""));
+    let frac = frac.trim_end_matches('0');
+    format!("{int}.{frac:0<3} MHz")
+}
+
+/// The labels on the VFO box's top row, in the order they are drawn; the
+/// clipboard chip only while another radio is open to paste onto.
 ///
 /// DUPLEX is a transmit-side control and a receive-only front end does not pay
 /// for it, exactly as it does not pay for XIT on the row below. TONE stays
 /// either way: the receive tone squelch behind it belongs to the receiver.
-fn vfo_chip_labels(tx_capable: bool) -> Vec<&'static str> {
+fn vfo_chip_labels(tx_capable: bool, clip: bool) -> Vec<&'static str> {
     let mut labels = VFO_CHIPS.to_vec();
+    if clip {
+        labels.insert(2, CLIP_CHIP);
+    }
     if tx_capable {
         labels.push(DUPLEX_CHIP);
     }
@@ -9532,7 +9824,7 @@ mod tests {
             let (ctx, input) = desktop_ctx();
             ctx.run_ui(input, |ui| {
                 let row1: &[&str] =
-                    if has_wide { &DISPLAY_VIEW_CHIPS } else { &DISPLAY_VIEW_CHIPS[..2] };
+                    if has_wide { &DISPLAY_VIEW_CHIPS } else { &DISPLAY_VIEW_CHIPS[..3] };
                 let room = chip_row_w(ui, row1).max(chip_row_w(ui, &DISPLAY_TOOL_CHIPS));
                 for row in [row1, &DISPLAY_TOOL_CHIPS[..]] {
                     ui.horizontal(|ui| {
@@ -9975,10 +10267,10 @@ mod tests {
             + 12.0
             + RIGHT_W
             + 8.0;
-        let vfo = chip_row_w(ui, &vfo_chip_labels(true)).max(vfo_offsets_w(ui, true))
+        let vfo = chip_row_w(ui, &vfo_chip_labels(true, false)).max(vfo_offsets_w(ui, true))
             + 2.0 * crate::chrome::MODULE_MARGIN_X
             + 4.0;
-        let rx = rx_rows(ui, &[], &[], false, false, mode).w()
+        let rx = rx_rows(ui, &[], &[], false, false, mode, false).w()
             + 2.0 * crate::chrome::MODULE_MARGIN_X
             + 4.0;
         // A CAT rig modulates our audio, so a digital mode there draws the
@@ -10106,7 +10398,10 @@ mod tests {
             // 1400 pt is where `layout::tier_for` starts calling a window a
             // desktop; the top panel's 8+8 margin and `angled_frame`'s 10+10
             // come off it before the packer sees it.
-            let avail = 1400.0 - 16.0 - 20.0;
+            // FFT · SPEC · FIT / CTR · SKIM · HFDL, SOLAR among the window
+            // chips, makes the Display box a few points wider: a CAT rig's
+            // second row needs about 1368 pt, so it is checked at 1410.
+            let avail = 1410.0 - 16.0 - 20.0;
             for mode in [Mode::Lsb, Mode::Nfm, Mode::Wfm, Mode::Drm] {
                 let boxes = cat_rig_strip_boxes(ui, mode);
                 let widths: Vec<f32> = boxes.iter().map(|b| b.w).collect();
@@ -10136,7 +10431,7 @@ mod tests {
         ctx.run_ui(input, |ui| {
             let mut boxes = cat_rig_strip_boxes(ui, Mode::Lsb);
             // The receive box an SDR draws, in place of the CAT rig's.
-            let rx = rx_rows(ui, &["Gain".to_string()], &[], true, true, Mode::Lsb).w()
+            let rx = rx_rows(ui, &["Gain".to_string()], &[], true, true, Mode::Lsb, false).w()
                 + 2.0 * crate::chrome::MODULE_MARGIN_X
                 + 4.0;
             boxes[3] = StripBox { w: rx, flex: 2.0, max_w: rx + RAIL_STRETCH_MAX };
@@ -10186,7 +10481,7 @@ mod tests {
             let range: &[&[&str]] = &[FrontChip::RX888_VGA_RANGE.labels];
             for agc_off in [false, true] {
                 let rx_w = |rails: &[String], front: &[&[&str]]| {
-                    rx_rows(ui, rails, front, true, agc_off, Mode::Lsb).w()
+                    rx_rows(ui, rails, front, true, agc_off, Mode::Lsb, false).w()
                         + 2.0 * crate::chrome::MODULE_MARGIN_X
                         + 4.0
                 };
@@ -10236,6 +10531,24 @@ mod tests {
         .drop_without_applying_deltas();
     }
 
+    #[test]
+    fn the_clipboard_chip_fills_pastes_and_empties() {
+        use super::{ClipClick, clip_click, clip_mhz};
+        // Empty: left fills, right does nothing.
+        assert_eq!(clip_click(false, true, false), Some(ClipClick::Copy));
+        assert_eq!(clip_click(false, false, true), None);
+        // Filled: left pastes, right empties.
+        assert_eq!(clip_click(true, true, false), Some(ClipClick::Paste));
+        assert_eq!(clip_click(true, false, true), Some(ClipClick::Clear));
+        // No click, nothing.
+        assert_eq!(clip_click(true, false, false), None);
+        // The tooltip's dial.
+        assert_eq!(clip_mhz(14_230_000.0), "14.230 MHz");
+        assert_eq!(clip_mhz(145_537_500.0), "145.5375 MHz");
+        assert_eq!(clip_mhz(7_074_010.0), "7.07401 MHz");
+        assert_eq!(clip_mhz(10_000_000.0), "10.000 MHz");
+    }
+
     /// Lay the condensed VFO/RIT box's rows out with real chips and drag
     /// values at desktop metrics and check both fit the width
     /// [`vfo_offsets_w`] and [`chip_row_w`] price — which is what keeps
@@ -10243,11 +10556,11 @@ mod tests {
     /// shape.
     #[test]
     fn the_condensed_vfo_box_fits_its_rows() {
-        for tx_capable in [false, true] {
+        for (tx_capable, clip) in [(false, false), (true, false), (false, true), (true, true)] {
             let (ctx, input) = desktop_ctx();
             ctx.run_ui(input, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(MODULE_ROW_SPACING, MODULE_ROW_SPACING);
-                let chips = vfo_chip_labels(tx_capable);
+                let chips = vfo_chip_labels(tx_capable, clip);
                 let room = chip_row_w(ui, &chips).max(vfo_offsets_w(ui, tx_capable)) + 4.0;
                 let row1 = ui
                     .horizontal(|ui| {
@@ -10275,7 +10588,10 @@ mod tests {
                         ui.min_rect().width()
                     })
                     .inner;
-                assert!(row1 <= room + 0.5, "tx={tx_capable}: row 1 took {row1} of {room}");
+                assert!(
+                    row1 <= room + 0.5,
+                    "tx={tx_capable} clip={clip}: row 1 took {row1} of {room}"
+                );
                 assert!(row2 <= room + 0.5, "tx={tx_capable}: row 2 took {row2} of {room}");
             })
             .drop_without_applying_deltas();
@@ -10700,8 +11016,8 @@ mod tests {
                             // reserved for them, so the rows are laid out here
                             // at the same figure.
                             ui.spacing_mut().slider_width = LEVEL_RAIL_W;
-                            let rows = rx_rows(ui, &rails, front, decim, agc_off, mode);
-                            let chips = rx_chips(mode);
+                            let rows = rx_rows(ui, &rails, front, decim, agc_off, mode, false);
+                            let chips = rx_chips(mode, false);
                             let (mut vol, mut db) = (0.5f32, -88.8f32);
                             // The deepest threshold, which is the longest the
                             // readout beside the rail reads.
@@ -10837,7 +11153,7 @@ mod tests {
     #[test]
     fn every_mode_keeps_room_for_the_defaults_chip() {
         for mode in Mode::ALL {
-            assert_eq!(rx_chips(mode).last(), Some(&RxChip::Defaults), "{mode:?}");
+            assert_eq!(rx_chips(mode, false).last(), Some(&RxChip::Defaults), "{mode:?}");
         }
     }
 

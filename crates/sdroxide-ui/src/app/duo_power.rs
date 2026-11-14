@@ -24,6 +24,32 @@ pub(in crate::app) fn hover(code: u8) -> String {
     }
 }
 
+/// Hearing your own signal, on the front panel (AJ3G, 13 Nov 2026). MIC A,
+/// right of REC: hear an over keyed at the radio itself (its microphone PTT),
+/// the inverse of `CatConfig::elad_mute_on_radio_ptt`.
+pub(in crate::app) const MIC_CHIP: &str = "MIC A";
+
+/// DIG A, under the 3W and 5W buttons: hear an over sdroxide keyed (the
+/// digital modes, TUNE, PTT), `EladConfig::hear_own_tx`.
+pub(in crate::app) const DIGI_CHIP: &str = "DIG A";
+
+/// The hover for MIC A (0) or DIG A (1).
+pub(in crate::app) fn monitor_hover(i: usize, lit: bool) -> String {
+    let state = if lit { "On: you hear it." } else { "Off: the speakers are quiet for it." };
+    match i {
+        0 => format!(
+            "Hear your own signal when you key the FDM-DUO at the radio: its microphone \
+             PTT, a foot switch or another program. SDRoxide asks the radio over CAT \
+             whether it is transmitting. Takes effect at once.\n\n{state}"
+        ),
+        _ => format!(
+            "Hear your own signal when SDRoxide transmits: the digital modes, TUNE and PTT. \
+             The receiver is read right through the over. Takes effect from the next \
+             over.\n\n{state}"
+        ),
+    }
+}
+
 /// Menu 34's numbered steps, in watts, by `TP` parameter — the radio's own
 /// labels (`sdroxide_cat::elad::TX_POWER_STEPS_W`, repeated here because the
 /// UI does not depend on the CAT crate).
@@ -42,5 +68,12 @@ mod tests {
         assert_eq!(watts, vec![1.0, 3.0, 5.0]);
         assert_eq!(PRESETS[3], ("MAX", 9));
         assert!(hover(8).contains("HR500"));
+    }
+
+    #[test]
+    fn the_monitor_chips_say_which_over_they_are_for() {
+        assert!(monitor_hover(0, true).contains("microphone"));
+        assert!(monitor_hover(1, false).contains("digital modes"));
+        assert!(monitor_hover(1, false).contains("Off"));
     }
 }

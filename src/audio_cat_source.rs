@@ -10,7 +10,7 @@ use sdroxide_radio::rtrb;
 use sdroxide_radio::{Complex32, ControlUpdate, DC_BLOCK_HZ, IqSource, Result};
 use sdroxide_types::{
     AgcMode, CatConfig, CatFamily, Mode, SoundFormat, TRUSDX_RX_RATE_HZ, TRUSDX_TX_RATE_HZ,
-    TrUsdxAudio, TxTelemetry,
+    TxTelemetry,
 };
 
 use crate::dial::Dial;
@@ -127,7 +127,7 @@ impl AudioCatSource {
         // and there is nothing for `audio_in`/`audio_out` to name. Everything
         // about the transport differs, so it is built separately rather than
         // threaded through this one's sound-card setup.
-        if cfg.family == CatFamily::TrUsdx && cfg.trusdx_audio == TrUsdxAudio::OneCable {
+        if cfg.family == CatFamily::TrUsdx && cfg.trusdx_audio.streams_audio() {
             return Self::open_streamed(cfg);
         }
         // Adopt the rig's current dial/mode before we start commanding it.

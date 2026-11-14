@@ -1743,15 +1743,6 @@ settings-radio-corrects-reference-oscillator-applied-when = Corrige l'oscillateu
 settings-radio-receive-only-below-adc-s = Réception seule. Sous la limite de Nyquist du CAN, l'antenne est échantillonnée directement et l'accord est instantané, car il n'y a pas de convertisseur matériel — tout le flux du CAN est converti en bande de base par l'hôte. Au-dessus, le récepteur bascule automatiquement sur son accord R828D et la prise SMA VHF, donc les deux antennes doivent être branchées. La VHF exige une horloge de CAN d'au moins 32,4 Msps pour que la FI de l'accord tienne, et à des horloges inférieures à 48 Msps il existe un trou entre les deux plages que rien ne peut atteindre. Chaque réglage ici s'applique tout de suite — il n'y a pas de bouton Appliquer à presser.
 settings-radio-device = Périphérique
 settings-radio-no-devices-press-rescan = aucun périphérique — appuyez sur Rechercher
-settings-radio-six-rates-are-six-different =
-    Les six taux sont six images FPGA différentes, non un registre — c'est pourquoi rien dans le protocole d'ELAD ne choisit entre elles, et pourquoi ce que signifie ce réglage dépend du modèle.
-
-    FDM-S1 / FDM-S2 : une commande. Leur FPGA est chargé par l'ordinateur à chaque mise sous tension, et sdroxide lance le chargeur elad-firmware d'ELAD pour y mettre l'image de ce taux. Sans ce chargeur installé, un échantillonneur n'envoie aucun échantillon, et sdroxide le signale à l'écran.
-
-    FDM-DUO : pas une commande. La radio démarre son propre FPGA et arrive au taux dans lequel elle s'est allumée ou que FDM-SW2 lui a laissé en dernier (192 kHz sur une radio neuve), et ceci indique seulement comment le flux est LU. Une erreur et le panoramique est simplement de la mauvaise largeur, chaque fréquence à l'intérieur étant mise à l'échelle en conséquence.
-
-    Le taux réel du flux est mesuré quelques secondes après son démarrage, et un écart est signalé à l'écran. Prend effet à Appliquer.
-settings-radio-fdm-s-fpga-image-loaded = FDM-S : l'image FPGA chargée — FDM-DUO : comment le flux est lu
 settings-radio-receiver-s-input-pad-one = L'atténuateur d'entrée du récepteur — un pas, en plus ou en moins. C'est la même commande que le curseur Gain de la fenêtre principale.
 settings-radio-pre-selection-filters = Filtres de présélection
 settings-radio-low-pass-bank-front-adc = Le banc de filtres passe-bas devant le CAN. Le contourner donne la vue la plus large et le pire comportement près des forts signaux hors bande — un émetteur de radiodiffusion à quelques kilomètres placera des images sur toute la bande. Laissez-le activé sauf si vous écoutez volontairement en dehors de la plage filtrée.
@@ -1878,7 +1869,13 @@ settings-radio-no-rsps-press-rescan-needs = aucun RSP — appuyez sur Rechercher
 settings-radio-both-tuners-running-api-fixes = Les deux accords en marche, l'API fixe le CAN à 6 MHz et renvoie 2 Msps depuis une FI basse — donc 2 Msps est la plus large largeur, et les plus étroites sont ce sous-échantillonnage. Prend effet à Appliquer.
 settings-radio-rates-below-2-msps-run = Les taux inférieurs à 2 Msps font tourner le CAN à 2 Msps et décimer dans le service. Prend effet à Appliquer.
 settings-radio-reduced-adc-resolution = {"  "}(résolution du CAN réduite)
+topbar-sdrplay-if-hint = Un tuner en FI basse (1,620 MHz) au lieu de FI nulle : ni pic DC, ni fuite d'OL, ni image au centre. Par défaut jusqu'à 2 Msps ; un débit plus large passe en FI nulle, et un clic y ramène à 2 Msps en FI basse. Basculer rouvre la radio.
+topbar-sdrplay-if-low-hint = FI basse (1,620 MHz) : ni pic DC, ni fuite d'OL, ni image au centre. Clic : FI nulle, pour plus de 2 Msps.
+topbar-sdrplay-if-zero-hint = FI nulle : pic DC, fuite d'OL et image au centre ressemblent à des signaux. Réduire la bande à 2 Msps pour la FI basse, sans ces artefacts : clic.
+topbar-sdrplay-if-dual = Un RSPduo avec ses deux tuners est déjà en FI basse
 settings-radio-if-bandwidth = Largeur de la FI
+settings-radio-low-if = FI basse
+settings-radio-low-if-check = FI 1,620 MHz jusqu'à 2 Msps (comme SDRuno) ; débits plus larges en FI nulle
 settings-radio-tuner-s-analog-filter-auto = Le filtre analogique de l'accord. Auto choisit le plus large qui convienne au taux d'échantillonnage. Prend effet à Appliquer.
 settings-radio-rsp-s-own-if-gain = La boucle de gain FI propre au RSP, gérée par le service de l'API. Désactivé rend le curseur de gain FI à vous — le réglage pour la mesure et les modes numériques en signaux faibles.
 settings-radio-agc-set-point = Consigne du CAG
@@ -2035,6 +2032,8 @@ topbar-bar-trace = barre / tracé
 topbar-needle-bar-trace = aiguille / barre / tracé
 topbar-swap-vfos = Échanger les VFO
 topbar-copy-b = Copier A vers B
+topbar-clip = Presse-papiers : gauche remplit / droit vide
+topbar-clip-full = Presse-papiers : gauche colle { $freq } ({ $mode }) / droit vide
 topbar-second-receiver-right-ear-tunes = Second récepteur, dans l'oreille droite. Il s'accorde indépendamment de A/B — ses commandes apparaissent dans le module SUB, et sa bande passante sur la cascade.
 topbar-band-plan = , d'après le plan de bande
 topbar-repeater-shift-following-band-plan = Décalage relais : suit le plan de bande, qui n'a pas de décalage pour cette fréquence — simplex
@@ -2215,6 +2214,7 @@ topbar-how-many-signals-model-reads = Le nombre de signaux que lit le modèle à
 topbar-spots = SPOTS
 topbar-save-skimmer-s-spot-list = Enregistrer la liste des spots du skimmer dans un fichier
 topbar-show-hide-full-band-waterfall = Afficher/masquer la bande de cascade pleine largeur au-dessus du panoramique — tout ce que ce récepteur voit à la fois
+    Récepteur à bande étroite : SCAN → PANO balaye une plage et en fait ici une vue d'ensemble.
 topbar-spectrum-waterfall-either-layer-both = Spectre et cascade — l'une ou l'autre couche, les deux, ou aucune. Allumé lorsque les deux sont affichées.
 topbar-spectrum = SPECTRE
 topbar-show-spectrum = AFFICHER LE SPECTRE
@@ -3969,8 +3969,11 @@ logbook-no-qsos-yet-run-ft8 = aucun QSO pour l'instant — lancez FT8/FT4 ou ajo
 scanner-scanner = Scanner
 scanner-work-through-stored-memory-channels = Parcourir les canaux mémoire enregistrés
 scanner-work-through-slice-band-channel = Parcourir une portion de bande sur une grille de canaux
+scanner-sweep-range-into-panorama = Balayer une plage sans arrêt pour former un panorama
+scanner-panorama-hint = Balaye sans arrêt ; chaque balayage complet est une ligne de la bande large (WIDE).
 scanner-stop = ARRÊT
 scanner-start = DÉMARRER
+scanner-band = Bande
 scanner-from = De
 scanner-step = Pas
 scanner-mode = Mode
@@ -3993,9 +3996,77 @@ scanner-unfiled = Non classés
 scanner-nothing-filed-under-folders-you = Rien n'est classé dans les dossiers que vous avez choisis.
 scanner-stops = S'arrête à
 scanner-use-receiver-s-own-squelch = Utiliser le squelch propre au récepteur, pour que le balayage s'arrête exactement là où l'audio s'ouvrirait
+scanner-stop-snr = S'arrête là où un canal dépasse d'autant le bruit de fond alentour ; suit le gain et le bruit de bande.
 scanner-squelch-off-scan-will-stop = le squelch est désactivé — le balayage s'arrêtera sur la première chose qu'il examine
 scanner-channel-power-signal-has-reach = Puissance du canal qu'un signal doit atteindre pour arrêter le balayage
 scanner-listens = Écoute pendant
+scanner-settles = Attente par tranche
+scanner-settles-hint = Attente après le réaccord, avant la lecture du spectre. Plus longue : image plus stable, balayage plus lent.
+scanner-pano-width = Largeur de tranche
+scanner-pano-width-hint = Part de la largeur du récepteur utilisée par tranche. Moins : loin de la retombée des bords ; plus : balayage plus rapide. Recouvrement de 10 %.
+scanner-pano-pause = Pause après chaque ligne
+scanner-pano-pause-hint = Attente après chaque balayage complet avant le suivant. 0 : sans pause.
+scanner-pano-now = Maintenant
+scanner-pano-now-at = à { $mhz } MHz ({ $pct } %) · balayage { $n }
+scanner-pano-strip = Bande
+scanner-pano-strip-is = une ligne toutes les { $row } s = { $strip } par bande
+scanner-pano-strip-hint = Mesuré : dernier balayage plus pause, fois { $rows } lignes
+scanner-pano-strip-first = après le premier balayage
+rec-db-error = Base d'enregistrement indisponible : { $err }
+rec-retry = Réessayer
+rec-live = DIRECT
+rec-live-hint = Retour à la bande en direct
+rec-stop = ■ STOP
+rec-record = ● REC
+rec-record-hint = Enregistrer la bande large (WIDE), en commençant par les balayages déjà affichés :
+    sous PANO une ligne par balayage, sinon une par intervalle (niveau le plus fort)
+rec-desktop-only = Application de bureau uniquement : la base d'enregistrement s'y trouve.
+rec-interval = Toutes les
+rec-interval-hint = Temps entre lignes enregistrées, à partir de 1 s.
+    120 lignes remplissent une bande.
+rec-interval-locked = Fixe pendant l'enregistrement
+rec-strip-span = = { $min } min par bande
+rec-status-recording = Session { $id } · { $rows } lignes · bande { $strip } · { $time }
+rec-status-ready = Prêt : enregistre la bande large de { $radio }
+rec-status-first-sweep = Prêt : { $radio } · premier balayage en cours …
+rec-status-no-strip = Pas de bande large : lancer SCAN → PANO, ou un récepteur avec WIDE
+rec-db-summary = Base { $size } · { $n } sessions
+rec-init = DB INIT
+rec-init-hint = Supprimer toutes les sessions
+rec-init-locked = Arrêter d'abord l'enregistrement
+rec-init-sure = TOUT SUPPRIMER ?
+rec-init-armed-hint = Appuyer encore : toutes les sessions disparaissent définitivement
+rec-init-warning = ⚠ Supprime les { $n } sessions ({ $size }). Irréversible.
+rec-cancel = Annuler
+rec-empty = Aucune session enregistrée.
+rec-col-when = Début
+rec-col-radio = Radio
+rec-col-bands = Bandes
+rec-col-mhz = MHz
+rec-col-length = Durée
+rec-col-size = Taille
+rec-col-strips = Bandes
+rec-open-strips = Afficher les bandes de cette session
+rec-every = Une ligne toutes les { $s } s
+rec-delete = SUPPR
+rec-delete-hint = Supprimer la session
+rec-delete-sure = SÛR ?
+rec-delete-armed-hint = Appuyer encore : la session disparaît définitivement
+rec-rows = { $n } lignes
+rec-load = CHARGER
+rec-load-hint = Afficher la bande dans la bande large
+rec-load-sure = STOP + CHARGER ?
+rec-load-armed-hint = Appuyer encore : l'enregistrement s'arrête, la bande se charge
+rec-load-warning = ⚠ Charger arrête l'enregistrement en cours (session { $id }).
+rec-viewing = Session { $id }, bande { $strip } : { $from }–{ $to }
+rec-store = GARDER ACTUEL
+rec-store-hint = Garder la bande telle quelle comme session :
+    une ligne par balayage, à son heure
+rec-store-recording = L'enregistrement inclut déjà la bande
+rec-store-loaded = La bande affiche un enregistrement chargé
+rec-store-empty = La bande est vide
+rec-status-ready-strip = Prêt : { $radio } · { $n } balayages sur la bande depuis { $since }
+rec-every-sweep = Une ligne par balayage, toutes les { $s } s en moyenne
 scanner-how-long-stay-candidate-before = Combien de temps rester sur un candidat avant de le juger. En dessous d'environ un dixième de seconde, l'indicateur de niveau ne s'est pas stabilisé et les signaux faibles sont manqués
 scanner-resumes = Reprend
 scanner-carry-once-signal-drops = Continuer une fois le signal tombé
@@ -4004,8 +4075,6 @@ scanner-stay-until-you-press-next = Rester jusqu'à ce que vous appuyiez sur SUI
 scanner-how-long-stay = Combien de temps rester
 scanner-how-long-wait-after-signal = Combien de temps attendre après la chute du signal
 scanner-move-don-t-stop-channel = Passer à la suite, et ne plus s'arrêter sur ce canal
-scanner-next = SUIVANT
-scanner-move-now = Passer à la suite maintenant
 
 ## adsb (src/app/panels/adsb.rs)
 
@@ -4523,6 +4592,7 @@ multi-take-radio-off-row = Retirer cette radio de cette rangée. Elle continue d
 multi-open-pane = Ouvrir un autre volet avec une radio qui n'est pas à l'écran
 multi-pick-radio = Radio ▼
 multi-pick-radio-tip = Mettre une radio dans cette rangée. Les anneaux marquent les radios dont la liaison est ouverte.
+multi-resting-connection-tip = Connexion au repos : la choisir compose { $url }
 multi-new-radio = Nouvelle radio…
 multi-asked-station-another-radio = Demande à la station une autre radio…
 multi-client-cannot-open-connection = Ce client ne peut pas ouvrir de connexion.
@@ -5207,6 +5277,12 @@ sat-norad-2 = NORAD { $norad_id }
 
 scanner-holding-mhz = maintien sur { $here } MHz
 scanner-scanning-mhz = balayage · { $here } MHz
+scanner-pano-first = Panorama { $range } MHz · premier balayage …
+scanner-pano-sweeps = Panorama { $range } MHz · balayage { $n } · { $secs } s
+scanner-pano-clear = Effacer le panorama et rebalayer
+scanner-pano-plus-pause = + pause { $secs } s
+scanner-forward = Avant : continuer vers le haut
+scanner-backward = Arrière : faire demi-tour et descendre
 
 ## spectrum: messages with values (src/app/spectrum.rs)
 
@@ -5365,6 +5441,7 @@ elad-tx-input-mic = Microphone
 elad-tx-input-auto = Automatique
 elad-tx-input-leave = Laisser comme réglé sur la radio
 tr-usdx-audio-one-cable = Un seul câble (audio dans le flux CAT)
+tr-usdx-audio-one-cable-mute = Un seul câble (audio dans le flux CAT), haut-parleur mis en sourdine
 tr-usdx-audio-sound-card = Carte son USB (prise 3,5 mm)
 spy-server-format-uint8 = 8 bits (débit le plus faible)
 spy-server-format-int16 = 16 bits
@@ -5654,6 +5731,7 @@ rifp-encoding-group4 = G4
 rifp-encoding-group3 = G3
 scan-kind-memories = MÉM
 scan-kind-range = PLAGE
+scan-kind-panorama = PANO
 scan-resume-carrier = PORTEUSE
 scan-resume-timed = TEMPORISÉ
 scan-resume-manual = MANUEL
@@ -5708,7 +5786,7 @@ settings-ui-module-panadapter = Panadapter
 settings-ui-undock-all-hint = Place chaque module dans sa propre fenêtre ; la fenêtre principale ne garde que le spectre et les décodeurs. Un module sans rien à afficher, comme le panneau d'exploitation en mode phonie, n'ouvre pas de fenêtre.
 settings-ui-undock-hint =
     Détaché, ce module passe dans sa propre fenêtre et la fenêtre principale rend la place à ce qui reste : mettez la cascade sur un deuxième écran, ou les commandes sur un troisième. Fermer sa fenêtre le rattache.
-    
+
     Sous Wayland la taille est restaurée mais c'est le compositeur qui décide de l'emplacement d'une fenêtre : rendez-la flottante et épinglez-la sur un écran avec une règle de fenêtre correspondant à l'app-id « { $app_id } ».
 settings-ui-undocked = Détachée — sa propre fenêtre
 settings-ui-window-label = Fenêtre { $module }
@@ -5961,3 +6039,7 @@ textmodem-psk-coded-hint =
             [one] porteuse
            *[other] porteuses
         }, { $code }, { $bw } Hz de large
+
+topbar-sk-filter-after-nr-hint = SK après RNN/DFNR — et après l'AGC : ce que le filtre retire reste retiré (voir le gain à côté) ; désactivé : avant l'AGC, qui rétablit le niveau
+topbar-sk-filter-boost-hint = Gain après le filtre SK, 0–18 dB (5 dB), limité en douceur sous la pleine échelle : après le NR rien ne rétablit le niveau retiré par le filtre
+topbar-sk-filter-boost-before-nr = Avant le NR l'AGC rétablit le niveau ; le gain n'agit qu'après le NR

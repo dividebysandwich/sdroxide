@@ -1665,6 +1665,8 @@ impl SdroxideApp {
                     self.wide_grid = None;
                     self.wide_guide = None;
                     self.wide_wf.clear();
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.rec_tab.source_changed();
                     // This also fires on a reconnect, and pictures may have
                     // come in while the link was down. Read the stores again
                     // rather than leaving a gallery that stops at the moment
@@ -1750,8 +1752,14 @@ impl SdroxideApp {
                 // the "waiting for spectrum" notice, and a full-band frame is
                 // not evidence that the tuned receiver is producing samples.
                 RadioEvent::WideSpectrum(f) => {
-                    self.wide_guide_note_frame(&f);
-                    self.wide_frame = Some(std::sync::Arc::new(f));
+                    // Recorded whatever the strip is showing: a loaded
+                    // recording holds the strip, not the recorder.
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.rec_tab.on_wide_frame(&f);
+                    if !self.rec_viewing() {
+                        self.wide_guide_note_frame(&f);
+                        self.wide_frame = Some(std::sync::Arc::new(f));
+                    }
                 }
                 RadioEvent::Meters(m) => {
                     if self.focused {
@@ -2217,6 +2225,10 @@ impl SdroxideApp {
                 RadioEvent::RadioConfig(_) => {}
             }
         }
+        // A recorder row whose interval is over goes out now, not with the
+        // next sweep — a slow PANO sweep can be tens of seconds away.
+        #[cfg(not(target_arch = "wasm32"))]
+        self.rec_tab.tick();
         // A switched-off skimmer stops emitting, so its last boxes would sit on
         // the waterfall until something else replaced them; drop them per kind.
         if !self.skimmer_spots.is_empty() {

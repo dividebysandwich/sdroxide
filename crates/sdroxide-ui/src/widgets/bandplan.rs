@@ -151,6 +151,13 @@ fn coarse(region: Region) -> Vec<Seg> {
     v
 }
 
+/// The coarse allocations of this station's region — every amateur band plus
+/// the broadcast, CB and AM ones — as (low Hz, high Hz, label), low first. What
+/// a range picker offers.
+pub fn allocations() -> Vec<(f64, f64, &'static str)> {
+    coarse(sdroxide_types::region()).into_iter().map(|s| (s.lo, s.hi, s.label)).collect()
+}
+
 /// Depth of the allocation row along the bottom of the full-band strip, pt.
 // Why: HDZ 2026-11-10: "zum Panorama unten gerne noch Bänder in den unteren
 //      6–8 Pixeln als Overlay".

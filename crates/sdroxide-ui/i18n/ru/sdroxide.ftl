@@ -1751,15 +1751,6 @@ settings-radio-corrects-reference-oscillator-applied-when = Корректиру
 settings-radio-receive-only-below-adc-s = Только приём. Ниже предела Найквиста АЦП антенна сэмплируется напрямую, и перестройка мгновенна, потому что аппаратного понижающего преобразователя нет — весь поток АЦП переводится в базовую полосу на хосте. Выше него приёмник автоматически переключается на свой тюнер R828D и VHF-SMA, поэтому обе антенны должны быть подключены. Для VHF нужна тактовая частота АЦП 32,4 Msps или выше, чтобы уместилась ПЧ тюнера, а на тактовых частотах ниже 48 Msps между двумя диапазонами есть промежуток, до которого ничто не дотянется. Каждая настройка здесь применяется сразу — кнопки «Применить» нет.
 settings-radio-device = Устройство
 settings-radio-no-devices-press-rescan = устройств нет — нажмите «Пересканировать»
-settings-radio-six-rates-are-six-different =
-    Шесть частот — это шесть разных образов FPGA, а не регистр, — поэтому ничто в протоколе ELAD не выбирает между ними, и смысл этой настройки зависит от модели.
-
-    FDM-S1 / FDM-S2: команда. Их FPGA загружается компьютером при каждом включении, и sdroxide запускает собственный загрузчик ELAD elad-firmware, чтобы записать образ этой частоты. Без установленного загрузчика сэмплер вообще не отправляет отсчёты, и sdroxide сообщает об этом на экране.
-
-    FDM-DUO: не команда. Радио загружает собственную FPGA и приходит на той частоте, на которой включилось или на которой его оставил FDM-SW2 (на новом — 192 кГц), а здесь задаётся только то, как ЧИТАЕТСЯ поток. Если ошибиться, панорама просто будет неверной ширины, а каждая частота внутри неё — масштабирована под это.
-
-    Реальная частота потока измеряется через пару секунд после его старта, и несоответствие выводится на экран. Вступает в силу при «Применить».
-settings-radio-fdm-s-fpga-image-loaded = FDM-S: загруженный образ FPGA — FDM-DUO: как читается поток
 settings-radio-receiver-s-input-pad-one = Входной аттенюатор приёмника — один шаг, вверх или вниз. Тот же регулятор, что и ползунок Gain в главном окне.
 settings-radio-pre-selection-filters = Предварительные фильтры
 settings-radio-low-pass-bank-front-adc = Банк фильтров нижних частот перед АЦП. Его обход даёт самый широкий вид и самое плохое поведение вблизи сильных внеполосных сигналов — передатчик вещания в нескольких милях даст муары по всему диапазону. Оставьте включённым, если намеренно не слушаете вне отфильтрованного диапазона.
@@ -1886,7 +1877,13 @@ settings-radio-no-rsps-press-rescan-needs = RSP не найдены — нажм
 settings-radio-both-tuners-running-api-fixes = Когда работают оба тюнера, API фиксирует АЦП на 6 МГц и отдаёт 2 Msps из низкой ПЧ — поэтому 2 Msps — самая широкая полоса, а более узкие — это её децимация. Вступает в силу при «Применить».
 settings-radio-rates-below-2-msps-run = Частоты ниже 2 Msps работают с АЦП на 2 Msps и децимируют в службе. Вступает в силу при «Применить».
 settings-radio-reduced-adc-resolution = {"  "}(сниженное разрешение АЦП)
+topbar-sdrplay-if-hint = Один тюнер на низкой ПЧ (1,620 МГц) вместо нулевой ПЧ: нет пика DC, утечки гетеродина и зеркала в центре. По умолчанию до 2 Msps; более широкая частота работает на нулевой ПЧ, щелчок там даёт 2 Msps на низкой ПЧ. Переключение переоткрывает радио.
+topbar-sdrplay-if-low-hint = Низкая ПЧ (1,620 МГц): нет пика DC, утечки гетеродина и зеркала в центре. Щелчок: нулевая ПЧ, для частот выше 2 Msps.
+topbar-sdrplay-if-zero-hint = Нулевая ПЧ: пик DC, утечка гетеродина и зеркало в центре выглядят как сигналы. Уменьшите полосу до 2 Msps для низкой ПЧ без этих артефактов: щелчок.
+topbar-sdrplay-if-dual = RSPduo с двумя тюнерами и так работает на низкой ПЧ
 settings-radio-if-bandwidth = Полоса ПЧ
+settings-radio-low-if = Низкая ПЧ
+settings-radio-low-if-check = ПЧ 1,620 МГц до 2 Msps (как SDRuno); шире — нулевая ПЧ
 settings-radio-tuner-s-analog-filter-auto = Аналоговый фильтр тюнера. «Автоматически» выбирает самый широкий, который подходит к частоте дискретизации. Вступает в силу при «Применить».
 settings-radio-rsp-s-own-if-gain = Собственный контур усиления ПЧ RSP, которым управляет служба API. Выключено отдаёт ползунок усиления ПЧ обратно вам — настройка для измерений и цифровых режимов слабых сигналов.
 settings-radio-agc-set-point = Уставка AGC
@@ -2043,6 +2040,8 @@ topbar-bar-trace = столбцы / след
 topbar-needle-bar-trace = стрелка / столбцы / след
 topbar-swap-vfos = Поменять VFO местами
 topbar-copy-b = Копировать A в B
+topbar-clip = Буфер: левый — заполнить / правый — очистить
+topbar-clip-full = Буфер: левый — вставить { $freq } ({ $mode }) / правый — очистить
 topbar-second-receiver-right-ear-tunes = Второй приёмник, в правое ухо. Он настраивается независимо от A/B — его элементы управления появляются в модуле SUB, а его полоса пропускания — на водопаде.
 topbar-band-plan = , из плана диапазонов
 topbar-repeater-shift-following-band-plan = Сдвиг ретранслятора: следует плану диапазонов, в котором для этой частоты сдвига нет — симплекс
@@ -2223,6 +2222,7 @@ topbar-how-many-signals-model-reads = Сколько сигналов модел
 topbar-spots = СПОТЫ
 topbar-save-skimmer-s-spot-list = Сохранить список спотов скиммера в файл
 topbar-show-hide-full-band-waterfall = Показать/скрыть полосу водопада всего диапазона над панорамой — всё, что этот приёмник может видеть сразу
+    Узкополосный приёмник: SCAN → PANO проходит диапазон и строит здесь обзор.
 topbar-spectrum-waterfall-either-layer-both = Спектр и водопад — любой слой, оба или ни одного. Горит, когда показаны оба.
 topbar-spectrum = СПЕКТР
 topbar-show-spectrum = ПОКАЗАТЬ СПЕКТР
@@ -3976,8 +3976,11 @@ logbook-no-qsos-yet-run-ft8 = QSO пока нет — проведите FT8/FT4
 scanner-scanner = Сканер
 scanner-work-through-stored-memory-channels = Пройтись по сохранённым ячейкам памяти
 scanner-work-through-slice-band-channel = Пройтись по участку диапазона по сетке каналов
+scanner-sweep-range-into-panorama = Пройти диапазон без остановок и собрать панораму
+scanner-panorama-hint = Проходит без остановок; каждый полный проход — строка полосы всего диапазона (WIDE).
 scanner-stop = СТОП
 scanner-start = СТАРТ
+scanner-band = Диапазон
 scanner-from = От
 scanner-step = Шаг
 scanner-mode = Режим
@@ -4000,9 +4003,77 @@ scanner-unfiled = Без папки
 scanner-nothing-filed-under-folders-you = В выбранных вами папках ничего не лежит.
 scanner-stops = Останавливается на
 scanner-use-receiver-s-own-squelch = Использовать собственный шумоподавитель приёмника, чтобы сканирование останавливалось ровно там, где открылся бы звук
+scanner-stop-snr = Останавливается, где канал выше окружающего шумового порога на столько; следует за усилением и шумом диапазона.
 scanner-squelch-off-scan-will-stop = шумоподавитель выключен — сканирование остановится на первом, что проверит
 scanner-channel-power-signal-has-reach = Мощность канала, которой сигнал должен достичь, чтобы остановить сканирование
 scanner-listens = Слушает
+scanner-settles = Ждёт на участке
+scanner-settles-hint = Пауза после перестройки перед чтением спектра. Дольше — спокойнее картинка, медленнее проход.
+scanner-pano-width = Ширина участка
+scanner-pano-width-hint = Доля полосы приёмника на участок. Меньше — без завала по краям; больше — быстрее проход. Перекрытие 10 %.
+scanner-pano-pause = Пауза после каждой строки
+scanner-pano-pause-hint = Ожидание после каждого полного прохода перед следующим. 0: без паузы.
+scanner-pano-now = Сейчас
+scanner-pano-now-at = на { $mhz } МГц ({ $pct } %) · проход { $n }
+scanner-pano-strip = Полоса
+scanner-pano-strip-is = строка каждые { $row } с = { $strip } на полосу
+scanner-pano-strip-hint = Измерено: последний проход плюс пауза, × { $rows } строк
+scanner-pano-strip-first = после первого прохода
+rec-db-error = База записей недоступна: { $err }
+rec-retry = Повторить
+rec-live = ЭФИР
+rec-live-hint = Назад к живой полосе
+rec-stop = ■ СТОП
+rec-record = ● REC
+rec-record-hint = Запись полосы диапазона (WIDE), начиная с уже показанных проходов:
+    в PANO строка на проход, иначе строка за интервал (максимальный уровень)
+rec-desktop-only = Только в настольном приложении: там находится база записей.
+rec-interval = Каждые
+rec-interval-hint = Интервал между сохранёнными строками, от 1 с.
+    120 строк заполняют одну полосу.
+rec-interval-locked = Не меняется во время записи
+rec-strip-span = = { $min } мин на полосу
+rec-status-recording = Сеанс { $id } · { $rows } строк · полоса { $strip } · { $time }
+rec-status-ready = Готово: записывает полосу диапазона { $radio }
+rec-status-first-sweep = Готово: { $radio } · идёт первый проход …
+rec-status-no-strip = Нет полосы диапазона: запустите SCAN → PANO или приёмник с WIDE
+rec-db-summary = База { $size } · сеансов: { $n }
+rec-init = DB INIT
+rec-init-hint = Удалить все сеансы
+rec-init-locked = Сначала остановите запись
+rec-init-sure = УДАЛИТЬ ВСЁ?
+rec-init-armed-hint = Нажмите ещё раз: все сеансы удаляются навсегда
+rec-init-warning = ⚠ Удаляет все сеансы ({ $n }, { $size }). Отменить нельзя.
+rec-cancel = Отмена
+rec-empty = Записанных сеансов пока нет.
+rec-col-when = Начало
+rec-col-radio = Радио
+rec-col-bands = Диапазоны
+rec-col-mhz = МГц
+rec-col-length = Длительность
+rec-col-size = Размер
+rec-col-strips = Полосы
+rec-open-strips = Показать полосы этого сеанса
+rec-every = Одна строка каждые { $s } с
+rec-delete = УДАЛ
+rec-delete-hint = Удалить сеанс
+rec-delete-sure = ТОЧНО?
+rec-delete-armed-hint = Нажмите ещё раз: сеанс удаляется навсегда
+rec-rows = строк: { $n }
+rec-load = ЗАГР
+rec-load-hint = Показать полосу в полосе диапазона
+rec-load-sure = СТОП + ЗАГР?
+rec-load-armed-hint = Нажмите ещё раз: запись остановится, полоса загрузится
+rec-load-warning = ⚠ Загрузка останавливает идущую запись (сеанс { $id }).
+rec-viewing = Сеанс { $id }, полоса { $strip }: { $from }–{ $to }
+rec-store = СОХР ТЕКУЩ
+rec-store-hint = Сохранить полосу как есть как сеанс:
+    одна строка на проход, со своим временем
+rec-store-recording = Запись и так включает полосу
+rec-store-loaded = Полоса показывает загруженную запись
+rec-store-empty = Полоса пуста
+rec-status-ready-strip = Готово: { $radio } · { $n } проходов на полосе с { $since }
+rec-every-sweep = Одна строка на проход, в среднем каждые { $s } с
 scanner-how-long-stay-candidate-before = Как долго оставаться на кандидате, прежде чем судить о нём. Меньше примерно одной десятой секунды — измеритель уровня не устаканивается, и слабые сигналы пропускаются
 scanner-resumes = Продолжает
 scanner-carry-once-signal-drops = Продолжить, когда сигнал пропадает
@@ -4011,8 +4082,6 @@ scanner-stay-until-you-press-next = Оставаться, пока не нажм
 scanner-how-long-stay = Как долго оставаться
 scanner-how-long-wait-after-signal = Как долго ждать после того, как сигнал пропал
 scanner-move-don-t-stop-channel = Двигаться дальше и не останавливаться на этом канале снова
-scanner-next = ДАЛЕЕ
-scanner-move-now = Двигаться дальше сейчас
 
 ## ADS-B (src/app/panels/adsb.rs)
 
@@ -4530,6 +4599,7 @@ multi-take-radio-off-row = Убрать это радио из этого ряд
 multi-open-pane = Открыть ещё одну панель с радио, которого нет на экране
 multi-pick-radio = Радио ▼
 multi-pick-radio-tip = Поставить радио в этот ряд. Кольца отмечают радио с открытой связью.
+multi-resting-connection-tip = Спящее соединение: выбор подключает { $url }
 multi-new-radio = Новое радио…
 multi-asked-station-another-radio = Запрошено у станции другое радио…
 multi-client-cannot-open-connection = Этот клиент не может открыть соединение.
@@ -5203,6 +5273,12 @@ sat-norad-2 = NORAD { $norad_id }
 
 scanner-holding-mhz = удерживается { $here } МГц
 scanner-scanning-mhz = сканирование · { $here } МГц
+scanner-pano-first = Панорама { $range } МГц · первый проход …
+scanner-pano-sweeps = Панорама { $range } МГц · проход { $n } · { $secs } с
+scanner-pano-clear = Сбросить панораму и пройти заново
+scanner-pano-plus-pause = + пауза { $secs } с
+scanner-forward = Вперёд: дальше вверх
+scanner-backward = Назад: развернуться и дальше вниз
 
 ## spectrum: сообщения со значениями (src/app/spectrum.rs)
 
@@ -5361,6 +5437,7 @@ elad-tx-input-mic = Микрофон
 elad-tx-input-auto = Авто
 elad-tx-input-leave = Оставить как задано на радио
 tr-usdx-audio-one-cable = Один кабель (звук в потоке CAT)
+tr-usdx-audio-one-cable-mute = Один кабель (звук в потоке CAT), отключение динамика
 tr-usdx-audio-sound-card = USB-звуковая карта (разъём 3,5 мм)
 spy-server-format-uint8 = 8 бит (самая низкая полоса)
 spy-server-format-int16 = 16 бит
@@ -5650,6 +5727,7 @@ rifp-encoding-group4 = G4
 rifp-encoding-group3 = G3
 scan-kind-memories = ПАМЯТЬ
 scan-kind-range = ДИАПАЗОН
+scan-kind-panorama = ПАНО
 scan-resume-carrier = НЕСУЩАЯ
 scan-resume-timed = ПО ВРЕМЕНИ
 scan-resume-manual = ВРУЧНУЮ
@@ -5959,3 +6037,7 @@ textmodem-psk-coded-hint =
             [many] несущих
            *[other] несущей
         }, { $code }, ширина { $bw } Гц
+
+topbar-sk-filter-after-nr-hint = SK после RNN/DFNR — а значит после АРУ: что фильтр убрал, не возвращается (см. усиление рядом); выкл.: перед АРУ, которая восстанавливает уровень
+topbar-sk-filter-boost-hint = Усиление после SK-фильтра, 0–18 дБ (5 дБ), мягкое ограничение ниже полной шкалы: после NR уровень, убранный фильтром, никто не восстанавливает
+topbar-sk-filter-boost-before-nr = До NR уровень восстанавливает АРУ; усиление действует только после NR

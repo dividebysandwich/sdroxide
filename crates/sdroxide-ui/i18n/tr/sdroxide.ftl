@@ -1745,15 +1745,6 @@ settings-radio-corrects-reference-oscillator-applied-when = Referans osilatörü
 settings-radio-receive-only-below-adc-s = Yalnızca alma. ADC'nin Nyquist sınırının altında anten doğrudan örneklenir ve yeniden ayar anlıktır, çünkü donanımda bir aşağı dönüştürücü yoktur — ADC'nin tüm akışı ana bilgisayarda tabanbanda çevrilir. Bunun üstünde alıcı, R828D tuner'ına ve VHF SMA'ya otomatik olarak geçer; bu yüzden iki anten de bağlı olmalıdır. VHF, tuner'ın IF'inin sığması için 32,4 Msps ya da daha yüksek bir ADC saati gerektirir ve 48 Msps'nin altındaki saatlerde iki aralık arasında hiçbir şeyin ulaşamadığı bir boşluk vardır. Buradaki her ayar hemen uygulanır — basılacak bir Uygula düğmesi yoktur.
 settings-radio-device = Aygıt
 settings-radio-no-devices-press-rescan = aygıt yok — Yeniden tara'ya basın
-settings-radio-six-rates-are-six-different =
-    Altı hız, bir yazmacın değil altı farklı FPGA görüntüsüdür — bu yüzden ELAD'ın protokolünde hiçbir şey aralarından seçim yapmaz ve bu ayarın ne anlama geldiği modele bağlıdır.
-
-    FDM-S1 / FDM-S2: bir komut. FPGA'ları bilgisayar tarafından her açılışta yüklenir ve sdroxide, bu hızın görüntüsünü yerleştirmek için ELAD'ın kendi elad-firmware yükleyicisini çalıştırır. Bu yükleyici kurulu değilse bir örnekleyici hiç örnek göndermez ve sdroxide bunu ekranda söyler.
-
-    FDM-DUO: bir komut değil. Radyo kendi FPGA'sını başlatır ve açıldığı ya da FDM-SW2'nin en son bıraktığı hızda gelir (yeni birinde 192 kHz); bu ayar yalnızca akışın NASIL OKUNACAĞINI söyler. Yanlış ayarlarsanız panadaptör yalnızca yanlış genişlikte olur ve içindeki her frekans buna göre ölçeklenir.
-
-    Akışın gerçek hızı, başladıktan birkaç saniye sonra ölçülür ve bir uyumsuzluk ekranda bildirilir. Uygula ile etkinleşir.
-settings-radio-fdm-s-fpga-image-loaded = FDM-S: yüklenen FPGA görüntüsü — FDM-DUO: akışın nasıl okunduğu
 settings-radio-receiver-s-input-pad-one = Alıcının giriş pedi — bir adım, içeri ya da dışarı. Ana penceredeki Kazanç kaydırıcısıyla aynı denetim.
 settings-radio-pre-selection-filters = Ön seçim filtreleri
 settings-radio-low-pass-bank-front-adc = ADC'nin önündeki alçak geçiren filtre bankası. Onu atlamak en geniş görünümü verir ama güçlü bant dışı sinyallerin yakınında en kötü davranışı — birkaç mil uzaktaki bir yayın vericisi bandın her yerine görüntüler düşürür. Bilerek filtrelenmiş aralığın dışında dinlemiyorsanız açık bırakın.
@@ -1880,7 +1871,13 @@ settings-radio-no-rsps-press-rescan-needs = RSP yok — Yeniden tara'ya basın (
 settings-radio-both-tuners-running-api-fixes = Her iki tuner çalışırken API, ADC'yi 6 MHz'e sabitler ve düşük bir IF'ten 2 Msps verir — bu yüzden en geniş aralık 2 Msps'dir ve daha dar olanlar onun seyreltilmiş halidir. Uygula ile etkinleşir.
 settings-radio-rates-below-2-msps-run = 2 Msps'nin altındaki hızlar ADC'yi 2 Msps'de çalıştırır ve servisteki seyreltmeyle elde edilir. Uygula ile etkinleşir.
 settings-radio-reduced-adc-resolution = {"  "}(azaltılmış ADC çözünürlüğü)
+topbar-sdrplay-if-hint = Tek tuner sıfır IF yerine düşük IF'de (1,620 MHz): merkezde DC tepesi, LO sızıntısı veya imge yok. 2 Msps'ye kadar varsayılan; daha geniş hız sıfır IF'de çalışır, oradaki tıklama düşük IF'de 2 Msps'ye geçer. Geçiş radyoyu yeniden açar.
+topbar-sdrplay-if-low-hint = Düşük IF (1,620 MHz): merkezde DC tepesi, LO sızıntısı veya imge yok. Tıkla: 2 Msps üstü hızlar için sıfır IF.
+topbar-sdrplay-if-zero-hint = Sıfır IF: merkezdeki DC tepesi, LO sızıntısı ve imge sinyal gibi görünür. Bu artefaktlardan kaçınmak için bant genişliğini 2 Msps'ye düşürüp düşük IF kullan: tıkla.
+topbar-sdrplay-if-dual = İki tuner'ı çalışan bir RSPduo zaten düşük IF'de
 settings-radio-if-bandwidth = IF bant genişliği
+settings-radio-low-if = Düşük IF
+settings-radio-low-if-check = 2 Msps'ye kadar IF 1,620 MHz (SDRuno gibi); daha geniş hızlar sıfır IF'de
 settings-radio-tuner-s-analog-filter-auto = Tuner'ın analog filtresi. Otomatik, örnekleme hızına sığan en geniş olanı seçer. Uygula ile etkinleşir.
 settings-radio-rsp-s-own-if-gain = RSP'nin kendi IF kazanç döngüsü; API servisi tarafından çalıştırılır. Kapalı, IF kazanç kaydırıcısını size geri verir — ölçüm ve zayıf sinyal dijital modları için ayar.
 settings-radio-agc-set-point = AGC ayar noktası
@@ -2037,6 +2034,8 @@ topbar-bar-trace = çubuk / iz
 topbar-needle-bar-trace = iğne / çubuk / iz
 topbar-swap-vfos = VFO'ları değiştir
 topbar-copy-b = A'yı B'ye kopyala
+topbar-clip = Pano: sol doldurur / sağ boşaltır
+topbar-clip-full = Pano: sol yapıştırır { $freq } ({ $mode }) / sağ boşaltır
 topbar-second-receiver-right-ear-tunes = İkinci alıcı, sağ kulakta. A/B'den bağımsız ayarlanır — denetimleri SUB modülünde ve geçiş bandı şelalede görünür.
 topbar-band-plan = , bant planından
 topbar-repeater-shift-following-band-plan = Tekrarlayıcı kayması: bant planını izliyor, bu frekans için kayma yok — simpleks
@@ -2217,6 +2216,7 @@ topbar-how-many-signals-model-reads = Model bir seferde kaç sinyal okur. Kalanl
 topbar-spots = SPOTLAR
 topbar-save-skimmer-s-spot-list = Skimmer'ın spot listesini bir dosyaya kaydedin
 topbar-show-hide-full-band-waterfall = Panadaptörün üstündeki tüm bant şelale şeridini göster/gizle — bu alıcının bir anda görebildiği her şey
+    Dar bantlı alıcı: SCAN → PANO bir aralığı tarayıp burada genel bakış oluşturur.
 topbar-spectrum-waterfall-either-layer-both = Spektrum ve şelale — biri, ikisi ya da hiçbiri. İkisi de gösterilirken yanar.
 topbar-spectrum = SPEKTRUM
 topbar-show-spectrum = SPEKTRUMU GÖSTER
@@ -3968,8 +3968,11 @@ logbook-no-qsos-yet-run-ft8 = henüz QSO yok — FT8/FT4 çalıştırın ya da e
 scanner-scanner = Tarayıcı
 scanner-work-through-stored-memory-channels = Kayıtlı hafıza kanallarını sırayla çalışın
 scanner-work-through-slice-band-channel = Bir bandın bir dilimini kanal ızgarasında sırayla çalışın
+scanner-sweep-range-into-panorama = Bir aralığı durmadan tarayıp panorama oluştur
+scanner-panorama-hint = Durmadan tarar; her tam tarama tam bant şeridinde (WIDE) bir satırdır.
 scanner-stop = DURDUR
 scanner-start = BAŞLAT
+scanner-band = Bant
 scanner-from = Başlangıç
 scanner-step = Adım
 scanner-mode = Mod
@@ -3992,9 +3995,77 @@ scanner-unfiled = Klasörsüz
 scanner-nothing-filed-under-folders-you = Seçtiğiniz klasörlerin altına hiçbir şey kaydedilmemiş.
 scanner-stops = Durduğu yer
 scanner-use-receiver-s-own-squelch = Alıcının kendi susturmasını kullanın; böylece tarama, ses tam olarak açılacağı yerde durur
+scanner-stop-snr = Bir kanal çevresindeki gürültü tabanını bu kadar aştığında durur; kazanç ve bant gürültüsünü izler.
 scanner-squelch-off-scan-will-stop = susturma kapalı — tarama baktığı ilk şeyde durur
 scanner-channel-power-signal-has-reach = Taramayı durdurmak için bir sinyalin ulaşması gereken kanal gücü
 scanner-listens = Dinler
+scanner-settles = Dilim başına bekler
+scanner-settles-hint = Yeniden ayardan sonra spektrum okunmadan önceki bekleme. Daha uzun: daha sakin görüntü, daha yavaş tarama.
+scanner-pano-width = Dilim genişliği
+scanner-pano-width-hint = Her dilimin kullandığı alıcı genişliği payı. Az: kenar düşüşünden uzak; çok: daha hızlı tarama. Dilimler %10 örtüşür.
+scanner-pano-pause = Her satırdan sonra duraklama
+scanner-pano-pause-hint = Her tam taramadan sonra bir sonrakine kadar bekleme. 0: duraklamasız.
+scanner-pano-now = Şimdi
+scanner-pano-now-at = { $mhz } MHz ({ $pct } %) · tarama { $n }
+scanner-pano-strip = Şerit
+scanner-pano-strip-is = her { $row } sn'de bir satır = şerit başına { $strip }
+scanner-pano-strip-hint = Ölçülen: son tarama artı duraklama, × { $rows } satır
+scanner-pano-strip-first = ilk taramadan sonra
+rec-db-error = Kayıt veritabanı kullanılamıyor: { $err }
+rec-retry = Yeniden dene
+rec-live = CANLI
+rec-live-hint = Canlı şeride dön
+rec-stop = ■ DUR
+rec-record = ● REC
+rec-record-hint = Tam bant şeridini (WIDE) kaydet, üzerindeki taramalardan başlayarak:
+    PANO'da tarama başına bir satır, aksi halde aralık başına (en güçlü seviye)
+rec-desktop-only = Yalnızca masaüstü uygulamasında: kayıt veritabanı orada.
+rec-interval = Her
+rec-interval-hint = Kaydedilen satırlar arası süre, 1 sn ve üzeri.
+    120 satır bir şerit doldurur.
+rec-interval-locked = Kayıt sırasında sabit
+rec-strip-span = = şerit başına { $min } dk
+rec-status-recording = Oturum { $id } · { $rows } satır · şerit { $strip } · { $time }
+rec-status-ready = Hazır: { $radio } tam bant şeridini kaydeder
+rec-status-first-sweep = Hazır: { $radio } · ilk tarama sürüyor …
+rec-status-no-strip = Tam bant şeridi yok: SCAN → PANO başlatın veya WIDE destekli alıcı
+rec-db-summary = Veritabanı { $size } · { $n } oturum
+rec-init = DB INIT
+rec-init-hint = Tüm oturumları sil
+rec-init-locked = Önce kaydı durdurun
+rec-init-sure = TÜMÜ SİLİNSİN Mİ?
+rec-init-armed-hint = Tekrar basın: tüm oturumlar kalıcı olarak silinir
+rec-init-warning = ⚠ { $n } oturumun tümünü siler ({ $size }). Geri alınamaz.
+rec-cancel = İptal
+rec-empty = Henüz kayıtlı oturum yok.
+rec-col-when = Başlangıç
+rec-col-radio = Telsiz
+rec-col-bands = Bantlar
+rec-col-mhz = MHz
+rec-col-length = Süre
+rec-col-size = Boyut
+rec-col-strips = Şeritler
+rec-open-strips = Bu oturumun şeritlerini göster
+rec-every = Her { $s } sn'de bir satır
+rec-delete = SİL
+rec-delete-hint = Oturumu sil
+rec-delete-sure = EMİN MİSİNİZ?
+rec-delete-armed-hint = Tekrar basın: oturum kalıcı olarak silinir
+rec-rows = { $n } satır
+rec-load = YÜKLE
+rec-load-hint = Şeridi tam bant şeridinde göster
+rec-load-sure = DUR + YÜKLE?
+rec-load-armed-hint = Tekrar basın: kayıt durur, şerit yüklenir
+rec-load-warning = ⚠ Yüklemek süren kaydı durdurur (oturum { $id }).
+rec-viewing = Oturum { $id }, şerit { $strip }: { $from }–{ $to }
+rec-store = MEVCUDU SAKLA
+rec-store-hint = Şeridi olduğu gibi oturum olarak sakla:
+    tarama başına bir satır, kendi zamanıyla
+rec-store-recording = Kayıt şeridi zaten içeriyor
+rec-store-loaded = Şerit yüklenmiş bir kaydı gösteriyor
+rec-store-empty = Şerit boş
+rec-status-ready-strip = Hazır: { $radio } · { $since } itibarıyla şeritte { $n } tarama
+rec-every-sweep = Tarama başına bir satır, ortalama her { $s } sn
 scanner-how-long-stay-candidate-before = Bir adayı yargılamadan önce onda ne kadar kalınacağı. Yaklaşık onda bir saniyenin altında seviye ölçer yerleşmez ve zayıf sinyaller kaçar
 scanner-resumes = Devam eder
 scanner-carry-once-signal-drops = Sinyal düştükten sonra devam edin
@@ -4003,8 +4074,6 @@ scanner-stay-until-you-press-next = SONRAKİ'ye basana dek kalın
 scanner-how-long-stay = Ne kadar kalınacağı
 scanner-how-long-wait-after-signal = Sinyal düştükten sonra ne kadar beklenecek
 scanner-move-don-t-stop-channel = Devam edin ve bu kanalda bir daha durmayın
-scanner-next = SONRAKİ
-scanner-move-now = Şimdi devam et
 
 ## adsb (src/app/panels/adsb.rs)
 
@@ -4521,6 +4590,7 @@ multi-take-radio-off-row = Bu telsizi bu sıradan çıkar. Çalışmaya devam ed
 multi-open-pane = Ekranda olmayan bir telsizle başka bir bölme aç
 multi-pick-radio = Radyo ▼
 multi-pick-radio-tip = Bu sıraya bir telsiz koy. Halkalar bağlantısı açık telsizleri gösterir.
+multi-resting-connection-tip = Bekleyen bağlantı: seçmek { $url } adresini arar
 multi-new-radio = Yeni telsiz…
 multi-asked-station-another-radio = İstasyondan başka bir radyo istendi…
 multi-client-cannot-open-connection = Bu istemci bir bağlantı açamaz.
@@ -5199,6 +5269,12 @@ sat-norad-2 = NORAD { $norad_id }
 
 scanner-holding-mhz = { $here } MHz'de tutuluyor
 scanner-scanning-mhz = taranıyor · { $here } MHz
+scanner-pano-first = Panorama { $range } MHz · ilk tarama …
+scanner-pano-sweeps = Panorama { $range } MHz · tarama { $n } · { $secs } sn
+scanner-pano-clear = Panoramayı at ve yeniden tara
+scanner-pano-plus-pause = + duraklama { $secs } sn
+scanner-forward = İleri: yukarı devam
+scanner-backward = Geri: dön ve aşağı devam
 
 ## spectrum: değerli iletiler (src/app/spectrum.rs)
 
@@ -5357,6 +5433,7 @@ elad-tx-input-mic = Mikrofon
 elad-tx-input-auto = Otomatik
 elad-tx-input-leave = Radyoda ayarlandığı gibi bırak
 tr-usdx-audio-one-cable = Tek kablo (CAT akışındaki ses)
+tr-usdx-audio-one-cable-mute = Tek kablo (CAT akışındaki ses), hoparlörü sessize alma
 tr-usdx-audio-sound-card = USB ses kartı (3,5 mm jak)
 spy-server-format-uint8 = 8 bit (en düşük bant genişliği)
 spy-server-format-int16 = 16 bit
@@ -5646,6 +5723,7 @@ rifp-encoding-group4 = G4
 rifp-encoding-group3 = G3
 scan-kind-memories = HAF
 scan-kind-range = ARALIK
+scan-kind-panorama = PANO
 scan-resume-carrier = TAŞIYICI
 scan-resume-timed = ZAMANLI
 scan-resume-manual = ELLE
@@ -5953,3 +6031,7 @@ textmodem-psk-coded-hint =
             [one] taşıyıcı
            *[other] taşıyıcı
         }, { $code }, { $bw } Hz genişlik
+
+topbar-sk-filter-after-nr-hint = SK, RNN/DFNR'den sonra — dolayısıyla AGC'den de sonra: filtrenin aldığı geri gelmez (yanındaki güçlendirmeye bak); kapalı: seviyeyi geri getiren AGC'den önce
+topbar-sk-filter-boost-hint = SK filtresinden sonra güçlendirme, 0–18 dB (5 dB), tam ölçeğin altında yumuşak sınırlı: NR'den sonra filtrenin aldığı seviyeyi kimse geri getirmez
+topbar-sk-filter-boost-before-nr = NR'den önce AGC seviyeyi geri getirir; güçlendirme yalnızca NR'den sonra çalışır

@@ -61,7 +61,7 @@ const MARK_TRIANGLE: f32 = 7.0;
 /// Rows of history kept. At ~20 frames a second this is about six seconds —
 /// long enough to see a band opening without the strip turning into a second
 /// waterfall competing with the main one.
-const ROWS: usize = 120;
+pub(crate) const ROWS: usize = 120;
 
 /// A click tunes to a multiple of this. 100 Hz is finer than a pixel of a
 /// 32 MHz strip, so it never fights the hover readout showing where it lands.

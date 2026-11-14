@@ -1725,15 +1725,6 @@ settings-radio-corrects-reference-oscillator-applied-when = 基準発振器を�
 settings-radio-receive-only-below-adc-s = 受信のみ。ADC のナイキスト限界より下では、アンテナが直接サンプリングされ、ハードウェアのダウンコンバーターがないため、再同調は即座に行われます。ADC のストリーム全体がホストでベースバンドに変換されます。それより上では、受信機は自動的に R828D チューナーと VHF の SMA に切り替わるため、両方のアンテナを接続する必要があります。VHF では、チューナーの IF が収まるように ADC クロックが 32.4 Msps 以上必要です。また、クロックが 48 Msps 未満では、2 つの範囲の間に、どれも届かない隙間があります。ここのすべての設定は直ちに適用されます。押す適用ボタンはありません。
 settings-radio-device = デバイス
 settings-radio-no-devices-press-rescan = デバイスがありません。再スキャンを押してください
-settings-radio-six-rates-are-six-different =
-    6 つのレートは、6 つの異なる FPGA イメージであり、レジスターではありません。そのため、ELAD のプロトコルではそれらを選ぶ手段がなく、この設定が何を意味するかは機種によって異なります。
-
-    FDM-S1 / FDM-S2：コマンドです。それらの FPGA は、電源を入れるたびにコンピューターが読み込み、sdroxide は ELAD 自身の elad-firmware ローダーを実行して、このレートのイメージを入れます。そのローダーがインストールされていないと、サンプラーはサンプルをまったく送らず、sdroxide は画面でその旨を伝えます。
-
-    FDM-DUO：コマンドではありません。無線機は自分の FPGA を起動し、電源を入れたとき、または FDM-SW2 が最後に残したレート（新品なら 192 kHz）で動作します。この設定は、ストリームをどう *読み取る* かを示すだけです。誤ると、パナダプターが単に誤った幅になり、その中のすべての周波数が、それに合わせて拡大縮小されます。
-
-    ストリームの実際のレートは、開始後約 2 秒で測定され、不一致は画面に報告されます。適用で有効になります。
-settings-radio-fdm-s-fpga-image-loaded = FDM-S：読み込まれた FPGA イメージ — FDM-DUO：ストリームの読み取り方法
 settings-radio-receiver-s-input-pad-one = 受信機の入力パッドです。1 ステップ、入または切です。メインウィンドウのゲインスライダーと同じコントロールです。
 settings-radio-pre-selection-filters = 事前選択フィルター
 settings-radio-low-pass-bank-front-adc = ADC の前にあるローパスフィルターのバンクです。これを迂回すると最も広い表示になりますが、帯域外の強い信号の近くでは最悪の動作になります。数マイル離れた放送送信機が、バンド全体にイメージを生じさせます。フィルターされた範囲の外を意図的に聴くのでない限り、オンのままにしてください。
@@ -1861,7 +1852,13 @@ settings-radio-no-rsps-press-rescan-needs = RSP がありません。再スキ�
 settings-radio-both-tuners-running-api-fixes = 両方のチューナーが動いている場合、API は ADC を 6 MHz に固定し、低い IF から 2 Msps を返します。そのため、2 Msps が最も広いスパンで、それより狭いものはその間引きされたものです。適用で有効になります。
 settings-radio-rates-below-2-msps-run = 2 Msps より低いレートでは、ADC は 2 Msps で動作し、サービス内で間引きを行います。適用で有効になります。
 settings-radio-reduced-adc-resolution = {"  "}（ADC の分解能が低下）
+topbar-sdrplay-if-hint = 単一チューナーをゼロIFではなく低IF (1.620 MHz) で動作: 中央のDCスパイク、LO漏れ、イメージなし。2 Msps までは既定でオン。それより広いレートはゼロIFで動作し、そこでクリックすると 2 Msps の低IFに切替。切替で無線機を再接続。
+topbar-sdrplay-if-low-hint = 低IF (1.620 MHz): 中央にDCスパイク、LO漏れ、イメージなし。クリック: ゼロIF (2 Msps 超用)。
+topbar-sdrplay-if-zero-hint = ゼロIF: 中央のDCスパイク、LO漏れ、イメージが信号に見える。帯域幅を 2 Msps に下げて低IFでアーティファクトを回避: クリック。
+topbar-sdrplay-if-dual = 両チューナー動作中の RSPduo はもともと低IF
 settings-radio-if-bandwidth = IF 帯域幅
+settings-radio-low-if = 低IF
+settings-radio-low-if-check = 2 Msps までは IF 1.620 MHz (SDRuno と同じ)、それ以上はゼロIF
 settings-radio-tuner-s-analog-filter-auto = チューナーのアナログフィルターです。自動では、サンプルレートに収まる最も広いものを選びます。適用で有効になります。
 settings-radio-rsp-s-own-if-gain = API サービスが動かす、RSP 自身の IF ゲインのループです。オフにすると、IF ゲインのスライダーがあなたの手に戻ります。測定や微弱信号のデジタルモード用の設定です。
 settings-radio-agc-set-point = AGC の設定点
@@ -2018,6 +2015,8 @@ topbar-bar-trace = バー / トレース
 topbar-needle-bar-trace = 針 / バー / トレース
 topbar-swap-vfos = VFO を入れ替え
 topbar-copy-b = A を B にコピー
+topbar-clip = クリップボード：左でコピー／右で消去
+topbar-clip-full = クリップボード：左で貼り付け { $freq }（{ $mode }）／右で消去
 topbar-second-receiver-right-ear-tunes = 2 つ目の受信機で、右耳に聞こえます。A/B とは独立して同調します。そのコントロールは SUB モジュールに、そのパスバンドはウォーターフォールに表示されます。
 topbar-band-plan = 、バンドプランから
 topbar-repeater-shift-following-band-plan = レピーターシフト：バンドプランに従っています。この周波数にはシフトがないため、シンプレックスです
@@ -2198,6 +2197,7 @@ topbar-how-many-signals-model-reads = モデルが一度に読み取る信号の
 topbar-spots = スポット
 topbar-save-skimmer-s-spot-list = スキマーのスポット一覧をファイルに保存
 topbar-show-hide-full-band-waterfall = パナダプターの上の、全バンドのウォーターフォールのストリップを表示／非表示にします。この受信機が一度に見られるすべてです
+    狭帯域の受信機：SCAN → PANO で範囲を掃引し、ここに概観を作る。
 topbar-spectrum-waterfall-either-layer-both = スペクトラムとウォーターフォール。どちらか一方、両方、またはどちらもなし。両方が表示されている間は点灯します。
 topbar-spectrum = スペクトラム
 topbar-show-spectrum = スペクトラムを表示
@@ -3949,8 +3949,11 @@ logbook-no-qsos-yet-run-ft8 = まだ QSO がありません。FT8/FT4 を実行�
 scanner-scanner = スキャナー
 scanner-work-through-stored-memory-channels = 保存されたメモリーチャンネルを順に巡回します
 scanner-work-through-slice-band-channel = チャンネルグリッド上で、バンドの一部を順に巡回します
+scanner-sweep-range-into-panorama = 範囲を止まらずに掃引してパノラマにする
+scanner-panorama-hint = 止まらずに掃引。1回の掃引ごとに全帯域ストリップ（WIDE）の1行。
 scanner-stop = 停止
 scanner-start = 開始
+scanner-band = バンド
 scanner-from = 開始
 scanner-step = ステップ
 scanner-mode = モード
@@ -3973,9 +3976,77 @@ scanner-unfiled = 未分類
 scanner-nothing-filed-under-folders-you = 選んだフォルダーの下には、何も格納されていません。
 scanner-stops = 停止条件
 scanner-use-receiver-s-own-squelch = 受信機自身のスケルチを使うため、音声が開くまさにその場所でスキャンが止まります
+scanner-stop-snr = 周囲のノイズフロアよりこれだけ高いチャンネルで停止。ゲインと帯域ノイズに追従。
 scanner-squelch-off-scan-will-stop = スケルチがオフです。スキャンは、最初に調べたものでそのまま止まります
 scanner-channel-power-signal-has-reach = スキャンを止めるために、信号が到達しなければならないチャンネルの電力です
 scanner-listens = 聴く時間
+scanner-settles = 区間ごとの待機
+scanner-settles-hint = 再同調後、スペクトルを読む前の待機。長いほど画像が安定し、掃引は遅くなる。
+scanner-pano-width = 区間幅
+scanner-pano-width-hint = 各区間で使う受信幅の割合。小さいほど端の減衰を避け、大きいほど掃引が速い。区間は10 %重なる。
+scanner-pano-pause = 各行の後の休止
+scanner-pano-pause-hint = 1回のスイープ完了後、次を始めるまでの待ち時間。0: 休止なし。
+scanner-pano-now = 現在
+scanner-pano-now-at = { $mhz } MHz ({ $pct } %) · スイープ { $n }
+scanner-pano-strip = ストリップ
+scanner-pano-strip-is = { $row } 秒ごとに1行 = ストリップあたり { $strip }
+scanner-pano-strip-hint = 実測: 直前のスイープ + 休止 × { $rows } 行
+scanner-pano-strip-first = 最初のスイープ後
+rec-db-error = 録音データベースを使用できません: { $err }
+rec-retry = 再試行
+rec-live = ライブ
+rec-live-hint = ライブのストリップに戻る
+rec-stop = ■ 停止
+rec-record = ● REC
+rec-record-hint = 全帯域ストリップ (WIDE) を記録 (表示中のスイープから開始):
+    PANO ではスイープごとに1行、それ以外は間隔ごとに1行 (最大レベル)
+rec-desktop-only = デスクトップアプリのみ: 録音データベースはそちらにあります。
+rec-interval = 間隔
+rec-interval-hint = 保存する行の間隔、1 秒以上。
+    120 行で1ストリップ。
+rec-interval-locked = 記録中は固定
+rec-strip-span = = ストリップあたり { $min } 分
+rec-status-recording = セッション { $id } · { $rows } 行 · ストリップ { $strip } · { $time }
+rec-status-ready = 準備完了: { $radio } の全帯域ストリップを記録
+rec-status-first-sweep = 準備完了: { $radio } · 最初のスイープ中 …
+rec-status-no-strip = 全帯域ストリップなし: SCAN → PANO を開始、または WIDE 対応受信機
+rec-db-summary = データベース { $size } · { $n } セッション
+rec-init = DB INIT
+rec-init-hint = 全セッションを削除
+rec-init-locked = 先に記録を停止
+rec-init-sure = すべて削除？
+rec-init-armed-hint = もう一度押す: 全セッションを完全に削除
+rec-init-warning = ⚠ 全 { $n } セッション ({ $size }) を削除します。元に戻せません。
+rec-cancel = キャンセル
+rec-empty = 記録されたセッションはありません。
+rec-col-when = 開始
+rec-col-radio = 無線機
+rec-col-bands = バンド
+rec-col-mhz = MHz
+rec-col-length = 長さ
+rec-col-size = サイズ
+rec-col-strips = ストリップ
+rec-open-strips = このセッションのストリップを表示
+rec-every = { $s } 秒ごとに1行
+rec-delete = 削除
+rec-delete-hint = セッションを削除
+rec-delete-sure = 確認？
+rec-delete-armed-hint = もう一度押す: セッションを完全に削除
+rec-rows = { $n } 行
+rec-load = 読込
+rec-load-hint = ストリップを全帯域ストリップに表示
+rec-load-sure = 停止して読込？
+rec-load-armed-hint = もう一度押す: 記録を停止してストリップを読込
+rec-load-warning = ⚠ 読み込むと実行中の記録 (セッション { $id }) が停止します。
+rec-viewing = セッション { $id }、ストリップ { $strip }: { $from }–{ $to }
+rec-store = 現在を保存
+rec-store-hint = ストリップをそのままセッションとして保存:
+    スイープごとに1行、その時刻で
+rec-store-recording = 記録中はストリップも記録されます
+rec-store-loaded = ストリップは読込済みの記録を表示中
+rec-store-empty = ストリップは空です
+rec-status-ready-strip = 準備完了: { $radio } · { $since } 以降 { $n } スイープ
+rec-every-sweep = スイープごとに1行、平均 { $s } 秒ごと
 scanner-how-long-stay-candidate-before = 候補を判定する前に、その候補にとどまる時間です。約 0.1 秒を下回ると、レベルメーターが整定せず、弱い信号を取り逃します
 scanner-resumes = 再開
 scanner-carry-once-signal-drops = 信号が下がったら続けます
@@ -3984,8 +4055,6 @@ scanner-stay-until-you-press-next = 次を押すまでとどまります
 scanner-how-long-stay = とどまる時間
 scanner-how-long-wait-after-signal = 信号が下がった後に待つ時間
 scanner-move-don-t-stop-channel = 次へ進み、このチャンネルでは再び止まりません
-scanner-next = 次へ
-scanner-move-now = 今すぐ次へ進みます
 
 ## ADS-B（src/app/panels/adsb.rs）
 
@@ -4503,6 +4572,7 @@ multi-take-radio-off-row = この無線機をこの列から外します。動�
 multi-open-pane = 画面に出ていない無線機で別のペインを開く
 multi-pick-radio = 無線機 ▼
 multi-pick-radio-tip = この列に無線機を加えます。リングはリンクが開いている無線機を示します。
+multi-resting-connection-tip = 休止中の接続: 選ぶと { $url } に接続
 multi-new-radio = 新しい無線機…
 multi-asked-station-another-radio = ステーションに別の無線機を依頼しました…
 multi-client-cannot-open-connection = このクライアントは接続を開けません。
@@ -5151,6 +5221,12 @@ sat-norad-2 = NORAD { $norad_id }
 
 scanner-holding-mhz = { $here } MHz で保持中
 scanner-scanning-mhz = スキャン中 · { $here } MHz
+scanner-pano-first = パノラマ { $range } MHz · 初回掃引中 …
+scanner-pano-sweeps = パノラマ { $range } MHz · 掃引 { $n } · { $secs } 秒
+scanner-pano-clear = パノラマを破棄して再掃引
+scanner-pano-plus-pause = + 休止 { $secs } 秒
+scanner-forward = 前進：上へ進む
+scanner-backward = 後退：反転して下へ進む
 
 ## スペクトラム：値を含むメッセージ（src/app/spectrum.rs）
 
@@ -5310,6 +5386,7 @@ elad-tx-input-mic = マイク
 elad-tx-input-auto = 自動
 elad-tx-input-leave = 無線機の設定どおり
 tr-usdx-audio-one-cable = ワンケーブル（CAT ストリーム内の音声）
+tr-usdx-audio-one-cable-mute = ワンケーブル（CAT ストリーム内の音声）、スピーカーをミュート
 tr-usdx-audio-sound-card = USB サウンドカード（3.5 mm ジャック）
 spy-server-format-uint8 = 8 ビット（最も低い帯域）
 spy-server-format-int16 = 16 ビット
@@ -5599,6 +5676,7 @@ rifp-encoding-group4 = G4
 rifp-encoding-group3 = G3
 scan-kind-memories = MEM
 scan-kind-range = 範囲
+scan-kind-panorama = PANO
 scan-resume-carrier = キャリア
 scan-resume-timed = 時間指定
 scan-resume-manual = 手動
@@ -5910,3 +5988,7 @@ textmodem-psk-coded-hint =
             [one] 搬送波
            *[other] 搬送波
         }、{ $code }、帯域幅 { $bw } Hz
+
+topbar-sk-filter-after-nr-hint = SK を RNN/DFNR の後に — つまり AGC の後: フィルターが下げたレベルは戻らない (隣のブースト参照)。オフ: レベルを戻す AGC の前
+topbar-sk-filter-boost-hint = SK フィルター後のブースト 0–18 dB (5 dB)、フルスケール手前でソフトリミット: NR の後ではフィルターが下げたレベルを戻すものがない
+topbar-sk-filter-boost-before-nr = NR の前では AGC がレベルを戻すため、ブーストは NR の後のみ有効

@@ -190,6 +190,7 @@ impl Tr for TrUsdxAudio {
     fn tr(self) -> String {
         match self {
             TrUsdxAudio::OneCable => tr!("tr-usdx-audio-one-cable"),
+            TrUsdxAudio::OneCableMute => tr!("tr-usdx-audio-one-cable-mute"),
             TrUsdxAudio::SoundCard => tr!("tr-usdx-audio-sound-card"),
         }
     }
@@ -928,6 +929,7 @@ impl Tr for ScanKind {
         match self {
             ScanKind::Memories => tr!("scan-kind-memories"),
             ScanKind::Range => tr!("scan-kind-range"),
+            ScanKind::Panorama => tr!("scan-kind-panorama"),
         }
     }
 }

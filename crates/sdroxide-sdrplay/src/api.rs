@@ -257,6 +257,10 @@ pub(crate) fn select(
             })?;
 
         let model = SdrPlayModel::from_hw_ver(dev.hw_ver);
+        // What the service listed the RSPduo as still able to do, before the
+        // request below overwrites it: a select it refuses is nearly always a
+        // mode it no longer offers, and the bits say which (#683).
+        let offered = dev.rsp_duo_mode;
         if model == SdrPlayModel::RspDuo {
             if dual {
                 dev.tuner = ffi::TUNER_BOTH;
@@ -278,8 +282,20 @@ pub(crate) fn select(
             // The service arbitrates ownership: a select that fails on a
             // device the table just listed is nearly always "someone else has
             // it" — but keep the API's own words in the message too.
+            let modes = if model == SdrPlayModel::RspDuo {
+                format!(" (the service offered: {})", duo_modes(offered))
+            } else {
+                String::new()
+            };
+            tracing::warn!(
+                serial = %dev.serial(),
+                held = s.held.len(),
+                offered,
+                "SDRplay SelectDevice refused: {}",
+                api.err_text(err)
+            );
             return Err(Error::InUse(format!(
-                "{} (serial {}) — {}",
+                "{} (serial {}) — {}{modes}",
                 model.label(),
                 dev.serial(),
                 api.err_text(err)
@@ -292,6 +308,23 @@ pub(crate) fn select(
         s.held.push((dev.serial(), dev.hw_ver));
     }
     result.map(|dev| (api, dev))
+}
+
+/// The RSPduo modes a `GetDevices` entry offers, as words, for an error the
+/// operator can read out to us: `rspDuoMode` there is a bit set of the modes
+/// still available, not the mode the board is in.
+fn duo_modes(bits: ffi::RspDuoMode) -> String {
+    let names: Vec<&str> = [
+        (ffi::RSPDUO_MODE_SINGLE_TUNER, "single tuner"),
+        (ffi::RSPDUO_MODE_DUAL_TUNER, "dual tuner"),
+        (ffi::RSPDUO_MODE_MASTER, "master"),
+        (ffi::RSPDUO_MODE_SLAVE, "slave"),
+    ]
+    .iter()
+    .filter(|(b, _)| bits & b != 0)
+    .map(|(_, n)| *n)
+    .collect();
+    if names.is_empty() { "no mode".into() } else { names.join(", ") }
 }
 
 /// Hand a selected device back to the service. Best-effort: on an unplugged
@@ -307,5 +340,27 @@ pub(crate) fn release(dev: &mut ffi::DeviceT) {
         if err != ffi::ERR_SUCCESS {
             tracing::debug!("ReleaseDevice: {}", api.err_text(err));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The refusal names the modes the service still offered, so a report
+    /// from a station we cannot reproduce says which one was gone (#683).
+    #[test]
+    fn the_offered_duo_modes_read_as_words() {
+        assert_eq!(duo_modes(0), "no mode");
+        assert_eq!(duo_modes(ffi::RSPDUO_MODE_SINGLE_TUNER), "single tuner");
+        assert_eq!(
+            duo_modes(
+                ffi::RSPDUO_MODE_SINGLE_TUNER
+                    | ffi::RSPDUO_MODE_DUAL_TUNER
+                    | ffi::RSPDUO_MODE_MASTER
+            ),
+            "single tuner, dual tuner, master"
+        );
+        assert_eq!(duo_modes(ffi::RSPDUO_MODE_SLAVE), "slave");
     }
 }

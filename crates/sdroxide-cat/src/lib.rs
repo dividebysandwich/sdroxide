@@ -285,6 +285,15 @@ trait Protocol: Send {
         Vec::new()
     }
 
+    /// How often [`Self::tx_state_requests`] is asked on its own, faster than
+    /// the meters it otherwise rides with. `None`, the default, keeps it with
+    /// the meter poll. A family whose receiver keeps playing through an over
+    /// the radio keyed (the ELAD FDM-DUO) wants the mute to land before the
+    /// first syllable rather than up to a meter period later.
+    fn tx_state_period(&self) -> Option<Duration> {
+        None
+    }
+
     /// Frames written once when the link opens, before anything else — for a
     /// profile that must ask what is on the other end before its other frames
     /// mean anything: the model, the power scale, the mode names. Empty — the
@@ -1301,7 +1310,7 @@ fn make_protocol(cfg: &CatConfig) -> Box<dyn Protocol> {
         // The one family whose audio is *in* the byte stream: the serial
         // thread routes bytes to the profile's own demultiplexer rather than
         // expecting a sound card (see `Protocol::streams_audio`).
-        CatFamily::TrUsdx => Box::new(trusdx::TrUsdx::new(cfg.trusdx_audio.streams_audio())),
+        CatFamily::TrUsdx => Box::new(trusdx::TrUsdx::new(cfg.trusdx_audio)),
         CatFamily::Rigctld => Box::new(rigctld::Rigctld::new()),
         CatFamily::Flrig => Box::new(flrig::Flrig::new(cfg.flrig_addr.trim().to_string())),
     }
@@ -2891,6 +2900,11 @@ fn serial_thread(
         // Worth having anyway — the cost is one addition, and the worst it can
         // decay to is the lockstep it starts out avoiding.
         let mut next_meter = Instant::now() + rx_meter_period / 2;
+        // The rig's own transmit state, where the profile wants it asked on a
+        // beat of its own (`Protocol::tx_state_period`).
+        let tx_state_period = protocol.tx_state_period();
+        // First read one beat in, like the meters: not into the opening exchange.
+        let mut next_tx_state = Instant::now() + tx_state_period.unwrap_or_default();
         let mut ptt = false;
         // When a CAT key-down was last written, so the rig's refusal of one can
         // be told from the refusals its unimplemented sub-commands answer with.
@@ -3351,8 +3365,8 @@ fn serial_thread(
             // hear it — so without this the session would be silent, with a
             // control link that worked perfectly.
             // Re-arm the stream when no audio has arrived for a moment. The
-            // enable is `UA0;UA1;`, so it is safe to send over a healthy stream
-            // as well as a dead one — but the idle test is what keeps it off a
+            // enable is `UA0;UA1;` (`UA2;` with the speaker muted), so it is
+            // safe to send over a healthy stream as well as a dead one — but the idle test is what keeps it off a
             // healthy one, because a command written while the stream is
             // running is what kills this firmware in the first place.
             if streaming
@@ -3553,7 +3567,7 @@ fn serial_thread(
                 // ...and ask whether the rig has keyed itself. Not while we are
                 // the ones keying it: the answer would be our own key-down
                 // coming back, and the engine already knows about that.
-                if !ptt {
+                if !ptt && tx_state_period.is_none() {
                     reqs.extend(protocol.tx_state_requests());
                 }
                 for req in reqs {
@@ -3599,6 +3613,20 @@ fn serial_thread(
                         if write_frame(&mut *port, &mut *protocol, &f, &mut last_write, &mut io) {
                             break 'io true;
                         }
+                    }
+                }
+            }
+
+            // The transmit read on its own beat, for a profile that asks for one.
+            // Not while we are keying: the engine already knows about that.
+            if let Some(period) = tx_state_period
+                && !ptt
+                && Instant::now() >= next_tx_state
+            {
+                next_tx_state = Instant::now() + period;
+                for req in protocol.tx_state_requests() {
+                    if write_frame(&mut *port, &mut *protocol, &req, &mut last_write, &mut io) {
+                        break 'io true;
                     }
                 }
             }
