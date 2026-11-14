@@ -10,4 +10,3 @@ description = "The TNC host ports (command + data over TCP, or in-process) share
 
 [dependencies]
 crossbeam-channel.workspace = true
-tracing.workspace = true

@@ -66,7 +66,7 @@ const GAMMA_MAX: f32 = 1000.0;
 fn exp_int_e1(x: f32) -> f32 {
     let x = x.max(1e-8); // ν→0 only for empty bins (output is 0 either way)
     if x < 1.0 {
-        -x.ln() - 0.577_215_66
+        -x.ln() - std::f32::consts::EULER_GAMMA
             + x * (0.999_991_93
                 + x * (-0.249_910_55 + x * (0.055_199_68 + x * (-0.009_760_04 + x * 0.001_078_57))))
     } else {

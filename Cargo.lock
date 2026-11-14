@@ -5564,7 +5564,6 @@ version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "rtrb",
- "sdroxide-types",
  "thiserror 2.0.20",
  "tracing",
  "tracing-subscriber",
@@ -6017,7 +6016,6 @@ name = "sdroxide-tnc"
 version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
- "tracing",
 ]
 
 [[package]]
