@@ -431,7 +431,12 @@ impl Protocol for Elad {
     }
 
     fn poll_requests(&self) -> Vec<Vec<u8>> {
-        vec![b"FA;".to_vec(), b"MD;".to_vec()]
+        // The transmit output rides with the mode, on the slow half of the
+        // poll: menu 33 is a front-panel setting changed a few times an
+        // evening, but the XVTR chip has to follow it when it is, or the panel
+        // says the PA is in circuit when it is not. A read only, so harmless
+        // mid-over; the CAT loop forwards it only when it changes.
+        vec![b"FA;".to_vec(), b"MD;".to_vec(), read_tx_out_frame().into_bytes()]
     }
     /// `IF;`, the TS-480 status read the DUO keeps from Kenwood's set, so an
     /// over keyed at the radio — its microphone PTT — is known here. Whether
@@ -788,6 +793,9 @@ mod tests {
         assert_eq!(parse_str(&mut e, "TT0;"), vec![CatUpdate::RxAntenna(false)]);
         assert!(parse_str(&mut e, "TT2;").is_empty());
         assert!(parse_str(&mut e, "TT;").is_empty());
+        // Re-read on the slow poll, so a change at the front panel shows.
+        assert!(frames(e.poll_requests()).contains(&"TT;".to_string()));
+        assert!(!frames(e.dial_requests()).contains(&"TT;".to_string()));
         // `TP` is the power register, not the transmit output.
         assert!(parse_str(&mut e, "TP09;").is_empty());
     }
