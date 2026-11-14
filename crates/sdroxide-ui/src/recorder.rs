@@ -259,7 +259,11 @@ impl Recorder {
     }
 
     pub fn set_interval_s(&self, s: f64) -> rusqlite::Result<()> {
-        let s = if s.is_finite() { s.clamp(MIN_INTERVAL_S, MAX_INTERVAL_S) } else { DEFAULT_INTERVAL_S };
+        let s = if s.is_finite() {
+            s.clamp(MIN_INTERVAL_S, MAX_INTERVAL_S)
+        } else {
+            DEFAULT_INTERVAL_S
+        };
         self.db.execute(
             "INSERT INTO meta (key, value) VALUES ('interval_s', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",

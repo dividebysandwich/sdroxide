@@ -5,8 +5,8 @@ use eframe::egui::{self, RichText};
 
 use crate::i18n::tr;
 use crate::recorder::{
-    DEFAULT_INTERVAL_S, MAX_INTERVAL_S, MIN_INTERVAL_S, Recorder, STRIP_ROWS, SessionInfo, StoredRow, StripInfo,
-    Sweep, mb,
+    DEFAULT_INTERVAL_S, MAX_INTERVAL_S, MIN_INTERVAL_S, Recorder, STRIP_ROWS, SessionInfo,
+    StoredRow, StripInfo, Sweep, mb,
 };
 
 /// What the tab asks of the app after drawing.
@@ -637,10 +637,10 @@ impl RecTab {
             self.dirty = true;
         }
         if let Some(id) = delete {
-            if let Some(rec) = self.rec.as_mut() {
-                if let Err(e) = rec.delete(id) {
-                    self.error = Some(e.to_string());
-                }
+            if let Some(rec) = self.rec.as_mut()
+                && let Err(e) = rec.delete(id)
+            {
+                self.error = Some(e.to_string());
             }
             if self.viewing.as_ref().is_some_and(|v| v.0 == id) {
                 action = Some(RecAction::Live);
