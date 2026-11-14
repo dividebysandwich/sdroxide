@@ -12282,6 +12282,12 @@ own T/R switching. One that wants more than a milliwatt of drive is better
 driven from RTX at low power through an attenuator, with the chip out and the
 **max drive** of its Transverters row keeping the level down.
 
+The level at RF OUT follows **Drive** (or the TUNE %), up to about 0 dBm at
+full scale — measured on an FDM-DUO at 234 mV RMS into 50 Ω, about +0.4 dBm.
+The TX PWR buttons (menu 34) do **not** change it: they set the PA's ceiling
+only, so with XVTR lit, Drive and the Transverters row's **max drive** are the
+controls.
+
 The port is never switched during an over: sdroxide refuses the click while
 transmitting and says so, and the radio itself ignores `TT` then. It needs the
 CAT serial port — the receive cable alone cannot read the setting back, so the
