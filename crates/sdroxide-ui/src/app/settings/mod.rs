@@ -3753,6 +3753,14 @@ fn caret_at(placed: &[(u32, egui::Rect)], slot: usize) -> Option<(f32, egui::Ran
 /// either half of itself a no-op: both halves name a gap that is where it
 /// already is, and an index taken after the removal would read one of them as a
 /// move by one.
+/// Whether a remembered chip drag outlived its release elsewhere: the button
+/// is up, and no chip on the strip reported the release this frame. The frame
+/// that drops a chip has the button up as well, so `dropped` is what keeps the
+/// drop from being cancelled before it is applied.
+fn drag_is_stale(dropped: bool, pointer_down: bool) -> bool {
+    !dropped && !pointer_down
+}
+
 fn reordered(ids: &[u32], dragged: u32, before: Option<u32>) -> Vec<u32> {
     let mut out = ids.to_vec();
     let Some(from) = ids.iter().position(|id| *id == dragged) else { return out };
@@ -4052,8 +4060,10 @@ impl SdroxideApp {
         // sorts its tabs to match and records it.
         // A drag whose release this strip never saw — the dialog was closed
         // under it, or the pointer left the window — must not leave a caret
-        // following the mouse the next time the page is opened.
-        if dragging.is_some() && !ui.input(|i| i.pointer.any_down()) {
+        // following the mouse the next time the page is opened. The release
+        // this strip *did* see arrives with the button already up, so it has
+        // to be told apart, or the drop below never runs.
+        if dragging.is_some() && drag_is_stale(dropped, ui.input(|i| i.pointer.any_down())) {
             dragging = None;
         }
         if let Some(id) = dragging {
@@ -4217,6 +4227,17 @@ mod roster_order_tests {
         assert_eq!(reordered(&ids, 3, Some(0)), vec![3, 0, 1, 2], "to the front");
         assert_eq!(reordered(&ids, 0, None), vec![1, 2, 3, 0], "to the end");
         assert_eq!(reordered(&ids, 0, Some(3)), vec![1, 2, 0, 3], "into the middle");
+    }
+
+    /// The drop frame has the button up too; only a release no chip saw is stale.
+    #[test]
+    fn the_release_that_drops_a_chip_does_not_cancel_the_drag() {
+        // Mid-drag: button down.
+        assert!(!drag_is_stale(false, true));
+        // The drop frame: button up, a chip reported drag_stopped.
+        assert!(!drag_is_stale(true, false));
+        // A release the strip never saw: button up, nothing dropped here.
+        assert!(drag_is_stale(false, false));
     }
 }
 
