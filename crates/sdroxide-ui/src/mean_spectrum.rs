@@ -40,6 +40,39 @@ fn floor_of(power: &[f64]) -> Option<f64> {
     Some(*mid.select_nth_unstable_by(q, |a, b| a.total_cmp(b)).1)
 }
 
+/// The noise floor at each cell, read in a window of `half` cells either side
+/// (fewer at the ends): the [`FLOOR_QUANTILE`] of the reached cells in it.
+/// Where the window holds too few, the floor of the whole row stands in.
+///
+/// For a row whose floor is not flat. Over a panadapter's few hundred kHz the
+/// noise floor is level and one floor serves; across a full-band strip — 0 to
+/// 30 MHz on a direct-sampling RTL-SDR, the noise tens of dB higher at the
+/// bottom than at the top — one floor is the quiet end's, and the line traces
+/// the slope of the noise instead of how far a signal stands out of the noise
+/// around it.
+// Why: HDZ 2026-11-13 (picture, PANO 0–30 MHz): "hier muss im S/N ein
+//      Rechenfehler gewesen sein … wenn ich mir die lokalen Spektren ansehe,
+//      dann ist S/N niedriger, der Bezugspunkt muss lokaler werden".
+fn local_floors(power: &[f64], half: usize) -> Option<Vec<f64>> {
+    let whole = floor_of(power)?;
+    let n = power.len();
+    let mut win: Vec<f64> = Vec::with_capacity(2 * half + 1);
+    Some(
+        (0..n)
+            .map(|i| {
+                win.clear();
+                let (a, b) = (i.saturating_sub(half), (i + half + 1).min(n));
+                win.extend(power[a..b].iter().copied().filter(|p| p.is_finite() && *p > 0.0));
+                if win.len() < 8 {
+                    return whole;
+                }
+                let q = ((win.len() - 1) as f64 * FLOOR_QUANTILE) as usize;
+                *win.select_nth_unstable_by(q, |a, b| a.total_cmp(b)).1
+            })
+            .collect(),
+    )
+}
+
 /// Where the app leaves the guide for the spectrum widget (`Arc<Guide>`).
 pub fn guide_id() -> eframe::egui::Id {
     eframe::egui::Id::new("snr-guide")
@@ -144,6 +177,9 @@ pub struct MeanGrid {
     started: Option<f64>,
     /// The lead-in, s ([`LEAD_IN_S`]; tests of other things set it to 0).
     lead_in_s: f64,
+    /// Cells either side the noise floor is read over, or `None` for one
+    /// floor across the whole grid (see [`local_floors`]).
+    floor_half: Option<usize>,
 }
 
 /// How long the kurtosis moments remember to start with, in seconds, the same
@@ -271,7 +307,20 @@ impl MeanGrid {
             frame_dt: 0.0,
             started: None,
             lead_in_s: LEAD_IN_S,
+            floor_half: None,
         })
+    }
+
+    /// Read the noise floor locally, `half` cells either side of each cell,
+    /// rather than once for the whole grid: for a row whose floor slopes.
+    pub fn set_local_floor(&mut self, half: usize) {
+        self.floor_half = Some(half.max(4));
+    }
+
+    /// The lead-in before frames are counted, s: none for rows that are whole
+    /// sweeps rather than the first frames after a switch-on.
+    pub fn set_lead_in(&mut self, s: f64) {
+        self.lead_in_s = s.max(0.0);
     }
 
     /// Whether `f` can be laid onto this grid as it is: inside it (half a
@@ -300,6 +349,7 @@ impl MeanGrid {
     pub fn relaid(&self, f: &SpectrumFrame) -> Option<Self> {
         let mut g = MeanGrid::new(f)?;
         g.lead_in_s = self.lead_in_s;
+        g.floor_half = self.floor_half;
         if !self.same_resolution(f) {
             // Another resolution starts afresh, with a lead-in of its own:
             // a zoom opens with a transient too.
@@ -392,13 +442,18 @@ impl MeanGrid {
     }
 
     /// S/N per cell: the mean over the noise floor in dB, the floor being the
-    /// lowest tenth of the cells' means ([`FLOOR_QUANTILE`]).
+    /// lowest tenth of the cells' means ([`FLOOR_QUANTILE`]) — of all of them,
+    /// or of those around the cell with [`Self::set_local_floor`].
     pub fn guide(&self) -> Option<Guide> {
-        let floor = floor_of(&self.power)?;
+        let floors = match self.floor_half {
+            Some(half) => local_floors(&self.power, half)?,
+            None => vec![floor_of(&self.power)?; self.power.len()],
+        };
         let snr_db: Vec<f32> = self
             .power
             .iter()
-            .map(|p| {
+            .zip(&floors)
+            .map(|(p, floor)| {
                 if p.is_finite() && *p > 0.0 {
                     (10.0 * (p / floor).log10()) as f32
                 } else {
@@ -527,6 +582,93 @@ mod tests {
     }
 
     use super::*;
+
+    /// A full-band row of 1024 bins over 0–30 MHz whose noise floor falls
+    /// 30 dB from the bottom to the top of the band, as a direct-sampling
+    /// RTL-SDR's does, noise ±4 dB changing from frame to frame, and two
+    /// carriers 15 dB over the noise around them, one low and one high.
+    fn sloped_frame(r: usize) -> SpectrumFrame {
+        let n = 1024;
+        let bins = (0..n)
+            .map(|i| {
+                let floor = -80.0 - 30.0 * i as f32 / (n - 1) as f32;
+                let h =
+                    ((i as u64 * 2_654_435_761) ^ (r as u64 * 40_503)).wrapping_mul(2_246_822_519);
+                let noise = floor + ((h >> 16) % 9) as f32 - 4.0;
+                let db = if (99..=101).contains(&i) || (899..=901).contains(&i) {
+                    floor + 15.0
+                } else {
+                    noise
+                };
+                ((db + 130.0) / 100.0 * 255.0).round().clamp(0.0, 255.0) as u8
+            })
+            .collect();
+        SpectrumFrame {
+            seq: r as u32,
+            center_hz: 15e6,
+            span_hz: 30e6,
+            db_floor: -130.0,
+            db_ceil: -30.0,
+            bins,
+            rows: Vec::new(),
+            rows_clocked: false,
+        }
+    }
+
+    fn sloped_guide(local: bool) -> Guide {
+        let mut g = grid_now(&sloped_frame(0));
+        if local {
+            g.set_local_floor(1024 / 32);
+        }
+        for r in 0..40 {
+            g.push(&sloped_frame(r), r as f64 * 0.1);
+        }
+        g.guide().expect("guide")
+    }
+
+    /// The median S/N of the noise cells in `range`.
+    fn noise_snr(g: &Guide, range: std::ops::Range<usize>) -> f32 {
+        let mut v: Vec<f32> = range
+            .filter(|i| !(95..=105).contains(i) && !(895..=905).contains(i))
+            .map(|i| g.snr_db[i])
+            .collect();
+        v.sort_by(f32::total_cmp);
+        v[v.len() / 2]
+    }
+
+    /// One floor across a band whose noise slopes reads the slope: the noise
+    /// at the bottom stands well over the floor of the quiet top. This is the
+    /// fault the local floor removes, kept as its counter-check.
+    #[test]
+    fn one_floor_across_a_sloping_band_reads_the_slope() {
+        let g = sloped_guide(false);
+        let (low, high) = (noise_snr(&g, 20..200), noise_snr(&g, 824..1004));
+        assert!(low - high > 15.0, "noise low {low:.1} dB, high {high:.1} dB");
+    }
+
+    /// Read against the floor around each cell, the noise sits near 0 dB at
+    /// both ends of a sloping band, and a carrier stands out as far low as
+    /// high.
+    #[test]
+    fn a_local_floor_follows_a_sloping_band() {
+        let g = sloped_guide(true);
+        let (low, high) = (noise_snr(&g, 20..200), noise_snr(&g, 824..1004));
+        assert!(low.abs() < 4.0 && high.abs() < 4.0, "noise low {low:.1} dB, high {high:.1} dB");
+        let (c_low, c_high) = (g.snr_db[100], g.snr_db[900]);
+        assert!((c_low - c_high).abs() < 2.0, "carriers {c_low:.1} and {c_high:.1} dB");
+        assert!(c_low > 10.0, "the low carrier stands out: {c_low:.1} dB");
+    }
+
+    /// The local floor survives the grid being laid anew, as the lead-in does.
+    #[test]
+    fn a_relaid_grid_keeps_its_local_floor() {
+        let mut g = grid_now(&sloped_frame(0));
+        g.set_local_floor(32);
+        let mut moved = sloped_frame(1);
+        moved.center_hz += 1e5;
+        let h = g.relaid(&moved).expect("relaid");
+        assert_eq!(h.floor_half, Some(32));
+    }
 
     /// A grid that counts from its first frame: for the tests of what the
     /// mean does, not of the lead-in before it.

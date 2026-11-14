@@ -1273,7 +1273,17 @@ them all at once.
   the strip shows the S/N and SK under the cursor below the frequency, in
   their lines' colours, as on the panadapter. One of the
   strip's cells is several kilohertz wide, so a weak SSB signal is diluted in
-  it: the line finds the middling and strong ones.
+  it: the line finds the middling and strong ones. On the strip the noise
+  floor is read **locally**, the lowest tenth of the cells around each
+  frequency — under a PANO scan within one segment's width (what one slice of
+  the sweep sees, with its own gain), otherwise within a sixteenth of the
+  strip: a whole band's floor is rarely level
+  (on an RTL-SDR in direct sampling it falls by tens of dB from 0 to 30 MHz),
+  and one floor for all of it would draw the slope of the noise rather than
+  how far a signal stands out of the noise around it. Where a band is full of
+  stations in every cell, as medium wave at night, the floor there is the
+  stations, and the line reads low. A PANO row is a whole sweep, so the
+  strip's lines count it from the first sweep on, without the 2 s lead-in.
 
   On such a receiver the **main panadapter can be zoomed out into the strip's
   window too**, past the I/Q the front end is streaming: keep zooming and it

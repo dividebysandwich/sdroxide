@@ -60,7 +60,25 @@ impl SdroxideApp {
             Some(g) => self.wide_grid = g.relaid(f),
             None => self.wide_grid = crate::mean_spectrum::MeanGrid::new(f),
         }
+        // A panorama's rows are whole sweeps, seconds apart: no switch-on
+        // transient to wait out, and a lead-in would throw the first sweep away.
+        let pano =
+            self.state.scan.running && self.scanner.kind == sdroxide_types::ScanKind::Panorama;
         let Some(grid) = self.wide_grid.as_mut() else { return };
+        // The strip spans a whole band, whose noise floor slopes: S/N is read
+        // against the floor around each cell. Under a panorama the window is
+        // one segment wide — what one slice of the sweep sees, with its own
+        // gain — otherwise a sixteenth of the strip.
+        // Why: HDZ 2026-11-13: "das S/N ist lokal in jedem Segment zu rechnen".
+        let n = f.bins.len();
+        let segment_hz = f64::from(self.scanner.pano_usable) * self.state.sample_rate;
+        let half = if pano && f.span_hz > 0.0 && segment_hz > 0.0 {
+            ((segment_hz / f.span_hz * n as f64) / 2.0).round() as usize
+        } else {
+            n / 32
+        };
+        grid.set_local_floor(half);
+        grid.set_lead_in(if pano { 0.0 } else { crate::mean_spectrum::LEAD_IN_S });
         grid.push(f, crate::time::now_unix_f64());
         grid.set_sk_tau(f64::from(self.view.sk_tau_s));
         self.wide_guide = grid.guide().map(std::sync::Arc::new);
