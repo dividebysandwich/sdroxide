@@ -2903,7 +2903,8 @@ fn serial_thread(
         // The rig's own transmit state, where the profile wants it asked on a
         // beat of its own (`Protocol::tx_state_period`).
         let tx_state_period = protocol.tx_state_period();
-        let mut next_tx_state = Instant::now();
+        // First read one beat in, like the meters: not into the opening exchange.
+        let mut next_tx_state = Instant::now() + tx_state_period.unwrap_or_default();
         let mut ptt = false;
         // When a CAT key-down was last written, so the rig's refusal of one can
         // be told from the refusals its unimplemented sub-commands answer with.
