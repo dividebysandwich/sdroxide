@@ -169,6 +169,9 @@ pub(crate) struct Shared {
     pub audio_on: AtomicBool,
     /// Whether a client currently holds the transmit key.
     pub tx_keyed: AtomicBool,
+    /// IQ blocks the engine had to drop because the hub had not yet taken
+    /// the earlier ones — counted so a short stream shows up in the log.
+    pub iq_dropped: std::sync::atomic::AtomicU64,
 }
 
 /// The engine's handle on the running server.
@@ -199,7 +202,16 @@ impl TciServerController {
         listener.set_nonblocking(true).map_err(|e| format!("{addr}: {e}"))?;
 
         let (ctl_tx, ctl_rx) = unbounded();
-        let (iq_tx, iq_rx) = bounded(8);
+        // The engine hands IQ over in small blocks — about 1,800 a second at
+        // 2 Msps — and the hub collects them every few milliseconds at best and
+        // now and then after a pause of 100 ms or more. Eight blocks were far
+        // too few to cover such a pause: measured 14.11. on a RSP1A, TCI clients
+        // received 90 % of the IQ they asked for, at every rate, while RX audio
+        // from the same samples arrived complete. 512 blocks cover about a
+        // quarter of a second at that rate.
+        // Why: HDZ 2026-11-14, TCI_transcode against sdroxide: rtl_433 decoded
+        //      nothing from the gappy stream.
+        let (iq_tx, iq_rx) = bounded(512);
         let (aud_tx, aud_rx) = bounded(16);
         let (req_tx, req_rx) = unbounded();
         let (tx_prod, tx_audio) = rtrb::RingBuffer::<f32>::new(TX_RING);
@@ -254,7 +266,15 @@ impl TciServerController {
         if self.shared.iq_rate.load(Ordering::Relaxed) == 0 || iq.is_empty() {
             return;
         }
-        let _ = self.iq_tx.try_send(IqBlock { rate, data: iq.to_vec() });
+        if self.iq_tx.try_send(IqBlock { rate, data: iq.to_vec() }).is_err() {
+            let n = self.shared.iq_dropped.fetch_add(1, Ordering::Relaxed) + 1;
+            if n.is_power_of_two() {
+                tracing::warn!(
+                    dropped = n,
+                    "TCI server: IQ blocks dropped before the hub took them"
+                );
+            }
+        }
     }
 
     /// Hand over a block of 48 kHz mono RX audio.
