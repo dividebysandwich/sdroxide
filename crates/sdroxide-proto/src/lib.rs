@@ -1718,7 +1718,10 @@ use sdroxide_types::{
 ///
 /// v210: truSDX `TrUsdxAudio::OneCableMute` appended, a new value inside
 /// `CatConfig` and so inside every `RadioConfig`.
-pub const PROTO_VERSION: u16 = 210;
+///
+/// v211: ELAD monitoring. `CatConfig` gains `elad_mute_on_radio_ptt` and
+/// `EladConfig` gains `hear_own_tx`, which changes every `RadioConfig`.
+pub const PROTO_VERSION: u16 = 211;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
