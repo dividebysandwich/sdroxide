@@ -2565,7 +2565,7 @@ impl SdroxideApp {
             self.decim_range().is_some(),
             self.state.rx[0].agc == AgcMode::Off,
             self.state.rx[0].mode,
-            self.duo_presets_apply(),
+            self.elad_monitor_chips(),
         )
     }
 
@@ -2856,7 +2856,7 @@ impl SdroxideApp {
         let rx_gains = self.rx_gains();
         let bar_gains = self.bar_gains();
         let front_chips = self.front_chips();
-        let chips = rx_chips(self.state.rx[0].mode, self.duo_presets_apply());
+        let chips = rx_chips(self.state.rx[0].mode, self.elad_monitor_chips());
         // A menu column wraps its rows and is as wide as the menu around it,
         // so there is nothing to balance there: the run stays whole, under the
         // squelch rail, in the order it has always had.
@@ -5313,6 +5313,13 @@ impl SdroxideApp {
                 && c.label == format!("{} (CAT)", sdroxide_types::CatFamily::Elad.label()))
     }
 
+    /// Whether MIC A and DIG A are offered: the power buttons' radio, but
+    /// over the ELAD backend only. The engine follows both choices for that
+    /// driver alone, so on a CAT rig of the ELAD family they would do nothing.
+    pub(in crate::app) fn elad_monitor_chips(&self) -> bool {
+        self.duo_presets_apply() && self.caps.as_ref().is_some_and(|c| c.driver == "elad")
+    }
+
     /// What the presets column costs beside the TX rows, its gap included; 0
     /// where it is not drawn.
     fn tx_duo_col_w(&self, ui: &egui::Ui) -> f32 {
@@ -5372,7 +5379,9 @@ impl SdroxideApp {
                             .strong()
                             .color(ink),
                     );
-                    self.tx_dig_chip(ui, cmds);
+                    if self.elad_monitor_chips() {
+                        self.tx_dig_chip(ui, cmds);
+                    }
                 },
             );
         });
