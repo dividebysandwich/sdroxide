@@ -733,7 +733,7 @@ impl Protocol for Kenwood {
 /// reporting whatever character happens to sit at offset 26 — a dialect that
 /// does not match must look like a rig that cannot answer, not like one that is
 /// permanently on the air.
-fn if_transmitting(body: &str) -> Option<bool> {
+pub(crate) fn if_transmitting(body: &str) -> Option<bool> {
     const TX_FLAG: usize = 26;
     const IF_BODY_LEN: usize = 35;
     if body.len() != IF_BODY_LEN {

@@ -2565,6 +2565,7 @@ impl SdroxideApp {
             self.decim_range().is_some(),
             self.state.rx[0].agc == AgcMode::Off,
             self.state.rx[0].mode,
+            self.duo_presets_apply(),
         )
     }
 
@@ -2855,7 +2856,7 @@ impl SdroxideApp {
         let rx_gains = self.rx_gains();
         let bar_gains = self.bar_gains();
         let front_chips = self.front_chips();
-        let chips = rx_chips(self.state.rx[0].mode);
+        let chips = rx_chips(self.state.rx[0].mode, self.duo_presets_apply());
         // A menu column wraps its rows and is as wide as the menu around it,
         // so there is nothing to balance there: the run stays whole, under the
         // squelch rail, in the order it has always had.
@@ -3322,6 +3323,23 @@ impl SdroxideApp {
                     );
                 }
                 self.rec_popup(ui, cmds, &rec);
+            }
+            RxChip::Mic => {
+                // Lit while the operator hears their own microphone over:
+                // the inverse of `CatConfig::elad_mute_on_radio_ptt`. Saved
+                // without a reopen; the engine reads it live.
+                let lit = self.radio_cfg.as_ref().is_some_and(|r| !r.cat.elad_mute_on_radio_ptt);
+                let resp = crate::chrome::chip(ui, lit, super::duo_power::MIC_CHIP)
+                    .on_hover_text(super::duo_power::monitor_hover(0, lit));
+                if resp.clicked()
+                    && let Some(cfg) = self.radio_cfg.as_mut()
+                {
+                    cfg.cat.elad_mute_on_radio_ptt = lit;
+                    cmds.push(Command::SetRadioConfig {
+                        cfg: Box::new(cfg.clone()),
+                        reopen: false,
+                    });
+                }
             }
             RxChip::Stereo => {
                 // WFM broadcast stereo: lit while a 19 kHz pilot is locked,
@@ -5225,10 +5243,16 @@ impl SdroxideApp {
     }
 
     /// The Drive label + rail + readout.
-    fn tx_drive(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+    ///
+    /// `pad` is room left after the label, so the condensed box can start its
+    /// Drive and Tune rails at the same place (0 elsewhere).
+    fn tx_drive(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, pad: f32) {
         let mut drive = self.state.tx.drive;
         let hover = self.drive_hover();
         ui.label(tr!("topbar-drive")).on_hover_text(&hover);
+        if pad > 0.0 {
+            ui.add_space(pad);
+        }
         if crate::chrome::slider_wheel(
             crate::chrome::slider_readout(
                 ui,
@@ -5296,18 +5320,19 @@ impl SdroxideApp {
             return 0.0;
         }
         let labels: Vec<&str> = super::duo_power::PRESETS.iter().map(|&(l, _)| l).collect();
-        let caption = crate::chrome::text_width(
-            ui,
-            &DUO_PRESETS_CAPTION.to_uppercase(),
-            egui::FontId::proportional(9.5),
-        );
-        MODULE_ROW_SPACING + chip_row_w(ui, &labels).max(caption)
+        let caption_w = |c: &str| {
+            crate::chrome::text_width(ui, &c.to_uppercase(), egui::FontId::proportional(9.5))
+        };
+        MODULE_ROW_SPACING + chip_row_w(ui, &labels).max(caption_w(DUO_PRESETS_CAPTION))
     }
 
     /// The FDM-DUO's power buttons, captioned underneath so an operator can
     /// tell they are the radio's own and not the amplifier's. Each puts the
     /// DUO's menu 34 on that setting now and saves it, so it is sent again at
     /// every connect; see [`super::duo_power`].
+    ///
+    /// DIG A sits under the caption, centred under 3W and 5W (AJ3G, 13 Nov
+    /// 2026): [`Self::tx_dig_chip`].
     fn tx_duo_presets(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
         let current = self.radio_cfg.as_ref().map(|r| r.cat.elad_tx_power);
         ui.vertical(|ui| {
@@ -5330,30 +5355,54 @@ impl SdroxideApp {
                     }
                 }
             });
-            // In the chips' own ink and centred under the row, so it reads as
-            // the name of the four buttons rather than a separate menu heading.
-            let ink = ui.visuals().widgets.inactive.fg_stroke.color;
             let w = row.response.rect.width();
+            // The caption straight under the buttons it names, then DIG A,
+            // both centred under the row, which puts DIG A under 3W and 5W
+            // (AJ3G, 13 Nov 2026: "move the ELAD FDM-DUO PWR above DIG A").
             ui.allocate_ui_with_layout(
                 egui::vec2(w, 0.0),
                 egui::Layout::top_down(egui::Align::Center),
                 |ui| {
                     ui.set_min_width(w);
+                    ui.spacing_mut().item_spacing = egui::vec2(MODULE_ROW_SPACING, 2.0);
+                    let ink = ui.visuals().widgets.inactive.fg_stroke.color;
                     ui.label(
                         RichText::new(DUO_PRESETS_CAPTION.to_uppercase())
                             .size(9.5)
                             .strong()
                             .color(ink),
                     );
+                    self.tx_dig_chip(ui, cmds);
                 },
             );
         });
     }
 
-    /// The tune-carrier level: label + rail + readout.
-    fn tx_tune_level(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+    /// DIG A, under the TX power buttons (AJ3G, 13 Nov 2026): lit when the
+    /// operator hears their own signal on an over sdroxide keyed (the digital
+    /// modes, TUNE, PTT). Saved without a reopen and taken at the next
+    /// key-down. Its partner for the radio's own microphone is
+    /// [`RxChip::Mic`], right of REC. FDM-DUO only, like the power buttons.
+    fn tx_dig_chip(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        let lit = self.radio_cfg.as_ref().is_some_and(|r| r.elad.hear_own_tx);
+        let resp = crate::chrome::chip(ui, lit, super::duo_power::DIGI_CHIP)
+            .on_hover_text(super::duo_power::monitor_hover(1, lit));
+        if resp.clicked()
+            && let Some(cfg) = self.radio_cfg.as_mut()
+        {
+            cfg.elad.hear_own_tx = !lit;
+            cmds.push(Command::SetRadioConfig { cfg: Box::new(cfg.clone()), reopen: false });
+        }
+    }
+
+    /// The tune-carrier level: label + rail + readout. `pad` as for
+    /// [`Self::tx_drive`].
+    fn tx_tune_level(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, pad: f32) {
         let mut tune_drive = self.state.tx.tune_drive;
         ui.label(tr!("topbar-tune-2"));
+        if pad > 0.0 {
+            ui.add_space(pad);
+        }
         if crate::chrome::slider_wheel(
             crate::chrome::slider_readout(
                 ui,
@@ -5665,11 +5714,11 @@ impl SdroxideApp {
         let mic = self.state.rx[0].mode.allows_voice_keyer() || !level;
         crate::chrome::control_row(ui, narrow, |ui| {
             self.tx_keyer_chip(ui);
-            self.tx_drive(ui, cmds);
+            self.tx_drive(ui, cmds, 0.0);
             if self.duo_presets_apply() {
                 self.tx_duo_presets(ui, cmds);
             }
-            self.tx_tune_level(ui, cmds);
+            self.tx_tune_level(ui, cmds, 0.0);
             if mic {
                 self.tx_mic(ui, cmds);
             }
@@ -5689,11 +5738,8 @@ impl SdroxideApp {
     /// The condensed TX box's natural width — [`tx_rows_w_for`] with the
     /// voice keyer's presence read off the current mode.
     fn tx_rows_w(&self, ui: &egui::Ui) -> f32 {
-        tx_rows_w_for(
-            ui,
-            self.state.rx[0].mode.allows_voice_keyer(),
-            self.tx_side_col_w() + self.tx_duo_col_w(ui),
-        )
+        let keyer = self.state.rx[0].mode.allows_voice_keyer();
+        tx_rows_w_for(ui, keyer, self.tx_side_col_w() + self.tx_duo_col_w(ui))
     }
 
     /// What the condensed TX box's right-hand columns cost: the transmit-audio
@@ -5726,8 +5772,12 @@ impl SdroxideApp {
         let (fixed1, fixed2) = tx_rows_fixed_w(ui, keyer);
         let inner = w - 2.0 * crate::chrome::MODULE_MARGIN_X - 4.0;
         let rows_w = inner - TX_MIC_GAP - side_w;
-        let (rail1, rail2) =
-            ((rows_w - fixed1).max(STRIP_RAIL_W), (rows_w - fixed2).max(STRIP_RAIL_W));
+        // One rail length for both rows (AJ3G, 13 Nov 2026: the Tune slider
+        // the same length as Drive's). The shorter row's label is padded, so
+        // the rails start together and the readouts still end flush.
+        let rail = (rows_w - fixed1.max(fixed2)).max(STRIP_RAIL_W);
+        let (rail1, rail2) = (rail, rail);
+        let (pad1, pad2) = ((fixed2 - fixed1).max(0.0), (fixed1 - fixed2).max(0.0));
         crate::chrome::module_bare_h(ui, w, crate::chrome::MODULE_TALL_H, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(MODULE_ROW_SPACING, MODULE_ROW_SPACING);
             ui.vertical(|ui| {
@@ -5735,12 +5785,12 @@ impl SdroxideApp {
                     ui.spacing_mut().slider_width = rail1;
                     self.tx_ptt_chip(ui, cmds);
                     self.tx_keyer_chip(ui);
-                    self.tx_drive(ui, cmds);
+                    self.tx_drive(ui, cmds, pad1);
                 });
                 ui.horizontal(|ui| {
                     ui.spacing_mut().slider_width = rail2;
                     self.tx_tune_chip(ui, cmds);
-                    self.tx_tune_level(ui, cmds);
+                    self.tx_tune_level(ui, cmds, pad2);
                 });
             });
             if duo {
@@ -7659,6 +7709,9 @@ enum RxChip {
     Bin,
     Mute,
     Rec,
+    /// ELAD FDM-DUO only: hear an over keyed at the radio's own microphone
+    /// (AJ3G, 13 Nov 2026: right of REC on the VOL/SQL bar).
+    Mic,
     /// WFM's stereo pilot.
     Stereo,
     /// WFM's RDS subcarrier.
@@ -7713,6 +7766,7 @@ impl RxChip {
             Self::Bin => "BIN",
             Self::Mute => return tr!("topbar-mute").into(),
             Self::Rec => "REC",
+            Self::Mic => super::duo_power::MIC_CHIP,
             Self::Stereo => "ST",
             Self::Rds => "RDS",
             Self::Drm => "DRM",
@@ -7884,13 +7938,18 @@ fn bw_chip_hint(mode: Mode, lo: f32, hi: f32) -> String {
 
 /// The RX box's chip run in a mode: the six every mode carries, then whatever
 /// the mode itself brings — a subcarrier to read, a tone to gate on.
-fn rx_chips(mode: Mode) -> Vec<RxChip> {
+///
+/// `mic` adds the FDM-DUO's MIC A chip right of REC (see [`RxChip::Mic`]).
+fn rx_chips(mode: Mode, mic: bool) -> Vec<RxChip> {
     // MONO is not among them: it is the *recording's* channel layout, and it
     // now sits beside the recording controls it belongs to, inside the REC
     // popup (issue #217). That is also one chip fewer on a strip that has to
     // fit on a 1366-pixel screen (issue #211).
     let mut chips =
         vec![RxChip::Bw, RxChip::Nb, RxChip::Anc, RxChip::Nr, RxChip::Mute, RxChip::Rec];
+    if mic {
+        chips.push(RxChip::Mic);
+    }
     // No auto-notch on broadcast audio, where what it cancels is the programme
     // (issue #434).
     if !mode.auto_notch_applies() {
@@ -7972,6 +8031,7 @@ fn rx_rows(
     decim: bool,
     agc_off: bool,
     mode: Mode,
+    mic: bool,
 ) -> RxRows {
     let g = MODULE_ROW_SPACING;
     // The Vol and SQL rails, which is what the box's stretch lengthens — so
@@ -8020,7 +8080,7 @@ fn rx_rows(
     // Then the run itself. Each chip is priced at its widest label, so the box
     // does not breathe as a decode comes and goes (see [`RxChip::width_label`])
     // and the run does not re-break under the operator's cursor.
-    let chips: Vec<f32> = rx_chips(mode).iter().map(|c| g + c.width(ui)).collect();
+    let chips: Vec<f32> = rx_chips(mode, mic).iter().map(|c| g + c.width(ui)).collect();
     let all: f32 = chips.iter().sum();
     // Ties keep a chip where it is, so the layout every rig has always had —
     // the whole run under the SQL rail — is what comes back unless lifting a
@@ -10167,7 +10227,7 @@ mod tests {
         let vfo = chip_row_w(ui, &vfo_chip_labels(true, false)).max(vfo_offsets_w(ui, true))
             + 2.0 * crate::chrome::MODULE_MARGIN_X
             + 4.0;
-        let rx = rx_rows(ui, &[], &[], false, false, mode).w()
+        let rx = rx_rows(ui, &[], &[], false, false, mode, false).w()
             + 2.0 * crate::chrome::MODULE_MARGIN_X
             + 4.0;
         // A CAT rig modulates our audio, so a digital mode there draws the
@@ -10328,7 +10388,7 @@ mod tests {
         ctx.run_ui(input, |ui| {
             let mut boxes = cat_rig_strip_boxes(ui, Mode::Lsb);
             // The receive box an SDR draws, in place of the CAT rig's.
-            let rx = rx_rows(ui, &["Gain".to_string()], &[], true, true, Mode::Lsb).w()
+            let rx = rx_rows(ui, &["Gain".to_string()], &[], true, true, Mode::Lsb, false).w()
                 + 2.0 * crate::chrome::MODULE_MARGIN_X
                 + 4.0;
             boxes[3] = StripBox { w: rx, flex: 2.0, max_w: rx + RAIL_STRETCH_MAX };
@@ -10378,7 +10438,7 @@ mod tests {
             let range: &[&[&str]] = &[FrontChip::RX888_VGA_RANGE.labels];
             for agc_off in [false, true] {
                 let rx_w = |rails: &[String], front: &[&[&str]]| {
-                    rx_rows(ui, rails, front, true, agc_off, Mode::Lsb).w()
+                    rx_rows(ui, rails, front, true, agc_off, Mode::Lsb, false).w()
                         + 2.0 * crate::chrome::MODULE_MARGIN_X
                         + 4.0
                 };
@@ -10913,8 +10973,8 @@ mod tests {
                             // reserved for them, so the rows are laid out here
                             // at the same figure.
                             ui.spacing_mut().slider_width = LEVEL_RAIL_W;
-                            let rows = rx_rows(ui, &rails, front, decim, agc_off, mode);
-                            let chips = rx_chips(mode);
+                            let rows = rx_rows(ui, &rails, front, decim, agc_off, mode, false);
+                            let chips = rx_chips(mode, false);
                             let (mut vol, mut db) = (0.5f32, -88.8f32);
                             // The deepest threshold, which is the longest the
                             // readout beside the rail reads.
@@ -11050,7 +11110,7 @@ mod tests {
     #[test]
     fn every_mode_keeps_room_for_the_defaults_chip() {
         for mode in Mode::ALL {
-            assert_eq!(rx_chips(mode).last(), Some(&RxChip::Defaults), "{mode:?}");
+            assert_eq!(rx_chips(mode, false).last(), Some(&RxChip::Defaults), "{mode:?}");
         }
     }
 
