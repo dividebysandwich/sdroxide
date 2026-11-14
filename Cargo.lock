@@ -5733,7 +5733,6 @@ dependencies = [
  "rustfft",
  "sdroxide-dsp",
  "sdroxide-types",
- "tracing",
 ]
 
 [[package]]
@@ -6134,7 +6133,6 @@ dependencies = [
  "rustfft",
  "sdroxide-dsp",
  "sdroxide-types",
- "tracing",
 ]
 
 [[package]]
