@@ -1721,7 +1721,10 @@ use sdroxide_types::{
 ///
 /// v211: ELAD monitoring. `CatConfig` gains `elad_mute_on_radio_ptt` and
 /// `EladConfig` gains `hear_own_tx`, which changes every `RadioConfig`.
-pub const PROTO_VERSION: u16 = 211;
+///
+/// v212: ELAD transverter port. `DeviceCaps` gains `rx_antenna_is_xvtr` and
+/// `Transverter` gains `elad_rf_out`, which changes every `RadioConfig`.
+pub const PROTO_VERSION: u16 = 212;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
