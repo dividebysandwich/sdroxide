@@ -1223,6 +1223,7 @@ impl InputRuntime {
         &mut self,
         state: &RadioState,
         meters: Option<&sdroxide_types::Meters>,
+        amp: Option<&sdroxide_types::AmpReadings>,
         tune_locked: bool,
     ) {
         if !self.cfg.tmate2.enabled {
@@ -1242,6 +1243,14 @@ impl InputRuntime {
             sdroxide_types::Tmate2TxReadout::Swr => sdroxide_tmate2::TxReadout::Swr,
         };
         d.lock_led = tune_locked;
+        // With a Hardrock keyed, the power figure is the amplifier's (the
+        // engine's `amp_tx_meter`), but the engine does not carry the
+        // amplifier's reflected power into the meters. Take it from the
+        // amplifier too, rather than the radio's reflection into the amp's
+        // input, which is a different and much smaller number.
+        if let Some(r) = amp.filter(|r| r.ptt && d.tx && r.rfl_w.is_finite()) {
+            d.tx_rfl_mw = Some((r.rfl_w.max(0.0) * 1_000.0).round() as u32);
+        }
         if self.tmate2_shown.as_ref() != Some(&d) {
             if let Some(t) = self.tmate2.as_ref() {
                 t.set_display(d.clone());

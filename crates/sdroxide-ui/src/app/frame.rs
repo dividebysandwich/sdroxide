@@ -2374,7 +2374,12 @@ impl SdroxideApp {
         input.poll_tmate2(ctx, state, &mut sink, cmds);
         drop(sink);
         #[cfg(not(target_arch = "wasm32"))]
-        input.tmate2_display(state, self.meters.as_ref(), view.tune_locked);
+        input.tmate2_display(
+            state,
+            self.meters.as_ref(),
+            self.amp_status.readings.as_ref(),
+            view.tune_locked,
+        );
         for act in speech_acts {
             self.apply_speech_action(act, now);
         }
