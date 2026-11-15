@@ -103,6 +103,20 @@ const MIN_BLOCK: usize = 1024;
 /// amplifier and a receiver scores well above this.
 const LOCK_THRESHOLD: f32 = 0.5;
 
+/// Envelope match a block needs before the table learns from it, higher than
+/// what holds the lock. A block that only just matches is usually one whose
+/// alignment has slipped (a gap in either stream moves the delay), and
+/// learning from it writes the misalignment into the table as a curve. Held
+/// alignments on a PlutoSky R2 match at 0.9 and up.
+const LEARN_THRESHOLD: f32 = 0.85;
+
+/// The most residual LO difference believed. Two synthesisers on one
+/// reference come out within a few hertz of the offset spun out (a PlutoSky
+/// R2 reads 0-10 Hz); a block reading tens is misaligned, and rotating it by
+/// that figure writes nonsense into the table. Seen on that radio: -1112 Hz
+/// and then 231 Hz on blocks after a stall, and the table scattered.
+const MAX_RESIDUAL_HZ: f32 = 50.0;
+
 /// How many samples of full-rate refinement either side of the coarse answer.
 const REFINE: usize = ENV_DECIM;
 
@@ -400,7 +414,14 @@ impl PureSignal {
 
         self.since_check += m as u64;
         self.since_locate += m as u64;
-        let recheck = self.since_check >= self.check_every;
+        // Locked, the alignment is confirmed on every block, not now and
+        // then: a gap in either stream moves the delay at once, and every
+        // block learned from between the jump and the next check writes the
+        // misalignment into the table. On a networked Pluto whose link stalls
+        // for 300 ms a few times a minute, half a second of that was enough to
+        // put a 12 dB bump in it (issue #525). The near search costs well
+        // under a millisecond.
+        let recheck = self.offset.is_some() || self.since_check >= self.check_every;
         let searching = self.offset.is_none() && self.since_locate >= self.locate_every;
         if searching || recheck {
             self.since_check = 0;
@@ -433,7 +454,7 @@ impl PureSignal {
             self.offset = None;
             return false;
         }
-        if self.frozen {
+        if self.frozen || score < LEARN_THRESHOLD {
             return false;
         }
         self.learn(idx, m)
@@ -568,6 +589,9 @@ impl PureSignal {
         // Radians per sample; zero when there was too little to measure.
         let w = if turn.norm() > 0.0 { f64::from(turn.arg()) / K_SLICE as f64 } else { 0.0 };
         self.residual_hz = (w * self.sample_rate / std::f64::consts::TAU) as f32;
+        if self.residual_hz.abs() > MAX_RESIDUAL_HZ {
+            return false;
+        }
         if w != 0.0 {
             let spun = std::mem::take(&mut self.scratch);
             derotate(&spun[..m], -w, &mut self.scratch);
@@ -1025,17 +1049,18 @@ mod tests {
         }
     }
 
-    /// A two-tone over at 2.5 Msps with the two synthesisers 300 Hz further
+    /// A two-tone over at 2.5 Msps with the two synthesisers 40 Hz further
     /// apart than the offset spun out: the residual is found and taken out,
-    /// and the table learns the amplifier's curve rather than walking down to
-    /// the floor. Before the rotation was measured, this ended with every
-    /// learned entry at -12 dB inside a second, the signature seen on a
-    /// PlutoSky R2 (issue #525).
+    /// and the table learns the amplifier's curve rather than walking off.
+    /// (This first ran at 300 Hz, which with the old divide-by-estimate update
+    /// ended with every learned entry at -12 dB inside a second; a residual
+    /// that large is now refused as a misaligned block, see
+    /// `an_impossible_residual_is_not_learned_from`.)
     #[test]
     fn a_residual_lo_error_does_not_walk_the_table_down() {
         let fs = 2.5e6f64;
         let offset_hz = -625_000.0f64;
-        let err_hz = 300.0f64;
+        let err_hz = 40.0f64;
         let delay = 50_000usize;
         let mut ps = PureSignal::with_history(32, 0.5, fs, 1.0);
         let mut line: std::collections::VecDeque<Complex32> =
@@ -1043,7 +1068,7 @@ mod tests {
         let coupler = Complex32::from_polar(0.02, 0.7);
         let mut hiss = source(16384 * 200, 31).into_iter();
         let (mut t_tx, mut t_rx) = (0u64, 0u64);
-        for _ in 0..150 {
+        for _ in 0..400 {
             let mut x: Vec<Complex32> = (0..25_000u64)
                 .map(|n| {
                     let t = (t_tx + n) as f64 / fs;
@@ -1072,11 +1097,12 @@ mod tests {
         }
         assert!(ps.locked(), "never aligned (score {:.2})", ps.score());
         assert!(
-            (ps.residual_hz() - err_hz as f32).abs() < 30.0,
+            (ps.residual_hz() - err_hz as f32).abs() < 8.0,
             "residual measured as {:.0} Hz, not {err_hz:.0}",
             ps.residual_hz()
         );
         let db: Vec<f32> = ps.table().iter().map(|g| 20.0 * g.norm().log10()).collect();
+        assert!(ps.correction_db() > 0.5, "learned nothing: {db:?}");
         assert!(
             ps.correction_db() < 6.0 && db.iter().all(|d| *d > -6.0),
             "the table walked off: {db:?}"
@@ -1108,7 +1134,7 @@ mod tests {
             ((seed >> 40) as f32 / 8_388_608.0) - 1.0
         };
         let mut t_tx = 0u64;
-        for _ in 0..1200 {
+        for _ in 0..2400 {
             let mut x: Vec<Complex32> = (0..4096u64)
                 .map(|n| {
                     let t = (t_tx + n) as f64 / fs;
@@ -1121,12 +1147,59 @@ mod tests {
             ps.predistort(&mut x);
             line.extend(x.iter().map(|s| *s * coupler));
             let fb: Vec<Complex32> =
-                line.drain(..4096).map(|s| s + Complex32::new(white(), white()) * 0.002).collect();
+                line.drain(..4096).map(|s| s + Complex32::new(white(), white()) * 0.0011).collect();
             ps.feed_back(&fb, 0.0, fs);
         }
         assert!(ps.locked(), "never aligned (score {:.2})", ps.score());
         let db: Vec<f32> = ps.table().iter().map(|g| 20.0 * g.norm().log10()).collect();
         assert!(ps.correction_db() < 2.0, "noise was learned as a curve: {db:?}");
+    }
+
+    /// A block whose leftover LO difference reads far beyond what two
+    /// synthesisers on one reference can be apart is not learned from: on a
+    /// PlutoSky R2 such a figure (-1112 Hz) came from the block after a stall,
+    /// and rotating by it scattered the table (issue #525).
+    #[test]
+    fn an_impossible_residual_is_not_learned_from() {
+        let fs = 2.5e6f64;
+        let mut ps = PureSignal::with_history(32, 0.9, fs, 1.0);
+        let coupler = Complex32::from_polar(0.05, 0.3);
+        let mut line: std::collections::VecDeque<Complex32> =
+            std::iter::repeat_n(Complex32::new(0.0, 0.0), 50_000).collect();
+        let mut t = 0u64;
+        for _ in 0..400 {
+            let mut x: Vec<Complex32> = (0..16384u64)
+                .map(|n| {
+                    let s = (t + n) as f64 / fs;
+                    let a = Complex32::from_polar(0.3, (std::f64::consts::TAU * 700.0 * s) as f32);
+                    let b = Complex32::from_polar(0.3, (std::f64::consts::TAU * 1900.0 * s) as f32);
+                    a + b
+                })
+                .collect();
+            ps.predistort(&mut x);
+            line.extend(x.iter().map(|s| amplifier(*s) * coupler));
+            // 400 Hz further apart than the offset given: inside what the
+            // slices can measure, far outside what is believed.
+            let fb: Vec<Complex32> = line
+                .drain(..16384)
+                .enumerate()
+                .map(|(i, s)| {
+                    let ph = std::f64::consts::TAU * 400.0 * (t + i as u64) as f64 / fs;
+                    s * Complex32::from_polar(1.0, ph as f32)
+                })
+                .collect();
+            t += 16384;
+            ps.feed_back(&fb, 0.0, fs);
+        }
+        assert!(ps.locked(), "never aligned (score {:.2})", ps.score());
+        assert!(
+            (ps.residual_hz() - 400.0).abs() < 40.0,
+            "residual read {:.0} Hz",
+            ps.residual_hz()
+        );
+        for g in ps.table() {
+            assert_eq!(*g, Complex32::new(1.0, 0.0), "learned from an impossible residual");
+        }
     }
 
     /// Holding the table stops it moving, which is what lets an operator keep
