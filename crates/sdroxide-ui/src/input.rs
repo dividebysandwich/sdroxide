@@ -1355,7 +1355,8 @@ fn tmate2_display_for(
         Mode::Spec => None,
         _ => Some(ModeIcon::Dig),
     };
-    let tx = state.tx.ptt;
+    // TUNE keys the carrier without PTT, and is transmitting all the same.
+    let tx = state.tx.ptt || state.tx.tune;
     let tx_meters = meters.and_then(|m| m.tx.as_ref());
     let fwd_w = tx_meters.and_then(|t| t.fwd_w).filter(|w| w.is_finite() && *w >= 0.0);
     let po = tx_meters.and_then(|t| t.po).filter(|p| p.is_finite());
