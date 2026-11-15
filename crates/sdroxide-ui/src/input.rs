@@ -480,7 +480,7 @@ pub(crate) fn apply_action(
         // Collected for the caller, like speech: they change the TMate 2's
         // own settings, which this function has no hold of.
         SpeakStatus | SpeakRepeat | SpeechSilence | SpeechToggle | Tmate2TxReadoutCycle
-        | Tmate2StepCycle => ui.speech.push(act),
+        | Tmate2StepCycle | Tmate2StepCycleDown => ui.speech.push(act),
         _ => {}
     }
 }
@@ -624,10 +624,10 @@ impl InputRuntime {
     /// The next main-dial tuning step from [`sdroxide_types::TMATE2_TUNE_STEPS`]
     /// for every TMate 2 dial bound to Tune, saved. From a step not on the
     /// list it goes to the first one above.
-    pub(crate) fn tmate2_next_step(&mut self) {
+    pub(crate) fn tmate2_next_step(&mut self, up: bool) {
         for b in &mut self.cfg.tmate2.bindings {
             if b.action == Action::Tune && b.control.is_dial() {
-                b.tuning.step = next_tune_step(b.tuning.step);
+                b.tuning.step = next_tune_step(b.tuning.step, up);
             }
         }
         self.persist();
@@ -1342,13 +1342,17 @@ fn step_digit(step: f32) -> Option<u8> {
     (0..9u8).find(|&i| (10f32.powi(i32::from(i)) - s).abs() < 0.5).map(|i| i + 1)
 }
 
-/// The step after `step` in [`sdroxide_types::TMATE2_TUNE_STEPS`], wrapping,
-/// keeping its sign (a reversed dial stays reversed). From a step not on the
-/// list it goes to the first one above.
-fn next_tune_step(step: f32) -> f32 {
+/// The step after `step` in [`sdroxide_types::TMATE2_TUNE_STEPS`] (or before
+/// it, `up` false), wrapping, keeping its sign (a reversed dial stays
+/// reversed). From a step not on the list it goes to the nearest one that way.
+fn next_tune_step(step: f32, up: bool) -> f32 {
     use sdroxide_types::TMATE2_TUNE_STEPS as STEPS;
     let now = step.abs();
-    let next = STEPS.iter().copied().find(|s| *s > now + 0.001).unwrap_or(STEPS[0]);
+    let next = if up {
+        STEPS.iter().copied().find(|s| *s > now + 0.001).unwrap_or(STEPS[0])
+    } else {
+        STEPS.iter().rev().copied().find(|s| *s < now - 0.001).unwrap_or(STEPS[STEPS.len() - 1])
+    };
     if step < 0.0 { -next } else { next }
 }
 
@@ -1844,11 +1848,14 @@ mod tests {
 
     #[test]
     fn tmate2_step_cycles_and_keeps_direction() {
-        assert_eq!(next_tune_step(1.0), 10.0);
-        assert_eq!(next_tune_step(10.0), 100.0);
-        assert_eq!(next_tune_step(1_000.0), 1.0);
-        assert_eq!(next_tune_step(-100.0), -1_000.0);
-        assert_eq!(next_tune_step(50.0), 100.0);
+        assert_eq!(next_tune_step(1.0, true), 10.0);
+        assert_eq!(next_tune_step(1_000.0, true), 10_000.0);
+        assert_eq!(next_tune_step(1_000_000.0, true), 1.0);
+        assert_eq!(next_tune_step(-100.0, true), -1_000.0);
+        assert_eq!(next_tune_step(50.0, true), 100.0);
+        assert_eq!(next_tune_step(1.0, false), 1_000_000.0);
+        assert_eq!(next_tune_step(50.0, false), 10.0);
+        assert_eq!(step_digit(1_000_000.0), Some(7));
         assert_eq!(step_digit(1.0), Some(1));
         assert_eq!(step_digit(-1_000.0), Some(4));
         assert_eq!(step_digit(50.0), None);

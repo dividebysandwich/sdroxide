@@ -2467,8 +2467,9 @@ impl SdroxideApp {
                 }
             }
             Tmate2TxReadoutCycle => self.input.tmate2_next_readout(),
-            Tmate2StepCycle => self.input.tmate2_next_step(),
-            // `apply_action` only ever collects the six above.
+            Tmate2StepCycle => self.input.tmate2_next_step(true),
+            Tmate2StepCycleDown => self.input.tmate2_next_step(false),
+            // `apply_action` only ever collects the seven above.
             _ => {}
         }
     }

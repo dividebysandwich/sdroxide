@@ -134,10 +134,13 @@ pub enum Action {
     /// Step the TMate 2 main dial's tuning step through
     /// [`TMATE2_TUNE_STEPS`].
     Tmate2StepCycle,
+    /// [`Action::Tmate2StepCycle`] the other way: the next finer step.
+    Tmate2StepCycleDown,
 }
 
 /// The steps [`Action::Tmate2StepCycle`] walks, in Hz.
-pub const TMATE2_TUNE_STEPS: [f32; 4] = [1.0, 10.0, 100.0, 1_000.0];
+pub const TMATE2_TUNE_STEPS: [f32; 7] =
+    [1.0, 10.0, 100.0, 1_000.0, 10_000.0, 100_000.0, 1_000_000.0];
 
 /// Whether an action is driven by a value or by a button.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,7 +168,8 @@ impl Action {
         match self {
             Tune | RitOffset | XitOffset | RitEnable | XitEnable | RitClear | XitClear
             | VfoSelect(_) | VfoToggle | SwapVfos | CopyAtoB | Split | BandUp | BandDown
-            | BandSelect(_) | MemoryRecall(_) | TuneLock | Tmate2StepCycle => "Tuning",
+            | BandSelect(_) | MemoryRecall(_) | TuneLock | Tmate2StepCycle
+            | Tmate2StepCycleDown => "Tuning",
             Volume | SubVolume | Squelch | FilterWidth | FilterShift | AgcMaxGain | ManualGain
             | Mute | NoiseBlanker | NoiseReductionCycle | AutoNotch | Binaural | AgcCycle
             | SubRx | ModeNext | ModePrev | ModeNextEveryday | ModePrevEveryday | ModeSelect(_)
@@ -252,7 +256,8 @@ impl Action {
             SpeechToggle => "Announcements on/off",
             Tmate2TxReadoutCycle => "TMate 2 TX readout (PO / REFL / SWR)",
             TuneLock => "Tuning lock on/off",
-            Tmate2StepCycle => "TMate 2 tuning step (1 / 10 / 100 Hz / 1 kHz)",
+            Tmate2StepCycle => "TMate 2 tuning step up (1 Hz to 1 MHz)",
+            Tmate2StepCycleDown => "TMate 2 tuning step down",
             VfoSelect(v) => return format!("Select VFO {}", if v == Vfo::A { "A" } else { "B" }),
             BandSelect(b) => return format!("Band {}", b.label()),
             ModeSelect(m) => return format!("Mode {}", m.label()),
@@ -349,6 +354,7 @@ impl Action {
             Tmate2TxReadoutCycle,
             TuneLock,
             Tmate2StepCycle,
+            Tmate2StepCycleDown,
         ]);
         v
     }

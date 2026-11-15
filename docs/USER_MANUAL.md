@@ -13614,8 +13614,10 @@ Both come from the same place as the power figure (the Hardrock when it is
 connected, otherwise the radio), and a reading the station does not report is
 left blank.
 
-**Tuning step and lock.** **TMate 2 tuning step (1 / 10 / 100 Hz / 1 kHz)**
-steps the main dial's step on each press and saves it. The digit the dial is
+**Tuning step and lock.** **TMate 2 tuning step up (1 Hz to 1 MHz)** steps
+the main dial's step through 1, 10 and 100 Hz, 1, 10 and 100 kHz and 1 MHz on
+each press, wrapping round, and saves it; **TMate 2 tuning step down** goes the
+other way. The digit the dial is
 stepping is underlined on the frequency display, as on ELAD's own software. **Tuning lock on/off**
 stops bound tuning controls (the TMate 2 dial, keys, MIDI and the panadapter
 mouse wheel) from moving the frequency and lights the TMate 2's LOCK LED;
