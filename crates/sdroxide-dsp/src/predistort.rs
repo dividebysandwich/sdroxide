@@ -80,6 +80,15 @@ pub const MAX_CORRECTION: f32 = 4.0;
 /// enough that each slice's estimate is not mostly noise.
 const K_SLICE: usize = 1024;
 
+/// The spread in one block's estimate of an entry at which that block is
+/// trusted half as much. A tenth: corrections worth making are a few percent
+/// to a few tens of percent, and an estimate wandering by more than that is
+/// mostly the receiver's noise.
+const TRUST_SPREAD: f32 = 0.1;
+
+/// The largest fraction one block may change an entry by.
+const MAX_STEP: f32 = 0.5;
+
 /// Envelope decimation for the coarse delay search. The envelope of a
 /// modulated signal has nothing in it above a few tens of kilohertz, so
 /// throwing away 63 of every 64 samples costs the correlation nothing and
@@ -589,6 +598,27 @@ impl PureSignal {
             hits[i] += 1;
         }
 
+        // Each entry's estimate, and how noisy it is: the residual left once
+        // the estimate is taken out, per sample, over the entry's power. A
+        // least-squares fit's variance, so an entry the amplitude only grazes,
+        // or one down near the receiver's noise, says so.
+        let mut r = vec![Complex32::new(0.0, 0.0); b];
+        for i in 0..b {
+            if hits[i] >= MIN_BIN_HITS && pw[i] > 0.0 {
+                r[i] = acc[i] / pw[i];
+            }
+        }
+        let mut err = vec![0.0f32; b];
+        for n in 0..m {
+            let x = self.refs[idx + n];
+            let a = x.norm();
+            if a <= 0.0 {
+                continue;
+            }
+            let i = ((a.clamp(0.0, 1.0) * b as f32) as usize).min(b - 1);
+            err[i] += (self.scratch[n] / k - r[i] * x).norm_sqr();
+        }
+
         let mut moved = false;
         for i in 0..b {
             if hits[i] < MIN_BIN_HITS || pw[i] <= 0.0 {
@@ -596,15 +626,28 @@ impl PureSignal {
             }
             // What the cascade actually does at this amplitude, relative to
             // unity. One means already linear here.
-            let r = acc[i] / pw[i];
-            if r.norm() <= 1e-6 {
-                continue;
-            }
+            let ri = r[i];
+            let var = err[i] / hits[i] as f32 / pw[i];
+            // How far to trust this block's figure for this entry: all the
+            // way when it is clean, less as its spread approaches the size of
+            // the corrections being made.
+            let trust = 1.0 / (1.0 + var / (TRUST_SPREAD * TRUST_SPREAD));
             // Move the table towards its own inverse: fixed-point iteration on
             // `G · g(|x·G|) = 1`, damped so one noisy block cannot swing it.
-            let want = self.table[i] / r;
-            self.table[i] = self.table[i] * (1.0 - self.alpha) + want * self.alpha;
-            self.learned[i] = true;
+            //
+            // In proportion to the error rather than by dividing by it. The
+            // two agree near the answer, but `1 / r` of a noisy `r` is on
+            // average *smaller* than one, so dividing pulls every entry the
+            // noise reaches downwards, block after block: with the feedback
+            // 10 dB weaker, a PlutoSky R2's low entries went to the floor
+            // and then scattered (issue #525). The step taken here is linear
+            // in `r`, so noise averages out instead of adding up.
+            let step = (ri - Complex32::new(1.0, 0.0)) * (self.alpha * trust);
+            let step = if step.norm() > MAX_STEP { step * (MAX_STEP / step.norm()) } else { step };
+            self.table[i] *= Complex32::new(1.0, 0.0) - step;
+            if trust > 0.25 {
+                self.learned[i] = true;
+            }
             moved = true;
         }
         if !moved {
@@ -1041,6 +1084,49 @@ mod tests {
         // And nothing is boosted: the highest amplitude sent keeps unit gain,
         // as the module promises, rather than the table's unreached top entry.
         assert!(db.iter().all(|d| *d < 0.01), "an entry asks for more than unity: {db:?}");
+    }
+
+    /// Feedback down near the receiver's noise, through an amplifier that is
+    /// already linear: nothing to correct, so the table has to stay flat.
+    /// Dividing by each entry's noisy estimate used to drag the low entries
+    /// to the floor within seconds, as a PlutoSky R2 did with its drive 10 dB
+    /// down (issue #525). A two-tone scaled down with the sample rate, to
+    /// keep the test quick.
+    #[test]
+    fn weak_feedback_leaves_a_linear_amplifier_alone() {
+        let fs = 250_000.0f64;
+        let mut ps = PureSignal::with_history(32, 0.5, fs, 1.0);
+        let mut line: std::collections::VecDeque<Complex32> =
+            std::iter::repeat_n(Complex32::new(0.0, 0.0), 20_000).collect();
+        let coupler = Complex32::from_polar(0.0063, 0.7);
+        // White, unlike `source`: a receiver's own noise.
+        let mut seed = 57u64;
+        let mut white = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            ((seed >> 40) as f32 / 8_388_608.0) - 1.0
+        };
+        let mut t_tx = 0u64;
+        for _ in 0..1200 {
+            let mut x: Vec<Complex32> = (0..4096u64)
+                .map(|n| {
+                    let t = (t_tx + n) as f64 / fs;
+                    let a = Complex32::from_polar(0.3, (std::f64::consts::TAU * 70.0 * t) as f32);
+                    let b = Complex32::from_polar(0.3, (std::f64::consts::TAU * 190.0 * t) as f32);
+                    a + b
+                })
+                .collect();
+            t_tx += 4096;
+            ps.predistort(&mut x);
+            line.extend(x.iter().map(|s| *s * coupler));
+            let fb: Vec<Complex32> =
+                line.drain(..4096).map(|s| s + Complex32::new(white(), white()) * 0.002).collect();
+            ps.feed_back(&fb, 0.0, fs);
+        }
+        assert!(ps.locked(), "never aligned (score {:.2})", ps.score());
+        let db: Vec<f32> = ps.table().iter().map(|g| 20.0 * g.norm().log10()).collect();
+        assert!(ps.correction_db() < 2.0, "noise was learned as a curve: {db:?}");
     }
 
     /// Holding the table stops it moving, which is what lets an operator keep
