@@ -13605,6 +13605,23 @@ output power, and the small digits show the power in watts (or milliwatts below
 
 None of this needs setting up.
 
+**REFL and SWR.** The small display can show reflected power or SWR instead of
+output power while you transmit; pick which under **Small display while
+transmitting** in the TMate 2 section, or bind **TMate 2 TX readout (PO / REFL /
+SWR)** to a button to step through them on the air. The bargraph stays on output
+power. The small display has no decimal point, so SWR reads ×10: `15` is 1.5:1.
+Both come from the same place as the power figure (the Hardrock when it is
+connected, otherwise the radio), and a reading the station does not report is
+left blank.
+
+**Tuning step and lock.** **TMate 2 tuning step (1 / 10 / 100 Hz / 1 kHz)**
+steps the main dial's step on each press and saves it. **Tuning lock on/off**
+stops bound tuning controls (the TMate 2 dial, keys, MIDI and the panadapter
+mouse wheel) from moving the frequency and lights the TMate 2's LOCK LED;
+clicking the panadapter or a spot still tunes. The lock is not saved, so it is
+always off when sdroxide starts. Both can go on any TMate 2 button, key or MIDI
+pad.
+
 **Switching VFOs after a transverter session.** The main-dial push tunes to
 whatever the other VFO last held, exactly as the on-screen A/B button does. If
 you last used VFO B with a transverter, that may be a VHF/UHF frequency the radio

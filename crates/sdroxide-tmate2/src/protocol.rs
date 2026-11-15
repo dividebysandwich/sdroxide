@@ -235,6 +235,21 @@ pub enum ModeIcon {
     Dig,
 }
 
+/// What the small display shows while transmitting. The bargraph is output
+/// power whichever is picked.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TxReadout {
+    /// [`Display::tx_mw`], in W (mW below 1 W); [`Display::tx_po_pct`] where
+    /// there is no power reading.
+    #[default]
+    Power,
+    /// [`Display::tx_rfl_mw`], in W (mW below 1 W).
+    Reflected,
+    /// [`Display::tx_swr_x10`], with no unit: there is no decimal point on the
+    /// small display, so 1.5:1 reads `15`.
+    Swr,
+}
+
 /// Everything the panel shows. Plain values, so a caller can compare two and
 /// only send when something changed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -261,7 +276,26 @@ pub struct Display {
     /// Transmit output, 0–100 % of full scale: the bargraph, and the small
     /// display where there is no power reading.
     pub tx_po_pct: Option<u8>,
+    /// Reflected power while transmitting, in milliwatts.
+    pub tx_rfl_mw: Option<u32>,
+    /// SWR × 10 while transmitting (15 = 1.5:1).
+    pub tx_swr_x10: Option<u32>,
+    /// Which of the three the small display shows while transmitting.
+    pub tx_readout: TxReadout,
     pub lock_led: bool,
+}
+
+/// Power on the small display: whole watts with the W legend from 1 W up,
+/// otherwise milliwatts with the mW legend.
+fn small_watts(r: &mut [u8; REPORT_LEN], mw: u32) {
+    if mw >= 1_000 {
+        small_digits(r, (mw + 500) / 1_000);
+        set(r, seg::W, true);
+    } else {
+        small_digits(r, mw);
+        set(r, seg::MW_M, true);
+        set(r, seg::MW_W, true);
+    }
 }
 
 fn set(r: &mut [u8; REPORT_LEN], s: Seg, on: bool) {
@@ -398,18 +432,22 @@ pub fn output(d: &Display) -> [u8; REPORT_LEN] {
                 set(&mut r, *s, true);
             }
         }
-        match (d.tx_mw, d.tx_po_pct) {
-            (Some(mw), _) if mw >= 1_000 => {
-                small_digits(&mut r, (mw + 500) / 1_000);
-                set(&mut r, seg::W, true);
+        match d.tx_readout {
+            TxReadout::Power => match (d.tx_mw, d.tx_po_pct) {
+                (Some(mw), _) => small_watts(&mut r, mw),
+                (None, Some(pct)) => small_digits(&mut r, u32::from(pct.min(100))),
+                (None, None) => {}
+            },
+            TxReadout::Reflected => {
+                if let Some(mw) = d.tx_rfl_mw {
+                    small_watts(&mut r, mw);
+                }
             }
-            (Some(mw), _) => {
-                small_digits(&mut r, mw);
-                set(&mut r, seg::MW_M, true);
-                set(&mut r, seg::MW_W, true);
+            TxReadout::Swr => {
+                if let Some(x10) = d.tx_swr_x10 {
+                    small_digits(&mut r, x10.min(999));
+                }
             }
-            (None, Some(pct)) => small_digits(&mut r, u32::from(pct.min(100))),
-            (None, None) => {}
         }
     } else if let Some(dbm) = d.signal_dbm {
         set(&mut r, seg::SMETER_LINE, true);
@@ -606,6 +644,33 @@ mod tests {
         assert_ne!(r[20] & 0x20, 0, "W");
         let (h, l) = SMALL_DIGIT[5];
         assert_eq!((r[23] & 0xF0, r[24] & 0xE0), (h, l), "4.6 W reads 5");
+    }
+
+    #[test]
+    fn tx_readout_picks_power_reflected_or_swr() {
+        let base = Display {
+            tx: true,
+            tx_mw: Some(100_000),
+            tx_po_pct: Some(100),
+            tx_rfl_mw: Some(4_000),
+            tx_swr_x10: Some(15),
+            ..Default::default()
+        };
+        let units = |r: &[u8; REPORT_LEN]| (r[23] & 0xF0, r[24] & 0xE0);
+        let tens = |r: &[u8; REPORT_LEN]| (r[25] & 0xF0, r[26] & 0xE0);
+
+        let r = output(&Display { tx_readout: TxReadout::Reflected, ..base.clone() });
+        assert_eq!(units(&r), SMALL_DIGIT[4], "4 W reflected");
+        assert_ne!(r[20] & 0x20, 0, "W");
+        assert_eq!(seg::BARS.iter().filter(|s| r[s.0] & s.1 != 0).count(), 15, "bargraph stays PO");
+
+        let r = output(&Display { tx_readout: TxReadout::Swr, ..base.clone() });
+        assert_eq!((units(&r), tens(&r)), (SMALL_DIGIT[5], SMALL_DIGIT[1]), "1.5:1 reads 15");
+        assert_eq!(r[20] & 0x20, 0, "no unit for SWR");
+
+        // Nothing measured: blank rather than a stale or made-up figure.
+        let r = output(&Display { tx_readout: TxReadout::Swr, tx_swr_x10: None, ..base });
+        assert_eq!(units(&r), (0, 0));
     }
 
     #[test]

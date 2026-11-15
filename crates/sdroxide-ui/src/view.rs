@@ -201,6 +201,11 @@ pub struct ViewState {
     /// Fraction of the panadapter height used by the spectrum line (rest = waterfall).
     pub spectrum_fraction: f32,
     /// Draw a decaying peak-hold trace over the spectrum.
+    /// [`sdroxide_types::Action::TuneLock`]: bound tuning controls leave
+    /// the frequency alone. Not saved: a lock left on across a restart would
+    /// look like a dead dial.
+    #[serde(skip)]
+    pub tune_locked: bool,
     pub peak_hold: bool,
     /// The SK filter's presets (see [`SkPreset`]): slots 1–3 start as HDZ's
     /// recipes (behind NR2 Med in SAM, DFNR Low, the spectral NR Low in SSB),
@@ -820,6 +825,7 @@ impl Default for ViewState {
             fft_size: 4096,
             spectrum_fraction: 0.35,
             peak_hold: false,
+            tune_locked: false,
             sk_presets: sk_presets_default(),
             snr_guide: false,
             sk_guide: false,

@@ -620,6 +620,7 @@ settings-controls-none = — none —
 settings-controls-tmate2 = ELAD TMate 2
 settings-controls-tmate2-unsupported = The TMate 2 needs the native app on Windows or Linux.
 settings-controls-tmate2-intro = The ELAD / WoodBoxRadio TMate 2 USB controller: the main dial, the E1 and E2 dials with their push switches, and keys F1 to F6. It is found by itself when plugged in.
+settings-controls-tmate2-tx-readout = Small display while transmitting
 settings-controls-tmate2-add = + Add TMate 2 control
 settings-controls-tmate2-defaults = Restore TMate 2 defaults
 settings-controls-tmate2-help = The TMate 2 speeds its dials up by itself on a fast turn, so the main dial's step can stay small. Close other programs that use the TMate 2 (SDR Console, ELAD's software) first. On Linux, install the udev rule for it so it can be opened without root.

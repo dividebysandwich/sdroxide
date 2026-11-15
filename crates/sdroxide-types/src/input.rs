@@ -124,7 +124,20 @@ pub enum Action {
     SpeechSilence,
     /// Announcements on/off, with a spoken confirmation either way.
     SpeechToggle,
+    /// What the TMate 2's small display shows while transmitting: steps
+    /// through [`Tmate2TxReadout`] (output power, reflected power, SWR).
+    Tmate2TxReadoutCycle,
+    /// Tuning lock on/off: while on, bound tuning controls (dials, keys, the
+    /// panadapter mouse wheel) leave the frequency alone, and the TMate 2's
+    /// LOCK LED is lit. Clicking the panadapter or a spot still tunes.
+    TuneLock,
+    /// Step the TMate 2 main dial's tuning step through
+    /// [`TMATE2_TUNE_STEPS`].
+    Tmate2StepCycle,
 }
+
+/// The steps [`Action::Tmate2StepCycle`] walks, in Hz.
+pub const TMATE2_TUNE_STEPS: [f32; 4] = [1.0, 10.0, 100.0, 1_000.0];
 
 /// Whether an action is driven by a value or by a button.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,13 +165,15 @@ impl Action {
         match self {
             Tune | RitOffset | XitOffset | RitEnable | XitEnable | RitClear | XitClear
             | VfoSelect(_) | VfoToggle | SwapVfos | CopyAtoB | Split | BandUp | BandDown
-            | BandSelect(_) | MemoryRecall(_) => "Tuning",
+            | BandSelect(_) | MemoryRecall(_) | TuneLock | Tmate2StepCycle => "Tuning",
             Volume | SubVolume | Squelch | FilterWidth | FilterShift | AgcMaxGain | ManualGain
             | Mute | NoiseBlanker | NoiseReductionCycle | AutoNotch | Binaural | AgcCycle
             | SubRx | ModeNext | ModePrev | ModeNextEveryday | ModePrevEveryday | ModeSelect(_)
             | RecordToggle => "Receive",
             Ptt | TuneCarrier | TxDrive | TuneDrive | MicGain | DigiAudioFreq | AbortTx
-            | CwStraight | VoicePlay(_) | VoiceStop | ToneBurst => "Transmit",
+            | CwStraight | VoicePlay(_) | VoiceStop | ToneBurst | Tmate2TxReadoutCycle => {
+                "Transmit"
+            }
             SpectrumZoom | SpectrumPan | SpectrumFloorDb | SpectrumCeilDb | FitSpan | ZoomIn
             | ZoomOut | PeakHold | SpectrumCollapse | WaterfallCollapse | WaterfallFlip => {
                 "Display"
@@ -235,6 +250,9 @@ impl Action {
             SpeakRepeat => "Repeat last announcement",
             SpeechSilence => "Stop speaking",
             SpeechToggle => "Announcements on/off",
+            Tmate2TxReadoutCycle => "TMate 2 TX readout (PO / REFL / SWR)",
+            TuneLock => "Tuning lock on/off",
+            Tmate2StepCycle => "TMate 2 tuning step (1 / 10 / 100 Hz / 1 kHz)",
             VfoSelect(v) => return format!("Select VFO {}", if v == Vfo::A { "A" } else { "B" }),
             BandSelect(b) => return format!("Band {}", b.label()),
             ModeSelect(m) => return format!("Mode {}", m.label()),
@@ -328,6 +346,9 @@ impl Action {
             SpeakRepeat,
             SpeechSilence,
             SpeechToggle,
+            Tmate2TxReadoutCycle,
+            TuneLock,
+            Tmate2StepCycle,
         ]);
         v
     }
@@ -1008,17 +1029,58 @@ impl Tmate2Binding {
     }
 }
 
+/// What the TMate 2's small display shows while transmitting. The bargraph
+/// is output power whichever is picked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Tmate2TxReadout {
+    /// Forward power, in watts (milliwatts below 1 W).
+    #[default]
+    Power,
+    /// Reflected power, in watts (milliwatts below 1 W).
+    Reflected,
+    /// SWR × 10 (the panel has no decimal point there): `15` is 1.5:1.
+    Swr,
+}
+
+impl Tmate2TxReadout {
+    pub const ALL: [Tmate2TxReadout; 3] =
+        [Tmate2TxReadout::Power, Tmate2TxReadout::Reflected, Tmate2TxReadout::Swr];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Tmate2TxReadout::Power => "Output power (PO)",
+            Tmate2TxReadout::Reflected => "Reflected power (REFL)",
+            Tmate2TxReadout::Swr => "SWR (×10, 15 = 1.5:1)",
+        }
+    }
+
+    /// The next one round, for [`Action::Tmate2TxReadoutCycle`].
+    pub fn next(self) -> Self {
+        match self {
+            Tmate2TxReadout::Power => Tmate2TxReadout::Reflected,
+            Tmate2TxReadout::Reflected => Tmate2TxReadout::Swr,
+            Tmate2TxReadout::Swr => Tmate2TxReadout::Power,
+        }
+    }
+}
+
 /// The ELAD / WoodBoxRadio TMate 2 USB controller.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Tmate2Settings {
     pub enabled: bool,
     pub bindings: Vec<Tmate2Binding>,
+    /// What the small display shows while transmitting.
+    pub tx_readout: Tmate2TxReadout,
 }
 
 impl Default for Tmate2Settings {
     fn default() -> Self {
-        Tmate2Settings { enabled: false, bindings: Tmate2Binding::defaults() }
+        Tmate2Settings {
+            enabled: false,
+            bindings: Tmate2Binding::defaults(),
+            tx_readout: Tmate2TxReadout::default(),
+        }
     }
 }
 

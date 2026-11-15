@@ -373,6 +373,19 @@ fn settings_tmate2_section(
         };
     }
 
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.label(tr!("settings-controls-tmate2-tx-readout"));
+        ComboBox::from_id_salt("tmate2-tx-readout")
+            .width(210.0)
+            .selected_text(cfg.tmate2.tx_readout.label())
+            .show_ui(ui, |ui| {
+                for r in sdroxide_types::Tmate2TxReadout::ALL {
+                    ui.selectable_value(&mut cfg.tmate2.tx_readout, r, r.label());
+                }
+            });
+    });
+
     ui.add_space(8.0);
     let mut remove: Option<usize> = None;
     egui::Grid::new("tmate2-grid").num_columns(5).spacing([10.0, 6.0]).striped(true).show(

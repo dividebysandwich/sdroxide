@@ -2120,7 +2120,7 @@ pub fn show_ext(
                         let factor = 0.998f64.powf(scroll as f64 * 2.0 * rate);
                         zoom_about(view, pos.x, &rect, factor, dev_span);
                     }
-                    WheelAction::Tune if detents != 0.0 => {
+                    WheelAction::Tune if detents != 0.0 && !view.tune_locked => {
                         // Onto the step grid, not one step from wherever the
                         // dial was left: dragging the panadapter tunes
                         // continuously, and the fraction of a step it leaves

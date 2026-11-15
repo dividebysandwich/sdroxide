@@ -1113,7 +1113,9 @@ be opened without root. The LCD shows the frequency, mode and S-meter (output
 power while transmitting) and the A/B, RX/TX, NB, NR, AN, RIT and XIT legends.
 With a Hardrock amplifier connected the power is the amplifier's output;
 without one it is the radio's own, and a radio that reports no power leaves the
-bargraph empty while transmitting. See the user manual, §6.4.4.
+bargraph empty while transmitting. The small display can show REFL or SWR
+instead, and there are bindable actions for the dial step and a tuning lock (with
+the LOCK LED). See the user manual, §6.4.4.
 
 Switching VFOs from the TM2 (the main-dial push, by default) tunes to whatever
 the other VFO last held, exactly as the on-screen A/B button does. After a

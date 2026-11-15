@@ -2374,7 +2374,7 @@ impl SdroxideApp {
         input.poll_tmate2(ctx, state, &mut sink, cmds);
         drop(sink);
         #[cfg(not(target_arch = "wasm32"))]
-        input.tmate2_display(state, self.meters.as_ref());
+        input.tmate2_display(state, self.meters.as_ref(), view.tune_locked);
         for act in speech_acts {
             self.apply_speech_action(act, now);
         }
@@ -2461,7 +2461,9 @@ impl SdroxideApp {
                     self.speech.announcer.say_sample(now);
                 }
             }
-            // `apply_action` only ever collects the four above.
+            Tmate2TxReadoutCycle => self.input.tmate2_next_readout(),
+            Tmate2StepCycle => self.input.tmate2_next_step(),
+            // `apply_action` only ever collects the six above.
             _ => {}
         }
     }

@@ -167,6 +167,7 @@ pub(crate) fn apply_action(
         }
         let rx = RxId::Main;
         match act {
+            Tune if ui.view.tune_locked => {}
             Tune => {
                 // Land on the step grid, not one step from wherever the dial
                 // happened to sit. Panadapter dragging tunes continuously and
@@ -475,7 +476,11 @@ pub(crate) fn apply_action(
         ToggleSpots => *ui.spots = !*ui.spots,
         ToggleMemories => *ui.memories = !*ui.memories,
         ToggleVoice => *ui.voice = !*ui.voice,
-        SpeakStatus | SpeakRepeat | SpeechSilence | SpeechToggle => ui.speech.push(act),
+        TuneLock => ui.view.tune_locked = !ui.view.tune_locked,
+        // Collected for the caller, like speech: they change the TMate 2's
+        // own settings, which this function has no hold of.
+        SpeakStatus | SpeakRepeat | SpeechSilence | SpeechToggle | Tmate2TxReadoutCycle
+        | Tmate2StepCycle => ui.speech.push(act),
         _ => {}
     }
 }
@@ -608,6 +613,24 @@ impl InputRuntime {
 
     pub fn persist(&self) {
         persist_input_settings(&self.cfg);
+    }
+
+    /// The next TMate 2 transmit readout (power, reflected, SWR), saved.
+    pub(crate) fn tmate2_next_readout(&mut self) {
+        self.cfg.tmate2.tx_readout = self.cfg.tmate2.tx_readout.next();
+        self.persist();
+    }
+
+    /// The next main-dial tuning step from [`sdroxide_types::TMATE2_TUNE_STEPS`]
+    /// for every TMate 2 dial bound to Tune, saved. From a step not on the
+    /// list it goes to the first one above.
+    pub(crate) fn tmate2_next_step(&mut self) {
+        for b in &mut self.cfg.tmate2.bindings {
+            if b.action == Action::Tune && b.control.is_dial() {
+                b.tuning.step = next_tune_step(b.tuning.step);
+            }
+        }
+        self.persist();
     }
 
     /// The chords bound to the CW straight key, in binding order. The CW panel
@@ -1200,6 +1223,7 @@ impl InputRuntime {
         &mut self,
         state: &RadioState,
         meters: Option<&sdroxide_types::Meters>,
+        tune_locked: bool,
     ) {
         if !self.cfg.tmate2.enabled {
             return;
@@ -1211,7 +1235,13 @@ impl InputRuntime {
         {
             self.tmate2_peak_w = self.tmate2_peak_w.max(w);
         }
-        let d = tmate2_display_for(state, meters, self.tmate2_peak_w);
+        let mut d = tmate2_display_for(state, meters, self.tmate2_peak_w);
+        d.tx_readout = match self.cfg.tmate2.tx_readout {
+            sdroxide_types::Tmate2TxReadout::Power => sdroxide_tmate2::TxReadout::Power,
+            sdroxide_types::Tmate2TxReadout::Reflected => sdroxide_tmate2::TxReadout::Reflected,
+            sdroxide_types::Tmate2TxReadout::Swr => sdroxide_tmate2::TxReadout::Swr,
+        };
+        d.lock_led = tune_locked;
         if self.tmate2_shown.as_ref() != Some(&d) {
             if let Some(t) = self.tmate2.as_ref() {
                 t.set_display(d.clone());
@@ -1290,6 +1320,16 @@ impl InputRuntime {
 /// VFO in use, its mode, the receive meter (or forward power on transmit), and
 /// the legends for the toggles the panel has a word for.
 #[cfg(not(target_arch = "wasm32"))]
+/// The step after `step` in [`sdroxide_types::TMATE2_TUNE_STEPS`], wrapping,
+/// keeping its sign (a reversed dial stays reversed). From a step not on the
+/// list it goes to the first one above.
+fn next_tune_step(step: f32) -> f32 {
+    use sdroxide_types::TMATE2_TUNE_STEPS as STEPS;
+    let now = step.abs();
+    let next = STEPS.iter().copied().find(|s| *s > now + 0.001).unwrap_or(STEPS[0]);
+    if step < 0.0 { -next } else { next }
+}
+
 fn tmate2_display_for(
     state: &RadioState,
     meters: Option<&sdroxide_types::Meters>,
@@ -1319,6 +1359,8 @@ fn tmate2_display_for(
     let tx_meters = meters.and_then(|m| m.tx.as_ref());
     let fwd_w = tx_meters.and_then(|t| t.fwd_w).filter(|w| w.is_finite() && *w >= 0.0);
     let po = tx_meters.and_then(|t| t.po).filter(|p| p.is_finite());
+    let rfl_w = tx_meters.and_then(|t| t.rfl_w).filter(|w| w.is_finite() && *w >= 0.0);
+    let swr = tx_meters.and_then(|t| t.swr).filter(|s| s.is_finite() && *s >= 1.0);
     sdroxide_tmate2::Display {
         freq_hz: (hz.is_finite() && hz > 0.0).then_some(hz.round() as u64),
         mode,
@@ -1339,6 +1381,9 @@ fn tmate2_display_for(
                 ((w / full).clamp(0.0, 1.0) * 100.0).round() as u8
             })
         }),
+        tx_rfl_mw: rfl_w.map(|w| (w * 1_000.0).round() as u32),
+        tx_swr_x10: swr.map(|s| (s * 10.0).round() as u32),
+        tx_readout: sdroxide_tmate2::TxReadout::Power,
         lock_led: false,
     }
 }
@@ -1736,6 +1781,48 @@ mod tests {
 
     /// A TMate 2 key held for PTT keys and unkeys the rig, and pulling the
     /// controller out while it is held unkeys it too.
+    #[test]
+    fn tuning_lock_holds_the_frequency() {
+        let mut state = RadioState { vfo_a_hz: 7_100_000.0, ..RadioState::default() };
+        let mut view = ViewState::default();
+        let mut flags = [false; 6];
+        let mut speech_acts = Vec::new();
+        let mut ui = sink(&mut view, &mut flags, &mut speech_acts);
+        let mut cmds = Vec::new();
+        let turn = ActionInput::Delta { d: 10.0, step: 10.0 };
+        apply_action(
+            Action::TuneLock,
+            ActionInput::Press,
+            ButtonMode::Toggle,
+            &mut state,
+            &mut ui,
+            &mut cmds,
+        );
+        assert!(ui.view.tune_locked);
+        apply_action(Action::Tune, turn, ButtonMode::Toggle, &mut state, &mut ui, &mut cmds);
+        assert_eq!(state.vfo_a_hz, 7_100_000.0);
+        assert!(cmds.is_empty());
+        apply_action(
+            Action::TuneLock,
+            ActionInput::Press,
+            ButtonMode::Toggle,
+            &mut state,
+            &mut ui,
+            &mut cmds,
+        );
+        apply_action(Action::Tune, turn, ButtonMode::Toggle, &mut state, &mut ui, &mut cmds);
+        assert_eq!(state.vfo_a_hz, 7_100_010.0);
+    }
+
+    #[test]
+    fn tmate2_step_cycles_and_keeps_direction() {
+        assert_eq!(next_tune_step(1.0), 10.0);
+        assert_eq!(next_tune_step(10.0), 100.0);
+        assert_eq!(next_tune_step(1_000.0), 1.0);
+        assert_eq!(next_tune_step(-100.0), -1_000.0);
+        assert_eq!(next_tune_step(50.0), 100.0);
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn tmate2_ptt_is_released_when_the_controller_goes_away() {
