@@ -5011,7 +5011,12 @@ one of the two.
   control only: it does not touch a transmission in progress (that is **ABORT
   TX**) and it does not put the mode selection back to **Auto**.
 - Received images are saved as PNG under `~/.config/sdroxide/sstv_rx/` and reload
-  into the gallery next time.
+  into the gallery next time. To keep them somewhere else — an external drive,
+  say — type an absolute path into **Settings → Uploads → Received pictures
+  folders** and press **APPLY**; new pictures go there, and the ones already in
+  `sstv_rx/` stay in the gallery. The path is on the machine the radio is
+  attached to. If the folder cannot be created (a drive that is not plugged in),
+  pictures go to the default folder until it can.
 - **Deleting.** Most of what a night on 20 m leaves behind is noise. **Right-click**
   a thumbnail and choose *Delete this picture*, or open one and use **Delete…** in
   the enlarged window — which asks a second time, because the file goes for good
@@ -5159,7 +5164,8 @@ between the two modes.
   many chunks arrived first time.
 - The counters read **frames** (valid), **bad** (failed their CRC and were not
   recovered) and **pictures** (complete and verified).
-- Received pictures are saved as PNG under `~/.config/sdroxide/sstv_rx/`,
+- Received pictures are saved as PNG under `~/.config/sdroxide/sstv_rx/` (or the
+  SSTV folder chosen in **Settings → Uploads**),
   alongside the SSTV ones — and are deleted the same way (3.6): right-click a
   thumbnail, or **Delete…** in the enlarged window.
 
@@ -5264,7 +5270,9 @@ top. The **VIEW** controls decide how it is shown:
 **The gallery.** Completed charts are written as grayscale PNG to
 `~/Pictures/sdroxide/wefax/` — with your pictures rather than in a hidden config
 directory, because a weather chart usually gets printed, mailed or opened next
-to a routing program, and all of that happens in a file manager. Each is named
+to a routing program, and all of that happens in a file manager. To save them
+elsewhere, set the WEFAX folder under **Settings → Uploads → Received pictures
+folders**; charts already in `~/Pictures/sdroxide/wefax/` stay in the gallery. Each is named
 for when it was received and what it was tuned to:
 
 ```
@@ -16269,7 +16277,8 @@ and not the station's.
 | `voice/` | dir | The voice-keyer recordings (`slot1.wav`…`slot10.wav`), 48 kHz mono. Drop your own WAV in to replace a message. |
 | `speech_voices/` | dir | Extra voices for the spoken announcements: a Piper `.onnx` model and its `.onnx.json` config, side by side. Absent until you create it — the shipped voice lives with the program, not here. Note this is *not* `voice/`, which is the voice keyer. |
 | `sstv_tx/` | dir | The ten SSTV transmit-image slots (`slot0.png`…`slot9.png`). |
-| `sstv_rx/` | dir | Received SSTV and RIFP pictures, kept for the gallery. |
+| `sstv_rx/` | dir | Received SSTV and RIFP pictures, kept for the gallery (unless you chose another folder in Settings → Uploads). |
+| `picture_folders.json` | JSON | Where received SSTV pictures and weather charts are saved, if not in the default folders. Written by **Settings → Uploads → Received pictures folders**. Absent until you set one. |
 | `wefax_rx/` | dir | Weather-fax charts received by an earlier version. Charts now go to `~/Pictures/sdroxide/wefax/`, but this is still read so an existing collection stays in the gallery. |
 | `solar/` | dir | Cached solar imagery, space-weather JSON and subscribed element-set listings for the 3D view, with an index of HTTP validators so refreshes stay cheap. Safe to delete; it is re-fetched on demand. |
 | `radios.json` | JSON | The roster of configured radios ([§2.17](#217-running-more-than-one-radio)): each radio's id, the name you gave it (empty = named after its interface) and whether it is switched on (`enabled`, absent = on). Absent until you add a second radio. Written by the GUI, and — on a machine running `--server` — by a signed-in remote client adding or closing a radio ([§8.1](#81-start-the-server)). |

@@ -2081,6 +2081,10 @@ impl SdroxideApp {
                         self.picup_edit = c.picture_upload.clone();
                         self.picup_seeded = true;
                     }
+                    if !self.folders_seeded {
+                        self.folders_edit = c.picture_folders.clone();
+                        self.folders_seeded = true;
+                    }
                     if !self.sat_cfg_seeded {
                         self.sat_cfg_edit = c.sat.clone();
                         self.sat_cfg = std::sync::Arc::new(c.sat.clone());

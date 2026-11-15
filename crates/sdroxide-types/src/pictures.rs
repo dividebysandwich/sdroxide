@@ -46,6 +46,51 @@ impl ImageKind {
     }
 }
 
+/// Where the station keeps the pictures it receives (`picture_folders.json`).
+///
+/// Engine-owned like the stores themselves: the pictures are decoded and saved
+/// on the machine the radio is attached to, so the path is a path on *that*
+/// machine's disk, whichever screen typed it.
+///
+/// Empty means the default for the store — `~/.config/sdroxide/sstv_rx` for
+/// SSTV and RIFP, `<Pictures>/sdroxide/wefax` for charts. It exists so a
+/// collection can live somewhere else, typically an external drive.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PictureFolders {
+    /// Absolute path for SSTV and RIFP pictures; empty is the default.
+    pub sstv: String,
+    /// Absolute path for weather-fax charts; empty is the default.
+    pub wefax: String,
+}
+
+impl PictureFolders {
+    /// The folder configured for a store, if one is set and usable as a path.
+    ///
+    /// Surrounding whitespace is dropped (it is what a paste adds), and a
+    /// relative path counts as unset: it would be resolved against whatever
+    /// directory the program happened to be started from, and pictures written
+    /// to a place nobody chose are worse than the default.
+    pub fn for_kind(&self, kind: ImageKind) -> Option<std::path::PathBuf> {
+        let raw = match kind {
+            ImageKind::Sstv => &self.sstv,
+            ImageKind::Wefax => &self.wefax,
+        };
+        let path = std::path::PathBuf::from(raw.trim());
+        (!raw.trim().is_empty() && path.is_absolute()).then_some(path)
+    }
+
+    /// Whether a non-empty entry is one [`Self::for_kind`] would ignore — what
+    /// the settings page warns about.
+    pub fn is_ignored(&self, kind: ImageKind) -> bool {
+        let raw = match kind {
+            ImageKind::Sstv => &self.sstv,
+            ImageKind::Wefax => &self.wefax,
+        };
+        !raw.trim().is_empty() && self.for_kind(kind).is_none()
+    }
+}
+
 /// How many transmit presets there are. Fixed so a slot number means the same
 /// thing in the panel, in `slot{i}.png` on disk, and on the wire.
 ///
@@ -224,6 +269,23 @@ pub fn safe_name(name: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_picture_folder_is_used_only_when_it_is_an_absolute_path() {
+        let f = PictureFolders::default();
+        assert_eq!(f.for_kind(ImageKind::Sstv), None, "empty is the default");
+        assert!(!f.is_ignored(ImageKind::Sstv));
+
+        let abs = if cfg!(windows) { r"D:\\sstv" } else { "/Volumes/Drive/sstv" };
+        let f = PictureFolders { sstv: format!("  {abs}\n"), wefax: "charts".into() };
+        assert_eq!(f.for_kind(ImageKind::Sstv), Some(std::path::PathBuf::from(abs)));
+        assert_eq!(f.for_kind(ImageKind::Wefax), None, "relative means somewhere nobody chose");
+        assert!(f.is_ignored(ImageKind::Wefax) && !f.is_ignored(ImageKind::Sstv));
+        assert!(
+            !PictureFolders { sstv: "   ".into(), ..Default::default() }
+                .is_ignored(ImageKind::Sstv)
+        );
+    }
 
     /// The name is a fetch key that arrives over an unauthenticated socket and
     /// is joined to a directory we then read. Everything that could reach out

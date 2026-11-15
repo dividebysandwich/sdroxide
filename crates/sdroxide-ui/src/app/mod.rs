@@ -1008,6 +1008,10 @@ pub struct SdroxideApp {
     /// UI-owned editable copy, seeded from the engine like the configs above.
     picup_edit: sdroxide_types::PictureUploadConfig,
     picup_seeded: bool,
+    /// Where received pictures are saved: the dialog's copy, seeded like the
+    /// configs above.
+    folders_edit: sdroxide_types::PictureFolders,
+    folders_seeded: bool,
     /// When a TEST went out, while its answer is awaited. Cleared by the
     /// answer, or after a while if none comes (the station may have gone).
     picup_test_pending: Option<f64>,
@@ -1825,6 +1829,8 @@ impl SdroxideApp {
             wsjtx_seeded: false,
             picup_edit: sdroxide_types::PictureUploadConfig::default(),
             picup_seeded: false,
+            folders_edit: sdroxide_types::PictureFolders::default(),
+            folders_seeded: false,
             picup_test_pending: None,
             picup_test: None,
             picup_last: None,

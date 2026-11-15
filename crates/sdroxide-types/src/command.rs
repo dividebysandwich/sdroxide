@@ -1308,4 +1308,10 @@ pub enum Command {
     /// echoed back in [`crate::RadioState::sonde`]. Appended last, for the
     /// usual reason.
     SetSondeConfig(crate::SondeSettings),
+
+    /// Where the station saves received SSTV pictures and weather charts
+    /// (`picture_folders.json`) — a path on the machine the engine runs on.
+    /// Echoed back in [`crate::StationConfig::picture_folders`]. Appended last,
+    /// for the usual reason.
+    SetPictureFolders(Box<crate::PictureFolders>),
 }

@@ -1695,7 +1695,12 @@ use sdroxide_types::{
 ///
 /// v204: Contestia. `Mode::Contestia` appended; it shares Olivia's tones and
 /// bandwidth fields, so `DigiConfig` is unchanged.
-pub const PROTO_VERSION: u16 = 204;
+///
+/// v205: where received pictures are saved. `StationConfig` gains
+/// `picture_folders` (`PictureFolders`) on its tail and `Command` gains
+/// `SetPictureFolders` last. `StationConfig` rides whole, so a v204 peer fails
+/// to decode it.
+pub const PROTO_VERSION: u16 = 205;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
@@ -2451,8 +2456,16 @@ mod tests {
         }));
         let back: ServerMsg = decode(&encode(&m).unwrap()).unwrap();
         assert_eq!(back, m);
+        let folders = sdroxide_types::PictureFolders {
+            sstv: "/Volumes/Drive/sstv".into(),
+            wefax: "/Volumes/Drive/wefax".into(),
+        };
+        let m = ClientMsg::Command(Command::SetPictureFolders(Box::new(folders.clone())));
+        let back: ClientMsg = decode(&encode(&m).unwrap()).unwrap();
+        assert_eq!(back, m);
         let m = ServerMsg::StationConfig(Box::new(sdroxide_types::StationConfig {
             picture_upload: cfg,
+            picture_folders: folders,
             ..Default::default()
         }));
         let back: ServerMsg = decode(&encode(&m).unwrap()).unwrap();
