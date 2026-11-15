@@ -52,6 +52,26 @@ const EASE: f64 = 0.06;
 /// and a marker that old would be a stale claim about where it is.
 pub const PLOT_STALE_S: i64 = 30 * 60;
 
+/// How long a plot blinks after the list asks for it, in seconds. Long enough
+/// to find it by eye across a world map, short enough not to be left running.
+pub const BLINK_S: f64 = 3.0;
+
+/// Blinks per second: a plot lit for a quarter of a second, dark for a quarter.
+const BLINK_HZ: f64 = 2.0;
+
+/// Where a blink is at `now` seconds when it began at `start`: `None` once it
+/// is over, else `(lit, ring)` — whether the square is in its lit half of the
+/// cycle, and how far (0..1) the ring that spreads from it has got. Pure, so
+/// the timing is testable without a frame.
+pub(crate) fn blink_phase(start: f64, now: f64) -> Option<(bool, f32)> {
+    let t = now - start;
+    if !(0.0..BLINK_S).contains(&t) {
+        return None;
+    }
+    let cycle = t * BLINK_HZ;
+    Some((cycle.fract() < 0.5, cycle.fract() as f32))
+}
+
 /// One aircraft's latest known position, as the map holds it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HfdlPlot {
@@ -79,6 +99,8 @@ pub struct HfdlMapState {
     pub selected: Option<String>,
     /// Latest fix per identity, keyed by [`sdroxide_types::HfdlFix::key`].
     plots: BTreeMap<String, HfdlPlot>,
+    /// The plot asked to blink and the time (egui seconds) it started.
+    blink: Option<(String, f64)>,
 }
 
 impl HfdlMapState {
@@ -130,6 +152,22 @@ impl HfdlMapState {
 
     pub fn len(&self) -> usize {
         self.plots.len()
+    }
+
+    /// Make the plot under `key` blink for [`BLINK_S`] seconds, starting at
+    /// `now` (egui seconds), and select it. Returns whether there is such a
+    /// plot — an aircraft that has sent no position has nothing to blink.
+    ///
+    /// The view is handed back to the auto-fit, which frames every plot, so a
+    /// plot panned or zoomed out of sight is in view for the blink.
+    pub fn blink(&mut self, key: &str, now: f64) -> bool {
+        if !self.plots.contains_key(key) {
+            return false;
+        }
+        self.blink = Some((key.to_owned(), now));
+        self.selected = Some(key.to_owned());
+        self.view.manual = false;
+        true
     }
 
     /// Whether an aircraft is plotted under `key` — so a list row can select
@@ -320,6 +358,28 @@ pub fn show(
         draw_target(key, a, true);
     }
 
+    // ── the blink asked for from the list ──
+    let t_now = ui.input(|i| i.time);
+    if let Some((key, start)) = state.blink.clone() {
+        match blink_phase(start, t_now) {
+            None => state.blink = None,
+            Some((lit, ring)) => {
+                if let Some((_, a)) = live.iter().find(|(k, _)| *k == key) {
+                    let c = project(a.lat, a.lon);
+                    let tint = map.dx;
+                    // The ring spreads and fades once per half-second cycle; the
+                    // disc under the square flashes with it.
+                    let spread = TARGET_R + 3.0 + 16.0 * ring;
+                    p.circle_stroke(c, spread, (2.0, alpha(tint, 255.0 * (1.0 - ring))));
+                    if lit {
+                        p.circle_filled(c, TARGET_R + 6.0, alpha(tint, 150.0));
+                    }
+                }
+                crate::repaint::animate(ui.ctx());
+            }
+        }
+    }
+
     // ── the data blocks ──
     // The selected and the hovered always; the rest in the table's stable order,
     // each only where its block misses the symbols already placed. The map
@@ -492,6 +552,35 @@ mod tests {
         m.observe(&[decode(1_000, Some(fix(Some("040087"), None, 50.0, -3.0)))], 1_000);
         m.observe(&[], 1_000 + PLOT_STALE_S + 1);
         assert!(m.is_empty(), "a plot nothing refreshes must come off the map");
+    }
+
+    #[test]
+    fn a_blink_lasts_three_seconds_in_half_second_beats() {
+        // Not started yet, and over.
+        assert_eq!(blink_phase(10.0, 9.0), None);
+        assert_eq!(blink_phase(10.0, 10.0 + BLINK_S), None);
+        // Lit for the first quarter second, dark for the next.
+        assert_eq!(blink_phase(10.0, 10.1).map(|p| p.0), Some(true));
+        assert_eq!(blink_phase(10.0, 10.3).map(|p| p.0), Some(false));
+        assert_eq!(blink_phase(10.0, 10.6).map(|p| p.0), Some(true));
+        // The ring starts at the plot and grows to the edge of each beat.
+        let (_, early) = blink_phase(10.0, 10.05).unwrap();
+        let (_, late) = blink_phase(10.0, 10.45).unwrap();
+        assert!(early < 0.2 && late > 0.8, "{early} {late}");
+        assert!((0.0..=1.0).contains(&late));
+    }
+
+    #[test]
+    fn blinking_needs_a_plot_and_hands_the_view_back_to_the_auto_fit() {
+        let mut m = HfdlMapState::default();
+        m.observe(&[decode(1_000, Some(fix(Some("484123"), None, 52.0, -30.0)))], 1_010);
+        m.view.manual = true;
+        assert!(!m.blink("icao:999999", 5.0), "nothing plotted under that key");
+        assert!(m.view.manual, "a miss leaves the view alone");
+        assert_eq!(m.selected, None);
+        assert!(m.blink("icao:484123", 5.0));
+        assert!(!m.view.manual, "the plot is framed so the blink is seen");
+        assert_eq!(m.selected.as_deref(), Some("icao:484123"));
     }
 
     #[test]

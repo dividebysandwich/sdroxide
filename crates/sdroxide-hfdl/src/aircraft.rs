@@ -20,7 +20,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use sdroxide_types::{HFDL_AIRCRAFT_KEEP_S, HFDL_AIRCRAFT_MAX, HfdlAircraft};
+use sdroxide_types::{HFDL_AIRCRAFT_KEEP_S, HFDL_AIRCRAFT_MAX, HFDL_LAST_TEXT_MAX, HfdlAircraft};
 use xng_mode_hfdl::pdu::{HfdlEvent, gs_name};
 
 #[derive(Default)]
@@ -124,6 +124,27 @@ impl AircraftBook {
             }
             if let Some(f) = p.get("flight").and_then(|v| v.as_str()) {
                 set_if_text(&mut row.flight, f);
+            }
+        }
+        row.last_kind = kind.to_owned();
+        if let Some(a) = crate::controller::acars_of(e) {
+            // What it said, for the list's last-message column: the text, or
+            // — for a block with none, a link test say — what the decoder made
+            // of it. Nothing to say leaves the previous message standing.
+            let body = match (a.one_line(), &a.decoded) {
+                (t, _) if !t.is_empty() => Some(t),
+                (_, Some(d)) => Some(d.clone()),
+                _ => None,
+            };
+            if let Some(body) = body {
+                let line = format!("[{}] {body}", a.label);
+                row.last_text = Some(if line.chars().count() > HFDL_LAST_TEXT_MAX {
+                    let mut cut: String = line.chars().take(HFDL_LAST_TEXT_MAX - 1).collect();
+                    cut.push('…');
+                    cut
+                } else {
+                    line
+                });
             }
         }
         if let Some(b) = &e.acars {
@@ -439,5 +460,49 @@ mod tests {
         assert_eq!(v.len(), HFDL_AIRCRAFT_MAX);
         assert_eq!(v[0].last_heard, 1_000 + n as i64 - 1, "the newest is kept");
         assert!(v.iter().all(|a| a.last_heard >= 1_020), "the 20 oldest went");
+    }
+
+    #[test]
+    fn the_last_message_is_the_last_acars_text_and_survives_a_position_report() {
+        let mut b = AircraftBook::new();
+        let mk = |label: &str, text: &str| {
+            let octets = xng_acars::block::build(
+                '2',
+                "N123AB",
+                None,
+                label,
+                '4',
+                Some("M01A"),
+                Some("UAL012"),
+                text,
+                false,
+            );
+            let mut e = ev("acars", json!({ "who": down(4, 12) }), Some(10.0));
+            e.acars = xng_acars::block::parse(&octets);
+            e
+        };
+        b.observe(&perf(4, 12, None, "UAL012", 40.0, -50.0), 8_912, 1_000);
+        assert_eq!(b.snapshot(1_000)[0].last_text, None, "no ACARS yet");
+        assert_eq!(b.snapshot(1_000)[0].last_kind, "performance-data");
+        b.observe(&mk("H1", "REQUEST\r\nHIGHER"), 8_912, 1_010);
+        let a = b.snapshot(1_010).remove(0);
+        assert_eq!(a.last_text.as_deref(), Some("[H1] REQUEST ⏎ HIGHER"));
+        assert_eq!(a.last_kind, "acars");
+        // A later position report changes the kind, not the message.
+        b.observe(&perf(4, 12, None, "UAL012", 40.1, -50.1), 8_912, 1_020);
+        let a = b.snapshot(1_020).remove(0);
+        assert_eq!(a.last_text.as_deref(), Some("[H1] REQUEST ⏎ HIGHER"));
+        assert_eq!(a.last_kind, "performance-data");
+        // A block with no text falls back to what the decoder made of it …
+        b.observe(&mk("Q2", ""), 8_912, 1_030);
+        assert_eq!(b.snapshot(1_030)[0].last_text.as_deref(), Some("[Q2] ETA Report"));
+        // … and one with neither text nor meaning leaves the last message standing.
+        b.observe(&mk("ZZ", ""), 8_912, 1_035);
+        assert_eq!(b.snapshot(1_035)[0].last_text.as_deref(), Some("[Q2] ETA Report"));
+        // … and a long text is cut.
+        b.observe(&mk("H1", &"X".repeat(400)), 8_912, 1_040);
+        let t = b.snapshot(1_040)[0].last_text.clone().unwrap();
+        assert_eq!(t.chars().count(), HFDL_LAST_TEXT_MAX);
+        assert!(t.ends_with('…'));
     }
 }

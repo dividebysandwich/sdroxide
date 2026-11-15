@@ -6421,15 +6421,19 @@ hfdl-acars-more-hint = One part of a longer message — further blocks follow.
 
 hfdl-aircraft-list = AIRCRAFT
 hfdl-no-aircraft-heard-yet = No aircraft heard yet. An aircraft shows here from its first downlink — a logon, a position report, an ACARS message — whether or not it ever sends a position for the map.
-hfdl-aircraft-on = on { $gs }
-hfdl-aircraft-msgs = { $n ->
-        [one] { $n } message
-       *[other] { $n } messages
-    }
 hfdl-aircraft-position = at { $lat }, { $lon } · { $age } ago
 hfdl-aircraft-from-you = { $km } km, { $bearing }° from you
 hfdl-aircraft-logged-off = logged off
-hfdl-aircraft-select-hint = Select this aircraft on the map
-hfdl-aircraft-no-position-hint = No position reported yet, so there is nothing to select on the map
-hfdl-aircraft-filter = log ▸
+hfdl-aircraft-no-position-hint = No position reported yet, so there is nothing to blink on the map
 hfdl-aircraft-filter-hint = Show only this aircraft's decodes: sets the filter and opens DECODES
+hfdl-col-reg = REG
+hfdl-col-flight = FLIGHT
+hfdl-col-heard = HEARD
+hfdl-col-station = STATION
+hfdl-col-mhz = MHz
+hfdl-col-snr = dB
+hfdl-col-msgs = MSGS
+hfdl-col-dist = KM
+hfdl-col-last = LAST MESSAGE
+hfdl-aircraft-sort-hint = Sort by this column; click again to reverse
+hfdl-aircraft-blink-hint = Blink this aircraft on the map

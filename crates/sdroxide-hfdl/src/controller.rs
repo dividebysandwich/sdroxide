@@ -232,7 +232,7 @@ fn record(log: &mut VecDeque<HfdlDecode>, acars: &mut VecDeque<HfdlDecode>, d: H
 
 /// The ACARS message an event carried, with what xng's application layer made
 /// of it. `None` for every event that carried no ACARS block.
-fn acars_of(e: &HfdlEvent) -> Option<HfdlAcars> {
+pub(crate) fn acars_of(e: &HfdlEvent) -> Option<HfdlAcars> {
     let b = e.acars.as_ref()?;
     let c = &b.core;
     let who = e.details.get("who");

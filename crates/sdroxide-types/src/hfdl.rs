@@ -355,7 +355,18 @@ pub struct HfdlAircraft {
     pub map_key: Option<String>,
     /// It has logged off (or been refused), so is no longer on the network.
     pub logged_off: bool,
+    /// The kind of the latest event attributed to it (`performance-data`,
+    /// `acars`, `logon-confirm`, ...). Appended last: the wire is positional.
+    pub last_kind: String,
+    /// What its latest ACARS message said: `[label] text`, on one line and
+    /// cut short, or the decoded line when the block had no text. Sticky — a
+    /// position report after it does not replace it — and `None` until the
+    /// aircraft has sent one.
+    pub last_text: Option<String>,
 }
+
+/// The longest [`HfdlAircraft::last_text`], in characters.
+pub const HFDL_LAST_TEXT_MAX: usize = 200;
 
 impl HfdlAircraft {
     pub fn new(key: String, unix: i64) -> Self {
@@ -377,6 +388,8 @@ impl HfdlAircraft {
             fix_at: 0,
             map_key: None,
             logged_off: false,
+            last_kind: String::new(),
+            last_text: None,
         }
     }
 
@@ -412,13 +425,23 @@ impl HfdlAircraft {
     pub fn absorb(&mut self, later: HfdlAircraft) {
         self.first_heard = self.first_heard.min(later.first_heard);
         self.msgs = self.msgs.saturating_add(later.msgs);
-        if later.last_heard >= self.last_heard {
+        let later_newer = later.last_heard >= self.last_heard;
+        // The newer row's message wins, but an older row's still beats none.
+        self.last_text = if later_newer {
+            later.last_text.or_else(|| self.last_text.take())
+        } else {
+            self.last_text.take().or(later.last_text)
+        };
+        if later_newer {
             self.last_heard = later.last_heard;
             self.freq_khz = later.freq_khz;
             self.snr_db = later.snr_db.or(self.snr_db);
             self.gs_id = later.gs_id.or(self.gs_id);
             self.gs = later.gs.or_else(|| self.gs.take());
             self.aircraft_id = later.aircraft_id.or(self.aircraft_id);
+            if !later.last_kind.is_empty() {
+                self.last_kind = later.last_kind;
+            }
         }
         self.flight = later.flight.or_else(|| self.flight.take());
         self.registration = later.registration.or_else(|| self.registration.take());
@@ -768,6 +791,8 @@ mod tests {
         icao.lon = Some(2.0);
         icao.fix_at = 140;
         icao.map_key = Some("icao:A1B2C3".into());
+        icao.last_text = Some("[H1] OLD".into());
+        icao.last_kind = "acars".into();
         let mut alias = HfdlAircraft::new("gs4:ac12".into(), 60);
         alias.msgs = 3;
         alias.last_heard = 200;
@@ -778,7 +803,12 @@ mod tests {
         alias.lon = Some(4.0);
         alias.fix_at = 190;
         alias.map_key = Some("ac:12".into());
+        alias.last_kind = "performance-data".into();
         icao.absorb(alias);
+        // The newer row's event kind wins; its lack of a message does not
+        // erase the older row's.
+        assert_eq!(icao.last_kind, "performance-data");
+        assert_eq!(icao.last_text.as_deref(), Some("[H1] OLD"));
         assert_eq!((icao.first_heard, icao.last_heard, icao.msgs), (60, 200, 5));
         assert_eq!((icao.freq_khz, icao.aircraft_id), (8_912, Some(12)));
         assert_eq!(icao.flight.as_deref(), Some("UAL012"));
