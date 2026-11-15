@@ -582,9 +582,9 @@ menu. Ordinary dragging and keyboard adjustment still work.
   from there it is yours to set, and it stays put however the signal moves.
 - **🔊** — audio volume.
 - **Front-end gain** — one rail per gain stage the radio lets software set, up
-  to three, each with its stage's short name: **ATT · VGA** on an RX-888 (the
-  attenuator first, the order the signal meets them; the VHF tuner's gain is in
-  Settings → Radio, as it does nothing on HF), **LNA · VGA** on a
+  to three, each with its stage's short name: **ATT · VGA** on an RX-888 on
+  HF (the attenuator first, the order the signal meets them), **RF** on an
+  RX-888 on VHF (see below), **LNA · VGA** on a
   HackRF, **LNA · MIX · IF** on an RTL-SDR on USB (over `rtl_tcp` the one
   combined **Gain**, which is all that protocol can set). A radio with a single
   stage shows one rail called **Gain**. The gain rails share one short length,
@@ -602,6 +602,18 @@ menu. Ordinary dragging and keyboard adjustment still work.
   **AUTO** picks whichever of the AD8370's two ranges lands nearer the gain
   asked for, **LOW** keeps the pre-amplifier out (tops out near +17 dB),
   **HIGH** puts it in (starts near −8 dB). Click to step through them.
+  An RX-888 swaps its controls with the band it is on. Its two inputs share
+  one ADC: on VHF the R828D tuner feeds it, and the driver holds the HF chain's
+  attenuator and VGA at a fixed setting there, while the tuner's gain does
+  nothing on HF. So above the HF/VHF crossover the strip shows the tuner's gain
+  as **RF** (0–49.6 dB) with its **AUTO** beside it (lit while the tuner runs
+  its own LNA and mixer loops, which greys the rail out) in place of
+  **ATT · VGA** and the range chip, and below the crossover it shows them again.
+  The switch follows the band the receiver reports, so it happens wherever the
+  dial crosses, by hand or by the automatic crossover. **RF** and **AUTO** are
+  the same settings as Settings → Radio → RX-888 → VHF tuner gain and its
+  Auto, and move them there too: both read the saved figure. A server too old
+  to report the band keeps **ATT · VGA** on the strip.
   On a desktop window 1800 pt wide or more, three rails cost the strip no row;
   narrower, an RTL-SDR's three can push the strip onto another row.
 - **DEC** — **front-end decimation**: keep the middle `1/N` of the span the radio
@@ -8765,7 +8777,9 @@ airband keep their own. A band you have never set a gain on keeps whatever is
 in force. Only the gain stages are remembered, not AGC switches or a bias tee.
 The gain sliders on some radios' own setup pages (RTL-SDR, RX-888) show the
 figure saved there rather than the one in force; the gain controls on the strip
-show the live one. Untick it for one gain everywhere.
+show the live one — apart from an RX-888's tuner gain, which the strip reads
+from the saved setting like Settings does, so a gain this remembers for a VHF
+band is in force without either showing it. Untick it for one gain everywhere.
 
 **S-meter calibration** is added to this radio's S-meter reading, and applies as
 you drag it; see [2.9](#29-the-s-meter) for why an SDR needs it.

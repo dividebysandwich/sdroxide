@@ -2086,6 +2086,15 @@ topbar-gain = Verstärkung
 topbar-tuner-agc-owns-gain = Tuner-AGC stellt Stufe; Manuell in Einstellungen → Radio.
 topbar-hackrf-amp-hint = HF-Verstärker HackRF, ca. +11 dB. Leuchtet = an.
 topbar-rx888-vga-range-hint = VGA-Bereich (AD8370): AUTO nach Sollwert, LOW bis ~+17 dB, HIGH mit Vorverstärker ab ~−8 dB.
+topbar-rx888-tuner-hint =
+    R828D-Tunerverstärkung, dB; UKW-Eingang
+    KW-Stufen ATT, VGA auf UKW gehalten
+topbar-rx888-tuner-auto-hint =
+    R828D-Tunerverstärkung, dB; UKW-Eingang
+    Tuner-AGC stellt Verstärkung
+topbar-rx888-tuner-agc-hint =
+    R828D-AGC: eigene LNA- und Mischerschleifen
+    Leuchtet = an; manuelle Tunerverstärkung ruht
 topbar-plutosdr-s-own-agc-setting =
     {""}
 

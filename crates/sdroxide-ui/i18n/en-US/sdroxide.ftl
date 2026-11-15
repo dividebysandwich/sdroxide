@@ -2108,6 +2108,15 @@ topbar-gain = Gain
 topbar-tuner-agc-owns-gain = Tuner AGC sets this stage; Manual in Settings → Radio.
 topbar-hackrf-amp-hint = HackRF RF amplifier, about +11 dB. Lit = on.
 topbar-rx888-vga-range-hint = VGA range (AD8370): AUTO by request, LOW up to ~+17 dB, HIGH with pre-amp from ~−8 dB.
+topbar-rx888-tuner-hint =
+    R828D tuner gain, dB; VHF input
+    HF stages ATT, VGA held on VHF
+topbar-rx888-tuner-auto-hint =
+    R828D tuner gain, dB; VHF input
+    Tuner AGC sets gain
+topbar-rx888-tuner-agc-hint =
+    R828D AGC: own LNA and mixer loops
+    Lit = on; manual tuner gain held
 topbar-plutosdr-s-own-agc-setting =
     {""}
 

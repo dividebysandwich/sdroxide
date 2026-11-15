@@ -1796,29 +1796,8 @@ fn open_rx888_source(
 /// clock the two do not meet, and the gap is published rather than papered over
 /// — see `sdroxide_rx888::band::freq_ranges`.
 fn rx888_caps(src: &rx888_source::Rx888Source) -> DeviceCaps {
-    use sdroxide_types::{Direction, GainElement, Rx888Config};
     let rate = src.sample_rate_hz();
-    let mut gains = vec![
-        // The AD8370's vernier is linear in voltage, so the dB step
-        // varies; a request is snapped to the nearest code and reported
-        // back, which makes a fine slider honest enough.
-        GainElement::db(Rx888Config::VGA_ELEMENT, Direction::Rx, -6.0, 34.0, 0.5),
-        GainElement::db(Rx888Config::ATT_ELEMENT, Direction::Rx, -31.5, 0.0, 0.5),
-    ];
-    // Only offer the tuner's gain on a receiver that has one, so the control
-    // does not appear on a board where it would do nothing.
-    if src.vhf_capable() {
-        gains.push(
-            // 29 discrete steps, snapped and reported back like the two above.
-            GainElement::db(
-                Rx888Config::TUNER_GAIN_ELEMENT,
-                Direction::Rx,
-                0.0,
-                Rx888Config::TUNER_GAIN_MAX_DB,
-                0.1,
-            ),
-        );
-    }
+    let gains = src.rx_gain_elements();
     DeviceCaps {
         driver: "rx888".into(),
         label: src.describe(),
