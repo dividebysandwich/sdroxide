@@ -1038,6 +1038,12 @@ pub struct SdroxideApp {
     /// like the network config above.
     tci_srv_edit: sdroxide_types::TciServerConfig,
     tci_srv_seeded: bool,
+    /// The TCI server config this radio's engine last announced — adopted on
+    /// every `RadioEvent::StationConfig`, unlike the edit copy above, because
+    /// it is what the roster reports for this radio to the other tabs (their
+    /// Servers page names the ports already taken) and what Settings → Radio
+    /// shows. `None` until the engine has spoken.
+    tci_srv_cfg: Option<sdroxide_types::TciServerConfig>,
     /// Live server status (bound address, connected clients, bind error) from
     /// `RadioEvent::TciServerStatus`.
     tci_srv_status: Option<TciServerStatus>,
@@ -1367,6 +1373,20 @@ pub(crate) struct RadioChip {
     /// `/ws`. It is not offered for closing anywhere, because no station will
     /// let go of it.
     pub first_of_station: bool,
+    /// This radio's built-in TCI server as its engine announced it — `None`
+    /// until it has. Each radio binds its own server, so a port is only taken
+    /// for the radio being edited if another radio of the same station holds
+    /// it; Settings → Servers reads that off here.
+    pub tci: Option<TciBrief>,
+}
+
+/// One radio's TCI server in a word: whether it is on, on which port, and
+/// whether the engine failed to bind it (the port held by another program).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TciBrief {
+    pub enabled: bool,
+    pub port: u16,
+    pub failed: bool,
 }
 
 impl RadioChip {
@@ -1391,6 +1411,10 @@ pub(crate) enum RadioTabRequest {
     /// Switch to this radio, carrying the settings dialog along: the origin's
     /// closes, the target's opens on its Radio page.
     Focus(u32),
+    /// [`RadioTabRequest::Focus`], opening on the Servers page instead: the
+    /// radio picker there switches which radio's TCI server is edited, and
+    /// that server is the target tab's, reached through its own engine.
+    FocusServers(u32),
     /// Put another radio in a roster. `station` is empty for this machine's own
     /// — the "+" the shell has always had — and otherwise the station key of a
     /// connection ([`SdroxideApp::station_key`]), which asks the station at the
@@ -1931,6 +1955,7 @@ impl SdroxideApp {
             rigctld_status: None,
             tci_srv_edit: sdroxide_types::TciServerConfig::default(),
             tci_srv_seeded: false,
+            tci_srv_cfg: None,
             tci_srv_status: None,
             net_cluster_cmds: String::new(),
             net_rbn_cmds: String::new(),
@@ -2461,6 +2486,20 @@ impl SdroxideApp {
     pub(crate) fn open_radio_settings(&mut self) {
         self.show_settings = true;
         self.settings_tab = SettingsTab::Radio;
+    }
+
+    /// Open the Settings dialog on the Servers tab — where the radio picker of
+    /// the TCI server section lands the operator on another radio.
+    pub(crate) fn open_servers_settings(&mut self) {
+        self.show_settings = true;
+        self.settings_tab = SettingsTab::Servers;
+    }
+
+    /// This radio's TCI server for the roster (see [`RadioChip::tci`]).
+    pub(crate) fn tci_brief(&self) -> Option<TciBrief> {
+        let cfg = self.tci_srv_cfg.as_ref()?;
+        let failed = self.tci_srv_status.as_ref().is_some_and(|s| !s.running && s.error.is_some());
+        Some(TciBrief { enabled: cfg.enabled, port: cfg.port, failed: cfg.enabled && failed })
     }
 
     /// Close the Settings dialog — the shell moves it to another tab when the

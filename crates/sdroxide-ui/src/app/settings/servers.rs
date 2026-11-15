@@ -28,6 +28,56 @@ pub(in crate::app) struct TciServerStatus {
     pub(in crate::app) client_error: Option<String>,
 }
 
+/// One radio of this station as the TCI server section's picker shows it.
+///
+/// The server is per radio — each engine binds its own, from its own
+/// `tciserver.json` — so the page edits the server of the radio whose dialog
+/// it is, and the picker moves the dialog to another radio rather than
+/// editing that radio's file from here.
+pub(in crate::app) struct TciRadio {
+    pub(in crate::app) id: u32,
+    pub(in crate::app) name: String,
+    pub(in crate::app) tci: Option<crate::app::TciBrief>,
+    /// The radio whose server this page edits.
+    pub(in crate::app) own: bool,
+}
+
+/// The other radios whose TCI server is switched on at `port`. Every radio
+/// counts, switched off or not: its engine runs either way and holds the port.
+pub(in crate::app) fn tci_port_holders(port: u16, radios: &[TciRadio]) -> Vec<&str> {
+    radios
+        .iter()
+        .filter(|r| !r.own && r.tci.is_some_and(|b| b.enabled && b.port == port))
+        .map(|r| r.name.as_str())
+        .collect()
+}
+
+/// The lowest port from [`sdroxide_types::TciServerConfig::BASE_PORT`] up that
+/// no other radio's server is switched on at.
+pub(in crate::app) fn first_free_tci_port(radios: &[TciRadio]) -> u16 {
+    let mut port = sdroxide_types::TciServerConfig::BASE_PORT;
+    while port < u16::MAX && !tci_port_holders(port, radios).is_empty() {
+        port += 1;
+    }
+    port
+}
+
+/// What a radio's picker chip says about its server: the port, "off", or
+/// nothing while its engine has not announced one. Ports go in as text:
+/// a port is a name, not a quantity to be grouped by thousands.
+fn tci_chip_text(r: &TciRadio) -> String {
+    match r.tci {
+        Some(b) if b.enabled && b.failed => {
+            tr!("settings-servers-tci-radio-failed", name = r.name, port = b.port.to_string())
+        }
+        Some(b) if b.enabled => {
+            tr!("settings-servers-tci-radio-on", name = r.name, port = b.port.to_string())
+        }
+        Some(_) => tr!("settings-servers-tci-radio-off", name = r.name),
+        None => r.name.clone(),
+    }
+}
+
 pub(in crate::app) fn settings_wsjtx_tab(
     ui: &mut egui::Ui,
     cfg: &mut sdroxide_types::WsjtxConfig,
@@ -436,9 +486,39 @@ pub(in crate::app) fn settings_tci_server_tab(
     cfg: &mut sdroxide_types::TciServerConfig,
     seeded: bool,
     status: &Option<TciServerStatus>,
+    radios: &[TciRadio],
     apply: &mut bool,
+    requests: &mut Vec<crate::app::RadioTabRequest>,
 ) {
     use sdroxide_types::TciServerConfig;
+
+    // Which radio's server this is, with more than one to choose from. Each
+    // radio binds its own, so this is the radio strip of Settings → Radio
+    // again, each chip carrying its port: clicking one moves the dialog to
+    // that radio, on this page.
+    // Why: this section showed one radio's server with nothing to say which,
+    //      and the others were only reached by switching tabs first. HDZ
+    //      2026-11-14: "nicht so kompliziert" — a picker, no overview table.
+    if radios.len() > 1 {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(tr!("settings-servers-tci-radio")).strong());
+            for r in radios {
+                let mut text = RichText::new(tci_chip_text(r)).size(12.5);
+                if r.own {
+                    text = text.strong().color(crate::theme::INK_ON_CYAN());
+                }
+                let chip = crate::chrome::chip(ui, r.own, text).on_hover_text(if r.own {
+                    tr!("settings-servers-tci-radio-own-tip")
+                } else {
+                    tr!("settings-servers-tci-radio-other-tip")
+                });
+                if chip.clicked() && !r.own {
+                    requests.push(crate::app::RadioTabRequest::FocusServers(r.id));
+                }
+            }
+        });
+        ui.add_space(6.0);
+    }
 
     if !seeded {
         ui.label(RichText::new(tr!("settings-servers-waiting-station-s-tci-server")).weak());
@@ -452,7 +532,15 @@ pub(in crate::app) fn settings_tci_server_tab(
             .color(crate::theme::CYAN()),
     );
     ui.add_space(6.0);
+    let was_on = cfg.enabled;
     crate::chrome::checkbox(ui, &mut cfg.enabled, tr!("settings-servers-enable"));
+    // Switched on at a port another radio's server already holds — a radio
+    // seeded before ports were spread out sits on the station's 50001 — moves
+    // to the first free one. Shown before APPLY, so it is the operator's to
+    // change back.
+    if cfg.enabled && !was_on && !tci_port_holders(cfg.port, radios).is_empty() {
+        cfg.port = first_free_tci_port(radios);
+    }
     ui.add_space(6.0);
 
     ui.add_enabled_ui(cfg.enabled, |ui| {
@@ -497,6 +585,22 @@ pub(in crate::app) fn settings_tci_server_tab(
         )
         .on_hover_text(tr!("settings-servers-off-leaves-control-receive-streams"));
     });
+
+    // Two radios on one port: the second to bind fails. Said here, before
+    // APPLY, rather than left to the status line after it.
+    let holders = tci_port_holders(cfg.port, radios);
+    if cfg.enabled && !holders.is_empty() {
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(tr!(
+                "settings-servers-tci-port-taken",
+                port = cfg.port.to_string(),
+                radios = holders.join(", "),
+                free = first_free_tci_port(radios).to_string()
+            ))
+            .color(Color32::from_rgb(230, 170, 60)),
+        );
+    }
 
     // Security: TCI has no authentication at all, so binding wide open hands
     // the transmitter to anyone who can reach the port.
@@ -615,4 +719,47 @@ pub(in crate::app) fn settings_tci_server_tab(
 
     ui.add_space(8.0);
     ui.label(RichText::new(tr!("settings-servers-server-lets-tci-capable-programs")).weak());
+}
+
+#[cfg(test)]
+mod tci_port_tests {
+    use super::*;
+    use crate::app::TciBrief;
+
+    fn radio(id: u32, name: &str, tci: Option<(bool, u16)>, own: bool) -> TciRadio {
+        TciRadio {
+            id,
+            name: name.into(),
+            tci: tci.map(|(enabled, port)| TciBrief { enabled, port, failed: false }),
+            own,
+        }
+    }
+
+    #[test]
+    fn a_port_is_taken_only_by_another_radio_whose_server_is_on() {
+        let radios = [
+            radio(0, "Station", Some((true, 50001)), false),
+            radio(11, "RSP1a", Some((false, 50001)), true),
+            radio(12, "Bench", Some((false, 50003)), false),
+            radio(13, "Unheard", None, false),
+        ];
+        assert_eq!(tci_port_holders(50001, &radios), vec!["Station"]);
+        assert!(tci_port_holders(50003, &radios).is_empty(), "a server that is off holds nothing");
+        assert!(tci_port_holders(50002, &radios).is_empty());
+        // The radio being edited never clashes with itself.
+        let alone = [radio(11, "RSP1a", Some((true, 50001)), true)];
+        assert!(tci_port_holders(50001, &alone).is_empty());
+    }
+
+    #[test]
+    fn the_first_free_port_skips_every_server_that_is_on() {
+        let radios = [
+            radio(0, "Station", Some((true, 50001)), false),
+            radio(1, "Two", Some((true, 50002)), false),
+            radio(2, "Three", Some((false, 50003)), false),
+            radio(3, "Edited", Some((true, 50004)), true),
+        ];
+        assert_eq!(first_free_tci_port(&radios), 50003);
+        assert_eq!(first_free_tci_port(&[]), 50001);
+    }
 }

@@ -3073,8 +3073,10 @@ session restore, scanner setup and the built-in servers (TCI, rigctld,
 WSJT-X) belong to each radio. Each radio's servers have their own
 configuration precisely so two radios can serve two copies of WSJT-X on two
 ports — which also means an additional radio's TCI server starts *disabled*,
-because the default port would collide with the first radio's; enable it and
-pick a free port in [§6.8.2](#682-built-in-tci-server).
+on a port of its own (50002 for the second radio in the roster, 50003 for the
+third, and so on); switch it on in [§6.8.2](#682-built-in-tci-server). The
+radio's own **Settings → Radio** page shows a line such as *TCI server: on,
+port 50002* with a **Set in Servers** chip that opens the Servers tab.
 
 **Background tabs.** A hidden radio's waterfall freezes — the pixels are only
 drawn for the tab you are watching — and resumes with a clean gap when you
@@ -13961,9 +13963,9 @@ Neither control protocol has any authentication, which is why both default to
 With more than one radio configured ([§2.17](#217-running-more-than-one-radio)),
 each radio has its own copy of this tab and its own servers — a client connects
 to a port and gets *that* radio, so two copies of WSJT-X on two ports can drive
-two radios at once. Additional radios start with the TCI server disabled, since
-its default port is already taken by the first radio's: enable it and pick a
-free port here.
+two radios at once. Additional radios start with the TCI server disabled, on a
+port of their own (50001 plus their place in the roster); the TCI section
+below has a radio picker to switch from one radio's server to the next.
 
 #### 6.8.1 Hamlib rigctld server
 
@@ -14032,13 +14034,23 @@ reported changes nothing.
 
 sdroxide also *is* a TCI server, so TCI-capable programs can use it as their
 radio: frequency and mode control, a wideband IQ stream, receive audio to
-decode, and transmit audio to put on the air. It is **on by default**.
+decode, and transmit audio to put on the air. It is **on by default** for the
+station radio; every further radio has a server of its own, off by default.
 
-- **Enable** — turn the whole server on or off.
+- **Radio** — shown with more than one radio. One chip per radio of the
+  station, each with its server's port or *off* (⚠ when the port could not be
+  bound). The lit chip is the radio this section edits; click another to move
+  the Settings dialog to that radio, on this tab.
+- **Enable** — turn this radio's server on or off. Switching it on at a port
+  another radio's server already uses moves it to the first free port from
+  50001; the new port shows before you press **APPLY**.
 - **Listen on** — `127.0.0.1` (this machine only, the default) or `0.0.0.0`
   (reachable from your whole network).
-- **Port** — 50001 by default, the port TCI clients expect. The screenshot uses
-  50002 because ExpertSDR3 has 50001 on that machine.
+- **Port** — 50001 by default for the station radio, the port TCI clients
+  expect; 50002, 50003, … for further radios. If another radio's server is
+  set to the same port, an amber line names that radio and the next free
+  port: only one of the two can bind it. The screenshot uses 50002 because
+  ExpertSDR3 has 50001 on that machine.
 - **Device name** — what clients see in the connect handshake.
 - **Max clients** — how many programs may connect at once. They all see the same
   radio, and the last command wins.

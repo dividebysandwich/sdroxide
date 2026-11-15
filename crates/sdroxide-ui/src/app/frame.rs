@@ -2127,6 +2127,8 @@ impl SdroxideApp {
                         self.tci_srv_edit = c.tci_server.clone();
                         self.tci_srv_seeded = true;
                     }
+                    // The applied truth, every time — see `tci_srv_cfg`.
+                    self.tci_srv_cfg = Some(c.tci_server.clone());
                     if !self.wsjtx_seeded {
                         self.wsjtx_edit = c.wsjtx.clone();
                         self.wsjtx_seeded = true;
