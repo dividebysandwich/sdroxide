@@ -27,6 +27,7 @@ use sdroxide_types::{
 use xng_mode_hfdl::HfdlChannelDecoder;
 use xng_mode_hfdl::pdu::{HfdlEvent, gs_name};
 
+use crate::aircraft::AircraftBook;
 use crate::stations::StationBook;
 
 /// Realtime data, dropped on backpressure.
@@ -89,6 +90,7 @@ impl HfdlController {
                     let (mut bursts, mut decodes) = (0u64, 0u64);
                     let mut tick = 0u64;
                     let mut book = StationBook::new();
+                    let mut fleet = AircraftBook::new();
                     // Set by anything that changes the status without a decode
                     // (a seeded table), so the next block carries it out rather
                     // than the panel waiting for the idle tick.
@@ -116,6 +118,7 @@ impl HfdlController {
                                             let khz = (cfg.frequency_hz / 1000.0).round() as u32;
                                             for e in events {
                                                 book.observe(&e, khz, now);
+                                                fleet.observe(&e, khz, now);
                                                 record(&mut log, &mut acars, mk_decode(&cfg, &e, now));
                                             }
                                             emitted = true;
@@ -129,6 +132,7 @@ impl HfdlController {
                                     if emitted || force || tick % IDLE_TICK == 0 || tick == 1 {
                                         force = false;
                                         let (stations, table_version) = book.snapshot();
+                                        let aircraft = fleet.snapshot(now_unix());
                                         let _ = res_tx.send(HfdlStatus {
                                             running: cfg.enabled,
                                             level_dbfs: decoder.level_dbfs(),
@@ -136,6 +140,7 @@ impl HfdlController {
                                             decodes,
                                             log: log.iter().cloned().collect(),
                                             acars: acars.iter().cloned().collect(),
+                                            aircraft,
                                             stations,
                                             table_version,
                                         });

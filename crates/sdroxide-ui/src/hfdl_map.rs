@@ -132,6 +132,12 @@ impl HfdlMapState {
         self.plots.len()
     }
 
+    /// Whether an aircraft is plotted under `key` — so a list row can select
+    /// its plot only when there is one to select.
+    pub fn has(&self, key: &str) -> bool {
+        self.plots.contains_key(key)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.plots.is_empty()
     }
@@ -486,6 +492,14 @@ mod tests {
         m.observe(&[decode(1_000, Some(fix(Some("040087"), None, 50.0, -3.0)))], 1_000);
         m.observe(&[], 1_000 + PLOT_STALE_S + 1);
         assert!(m.is_empty(), "a plot nothing refreshes must come off the map");
+    }
+
+    #[test]
+    fn the_map_says_whether_a_key_is_plotted() {
+        let mut m = HfdlMapState::default();
+        m.observe(&[decode(1_000, Some(fix(Some("484123"), None, 52.0, -30.0)))], 1_010);
+        assert!(m.has("icao:484123"));
+        assert!(!m.has("icao:999999"));
     }
 
     #[test]

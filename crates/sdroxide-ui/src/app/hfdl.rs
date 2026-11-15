@@ -18,8 +18,8 @@
 use crate::i18n::tr;
 use eframe::egui::{self, RichText};
 use sdroxide_types::{
-    Command, HfdlAcars, HfdlDecode, HfdlStation, HfdlStatus, Mode, hfdl_acars_label_name,
-    hfdl_plan_khz, hfdl_stations_on, hfdl_working_khz,
+    Command, HfdlAcars, HfdlAircraft, HfdlDecode, HfdlStation, HfdlStatus, Mode,
+    hfdl_acars_label_name, hfdl_plan_khz, hfdl_stations_on, hfdl_working_khz,
 };
 
 use crate::app::SdroxideApp;
@@ -235,6 +235,7 @@ impl SdroxideApp {
                 (HFDL_TAB_DECODES, tr!("hfdl-decodes")),
                 (HFDL_TAB_STATIONS, tr!("hfdl-stations")),
                 (HFDL_TAB_MESSAGES, tr!("hfdl-messages")),
+                (HFDL_TAB_AIRCRAFT, tr!("hfdl-aircraft-list")),
             ] {
                 if crate::chrome::chip(ui, self.view.hfdl_tab == tab, label.to_string()).clicked() {
                     self.view.hfdl_tab = tab;
@@ -252,6 +253,10 @@ impl SdroxideApp {
             HFDL_TAB_STATIONS => self.hfdl_stations_pane(ui, now, (cur_hz / 1e3).round() as u32),
             HFDL_TAB_MESSAGES => {
                 self.hfdl_messages_pane(ui);
+                None
+            }
+            HFDL_TAB_AIRCRAFT => {
+                self.hfdl_aircraft_pane(ui, now);
                 None
             }
             _ => {
@@ -289,6 +294,48 @@ impl SdroxideApp {
                 }
             });
         picked
+    }
+
+    /// Every aircraft the decoder has heard from, most recently heard first —
+    /// including those that never sent a position, which the map cannot show.
+    /// A row selects its plot on the map; its **log** link filters the decode
+    /// log to that aircraft.
+    fn hfdl_aircraft_pane(&mut self, ui: &mut egui::Ui, now: i64) {
+        let home = self.hfdl_home();
+        let fleet: &[HfdlAircraft] =
+            self.hfdl_status.as_ref().map(|s| s.aircraft.as_slice()).unwrap_or(&[]);
+        let room = ui.available_height().max(48.0);
+        let mut act = AircraftAction::None;
+        egui::ScrollArea::vertical()
+            .id_salt("hfdl-aircraft")
+            .max_height(room)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if fleet.is_empty() {
+                    ui.label(
+                        RichText::new(tr!("hfdl-no-aircraft-heard-yet"))
+                            .size(10.5)
+                            .color(crate::theme::gray(120)),
+                    );
+                    return;
+                }
+                for a in fleet {
+                    let plotted = a.map_key.as_deref().is_some_and(|k| self.hfdl_map.has(k));
+                    let selected = plotted && self.hfdl_map.selected == a.map_key;
+                    let next = hfdl_aircraft_row(ui, a, now, home, plotted, selected);
+                    if !matches!(next, AircraftAction::None) {
+                        act = next;
+                    }
+                }
+            });
+        match act {
+            AircraftAction::Select(key) => self.hfdl_map.selected = Some(key),
+            AircraftAction::Filter(text) => {
+                self.hfdl_filter = text;
+                self.view.hfdl_tab = HFDL_TAB_DECODES;
+            }
+            AircraftAction::None => {}
+        }
     }
 
     /// The ACARS messages the data link carried, newest first: who sent it,
@@ -528,6 +575,7 @@ fn slot(ui: &mut egui::Ui, w: f32, text: &str, color: egui::Color32) {
 pub(in crate::app) const HFDL_TAB_DECODES: u8 = 0;
 pub(in crate::app) const HFDL_TAB_STATIONS: u8 = 1;
 pub(in crate::app) const HFDL_TAB_MESSAGES: u8 = 2;
+pub(in crate::app) const HFDL_TAB_AIRCRAFT: u8 = 3;
 
 /// The stations in the order the list shows them: those heard most recently
 /// first, and the ones never heard (known only from the saved table) after,
@@ -759,6 +807,142 @@ fn hfdl_message_row(ui: &mut egui::Ui, d: &HfdlDecode) {
     ui.add_space(3.0);
 }
 
+/// What clicking a row of the aircraft list asked for.
+#[derive(Debug, Clone, PartialEq)]
+enum AircraftAction {
+    None,
+    /// Select the aircraft's plot on the map (by the map's key).
+    Select(String),
+    /// Filter the decode log to this text and show it.
+    Filter(String),
+}
+
+/// The second line of an aircraft's row: how long ago, on which station and
+/// channel, and how many events it accounts for.
+fn hfdl_aircraft_heard(a: &HfdlAircraft, now: i64) -> String {
+    let mut out = tr!(
+        "hfdl-station-heard",
+        age = crate::hfdl_map::fmt_age(now - a.last_heard),
+        mhz = format!("{:.3}", a.freq_khz as f32 / 1e3)
+    )
+    .to_string();
+    if let Some(gs) = &a.gs {
+        out.push_str(" · ");
+        out.push_str(&tr!("hfdl-aircraft-on", gs = gs.clone()));
+    }
+    if let Some(snr) = a.snr_db {
+        out.push_str(&format!(" · {snr:.0} dB"));
+    }
+    out.push_str(" · ");
+    out.push_str(&tr!("hfdl-aircraft-msgs", n = a.msgs));
+    out
+}
+
+/// The third line: where it last said it was, how long ago, and — from our own
+/// position, where we have one — how far and which way.
+fn hfdl_aircraft_where(a: &HfdlAircraft, now: i64, home: Option<(f64, f64)>) -> Option<String> {
+    let (lat, lon) = a.lat.zip(a.lon)?;
+    let mut out = tr!(
+        "hfdl-aircraft-position",
+        lat = format!("{lat:.3}"),
+        lon = format!("{lon:.3}"),
+        age = crate::hfdl_map::fmt_age(now - a.fix_at)
+    )
+    .to_string();
+    if let Some(h) = home {
+        let km = sdroxide_types::distance_km(h, (lat, lon));
+        let bear = sdroxide_types::bearing_deg(h, (lat, lon));
+        out.push_str(" · ");
+        out.push_str(&tr!(
+            "hfdl-aircraft-from-you",
+            km = format!("{km:.0}"),
+            bearing = format!("{bear:.0}")
+        ));
+    }
+    Some(out)
+}
+
+/// One aircraft in the list.
+fn hfdl_aircraft_row(
+    ui: &mut egui::Ui,
+    a: &HfdlAircraft,
+    now: i64,
+    home: Option<(f64, f64)>,
+    plotted: bool,
+    selected: bool,
+) -> AircraftAction {
+    let mut action = AircraftAction::None;
+    ui.horizontal_wrapped(|ui| {
+        let ink = if selected {
+            crate::theme::CYAN()
+        } else if a.logged_off {
+            crate::theme::gray(130)
+        } else {
+            crate::theme::gray(230)
+        };
+        // The name selects the plot — when it has one. An aircraft that never
+        // sent a position has nothing to select, and says so.
+        let name = ui.add(
+            egui::Label::new(RichText::new(a.label()).size(11.5).strong().color(ink))
+                .sense(if plotted { egui::Sense::click() } else { egui::Sense::hover() }),
+        );
+        if plotted {
+            if name.on_hover_text(tr!("hfdl-aircraft-select-hint")).clicked()
+                && let Some(k) = &a.map_key
+            {
+                action = AircraftAction::Select(k.clone());
+            }
+        } else {
+            name.on_hover_text(tr!("hfdl-aircraft-no-position-hint"));
+        }
+        // The other names it is known by, so a flight number can be matched
+        // to a registration or an ICAO address.
+        let label = a.label();
+        for other in [&a.registration, &a.icao].into_iter().flatten() {
+            if other.trim() != label {
+                ui.label(RichText::new(other.trim()).size(10.5).color(crate::theme::gray(150)));
+            }
+        }
+        if a.logged_off {
+            ui.label(
+                RichText::new(tr!("hfdl-aircraft-logged-off"))
+                    .size(10.0)
+                    .color(crate::theme::gray(110)),
+            );
+        }
+        let filter = a.filter_text();
+        if !filter.is_empty()
+            && ui
+                .add(
+                    egui::Label::new(
+                        RichText::new(tr!("hfdl-aircraft-filter"))
+                            .size(10.0)
+                            .color(crate::theme::CYAN_DIM()),
+                    )
+                    .sense(egui::Sense::click()),
+                )
+                .on_hover_text(tr!("hfdl-aircraft-filter-hint"))
+                .clicked()
+        {
+            action = AircraftAction::Filter(filter);
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        ui.add_space(10.0);
+        ui.label(
+            RichText::new(hfdl_aircraft_heard(a, now)).size(10.5).color(crate::theme::gray(140)),
+        );
+    });
+    if let Some(w) = hfdl_aircraft_where(a, now, home) {
+        ui.horizontal_wrapped(|ui| {
+            ui.add_space(10.0);
+            ui.label(RichText::new(w).size(10.5).color(crate::theme::CYAN_DIM()));
+        });
+    }
+    ui.add_space(3.0);
+    action
+}
+
 /// Save the channel in force as one of the operator's own chips, keeping the
 /// list sorted and refusing a channel already on it — so the file is written
 /// only on a real edit and the chip row does not reshuffle under the pointer.
@@ -969,6 +1153,69 @@ mod tests {
             tall = ui.min_rect().height() - before;
         });
         assert!(tall > 0.0);
+    }
+
+    fn plane() -> HfdlAircraft {
+        let mut a = HfdlAircraft::new("icao:A1B2C3".into(), 900);
+        a.icao = Some("A1B2C3".into());
+        a.registration = Some("N123AB".into());
+        a.flight = Some("UAL012".into());
+        a.gs = Some("Riverhead, New York".into());
+        a.freq_khz = 8_912;
+        a.last_heard = 990;
+        a.msgs = 7;
+        a.snr_db = Some(12.0);
+        a.lat = Some(40.0);
+        a.lon = Some(-50.0);
+        a.fix_at = 700;
+        a.map_key = Some("icao:A1B2C3".into());
+        a
+    }
+
+    #[test]
+    fn an_aircraft_row_tells_when_where_and_how_many() {
+        let a = plane();
+        let heard = hfdl_aircraft_heard(&a, 1_000);
+        assert!(heard.contains("8.912"), "{heard}");
+        assert!(heard.contains("Riverhead"), "{heard}");
+        assert!(heard.contains("12 dB"), "{heard}");
+        assert!(heard.contains("7 messages"), "{heard}");
+        let one = HfdlAircraft { msgs: 1, ..a.clone() };
+        assert!(hfdl_aircraft_heard(&one, 1_000).contains("1 message"));
+        assert!(!hfdl_aircraft_heard(&one, 1_000).contains("1 messages"));
+        // The position line reads from where we are, when we are somewhere.
+        let w = hfdl_aircraft_where(&a, 1_000, Some((40.0, -72.0))).unwrap();
+        assert!(w.contains("40.000, -50.000"), "{w}");
+        assert!(w.contains("km"), "{w}");
+        let blind = hfdl_aircraft_where(&a, 1_000, None).unwrap();
+        assert!(!blind.contains("km"), "{blind}");
+        // An aircraft that never sent a position has no such line.
+        let none = HfdlAircraft { lat: None, lon: None, fix_at: 0, ..a };
+        assert_eq!(hfdl_aircraft_where(&none, 1_000, None), None);
+    }
+
+    fn run_row(a: &HfdlAircraft, plotted: bool) -> (f32, AircraftAction) {
+        let mut out = (0.0, AircraftAction::None);
+        egui::__run_test_ui(|ui| {
+            let before = ui.min_rect().height();
+            let act = hfdl_aircraft_row(ui, a, 1_000, Some((40.0, -72.0)), plotted, false);
+            out = (ui.min_rect().height() - before, act);
+        });
+        out
+    }
+
+    #[test]
+    fn an_aircraft_row_is_compact_and_does_nothing_until_clicked() {
+        let (tall, act) = run_row(&plane(), true);
+        assert_eq!(act, AircraftAction::None);
+        assert!(tall > 20.0 && tall < 110.0, "an aircraft row is {tall} points tall");
+        // One that never sent a position, never resolved, and has logged off.
+        let mut bare = HfdlAircraft::new("gs4:ac12".into(), 900);
+        bare.aircraft_id = Some(12);
+        bare.logged_off = true;
+        let (tall, act) = run_row(&bare, false);
+        assert_eq!(act, AircraftAction::None);
+        assert!(tall > 10.0 && tall < 110.0, "{tall}");
     }
 
     #[test]

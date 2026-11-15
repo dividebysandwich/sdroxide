@@ -7049,7 +7049,7 @@ Below that, the log, newest first: the time (UTC), what kind of record it is, th
 
 #### The ground stations
 
-The header of the left-hand pane has three chips, **DECODES**, **STATIONS** and **MESSAGES**. **STATIONS** lists every ground station the decoder knows of, the one heard most recently first:
+The header of the left-hand pane has four chips, **DECODES**, **STATIONS**, **MESSAGES** and **AIRCRAFT**. **STATIONS** lists every ground station the decoder knows of, the one heard most recently first:
 
 - **When and how well it was heard** — how long ago, on which channel, its signal-to-noise figure, and how many squitters it has sent since you switched **LISTEN** on. It is green while that was within the last quarter of an hour. A station known only from the saved table says *not heard yet*.
 - **Its channels**, in kHz. A channel is green while the station is working it: the one it was just heard on, and any other its latest squitter lists as in use. Click a channel to tune to it; the channel you are on is underlined.
@@ -7076,6 +7076,18 @@ Each message shows:
 **SAVE** follows the tab. On **MESSAGES** it writes `sdroxide-hfdl-acars.csv`, one row per message with the oldest first, the text in one quoted field with its line breaks intact; on the other tabs it writes the decode log as before.
 
 The decode log's rows for the same messages now show the aircraft, the label and the start of the text instead of the link-layer envelope. The log also now lists its newest event at the top, as this section always said it did.
+
+#### The aircraft list
+
+**AIRCRAFT** lists every aircraft the decoder has heard from, the most recently heard first — including the ones that never sent a position, which the map cannot show. An aircraft is listed from its first downlink and stays for three hours after it was last heard.
+
+Each row gives the aircraft's name (the flight, else the registration, else the ICAO address, else `#` and its alias), its other names beside it, then how long ago it was heard and on which channel, the ground station it is talking to, its signal-to-noise figure and how many messages account for it; and, if it has sent a position, where it was, how long ago, and how far and in which direction that is from your grid square. **logged off** marks an aircraft that has said goodbye to the network.
+
+Click an aircraft's **name** to select it on the map (an aircraft with no position has nothing to select, and its tooltip says so); the row of the aircraft selected on the map is lit. Click **log ▸** to filter the decode log to that aircraft and switch to **DECODES**.
+
+An HFDL aircraft has no name of its own on the air. It logs on to a ground station giving its ICAO address and is handed a short *alias*, good only on that station, which every later frame uses. Until a logon is heard — often the case, since a logon is heard only if you were tuned to that channel at that moment — an aircraft is listed under its alias and station, and it is *merged into one row with its ICAO address* the moment the logon confirmation arrives. Two aircraft with the same alias on different stations stay two rows. Squitters, and uplinks addressed to an alias whose logon was never heard, say nothing reliable about which aircraft they concern and are not counted.
+
+The **aircraft** figure in the status strip is still the number plotted on the map, so it can be lower than the list's length.
 
 #### The aircraft map
 

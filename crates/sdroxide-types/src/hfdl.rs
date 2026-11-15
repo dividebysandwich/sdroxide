@@ -273,6 +273,11 @@ pub struct HfdlStatus {
     /// at 64 events, most of them squitters: a busy channel would push a
     /// message out of it in minutes. Appended last: the wire is positional.
     pub acars: Vec<HfdlDecode>,
+    /// The aircraft the decoder has heard from, most recently heard first,
+    /// whether or not they ever sent a position. Does not roll with the log:
+    /// an aircraft stays listed for [`HFDL_AIRCRAFT_KEEP_S`] after it was last
+    /// heard. Appended last: the wire is positional.
+    pub aircraft: Vec<HfdlAircraft>,
     /// The version of the system table received over the air since the decoder
     /// started, or `None` while none has been — [`Self::stations`] may still
     /// carry channels from the copy saved last time.
@@ -289,6 +294,7 @@ impl Default for HfdlStatus {
             log: Vec::new(),
             stations: Vec::new(),
             acars: Vec::new(),
+            aircraft: Vec::new(),
             table_version: None,
         }
     }
@@ -298,6 +304,132 @@ impl Default for HfdlStatus {
 /// a session's worth of HFDL is chatty (a squitter every ~32 s plus the
 /// aircraft traffic), and a panel has no need of more than a screenful.
 pub const HFDL_LOG_DEPTH: usize = 64;
+
+/// How long an aircraft stays in [`HfdlStatus::aircraft`] after it was last
+/// heard — three hours, long enough to cover a flight leg's gap between
+/// reports without the list growing without bound over a day's listening.
+pub const HFDL_AIRCRAFT_KEEP_S: i64 = 3 * 60 * 60;
+
+/// The most aircraft the list holds; the one heard longest ago goes first.
+pub const HFDL_AIRCRAFT_MAX: usize = 300;
+
+/// One aircraft the decoder has heard, with what it has told us.
+///
+/// An HFDL aircraft has no stable name on the air. It logs on to a ground
+/// station quoting its ICAO address and is handed a short *alias* that is only
+/// meaningful on that station; everything after, until it logs off, is
+/// addressed by the alias. So the identity pieced together here is whatever
+/// has been learned: the ICAO address once a logon (or a resolved downlink)
+/// has been heard, else the alias and the station it belongs to. When the
+/// ICAO turns up the two are merged into one row.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HfdlAircraft {
+    /// The row's identity: `icao:XXXXXX`, or `gs{n}:ac{alias}` while the ICAO
+    /// is unknown. Stable while nothing new is learned; changes (once) when
+    /// an alias row resolves to an ICAO.
+    pub key: String,
+    pub icao: Option<String>,
+    /// The registration, from an ACARS block.
+    pub registration: Option<String>,
+    /// The flight, from a position record or an ACARS block.
+    pub flight: Option<String>,
+    /// The latest GS-local alias.
+    pub aircraft_id: Option<u32>,
+    /// The ground station it is talking to, and its name.
+    pub gs_id: Option<u8>,
+    pub gs: Option<String>,
+    /// The channel it was last heard on, in kHz.
+    pub freq_khz: u32,
+    pub first_heard: i64,
+    pub last_heard: i64,
+    /// Events attributed to it.
+    pub msgs: u32,
+    /// EVM-derived SNR of the latest burst that measured one.
+    pub snr_db: Option<f32>,
+    /// Its latest position and when it was reported; `fix_at` is 0 for none.
+    pub lat: Option<f64>,
+    pub lon: Option<f64>,
+    pub fix_at: i64,
+    /// The key the map files its latest fix under ([`HfdlFix::key`]), so a
+    /// row can select its plot.
+    pub map_key: Option<String>,
+    /// It has logged off (or been refused), so is no longer on the network.
+    pub logged_off: bool,
+}
+
+impl HfdlAircraft {
+    pub fn new(key: String, unix: i64) -> Self {
+        Self {
+            key,
+            icao: None,
+            registration: None,
+            flight: None,
+            aircraft_id: None,
+            gs_id: None,
+            gs: None,
+            freq_khz: 0,
+            first_heard: unix,
+            last_heard: unix,
+            msgs: 0,
+            snr_db: None,
+            lat: None,
+            lon: None,
+            fix_at: 0,
+            map_key: None,
+            logged_off: false,
+        }
+    }
+
+    /// What to call it: the flight, then the registration, then the ICAO
+    /// address, then `#alias`.
+    pub fn label(&self) -> String {
+        for s in [&self.flight, &self.registration, &self.icao].into_iter().flatten() {
+            let t = s.trim();
+            if !t.is_empty() {
+                return t.to_string();
+            }
+        }
+        match self.aircraft_id {
+            Some(id) => format!("#{id}"),
+            None => "#?".to_string(),
+        }
+    }
+
+    /// The identifier to filter the decode log by: the most specific the
+    /// aircraft has that its log rows carry.
+    pub fn filter_text(&self) -> String {
+        self.flight
+            .as_deref()
+            .or(self.registration.as_deref())
+            .or(self.icao.as_deref())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default()
+    }
+
+    /// Fold what `later` knows into this row — used when an alias row turns out
+    /// to be the same aircraft as an ICAO row. Fields the newer one has
+    /// replace this one's; counts add; the history spans both.
+    pub fn absorb(&mut self, later: HfdlAircraft) {
+        self.first_heard = self.first_heard.min(later.first_heard);
+        self.msgs = self.msgs.saturating_add(later.msgs);
+        if later.last_heard >= self.last_heard {
+            self.last_heard = later.last_heard;
+            self.freq_khz = later.freq_khz;
+            self.snr_db = later.snr_db.or(self.snr_db);
+            self.gs_id = later.gs_id.or(self.gs_id);
+            self.gs = later.gs.or_else(|| self.gs.take());
+            self.aircraft_id = later.aircraft_id.or(self.aircraft_id);
+        }
+        self.flight = later.flight.or_else(|| self.flight.take());
+        self.registration = later.registration.or_else(|| self.registration.take());
+        if later.fix_at >= self.fix_at && later.fix_at > 0 {
+            self.lat = later.lat;
+            self.lon = later.lon;
+            self.fix_at = later.fix_at;
+            self.map_key = later.map_key;
+        }
+    }
+}
 
 /// How long what a ground station told us stays a claim worth showing: a
 /// squitter repeats every ~32 s, but the decoder hears one channel at a time,
@@ -606,5 +738,66 @@ mod tests {
         assert_eq!(hfdl_acars_label_name("H1"), Some("Company message"));
         assert_eq!(hfdl_acars_label_name("B6"), Some("ATS (ADS-C / CPDLC)"));
         assert_eq!(hfdl_acars_label_name("ZZ"), None);
+    }
+
+    #[test]
+    fn an_aircraft_is_labelled_by_the_most_useful_name_it_has() {
+        let mut a = HfdlAircraft::new("gs4:ac12".into(), 10);
+        assert_eq!(a.label(), "#?");
+        a.aircraft_id = Some(12);
+        assert_eq!(a.label(), "#12");
+        a.icao = Some("A1B2C3".into());
+        assert_eq!(a.label(), "A1B2C3");
+        a.registration = Some("N123AB".into());
+        assert_eq!(a.label(), "N123AB");
+        a.flight = Some(" UAL012 ".into());
+        assert_eq!(a.label(), "UAL012");
+        assert_eq!(a.filter_text(), "UAL012");
+        a.flight = Some("  ".into());
+        assert_eq!(a.label(), "N123AB", "a blank flight is no name");
+    }
+
+    #[test]
+    fn absorbing_a_row_merges_history_and_keeps_the_newest_facts() {
+        let mut icao = HfdlAircraft::new("icao:A1B2C3".into(), 100);
+        icao.icao = Some("A1B2C3".into());
+        icao.msgs = 2;
+        icao.last_heard = 150;
+        icao.freq_khz = 5_451;
+        icao.lat = Some(1.0);
+        icao.lon = Some(2.0);
+        icao.fix_at = 140;
+        icao.map_key = Some("icao:A1B2C3".into());
+        let mut alias = HfdlAircraft::new("gs4:ac12".into(), 60);
+        alias.msgs = 3;
+        alias.last_heard = 200;
+        alias.freq_khz = 8_912;
+        alias.aircraft_id = Some(12);
+        alias.flight = Some("UAL012".into());
+        alias.lat = Some(3.0);
+        alias.lon = Some(4.0);
+        alias.fix_at = 190;
+        alias.map_key = Some("ac:12".into());
+        icao.absorb(alias);
+        assert_eq!((icao.first_heard, icao.last_heard, icao.msgs), (60, 200, 5));
+        assert_eq!((icao.freq_khz, icao.aircraft_id), (8_912, Some(12)));
+        assert_eq!(icao.flight.as_deref(), Some("UAL012"));
+        assert_eq!((icao.lat, icao.lon, icao.fix_at), (Some(3.0), Some(4.0), 190));
+        assert_eq!(icao.map_key.as_deref(), Some("ac:12"));
+        assert_eq!(icao.key, "icao:A1B2C3", "the ICAO row keeps its identity");
+    }
+
+    #[test]
+    fn an_older_row_does_not_overwrite_a_newer_position() {
+        let mut a = HfdlAircraft::new("icao:X".into(), 100);
+        a.last_heard = 300;
+        a.lat = Some(9.0);
+        a.fix_at = 290;
+        let mut older = HfdlAircraft::new("gs4:ac1".into(), 50);
+        older.last_heard = 120;
+        older.lat = Some(1.0);
+        older.fix_at = 110;
+        a.absorb(older);
+        assert_eq!((a.lat, a.fix_at, a.last_heard), (Some(9.0), 290, 300));
     }
 }

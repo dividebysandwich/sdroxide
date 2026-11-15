@@ -10,6 +10,7 @@
 //! mapping from `xng_mode_hfdl::pdu::HfdlEvent` onto
 //! [`sdroxide_types::HfdlStatus`]'s rolling decode log.
 
+pub mod aircraft;
 pub mod controller;
 pub mod stations;
 
