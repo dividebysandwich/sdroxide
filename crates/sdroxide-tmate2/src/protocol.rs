@@ -118,6 +118,9 @@ const SPEED: usize = 38; // 38, 39, 40: increment per detent at each speed
 const THRESHOLD: usize = 41; // 41, 42: when the speed steps up
 const EVAL_TIME: usize = 43;
 
+/// How often the panel redraws its LCD, in 10 ms units.
+pub const LCD_REFRESH_10MS: u8 = 10;
+
 /// Status-byte bit: the "USB" LED, lit while a program is driving the device.
 pub const LED_USB: u8 = 0x01;
 /// Status-byte bit: the lock LED.
@@ -316,7 +319,9 @@ fn settings(r: &mut [u8; REPORT_LEN], lock: bool) {
     r[BACKLIGHT_G] = 0x32;
     r[BACKLIGHT_B] = 0xFF;
     r[CONTRAST] = 0x28;
-    r[REFRESH] = 0x28;
+    // In 10 ms units. ELAD's DLL sends 40 (400 ms), which leaves the S-meter
+    // visibly behind the signal; 100 ms keeps up with it.
+    r[REFRESH] = LCD_REFRESH_10MS;
     r[SPEED..SPEED + 3].copy_from_slice(&[1, 5, 10]);
     r[THRESHOLD..THRESHOLD + 2].copy_from_slice(&[15, 25]);
     r[EVAL_TIME] = 10;
@@ -472,7 +477,7 @@ mod tests {
     #[test]
     fn output_report_matches_the_captured_settings() {
         let r = idle_output();
-        assert_eq!(&r[33..44], &[0x00, 0x32, 0xFF, 0x28, 0x28, 1, 5, 10, 15, 25, 10]);
+        assert_eq!(&r[33..44], &[0x00, 0x32, 0xFF, 0x28, LCD_REFRESH_10MS, 1, 5, 10, 15, 25, 10]);
         assert_eq!(r[STATUS], LED_USB);
         assert!(r[..32].iter().all(|b| *b == 0));
         assert!(r[44..].iter().all(|b| *b == 0));

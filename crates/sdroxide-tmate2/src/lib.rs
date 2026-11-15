@@ -33,14 +33,15 @@ const RESCAN: Duration = Duration::from_secs(1);
 /// How long one read waits before the worker checks its mailbox. Reports do
 /// not wait on this — a read returns the moment one arrives. Short, because
 /// the refresh below has to keep its pace while the panel is idle.
-const READ_WAIT: Duration = Duration::from_millis(40);
-/// How often the output report is re-sent while connected.
+const READ_WAIT: Duration = Duration::from_millis(20);
+/// How often the output report is re-sent while connected, and so the
+/// longest a new S-meter reading waits before it is on the wire.
 ///
-/// Not optional: the panel treats the report's refresh-time byte (400 ms) as
-/// a watchdog and blanks the backlight and USB LED when no report arrives
-/// inside it — on hardware, a 2 s refresh made both blink. ELAD's own console
-/// and Tmate2_C both write continuously; well inside the window here.
-const REFRESH: Duration = Duration::from_millis(150);
+/// Not optional: the panel blanks the backlight and USB LED when no report
+/// arrives within its LCD refresh time — on hardware, a 2 s refresh made both
+/// blink. Kept well inside [`protocol::LCD_REFRESH_10MS`] (100 ms). ELAD's own
+/// console and Tmate2_C both write continuously too.
+const REFRESH: Duration = Duration::from_millis(40);
 /// Depth of the event queue. A stalled UI drops events rather than letting
 /// them pile up behind it.
 const QUEUE: usize = 256;
