@@ -71,6 +71,11 @@ pub enum Action {
     BandSelect(Band),
     ModeNext,
     ModePrev,
+    /// Step through the everyday modes only — [`Mode::EVERYDAY`] — rather
+    /// than every decoder the program has. What a hardware mode key wants:
+    /// [`Action::ModeNext`] reaches ADS-B, HFDL and the rest a few presses on.
+    ModeNextEveryday,
+    ModePrevEveryday,
     ModeSelect(Mode),
     MemoryRecall(u32),
     RecordToggle,
@@ -150,7 +155,8 @@ impl Action {
             | BandSelect(_) | MemoryRecall(_) => "Tuning",
             Volume | SubVolume | Squelch | FilterWidth | FilterShift | AgcMaxGain | ManualGain
             | Mute | NoiseBlanker | NoiseReductionCycle | AutoNotch | Binaural | AgcCycle
-            | SubRx | ModeNext | ModePrev | ModeSelect(_) | RecordToggle => "Receive",
+            | SubRx | ModeNext | ModePrev | ModeNextEveryday | ModePrevEveryday | ModeSelect(_)
+            | RecordToggle => "Receive",
             Ptt | TuneCarrier | TxDrive | TuneDrive | MicGain | DigiAudioFreq | AbortTx
             | CwStraight | VoicePlay(_) | VoiceStop | ToneBurst => "Transmit",
             SpectrumZoom | SpectrumPan | SpectrumFloorDb | SpectrumCeilDb | FitSpan | ZoomIn
@@ -205,6 +211,8 @@ impl Action {
             BandDown => "Band down",
             ModeNext => "Mode next",
             ModePrev => "Mode previous",
+            ModeNextEveryday => "Mode next (everyday modes)",
+            ModePrevEveryday => "Mode previous (everyday modes)",
             RecordToggle => "Record on/off",
             AbortTx => "Abort transmit",
             CwStraight => "CW straight key",
@@ -298,7 +306,7 @@ impl Action {
             BandDown,
         ];
         v.extend(Band::ALL.iter().map(|b| BandSelect(*b)));
-        v.extend([ModeNext, ModePrev]);
+        v.extend([ModeNext, ModePrev, ModeNextEveryday, ModePrevEveryday]);
         v.extend(Mode::ALL.iter().map(|m| ModeSelect(*m)));
         v.extend([RecordToggle, AbortTx, CwStraight, VoiceStop, ToneBurst]);
         v.extend((0..crate::VOICE_SLOTS as u8).map(VoicePlay));
@@ -992,8 +1000,8 @@ impl Tmate2Binding {
             Tmate2Binding::button(E2Push, Action::NoiseReductionCycle),
             Tmate2Binding::button(F1, Action::BandDown),
             Tmate2Binding::button(F2, Action::BandUp),
-            Tmate2Binding::button(F3, Action::ModePrev),
-            Tmate2Binding::button(F4, Action::ModeNext),
+            Tmate2Binding::button(F3, Action::ModePrevEveryday),
+            Tmate2Binding::button(F4, Action::ModeNextEveryday),
             Tmate2Binding::button(F5, Action::AgcCycle),
             Tmate2Binding::button(F6, Action::NoiseBlanker),
         ]

@@ -408,6 +408,25 @@ pub(crate) fn apply_action(
             let i = if act == ModeNext { (i + 1) % n } else { (i + n - 1) % n };
             cmds.push(Command::SetMode { rx, mode: all[i] });
         }
+        ModeNextEveryday | ModePrevEveryday => {
+            let cur = state.rx[0].mode;
+            let all: Vec<_> = sdroxide_types::Mode::EVERYDAY
+                .into_iter()
+                .filter(|m| state.mode_unavailable(*m).is_none())
+                .collect();
+            if !all.is_empty() {
+                let n = all.len();
+                // From a mode outside the list, the first press lands on its
+                // first (next) or last (previous) entry.
+                let i = match all.iter().position(|m| *m == cur) {
+                    Some(i) if act == ModeNextEveryday => (i + 1) % n,
+                    Some(i) => (i + n - 1) % n,
+                    None if act == ModeNextEveryday => 0,
+                    None => n - 1,
+                };
+                cmds.push(Command::SetMode { rx, mode: all[i] });
+            }
+        }
         ModeSelect(mode) => cmds.push(Command::SetMode { rx, mode }),
         MemoryRecall(n) => cmds.push(Command::RecallMemory(n)),
         RecordToggle => cmds.push(Command::SetRecording(!state.recording)),

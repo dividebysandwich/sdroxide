@@ -444,6 +444,20 @@ const PHONE_LSB_BANDS: [(f64, f64); 3] =
 impl Mode {
     /// Every mode, in the order they cycle and appear in the picker — which is
     /// deliberately *not* the enum's declaration order (see [`Mode::Hell`]).
+    /// The modes a hardware mode key steps through: voice, CW and the two
+    /// digital modes most stations live on. See [`crate::Action::ModeNextEveryday`].
+    pub const EVERYDAY: [Mode; 9] = [
+        Mode::Lsb,
+        Mode::Usb,
+        Mode::Cw,
+        Mode::Am,
+        Mode::Nfm,
+        Mode::Digu,
+        Mode::Digl,
+        Mode::Ft8,
+        Mode::Ft4,
+    ];
+
     pub const ALL: [Mode; 56] = [
         Mode::Lsb,
         Mode::Usb,
