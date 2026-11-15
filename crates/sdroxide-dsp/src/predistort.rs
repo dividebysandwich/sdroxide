@@ -49,8 +49,8 @@
 //! Two properties hold whatever the feedback says, because the failure mode of
 //! a correction loop fed rubbish must not be an over-driven amplifier:
 //!
-//! * The table is **normalised at the top** — the largest amplitude keeps unit
-//!   gain and everything below it is pulled *down* — so a compressing amplifier
+//! * The table is **normalised at the top** — the largest amplitude being sent
+//!   keeps unit gain and everything below it is pulled *down* — so a compressing amplifier
 //!   is linearised by reducing small-signal gain rather than by asking for more
 //!   than full scale.
 //! * Every entry is then clamped so that `|x| · |G(|x|)|` cannot exceed full
@@ -73,6 +73,12 @@ use crate::Complex32;
 /// How far an entry may depart from unity gain, as a ratio. A correction
 /// beyond this is not a nonlinearity, it is a broken feedback path.
 pub const MAX_CORRECTION: f32 = 4.0;
+
+/// Slice length for measuring how the loop gain turns across a block. Short
+/// enough that the turn between two slices stays under half a cycle for a
+/// residual LO error up to `rate / (2 · K_SLICE)` (1.2 kHz at 2.5 Msps), long
+/// enough that each slice's estimate is not mostly noise.
+const K_SLICE: usize = 1024;
 
 /// Envelope decimation for the coarse delay search. The envelope of a
 /// modulated signal has nothing in it above a few tens of kilohertz, so
@@ -112,6 +118,16 @@ const MIN_BIN_HITS: u32 = 32;
 pub struct PureSignal {
     /// The correction table: complex gain against `|x|` from 0 to full scale.
     table: Vec<Complex32>,
+    /// Which entries the feedback has reached. The top one that has is the
+    /// anchor [`PureSignal::normalise`] pins at unity: an entry above every
+    /// amplitude being sent has learned nothing, so pinning *it* would leave
+    /// the overall level of the learned part free to wander.
+    learned: Vec<bool>,
+    /// The sample rate, for reporting [`PureSignal::residual_hz`].
+    sample_rate: f64,
+    /// What was left of the LO difference in the last block learned from,
+    /// in Hz, after the nominal offset was spun out.
+    residual_hz: f32,
     /// How hard each block moves the table, 0..1.
     alpha: f32,
     frozen: bool,
@@ -185,6 +201,9 @@ impl PureSignal {
         let locate_every = (check_every / 4).max(1);
         PureSignal {
             table: vec![Complex32::new(1.0, 0.0); bins],
+            learned: vec![false; bins],
+            sample_rate: sample_rate_hz,
+            residual_hz: 0.0,
             alpha: Self::alpha_for_rate(rate),
             frozen: false,
             refs: Vec::new(),
@@ -259,10 +278,19 @@ impl PureSignal {
         if lo <= 0.0 || hi <= 0.0 { 0.0 } else { 20.0 * (hi / lo).log10() }
     }
 
+    /// What was left of the LO difference in the last block learned from, in
+    /// Hz: how far the two synthesisers really are from the offset that was
+    /// spun out. Taken out inside the loop; reported because a figure that
+    /// stays large says the offset given to [`PureSignal::feed_back`] is wrong.
+    pub fn residual_hz(&self) -> f32 {
+        self.residual_hz
+    }
+
     /// Forget the table and the alignment. What a new over does, and what the
     /// operator's Restart does.
     pub fn reset(&mut self) {
         self.table.fill(Complex32::new(1.0, 0.0));
+        self.learned.fill(false);
         self.unlock();
     }
 
@@ -499,11 +527,43 @@ impl PureSignal {
         let mut pw = vec![0.0f32; b];
         let mut hits = vec![0u32; b];
 
-        // The overall complex gain of the whole loop — coupler attenuation,
+        // The overall complex gain of the whole loop: coupler attenuation,
         // cable length, receiver gain and the phase between the two
         // synthesisers, all of it. Estimated per block and divided out, so
         // what is left is the *shape* of the amplifier's curve, which is the
         // only part worth learning.
+        //
+        // As a gain *and a slow rotation*, not a constant. The two
+        // synthesisers are not exactly the spun-out offset apart, and a few
+        // hundred hertz left over turns the loop gain through tens of degrees
+        // inside one block. A constant fitted to that comes out too small,
+        // each entry's own estimate scatters in phase around it, and the
+        // scatter reads as gain the amplifier has too much of: the whole
+        // learned table walks down to the floor (seen on a PlutoSky R2,
+        // issue #525). So the rotation is measured from how the gain turns
+        // between short slices of the block, and taken out first.
+        let mut turn = Complex32::new(0.0, 0.0);
+        let mut prev: Option<Complex32> = None;
+        let mut at = 0;
+        while at + K_SLICE <= m {
+            let mut sn = Complex32::new(0.0, 0.0);
+            for n in at..at + K_SLICE {
+                sn += self.scratch[n] * self.refs[idx + n].conj();
+            }
+            if let Some(p) = prev {
+                turn += sn * p.conj();
+            }
+            prev = Some(sn);
+            at += K_SLICE;
+        }
+        // Radians per sample; zero when there was too little to measure.
+        let w = if turn.norm() > 0.0 { f64::from(turn.arg()) / K_SLICE as f64 } else { 0.0 };
+        self.residual_hz = (w * self.sample_rate / std::f64::consts::TAU) as f32;
+        if w != 0.0 {
+            let spun = std::mem::take(&mut self.scratch);
+            derotate(&spun[..m], -w, &mut self.scratch);
+        }
+
         let mut num = Complex32::new(0.0, 0.0);
         let mut den = 0.0f32;
         for n in 0..m {
@@ -544,6 +604,7 @@ impl PureSignal {
             // `G · g(|x·G|) = 1`, damped so one noisy block cannot swing it.
             let want = self.table[i] / r;
             self.table[i] = self.table[i] * (1.0 - self.alpha) + want * self.alpha;
+            self.learned[i] = true;
             moved = true;
         }
         if !moved {
@@ -558,10 +619,21 @@ impl PureSignal {
     /// was given — see the module doc.
     fn normalise(&mut self) {
         let b = self.table.len();
-        let top = self.table[b - 1];
-        if top.norm() > 1e-6 {
-            for g in self.table.iter_mut() {
-                *g /= top;
+        // Pinned at the highest amplitude actually being sent, not at full
+        // scale. Each block's loop gain is divided out, so the feedback says
+        // nothing about the table's overall level, only its shape; anchored
+        // on an entry nothing reaches, that level is free to wander, and any
+        // bias in the estimates walks it off. Entries above the anchor hold
+        // its value, so a louder peak later starts from the curve's end.
+        if let Some(t) = self.learned.iter().rposition(|&l| l) {
+            let top = self.table[t];
+            if top.norm() > 1e-6 {
+                for g in self.table[..=t].iter_mut() {
+                    *g /= top;
+                }
+            }
+            for g in self.table[t + 1..].iter_mut() {
+                *g = Complex32::new(1.0, 0.0);
             }
         }
         for (i, g) in self.table.iter_mut().enumerate() {
@@ -897,6 +969,7 @@ mod tests {
         for (i, g) in ps.table.iter_mut().enumerate() {
             *g = Complex32::from_polar(100.0 * (i + 1) as f32, i as f32);
         }
+        ps.learned.fill(true);
         ps.normalise();
         for (i, g) in ps.table().iter().enumerate() {
             let a = (i + 1) as f32 / 16.0;
@@ -907,6 +980,67 @@ mod tests {
             );
             assert!(g.norm() <= MAX_CORRECTION + 1e-3);
         }
+    }
+
+    /// A two-tone over at 2.5 Msps with the two synthesisers 300 Hz further
+    /// apart than the offset spun out: the residual is found and taken out,
+    /// and the table learns the amplifier's curve rather than walking down to
+    /// the floor. Before the rotation was measured, this ended with every
+    /// learned entry at -12 dB inside a second, the signature seen on a
+    /// PlutoSky R2 (issue #525).
+    #[test]
+    fn a_residual_lo_error_does_not_walk_the_table_down() {
+        let fs = 2.5e6f64;
+        let offset_hz = -625_000.0f64;
+        let err_hz = 300.0f64;
+        let delay = 50_000usize;
+        let mut ps = PureSignal::with_history(32, 0.5, fs, 1.0);
+        let mut line: std::collections::VecDeque<Complex32> =
+            std::iter::repeat_n(Complex32::new(0.0, 0.0), delay).collect();
+        let coupler = Complex32::from_polar(0.02, 0.7);
+        let mut hiss = source(16384 * 200, 31).into_iter();
+        let (mut t_tx, mut t_rx) = (0u64, 0u64);
+        for _ in 0..150 {
+            let mut x: Vec<Complex32> = (0..25_000u64)
+                .map(|n| {
+                    let t = (t_tx + n) as f64 / fs;
+                    let a = Complex32::from_polar(0.3, (std::f64::consts::TAU * 700.0 * t) as f32);
+                    let b = Complex32::from_polar(0.3, (std::f64::consts::TAU * 1900.0 * t) as f32);
+                    a + b
+                })
+                .collect();
+            t_tx += 25_000;
+            ps.predistort(&mut x);
+            line.extend(x.iter().map(|s| amplifier(*s) * coupler));
+            while line.len() >= 16384 {
+                let fb: Vec<Complex32> = line
+                    .drain(..16384)
+                    .enumerate()
+                    .map(|(i, s)| {
+                        let t = (t_rx + i as u64) as f64 / fs;
+                        let ph = (std::f64::consts::TAU * (offset_hz + err_hz) * t) as f32;
+                        let n = hiss.next().unwrap_or(Complex32::new(0.0, 0.0));
+                        s * Complex32::from_polar(1.0, ph) + n * 0.0005
+                    })
+                    .collect();
+                t_rx += 16384;
+                ps.feed_back(&fb, offset_hz, fs);
+            }
+        }
+        assert!(ps.locked(), "never aligned (score {:.2})", ps.score());
+        assert!(
+            (ps.residual_hz() - err_hz as f32).abs() < 30.0,
+            "residual measured as {:.0} Hz, not {err_hz:.0}",
+            ps.residual_hz()
+        );
+        let db: Vec<f32> = ps.table().iter().map(|g| 20.0 * g.norm().log10()).collect();
+        assert!(
+            ps.correction_db() < 6.0 && db.iter().all(|d| *d > -6.0),
+            "the table walked off: {db:?}"
+        );
+        // And nothing is boosted: the highest amplitude sent keeps unit gain,
+        // as the module promises, rather than the table's unreached top entry.
+        assert!(db.iter().all(|d| *d < 0.01), "an entry asks for more than unity: {db:?}");
     }
 
     /// Holding the table stops it moving, which is what lets an operator keep
