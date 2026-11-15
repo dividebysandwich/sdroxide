@@ -13450,8 +13450,8 @@ yet.
 
 Everything sdroxide can be told to do is an **action** — tune, PTT, change band,
 cycle noise reduction, open the logbook — and the **Controls** tab binds actions
-to whatever you would rather press or turn than click. The three sections of the
-tab (keyboard, mouse, MIDI) all draw on the same list of actions.
+to whatever you would rather press or turn than click. The sections of the
+tab (keyboard, mouse, MIDI, TMate 2) all draw on the same list of actions.
 
 Actions come in two kinds, and the *Step / mode* column changes to match. A
 **continuous** action (tuning, volume, filter width) takes a *step* — the amount
@@ -13557,6 +13557,64 @@ by itself when you plug it back in.
 > knob plugged into your laptop works just as well against a remote engine
 > (`--connect`, [8](#8-remote-operation)). Keyboard and mouse bindings work in
 > the browser client too; MIDI needs the native app.
+
+#### 6.4.4 ELAD TMate 2
+
+The **ELAD / WoodBoxRadio TMate 2** USB controller is supported directly. It
+needs no ELAD software or DLL, and it works with any radio sdroxide drives, not
+only ELAD's. Tick **Enable** in the **ELAD TMate 2** section of the Controls tab
+and the panel is found by itself when it is plugged in; the status line beside it
+names the connected panel. It needs the native app on Windows or Linux. On Linux,
+install `packaging/linux/60-sdroxide-tmate2.rules` (the .deb does this for you)
+so it can be opened without root. macOS is not supported yet.
+
+The default bindings are:
+
+| Control | Does |
+|---|---|
+| Main dial | Tune, 10 Hz per detent |
+| E1 dial | Volume |
+| E2 dial | Filter width |
+| Main dial push | Swap VFO A/B |
+| E1 push | Mute |
+| E2 push | Cycle noise reduction |
+| F1 / F2 | Band down / up |
+| F3 / F4 | Previous / next everyday mode (LSB, USB, CW, AM, NFM, DIGU, DIGL, FT8, FT4) |
+| F5 | Cycle AGC |
+| F6 | Noise blanker |
+
+Every row can be rebound to any action, and **Last control** names whatever you
+touched last. **+ Add TMate 2 control** adds a row and **Restore TMate 2
+defaults** puts the table above back.
+
+**The LCD** shows the active VFO's frequency, the mode, the A/B and RX/TX
+legends, and the NB, NR, AN, RIT and XIT legends. On receive the bargraph is the
+S-meter and the small digits show the signal in dBm. On transmit the bargraph is
+output power, and the small digits show the power in watts (or milliwatts below
+1 W). Where that power reading comes from depends on your station:
+
+- **With a Hardrock amplifier connected** ([2.23](#223-hardrock-amplifier)), it
+  is the amplifier's output, the same figure every other power display in
+  sdroxide shows.
+- **Without an amplifier**, it is the radio's own forward power, so an FDM-DUO on
+  its own reads its milliwatts or watts.
+- **A radio that reports only a PO percentage** shows the bargraph and the
+  percentage instead of watts.
+- **A radio that reports no transmit power at all** leaves the bargraph empty
+  while you transmit. Everything else on the LCD still works.
+
+None of this needs setting up.
+
+**Switching VFOs after a transverter session.** The main-dial push tunes to
+whatever the other VFO last held, exactly as the on-screen A/B button does. If
+you last used VFO B with a transverter, that may be a VHF/UHF frequency the radio
+cannot receive on its own, and sdroxide pulls it back into range with a warning.
+Press A→B once to give VFO B the current frequency.
+
+A panel unplugged mid-QSO releases anything it was holding (PTT included) and
+reconnects by itself. Like MIDI, TMate 2 bindings live with the client, so the
+panel plugged into a remote laptop works against the radio over `--connect`
+([8](#8-remote-operation)).
 
 ### 6.5 Spots: spot feeds
 
