@@ -868,6 +868,16 @@ const AIRCRAFT_COL_SNR: u8 = 5;
 const AIRCRAFT_COL_MSGS: u8 = 6;
 const AIRCRAFT_COL_DIST: u8 = 7;
 
+/// The aircraft table's type sizes, in points. The table is the pane people
+/// read at a glance across a desk, not a log to skim, so it is set larger than
+/// the decode log's 10.5: the registration and the arrow a point and a half
+/// above the body, the headings between, the last message (monospace, and the
+/// widest thing in the row) a half-point under it.
+const AIRCRAFT_NAME_PT: f32 = 13.0;
+const AIRCRAFT_BODY_PT: f32 = 12.0;
+const AIRCRAFT_HEAD_PT: f32 = 11.0;
+const AIRCRAFT_LAST_PT: f32 = 11.5;
+
 /// The longest last message shown in its cell; the whole of it is the tooltip.
 const AIRCRAFT_LAST_LEAD: usize = 90;
 
@@ -956,7 +966,7 @@ fn hfdl_aircraft_header(ui: &mut egui::Ui, sorted: u8, asc: bool) -> Option<u8> 
         let ink = if col == sorted { crate::theme::CYAN() } else { crate::theme::CYAN_DIM() };
         let r = ui.add(
             egui::Label::new(
-                RichText::new(format!("{label}{arrow}")).size(10.0).strong().color(ink),
+                RichText::new(format!("{label}{arrow}")).size(AIRCRAFT_HEAD_PT).strong().color(ink),
             )
             .sense(egui::Sense::click()),
         );
@@ -968,7 +978,10 @@ fn hfdl_aircraft_header(ui: &mut egui::Ui, sorted: u8, asc: bool) -> Option<u8> 
         }
     }
     ui.label(
-        RichText::new(tr!("hfdl-col-last")).size(10.0).strong().color(crate::theme::CYAN_DIM()),
+        RichText::new(tr!("hfdl-col-last"))
+            .size(AIRCRAFT_HEAD_PT)
+            .strong()
+            .color(crate::theme::CYAN_DIM()),
     );
     clicked
 }
@@ -1016,8 +1029,10 @@ fn hfdl_aircraft_row(
         ui.label("");
     } else if ui
         .add(
-            egui::Label::new(RichText::new("▸").size(11.0).color(crate::theme::CYAN_DIM()))
-                .sense(egui::Sense::click()),
+            egui::Label::new(
+                RichText::new("▸").size(AIRCRAFT_NAME_PT).color(crate::theme::CYAN_DIM()),
+            )
+            .sense(egui::Sense::click()),
         )
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(tr!("hfdl-aircraft-filter-hint"))
@@ -1041,7 +1056,7 @@ fn hfdl_aircraft_row(
     } else {
         crate::theme::gray(160)
     };
-    let mut text = RichText::new(reg).size(11.0).strong().color(ink);
+    let mut text = RichText::new(reg).size(AIRCRAFT_NAME_PT).strong().color(ink);
     if a.logged_off {
         text = text.strikethrough();
     }
@@ -1073,34 +1088,42 @@ fn hfdl_aircraft_row(
         action = AircraftAction::Blink(k.clone());
     }
 
-    ui.label(RichText::new(a.flight.as_deref().unwrap_or("").trim()).size(10.5).color(fine));
+    ui.label(
+        RichText::new(a.flight.as_deref().unwrap_or("").trim()).size(AIRCRAFT_BODY_PT).color(fine),
+    );
 
     let (_, _, _, h, mi, s) = sdroxide_types::utc_ymd_hms(a.last_heard);
     let age = now - a.last_heard;
-    ui.label(RichText::new(crate::hfdl_map::fmt_age(age)).size(10.5).color(if age < 300 {
-        crate::theme::GREEN()
-    } else {
-        dim
-    }))
+    ui.label(
+        RichText::new(crate::hfdl_map::fmt_age(age)).size(AIRCRAFT_BODY_PT).color(if age < 300 {
+            crate::theme::GREEN()
+        } else {
+            dim
+        }),
+    )
     .on_hover_text(format!("{h:02}:{mi:02}:{s:02} UTC"));
 
-    ui.label(RichText::new(a.gs.as_deref().map_or("", hfdl_short_gs)).size(10.5).color(fine))
-        .on_hover_text(a.gs.as_deref().unwrap_or(""));
-    ui.label(RichText::new(format!("{:.3}", a.freq_khz as f32 / 1e3)).size(10.5).color(dim));
     ui.label(
-        RichText::new(a.snr_db.map_or(String::new(), |v| format!("{v:.0}"))).size(10.5).color(
-            match a.snr_db {
+        RichText::new(a.gs.as_deref().map_or("", hfdl_short_gs)).size(AIRCRAFT_BODY_PT).color(fine),
+    )
+    .on_hover_text(a.gs.as_deref().unwrap_or(""));
+    ui.label(
+        RichText::new(format!("{:.3}", a.freq_khz as f32 / 1e3)).size(AIRCRAFT_BODY_PT).color(dim),
+    );
+    ui.label(
+        RichText::new(a.snr_db.map_or(String::new(), |v| format!("{v:.0}")))
+            .size(AIRCRAFT_BODY_PT)
+            .color(match a.snr_db {
                 Some(v) if v >= 12.0 => crate::theme::GREEN(),
                 Some(_) => crate::theme::YELLOW(),
                 None => dim,
-            },
-        ),
+            }),
     );
-    ui.label(RichText::new(count(u64::from(a.msgs))).size(10.5).color(dim));
+    ui.label(RichText::new(count(u64::from(a.msgs))).size(AIRCRAFT_BODY_PT).color(dim));
 
     let dist = ui.label(
         RichText::new(hfdl_aircraft_km(a, home).map_or(String::new(), |km| format!("{km:.0}")))
-            .size(10.5)
+            .size(AIRCRAFT_BODY_PT)
             .color(crate::theme::CYAN_DIM()),
     );
     if let Some(w) = hfdl_aircraft_where(a, now, home) {
@@ -1114,13 +1137,15 @@ fn hfdl_aircraft_row(
             ui.label(
                 RichText::new(hfdl_lead(t, AIRCRAFT_LAST_LEAD))
                     .monospace()
-                    .size(10.0)
+                    .size(AIRCRAFT_LAST_PT)
                     .color(crate::theme::gray(200)),
             )
             .on_hover_text(t.as_str());
         }
         None => {
-            ui.label(RichText::new(&a.last_kind).size(10.0).color(crate::theme::gray(100)));
+            ui.label(
+                RichText::new(&a.last_kind).size(AIRCRAFT_LAST_PT).color(crate::theme::gray(100)),
+            );
         }
     }
     action
