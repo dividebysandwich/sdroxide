@@ -7079,7 +7079,7 @@ The decode log's rows for the same messages now show the aircraft, the label and
 
 #### The aircraft list
 
-**AIRCRAFT** is a table of every aircraft the decoder has heard from — including the ones that never sent a position, which the map cannot show. An aircraft is listed from its first downlink and stays for three hours after it was last heard. The table scrolls sideways when the pane is narrower than it is.
+**AIRCRAFT** is a table of every aircraft the decoder has heard from — including the ones that never sent a position, which the map cannot show. An aircraft is listed from its first downlink and stays for three hours after it was last heard. The table fills the left-hand pane, out to the divider between it and the map: the **LAST MESSAGE** column takes whatever width the others leave and cuts its text with an ellipsis where it runs out, so dragging the divider, or resizing the window, shows more or less of the message at once. The table scrolls sideways only when the pane is too narrow for the other columns and a usable stretch of message.
 
 | Column | What it holds |
 | --- | --- |
@@ -7092,7 +7092,7 @@ The decode log's rows for the same messages now show the aircraft, the label and
 | **dB** | The signal-to-noise figure of its latest burst that measured one. |
 | **MSGS** | How many events are attributed to it. |
 | **KM** | Distance from your grid square to its last reported position; empty with no position or no grid. Hover for the position, how long ago it was reported, and the bearing. |
-| **LAST MESSAGE** | What its latest ACARS message said, as `[label] text` on one line (hover for the whole of it, up to 200 characters). A position report after it does not replace it. An aircraft that has sent no ACARS shows the kind of event last heard from it, dimmer — `performance-data`, `logon-confirm`. |
+| **LAST MESSAGE** | What its latest ACARS message said, as `[label] text` on one line, cut to the width the pane has (hover for the whole of it, up to 200 characters). A position report after it does not replace it. An aircraft that has sent no ACARS shows the kind of event last heard from it, dimmer — `performance-data`, `logon-confirm`. |
 
 Click a column heading to sort by it, and again to reverse; the arrow shows which. It starts on **HEARD**, newest first. An aircraft with nothing in the sorted column — no registration, no position — goes last whichever way it runs. The sort is remembered with the rest of the layout.
 

@@ -315,19 +315,24 @@ impl SdroxideApp {
             );
             return;
         }
-        // Sideways too: the table is wider than the half of the window the
-        // log pane gets, and a cut-off column is worse than a scroll bar.
+        // The width the pane really has, taken before the scroll area, inside
+        // which the width is unbounded (it scrolls sideways).
+        let pane_w = ui.available_width() - ui.spacing().scroll.allocated_width();
+        // Sideways too: with the fixed columns and the least the last may have,
+        // the table can be wider than a narrow pane, and a cut-off column is
+        // worse than a scroll bar.
         egui::ScrollArea::both()
             .id_salt("hfdl-aircraft")
             .max_height(room)
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                let geom = TableGeom { origin_x: ui.cursor().min.x, width: pane_w };
                 egui::Grid::new("hfdl-aircraft-grid")
                     .num_columns(10)
                     .spacing([10.0, 3.0])
                     .striped(true)
                     .show(ui, |ui| {
-                        if let Some(c) = hfdl_aircraft_header(ui, col, asc) {
+                        if let Some(c) = hfdl_aircraft_header(ui, col, asc, geom) {
                             act = AircraftAction::Sort(c);
                         }
                         ui.end_row();
@@ -335,7 +340,7 @@ impl SdroxideApp {
                             let plotted =
                                 a.map_key.as_deref().is_some_and(|k| self.hfdl_map.has(k));
                             let selected = plotted && self.hfdl_map.selected == a.map_key;
-                            let next = hfdl_aircraft_row(ui, a, now, home, plotted, selected);
+                            let next = hfdl_aircraft_row(ui, a, now, home, plotted, selected, geom);
                             if !matches!(next, AircraftAction::None) {
                                 act = next;
                             }
@@ -878,8 +883,32 @@ const AIRCRAFT_BODY_PT: f32 = 12.0;
 const AIRCRAFT_HEAD_PT: f32 = 11.0;
 const AIRCRAFT_LAST_PT: f32 = 11.5;
 
-/// The longest last message shown in its cell; the whole of it is the tooltip.
-const AIRCRAFT_LAST_LEAD: usize = 90;
+/// The least the last-message column is given, however narrow the pane: below
+/// this the table scrolls sideways rather than squeeze the message to nothing.
+const AIRCRAFT_LAST_MIN_W: f32 = 150.0;
+
+/// Where the table sits in its pane, so its last column can take what the
+/// fixed ones leave.
+///
+/// The fixed columns are as wide as their contents; the last is the one that
+/// stretches, to the pane's right edge — which is where the splitter and the
+/// map begin — and its text is cut with an ellipsis to fit. It is worked out
+/// afresh every frame, so dragging the splitter or resizing the window moves
+/// the cut at once.
+#[derive(Clone, Copy)]
+struct TableGeom {
+    /// The table's left edge.
+    origin_x: f32,
+    /// The pane's usable width: what the scroll area has, less its bar.
+    width: f32,
+}
+
+impl TableGeom {
+    /// The width left for the last column, from the cell the cursor is in.
+    fn last_width(self, ui: &egui::Ui) -> f32 {
+        (self.width - (ui.cursor().min.x - self.origin_x)).max(AIRCRAFT_LAST_MIN_W)
+    }
+}
 
 /// How far the aircraft's last position is from `home`, in km.
 fn hfdl_aircraft_km(a: &HfdlAircraft, home: Option<(f64, f64)>) -> Option<f64> {
@@ -943,7 +972,7 @@ fn hfdl_aircraft_sorted(
 }
 
 /// The table's header row. Returns the column the operator clicked to sort by.
-fn hfdl_aircraft_header(ui: &mut egui::Ui, sorted: u8, asc: bool) -> Option<u8> {
+fn hfdl_aircraft_header(ui: &mut egui::Ui, sorted: u8, asc: bool, geom: TableGeom) -> Option<u8> {
     let mut clicked = None;
     ui.label(""); // over the log arrows
     for (col, label) in [
@@ -977,6 +1006,9 @@ fn hfdl_aircraft_header(ui: &mut egui::Ui, sorted: u8, asc: bool) -> Option<u8> 
             clicked = Some(col);
         }
     }
+    // The last column's width is set here too, so the header does not leave it
+    // narrower than the rows under it.
+    ui.set_width(geom.last_width(ui));
     ui.label(
         RichText::new(tr!("hfdl-col-last"))
             .size(AIRCRAFT_HEAD_PT)
@@ -1018,6 +1050,7 @@ fn hfdl_aircraft_row(
     home: Option<(f64, f64)>,
     plotted: bool,
     selected: bool,
+    geom: TableGeom,
 ) -> AircraftAction {
     let mut action = AircraftAction::None;
     let dim = crate::theme::gray(130);
@@ -1131,20 +1164,30 @@ fn hfdl_aircraft_row(
     }
 
     // The last message: what it said, or — for an aircraft that has sent no
-    // ACARS — only what kind of event was last heard from it, dimmer.
+    // ACARS — only what kind of event was last heard from it, dimmer. The cell
+    // takes the rest of the pane and the text is cut to fit it.
+    ui.set_width(geom.last_width(ui));
     match &a.last_text {
         Some(t) => {
-            ui.label(
-                RichText::new(hfdl_lead(t, AIRCRAFT_LAST_LEAD))
-                    .monospace()
-                    .size(AIRCRAFT_LAST_PT)
-                    .color(crate::theme::gray(200)),
+            ui.add(
+                egui::Label::new(
+                    RichText::new(t)
+                        .monospace()
+                        .size(AIRCRAFT_LAST_PT)
+                        .color(crate::theme::gray(200)),
+                )
+                .truncate(),
             )
             .on_hover_text(t.as_str());
         }
         None => {
-            ui.label(
-                RichText::new(&a.last_kind).size(AIRCRAFT_LAST_PT).color(crate::theme::gray(100)),
+            ui.add(
+                egui::Label::new(
+                    RichText::new(&a.last_kind)
+                        .size(AIRCRAFT_LAST_PT)
+                        .color(crate::theme::gray(100)),
+                )
+                .truncate(),
             );
         }
     }
@@ -1465,26 +1508,51 @@ mod tests {
         assert_eq!(hfdl_aircraft_km(&none, Some((0.0, 0.0))), None);
     }
 
-    /// Draw the header and one row into a grid, as the pane does.
-    fn run_table(a: &HfdlAircraft, plotted: bool) -> (f32, usize, AircraftAction) {
-        let mut out = (0.0, 0, AircraftAction::None);
+    /// Draw the header and one row into a grid in a pane `pane_w` wide, as the
+    /// pane does. Returns the grid's height and width and what the row asked for.
+    fn run_table(a: &HfdlAircraft, plotted: bool, pane_w: f32) -> (f32, f32, AircraftAction) {
+        let mut out = (0.0, 0.0, AircraftAction::None);
         egui::__run_test_ui(|ui| {
-            let before = ui.min_rect().height();
-            let mut act = AircraftAction::None;
-            egui::Grid::new("t").num_columns(10).show(ui, |ui| {
-                assert_eq!(hfdl_aircraft_header(ui, AIRCRAFT_COL_HEARD, false), None);
-                ui.end_row();
-                act = hfdl_aircraft_row(ui, a, 1_000, Some((40.0, -72.0)), plotted, false);
-                ui.end_row();
+            ui.allocate_ui(egui::vec2(pane_w, 400.0), |ui| {
+                let geom = TableGeom { origin_x: ui.cursor().min.x, width: pane_w };
+                let mut act = AircraftAction::None;
+                let grid = egui::Grid::new("t").num_columns(10).show(ui, |ui| {
+                    assert_eq!(hfdl_aircraft_header(ui, AIRCRAFT_COL_HEARD, false, geom), None);
+                    ui.end_row();
+                    act =
+                        hfdl_aircraft_row(ui, a, 1_000, Some((40.0, -72.0)), plotted, false, geom);
+                    ui.end_row();
+                });
+                out = (grid.response.rect.height(), grid.response.rect.width(), act);
             });
-            out = (ui.min_rect().height() - before, 0, act);
         });
         out
     }
 
+    /// The table fills its pane, so the last message reaches the splitter
+    /// whatever the pane's width — wide or dragged narrower — rather than
+    /// stopping where its own text does.
+    #[test]
+    fn the_table_fills_the_pane_and_follows_its_width() {
+        let mut a = plane();
+        a.last_text = Some("[H1] SHORT".into());
+        for w in [700.0_f32, 900.0, 1_200.0] {
+            let (_, got, _) = run_table(&a, true, w);
+            assert!((got - w).abs() < 2.0, "pane {w} wide, table {got} wide");
+        }
+        // A long message does not push it wider than the pane either.
+        a.last_text = Some(format!("[H1] {}", "LONG WORDS ".repeat(40)));
+        let (_, got, _) = run_table(&a, true, 900.0);
+        assert!((got - 900.0).abs() < 2.0, "table {got} wide in a 900 pane");
+        // A pane too narrow for the fixed columns and the least the message may
+        // have scrolls rather than squeezing it: the table is as wide as it must be.
+        let (_, narrow, _) = run_table(&a, true, 300.0);
+        assert!(narrow > 300.0, "{narrow}");
+    }
+
     #[test]
     fn a_table_row_is_one_line_and_does_nothing_until_clicked() {
-        let (tall, _, act) = run_table(&plane(), true);
+        let (tall, _, act) = run_table(&plane(), true, 900.0);
         assert_eq!(act, AircraftAction::None);
         assert!(tall > 20.0 && tall < 70.0, "header and row are {tall} points tall");
         // An aircraft that never sent a position, ACARS or a resolved ICAO,
@@ -1493,13 +1561,13 @@ mod tests {
         bare.aircraft_id = Some(12);
         bare.logged_off = true;
         bare.last_kind = "performance-data".into();
-        let (tall, _, act) = run_table(&bare, false);
+        let (tall, _, act) = run_table(&bare, false, 900.0);
         assert_eq!(act, AircraftAction::None);
         assert!(tall > 20.0 && tall < 70.0, "{tall}");
         // A long message stays one line: it is cut for the cell.
         let mut chatty = plane();
         chatty.last_text = Some(format!("[H1] {}", "WORD ".repeat(80)));
-        let (tall, _, _) = run_table(&chatty, true);
+        let (tall, _, _) = run_table(&chatty, true, 900.0);
         assert!(tall < 70.0, "a long last message made the row {tall} points tall");
     }
 
