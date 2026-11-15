@@ -4265,6 +4265,7 @@ saving an empty file. What goes in the file depends on the mode:
 | FSQ | One line per message: whether it was for you, sender, addressee and text. FSQ messages carry no time, so there is no time column |
 | ACARS, packet, JS8 and APRS | A `.csv` file, one row per message or frame, with its UTC time |
 | NAVTEX, VDL2 and HFDL | A tab-separated `.txt` file, one line per message, with its UTC time |
+| HFDL (MESSAGES tab) | A `.csv` file, one row per ACARS message, oldest first, with its UTC time |
 | WSPR and PI4 | The reception list as a `.csv` file, in the **RECEPTIONS** header |
 | The CW/RTTY skimmer | Its spot list, from the **Spots** row of the skimmer's settings |
 
@@ -7048,7 +7049,7 @@ Below that, the log, newest first: the time (UTC), what kind of record it is, th
 
 #### The ground stations
 
-The header of the left-hand pane has two chips, **DECODES** and **STATIONS**. **STATIONS** lists every ground station the decoder knows of, the one heard most recently first:
+The header of the left-hand pane has three chips, **DECODES**, **STATIONS** and **MESSAGES**. **STATIONS** lists every ground station the decoder knows of, the one heard most recently first:
 
 - **When and how well it was heard** — how long ago, on which channel, its signal-to-noise figure, and how many squitters it has sent since you switched **LISTEN** on. It is green while that was within the last quarter of an hour. A station known only from the saved table says *not heard yet*.
 - **Its channels**, in kHz. A channel is green while the station is working it: the one it was just heard on, and any other its latest squitter lists as in use. Click a channel to tune to it; the channel you are on is underlined.
@@ -7058,6 +7059,23 @@ The squitter says which channels are in use as a *bitmap* — bit by bit, the st
 Only the station's own transmissions count as hearing it: squitters, and the uplinks a station sends to aircraft. An aircraft's downlink names the station it is talking to, but that is the aircraft's signal, which a receiver can hear from much farther away than the station itself.
 
 The list does not roll like the decode log: a station stays on it for the session.
+
+#### The ACARS messages
+
+Airline ACARS messages ride inside HFDL exactly as they do inside VDL2 — the same ARINC 618 blocks, over shortwave. They are rarer than on VHF, and between squitters on a busy channel the decode log, which holds only the last 64 events, rolls past them within minutes. So they are also kept on the **MESSAGES** tab, the last 300, newest first.
+
+Each message shows:
+
+- the time, an arrow (**↓** from an aircraft, **↑** from a ground station), the aircraft's registration — or its flight, or its ICAO address, in that order, whichever the block carried — and the flight beside it;
+- the **label**, which says what kind of message it is (hover for its name where it is one of the few xng's decoder recognises: `H1` company messages, `A6`/`B6` ATS, `5Z`, `SA`, `MA`), the channel and the burst's signal-to-noise;
+- a cyan line when the message could be understood: an ADS-C report, a CPDLC message, an OOOI time such as `OUT 1204`, a position, the kind of a Q-series report;
+- the text itself on one line, line breaks shown as ⏎.
+
+**CRC** in amber means the message's own check sequence did not match, so some of the text may be wrong; the frame it rode in did pass its own check, which is why the message is shown at all. **more…** means one block of a longer message. The filter box above the list matches any of it — registration, flight, label, a word of the text.
+
+**SAVE** follows the tab. On **MESSAGES** it writes `sdroxide-hfdl-acars.csv`, one row per message with the oldest first, the text in one quoted field with its line breaks intact; on the other tabs it writes the decode log as before.
+
+The decode log's rows for the same messages now show the aircraft, the label and the start of the text instead of the link-layer envelope. The log also now lists its newest event at the top, as this section always said it did.
 
 #### The aircraft map
 

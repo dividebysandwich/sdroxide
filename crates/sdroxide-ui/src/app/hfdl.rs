@@ -18,8 +18,8 @@
 use crate::i18n::tr;
 use eframe::egui::{self, RichText};
 use sdroxide_types::{
-    Command, HfdlDecode, HfdlStation, HfdlStatus, Mode, hfdl_plan_khz, hfdl_stations_on,
-    hfdl_working_khz,
+    Command, HfdlAcars, HfdlDecode, HfdlStation, HfdlStatus, Mode, hfdl_acars_label_name,
+    hfdl_plan_khz, hfdl_stations_on, hfdl_working_khz,
 };
 
 use crate::app::SdroxideApp;
@@ -74,14 +74,28 @@ impl SdroxideApp {
                 cfg.frequency_hz = khz * 1e3;
             }
             crate::chrome::row_tail(ui, |ui| {
-                let log = self.hfdl_status.as_ref().map(|s| s.log.as_slice()).unwrap_or(&[]);
-                crate::app::panels::save_text_chip(
-                    ui,
-                    !log.is_empty(),
-                    "sdroxide-hfdl-log.txt",
-                    &tr!("hfdl-save-hfdl-decode-log-file"),
-                    || crate::app::save_text::hfdl_log_text(log),
-                );
+                // What SAVE writes follows the tab: the messages tab saves the
+                // ACARS messages as a CSV (the same columns' worth of detail
+                // the ACARS pane saves), every other tab the decode log.
+                if self.view.hfdl_tab == HFDL_TAB_MESSAGES {
+                    let msgs = self.hfdl_status.as_ref().map(|s| s.acars.as_slice()).unwrap_or(&[]);
+                    crate::app::panels::save_text_chip(
+                        ui,
+                        !msgs.is_empty(),
+                        "sdroxide-hfdl-acars.csv",
+                        &tr!("hfdl-save-hfdl-acars-messages-csv"),
+                        || crate::app::save_text::hfdl_acars_csv(msgs),
+                    );
+                } else {
+                    let log = self.hfdl_status.as_ref().map(|s| s.log.as_slice()).unwrap_or(&[]);
+                    crate::app::panels::save_text_chip(
+                        ui,
+                        !log.is_empty(),
+                        "sdroxide-hfdl-log.txt",
+                        &tr!("hfdl-save-hfdl-decode-log-file"),
+                        || crate::app::save_text::hfdl_log_text(log),
+                    );
+                }
             });
         });
         ui.add_space(4.0);
@@ -217,14 +231,16 @@ impl SdroxideApp {
     fn hfdl_left_pane(&mut self, ui: &mut egui::Ui, now: i64, cur_hz: f64) -> Option<u32> {
         ui.horizontal_wrapped(|ui| {
             ui.set_min_height(20.0);
-            for (tab, label) in
-                [(HFDL_TAB_DECODES, tr!("hfdl-decodes")), (HFDL_TAB_STATIONS, tr!("hfdl-stations"))]
-            {
+            for (tab, label) in [
+                (HFDL_TAB_DECODES, tr!("hfdl-decodes")),
+                (HFDL_TAB_STATIONS, tr!("hfdl-stations")),
+                (HFDL_TAB_MESSAGES, tr!("hfdl-messages")),
+            ] {
                 if crate::chrome::chip(ui, self.view.hfdl_tab == tab, label.to_string()).clicked() {
                     self.view.hfdl_tab = tab;
                 }
             }
-            if self.view.hfdl_tab == HFDL_TAB_DECODES {
+            if matches!(self.view.hfdl_tab, HFDL_TAB_DECODES | HFDL_TAB_MESSAGES) {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.hfdl_filter)
                         .hint_text("filter")
@@ -234,6 +250,10 @@ impl SdroxideApp {
         });
         match self.view.hfdl_tab {
             HFDL_TAB_STATIONS => self.hfdl_stations_pane(ui, now, (cur_hz / 1e3).round() as u32),
+            HFDL_TAB_MESSAGES => {
+                self.hfdl_messages_pane(ui);
+                None
+            }
             _ => {
                 self.hfdl_log_pane(ui);
                 None
@@ -271,10 +291,41 @@ impl SdroxideApp {
         picked
     }
 
+    /// The ACARS messages the data link carried, newest first: who sent it,
+    /// what kind it is, what the application layer made of it, and the text.
+    fn hfdl_messages_pane(&mut self, ui: &mut egui::Ui) {
+        let filter = self.hfdl_filter.trim().to_ascii_uppercase();
+        let msgs = self.hfdl_status.as_ref().map(|s| s.acars.as_slice()).unwrap_or(&[]);
+        let room = ui.available_height().max(48.0);
+        egui::ScrollArea::vertical()
+            .id_salt("hfdl-messages")
+            .max_height(room)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let mut shown = 0;
+                for d in msgs {
+                    if !filter.is_empty() && !hfdl_matches(d, &filter) {
+                        continue;
+                    }
+                    hfdl_message_row(ui, d);
+                    shown += 1;
+                }
+                if shown == 0 {
+                    let text = if msgs.is_empty() {
+                        tr!("hfdl-no-acars-yet")
+                    } else {
+                        tr!("hfdl-no-decode-matches-filter")
+                    };
+                    ui.label(RichText::new(text).size(10.5).color(crate::theme::gray(120)));
+                }
+            });
+    }
+
     /// The decode log, newest first, with a filter over it.
     fn hfdl_log_pane(&mut self, ui: &mut egui::Ui) {
         let filter = self.hfdl_filter.trim().to_ascii_uppercase();
-        // The log is carried whole in every status snapshot, oldest *last*.
+        // The log is carried whole in every status snapshot, newest first —
+        // shown in that order, as the manual says, with the latest at the top.
         let log = self.hfdl_status.as_ref().map(|s| s.log.as_slice()).unwrap_or(&[]);
         // What is left under the header, measured rather than assumed: the
         // header's real height is a font and a touch-metric question.
@@ -285,7 +336,7 @@ impl SdroxideApp {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 let mut shown = 0;
-                for d in log.iter().rev() {
+                for d in log {
                     if !filter.is_empty() && !hfdl_matches(d, &filter) {
                         continue;
                     }
@@ -402,6 +453,8 @@ fn hfdl_log_row(ui: &mut egui::Ui, d: &HfdlDecode) {
                     .color(crate::theme::CYAN()),
             );
             ui.label(RichText::new(fix.label()).size(10.5).color(crate::theme::gray(150)));
+        } else if let Some(a) = &d.acars {
+            hfdl_acars_summary(ui, a);
         } else if !d.details.is_empty() && d.details != "null" {
             ui.label(
                 RichText::new(tidy_details(&d.details)).size(10.0).color(crate::theme::gray(120)),
@@ -419,6 +472,13 @@ fn hfdl_matches(d: &HfdlDecode, filter: &str) -> bool {
         || d.position.as_ref().is_some_and(|f| {
             f.label().to_ascii_uppercase().contains(filter)
                 || f.icao.as_deref().is_some_and(|i| i.to_ascii_uppercase().contains(filter))
+        })
+        || d.acars.as_ref().is_some_and(|a| {
+            [a.registration.as_str(), a.flight.as_str(), a.label.as_str(), a.text.as_str()]
+                .iter()
+                .any(|f| f.to_ascii_uppercase().contains(filter))
+                || a.icao.as_deref().is_some_and(|i| i.to_ascii_uppercase().contains(filter))
+                || a.decoded.as_deref().is_some_and(|x| x.to_ascii_uppercase().contains(filter))
         })
         || d.details.to_ascii_uppercase().contains(filter)
 }
@@ -467,6 +527,7 @@ fn slot(ui: &mut egui::Ui, w: f32, text: &str, color: egui::Color32) {
 /// The left pane's tabs, as stored in the view state.
 pub(in crate::app) const HFDL_TAB_DECODES: u8 = 0;
 pub(in crate::app) const HFDL_TAB_STATIONS: u8 = 1;
+pub(in crate::app) const HFDL_TAB_MESSAGES: u8 = 2;
 
 /// The stations in the order the list shows them: those heard most recently
 /// first, and the ones never heard (known only from the saved table) after,
@@ -587,6 +648,117 @@ fn hfdl_station_row(ui: &mut egui::Ui, s: &HfdlStation, now: i64, cur_khz: u32) 
     picked
 }
 
+/// The ACARS message in a decode-log row: who, the label, and a short lead of
+/// what it says (the whole of it is on the messages tab).
+fn hfdl_acars_summary(ui: &mut egui::Ui, a: &HfdlAcars) {
+    const LEAD: usize = 110;
+    ui.label(RichText::new(hfdl_direction(a)).size(10.5).color(crate::theme::CYAN()));
+    ui.label(RichText::new(a.who()).size(10.5).strong());
+    ui.label(RichText::new(format!("[{}]", a.label)).size(10.5).color(crate::theme::gray(150)));
+    let lead = match &a.decoded {
+        Some(d) => d.clone(),
+        None => hfdl_lead(&a.one_line(), LEAD),
+    };
+    ui.label(RichText::new(lead).size(10.0).color(crate::theme::gray(130)));
+}
+
+/// `↓` for an aircraft's message, `↑` for a ground station's.
+fn hfdl_direction(a: &HfdlAcars) -> &'static str {
+    if a.downlink { "↓" } else { "↑" }
+}
+
+/// `text` cut to at most `max` characters, with an ellipsis when it was.
+fn hfdl_lead(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(max.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+/// One ACARS message on the messages tab: a line saying when, from whom, what
+/// kind and how well it was received, then what the application layer made of
+/// it, then the text.
+fn hfdl_message_row(ui: &mut egui::Ui, d: &HfdlDecode) {
+    let Some(a) = &d.acars else { return };
+    let (_, _, _, h, mi, s) = sdroxide_types::utc_ymd_hms(d.unix);
+    ui.horizontal_wrapped(|ui| {
+        ui.label(
+            RichText::new(format!("{h:02}:{mi:02}:{s:02}"))
+                .size(10.5)
+                .color(crate::theme::gray(120)),
+        );
+        ui.label(RichText::new(hfdl_direction(a)).size(11.0).color(crate::theme::CYAN()))
+            .on_hover_text(if a.downlink {
+                tr!("hfdl-acars-downlink")
+            } else {
+                tr!("hfdl-acars-uplink")
+            });
+        let who = a.who();
+        if !who.is_empty() {
+            ui.label(RichText::new(who).size(11.0).strong());
+        }
+        if !a.flight.trim().is_empty() && a.registration.trim() != a.flight.trim() {
+            ui.label(RichText::new(a.flight.trim()).size(10.5).color(crate::theme::gray(160)));
+        }
+        let label = match &a.sublabel {
+            Some(sub) => format!("{}/{sub}", a.label),
+            None => a.label.clone(),
+        };
+        let r = ui.label(RichText::new(label).size(10.5).color(crate::theme::CYAN_DIM()));
+        if let Some(name) = hfdl_acars_label_name(&a.label) {
+            r.on_hover_text(name);
+        }
+        ui.label(
+            RichText::new(format!("{:.3} MHz", d.freq_khz as f32 / 1e3))
+                .size(10.5)
+                .color(crate::theme::gray(130)),
+        );
+        if let Some(snr) = d.snr_db {
+            ui.label(RichText::new(format!("{snr:.0} dB")).size(10.5).color(if snr >= 12.0 {
+                crate::theme::GREEN()
+            } else {
+                crate::theme::YELLOW()
+            }));
+        }
+        if !a.crc_ok {
+            ui.label(
+                RichText::new(tr!("hfdl-acars-crc-bad")).size(10.5).color(crate::theme::HAZARD()),
+            )
+            .on_hover_text(tr!("hfdl-acars-crc-bad-hint"));
+        }
+        if a.more {
+            ui.label(
+                RichText::new(tr!("hfdl-acars-more")).size(10.5).color(crate::theme::gray(120)),
+            )
+            .on_hover_text(tr!("hfdl-acars-more-hint"));
+        }
+    });
+    if let Some(name) = hfdl_acars_label_name(&a.label)
+        && a.decoded.is_none()
+    {
+        ui.horizontal(|ui| {
+            ui.add_space(10.0);
+            ui.label(RichText::new(name).size(10.0).color(crate::theme::gray(110)));
+        });
+    }
+    if let Some(dec) = &a.decoded {
+        ui.horizontal_wrapped(|ui| {
+            ui.add_space(10.0);
+            ui.label(RichText::new(dec).size(10.5).color(crate::theme::CYAN()));
+        });
+    }
+    let text = a.one_line();
+    if !text.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            ui.add_space(10.0);
+            ui.label(RichText::new(text).monospace().size(10.5).color(crate::theme::gray(190)));
+        });
+    }
+    ui.add_space(3.0);
+}
+
 /// Save the channel in force as one of the operator's own chips, keeping the
 /// list sorted and refusing a channel already on it — so the file is written
 /// only on a real edit and the chip row does not reshuffle under the pointer.
@@ -628,6 +800,7 @@ mod tests {
             fec_corrected: None,
             details: r#"{"aircraft":"A9C-DM"}"#.to_string(),
             position: None,
+            acars: None,
         }
     }
 
@@ -726,6 +899,76 @@ mod tests {
             tall = ui.min_rect().height() - before;
         });
         assert!(tall > 0.0, "a station with nothing known still gets a row");
+    }
+
+    fn msg(text: &str, decoded: Option<&str>) -> HfdlDecode {
+        let mut d = dec("acars", None);
+        d.details = r#"{"who":{"dir":"downlink"}}"#.into();
+        d.acars = Some(HfdlAcars {
+            downlink: true,
+            registration: "N123AB".into(),
+            flight: "UAL012".into(),
+            label: "H1".into(),
+            text: text.into(),
+            crc_ok: true,
+            decoded: decoded.map(str::to_owned),
+            ..Default::default()
+        });
+        d
+    }
+
+    /// An ACARS message is found by its aircraft, its label and its words — not
+    /// only by the link-layer envelope the log used to show.
+    #[test]
+    fn the_filter_finds_an_acars_message_by_its_text() {
+        let d = msg("REQUEST DIRECT TO BIRD", Some("ETA 1530"));
+        assert!(hfdl_matches(&d, "BIRD"), "the message text");
+        assert!(hfdl_matches(&d, "N123AB"), "the registration");
+        assert!(hfdl_matches(&d, "UAL012"), "the flight");
+        assert!(hfdl_matches(&d, "H1"), "the label");
+        assert!(hfdl_matches(&d, "ETA 1530"), "what was decoded from it");
+        assert!(!hfdl_matches(&d, "WILCO"));
+    }
+
+    #[test]
+    fn a_long_lead_is_cut_with_an_ellipsis() {
+        assert_eq!(hfdl_lead("short", 10), "short");
+        let cut = hfdl_lead("abcdefghijklmnop", 10);
+        assert_eq!(cut.chars().count(), 10);
+        assert!(cut.ends_with('…'));
+        // Cut on characters, not bytes: a multi-byte one is never split.
+        assert_eq!(hfdl_lead("⏎⏎⏎⏎⏎⏎", 4).chars().count(), 4);
+    }
+
+    /// A message with its text, a decoded line and a long body stays a handful
+    /// of lines — and a CRC-failed one and a multi-block one draw too.
+    #[test]
+    fn a_message_row_has_a_bounded_height() {
+        let long = "WORD ".repeat(60);
+        let mut d = msg(&long, Some("ETA 1530"));
+        d.acars.as_mut().unwrap().crc_ok = false;
+        d.acars.as_mut().unwrap().more = true;
+        let mut tall = 0.0;
+        egui::__run_test_ui(|ui| {
+            let before = ui.min_rect().height();
+            hfdl_message_row(ui, &d);
+            tall = ui.min_rect().height() - before;
+        });
+        assert!(tall > 20.0, "the row drew nothing: {tall}");
+        assert!(tall < 220.0, "a message row is {tall} points tall");
+    }
+
+    #[test]
+    fn a_log_row_with_an_acars_message_draws_it_not_the_envelope() {
+        // No panic, and not the empty-details fallback: a row is drawn.
+        let d = msg("HELLO", None);
+        let mut tall = 0.0;
+        egui::__run_test_ui(|ui| {
+            let before = ui.min_rect().height();
+            hfdl_log_row(ui, &d);
+            tall = ui.min_rect().height() - before;
+        });
+        assert!(tall > 0.0);
     }
 
     #[test]

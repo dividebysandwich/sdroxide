@@ -6404,3 +6404,15 @@ hfdl-station-channel-hint = Tune to { $mhz } MHz. Green: the station is working 
 hfdl-station-channels-unknown = Channels unknown until the network broadcasts its system table.
 hfdl-chip-stations = Used by { $stations }
 hfdl-chip-working = { $station } is working this channel — heard { $age } ago
+
+## hfdl: ACARS messages (src/app/hfdl.rs)
+
+hfdl-messages = MESSAGES
+hfdl-no-acars-yet = No ACARS message yet. Airline messages ride inside the data link between the squitters, far less often than they do on VHF; the ones heard are kept here after the decode log has rolled past them.
+hfdl-save-hfdl-acars-messages-csv = Save the ACARS messages to a CSV file
+hfdl-acars-downlink = Aircraft to ground
+hfdl-acars-uplink = Ground to aircraft
+hfdl-acars-crc-bad = CRC
+hfdl-acars-crc-bad-hint = The message's own check sequence did not match, so some of the text may be wrong. The data link frame it rode in did pass its own check.
+hfdl-acars-more = more…
+hfdl-acars-more-hint = One part of a longer message — further blocks follow.

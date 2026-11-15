@@ -169,9 +169,9 @@ pub use geo::{
 };
 pub use hd::{HdAudioService, HdRadioStatus};
 pub use hfdl::{
-    HFDL_ACTIVE_FRESH_S, HFDL_DEFAULT_HZ, HFDL_LANE_RATE_HZ, HFDL_LOG_DEPTH, HfdlDecode, HfdlFix,
-    HfdlSettings, HfdlStation, HfdlStationFreq, HfdlStatus, hfdl_plan_khz, hfdl_stations_on,
-    hfdl_working_khz,
+    HFDL_ACARS_DEPTH, HFDL_ACTIVE_FRESH_S, HFDL_DEFAULT_HZ, HFDL_LANE_RATE_HZ, HFDL_LOG_DEPTH,
+    HfdlAcars, HfdlDecode, HfdlFix, HfdlSettings, HfdlStation, HfdlStationFreq, HfdlStatus,
+    hfdl_acars_label_name, hfdl_plan_khz, hfdl_stations_on, hfdl_working_khz,
 };
 pub use ibp::{
     Active as IbpActive, BANDS as IBP_BANDS, BEACONS as IBP_BEACONS, Beacon as IbpBeacon,

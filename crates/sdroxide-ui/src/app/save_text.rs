@@ -260,6 +260,38 @@ pub fn hfdl_log_text(log: &[HfdlDecode]) -> String {
     out
 }
 
+/// The HFDL ACARS messages as CSV, oldest first — the order the ACARS pane
+/// saves in, and the one a file reads naturally in. `messages` is newest first,
+/// as the status carries it; a decode without an ACARS message is skipped.
+pub fn hfdl_acars_csv(messages: &[HfdlDecode]) -> String {
+    let mut out = String::from(
+        "utc,freq_khz,snr_db,direction,registration,flight,icao,label,sublabel,block_id,msg_num,\
+         crc_ok,more,text,decoded\n",
+    );
+    for d in messages.iter().rev() {
+        let Some(a) = &d.acars else { continue };
+        out.push_str(&format!(
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            stamp(d.unix),
+            d.freq_khz,
+            d.snr_db.map_or(String::new(), |v| format!("{v:.1}")),
+            if a.downlink { "down" } else { "up" },
+            csv(&a.registration),
+            csv(a.flight.trim()),
+            csv(a.icao.as_deref().unwrap_or("")),
+            csv(&a.label),
+            csv(a.sublabel.as_deref().unwrap_or("")),
+            csv(&a.block_id.map(String::from).unwrap_or_default()),
+            csv(&a.msg_num),
+            if a.crc_ok { "ok" } else { "bad" },
+            if a.more { "yes" } else { "no" },
+            csv(&a.text),
+            csv(a.decoded.as_deref().unwrap_or("")),
+        ));
+    }
+    out
+}
+
 /// The VDL2 message log as text.
 pub fn vdl2_log_text(messages: &[Vdl2Message]) -> String {
     let mut out = String::from("utc\tfreq_mhz\tsnr_db\tsummary\n");
@@ -302,6 +334,54 @@ mod tests {
         assert_eq!(csv("a,b"), "\"a,b\"");
         assert_eq!(csv("say \"hi\""), "\"say \"\"hi\"\"\"");
         assert_eq!(csv("two\nlines"), "\"two\nlines\"");
+    }
+
+    fn hfdl_msg(unix: i64, text: &str) -> HfdlDecode {
+        HfdlDecode {
+            unix,
+            kind: "acars".into(),
+            gs: None,
+            freq_khz: 8_912,
+            snr_db: Some(11.5),
+            freq_skew_hz: None,
+            fec_corrected: None,
+            details: String::new(),
+            position: None,
+            acars: Some(sdroxide_types::HfdlAcars {
+                downlink: true,
+                registration: "N123AB".into(),
+                flight: "UAL012 ".into(),
+                icao: Some("A1B2C3".into()),
+                label: "H1".into(),
+                block_id: Some('4'),
+                msg_num: "M01A".into(),
+                text: text.into(),
+                crc_ok: true,
+                decoded: Some("ETA 1530".into()),
+                ..Default::default()
+            }),
+        }
+    }
+
+    /// The ACARS CSV reads oldest first (the status carries newest first), keeps
+    /// a message's own line breaks inside one quoted field, and skips a decode
+    /// that carried no message.
+    #[test]
+    fn hfdl_acars_export_is_chronological_and_quotes_the_text() {
+        let mut plain = hfdl_msg(0, "");
+        plain.acars = None;
+        let newest_first =
+            [hfdl_msg(2_000, "SECOND, WITH COMMA"), plain, hfdl_msg(1_000, "FIRST\r\nLINE2")];
+        let out = hfdl_acars_csv(&newest_first);
+        let mut lines = out.lines();
+        assert!(lines.next().unwrap().starts_with("utc,freq_khz,snr_db,direction,registration,"));
+        assert!(out.matches("N123AB").count() == 2, "a decode with no message adds no row: {out}");
+        let first = out.find("FIRST").unwrap();
+        let second = out.find("SECOND").unwrap();
+        assert!(first < second, "oldest first: {out}");
+        assert!(out.contains("\"SECOND, WITH COMMA\""), "{out}");
+        assert!(out.contains("\"FIRST\r\nLINE2\""), "{out}");
+        assert!(out.contains(",down,N123AB,UAL012,A1B2C3,H1,,4,M01A,ok,no,"), "{out}");
     }
 
     #[test]

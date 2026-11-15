@@ -422,6 +422,7 @@ mod tests {
             fec_corrected: None,
             details: "{}".into(),
             position: fix,
+            acars: None,
         }
     }
 

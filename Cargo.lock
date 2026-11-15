@@ -5588,6 +5588,7 @@ dependencies = [
  "sdroxide-types",
  "serde_json",
  "tracing",
+ "xng-acars",
  "xng-mode-hfdl",
 ]
 

@@ -132,7 +132,110 @@ pub struct HfdlDecode {
     /// and the rest do not. Lifted out of [`Self::details`] so the panel and
     /// the map need not parse JSON. Appended last: the wire is positional.
     pub position: Option<HfdlFix>,
+    /// The ACARS message this event carried, where it carried one — the text
+    /// itself, which [`Self::details`] does not. Appended last, like
+    /// [`Self::position`].
+    pub acars: Option<HfdlAcars>,
 }
+
+/// An ACARS block that rode inside an HFDL data link frame.
+///
+/// HFDL carries ACARS the way VDL2 does — it is the same airline message, over
+/// shortwave. The fields are ARINC 618's, as [`crate::Vdl2Acars`] names them;
+/// the two differ in that this one has been through xng's application-layer
+/// decoder already, so [`Self::decoded`] says what the message *is* where it
+/// could tell.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct HfdlAcars {
+    /// Aircraft to ground (`true`) or ground to aircraft.
+    pub downlink: bool,
+    /// The aircraft registration, dot padding stripped; empty when the block
+    /// carried none.
+    pub registration: String,
+    /// The ICAO address, when the logon cache resolved the downlink's alias.
+    pub icao: Option<String>,
+    /// The flight identification (downlink only; empty otherwise).
+    pub flight: String,
+    /// The two-character label — what kind of message this is.
+    pub label: String,
+    /// The H1 sublabel, when the label carries one.
+    pub sublabel: Option<String>,
+    /// The mode character.
+    pub mode: char,
+    /// The block identifier, where there was one.
+    pub block_id: Option<char>,
+    /// The message sequence number (downlink only; empty otherwise).
+    pub msg_num: String,
+    /// The message text, parity stripped. May hold line breaks.
+    pub text: String,
+    /// The block ended ETB rather than ETX: more blocks follow.
+    pub more: bool,
+    /// The ACARS block's own check sequence matched. Reported, not used to
+    /// filter: the HFDL frame it rode in has already passed its own.
+    pub crc_ok: bool,
+    /// Characters whose odd-parity bit disagreed.
+    pub parity_errors: u32,
+    /// What the application-layer decoder made of it — an ADS-C report, a
+    /// CPDLC message, a gate/wheels time, a position — as one line, where it
+    /// recognised anything.
+    pub decoded: Option<String>,
+}
+
+impl HfdlAcars {
+    /// What to call the aircraft: registration, then flight, then ICAO.
+    pub fn who(&self) -> String {
+        let reg = self.registration.trim();
+        if !reg.is_empty() {
+            return reg.to_string();
+        }
+        let flt = self.flight.trim();
+        if !flt.is_empty() {
+            return flt.to_string();
+        }
+        self.icao.clone().unwrap_or_default()
+    }
+
+    /// The text on one line, for a log row: line breaks become ` ⏎ `, other
+    /// control characters are dropped, and runs of space collapse.
+    pub fn one_line(&self) -> String {
+        let mut out = String::with_capacity(self.text.len());
+        let mut chars = self.text.chars().peekable();
+        while let Some(c) = chars.next() {
+            match c {
+                '\r' if chars.peek() == Some(&'\n') => {}
+                '\r' | '\n' => out.push_str(" ⏎ "),
+                c if c.is_control() => {}
+                c => out.push(c),
+            }
+        }
+        let mut collapsed = String::with_capacity(out.len());
+        for w in out.split(' ').filter(|w| !w.is_empty()) {
+            if !collapsed.is_empty() {
+                collapsed.push(' ');
+            }
+            collapsed.push_str(w);
+        }
+        collapsed
+    }
+}
+
+/// What the common ACARS labels are, for the log. Only the labels xng's own
+/// application layer dispatches on are named — a short list, deliberately: an
+/// unrecognised label is shown as itself rather than guessed at.
+pub fn hfdl_acars_label_name(label: &str) -> Option<&'static str> {
+    Some(match label {
+        "H1" => "Company message",
+        "A6" | "AA" | "B6" | "BA" => "ATS (ADS-C / CPDLC)",
+        "5Z" => "Airline designated downlink",
+        "SA" => "Media advisory",
+        "MA" => "MIAM",
+        _ => return None,
+    })
+}
+
+/// How many ACARS messages [`HfdlStatus::acars`] keeps — the same depth the
+/// VHF ACARS pane holds: a rolling view, not an archive.
+pub const HFDL_ACARS_DEPTH: usize = 300;
 
 /// What the engine tells the window about the decoder's own state. Re-sent
 /// whenever it changes, the same convention [`crate::Qo100Status`] follows.
@@ -165,6 +268,11 @@ pub struct HfdlStatus {
     /// from the saved system table before that. Appended last: the wire is
     /// positional.
     pub stations: Vec<HfdlStation>,
+    /// The ACARS messages among the decodes, newest first, bounded to
+    /// [`HFDL_ACARS_DEPTH`]. Kept apart from [`Self::log`] because that rolls
+    /// at 64 events, most of them squitters: a busy channel would push a
+    /// message out of it in minutes. Appended last: the wire is positional.
+    pub acars: Vec<HfdlDecode>,
     /// The version of the system table received over the air since the decoder
     /// started, or `None` while none has been — [`Self::stations`] may still
     /// carry channels from the copy saved last time.
@@ -180,6 +288,7 @@ impl Default for HfdlStatus {
             decodes: 0,
             log: Vec::new(),
             stations: Vec::new(),
+            acars: Vec::new(),
             table_version: None,
         }
     }
@@ -463,5 +572,39 @@ mod tests {
         let s = station(4, &[5_451, 8_912]).table_entry();
         let back: HfdlStation = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!(back, s);
+    }
+
+    #[test]
+    fn an_acars_message_is_named_by_registration_then_flight_then_icao() {
+        let mut a = HfdlAcars {
+            registration: "N123AB".into(),
+            flight: "UAL12".into(),
+            icao: Some("A1B2C3".into()),
+            ..Default::default()
+        };
+        assert_eq!(a.who(), "N123AB");
+        a.registration.clear();
+        assert_eq!(a.who(), "UAL12");
+        a.flight = "  ".into();
+        assert_eq!(a.who(), "A1B2C3");
+        a.icao = None;
+        assert_eq!(a.who(), "");
+    }
+
+    #[test]
+    fn the_text_goes_on_one_line() {
+        let a = HfdlAcars {
+            text: "POS N49321W032115\r\n/FL350  /TMP-52\n\u{7}END".into(),
+            ..Default::default()
+        };
+        assert_eq!(a.one_line(), "POS N49321W032115 ⏎ /FL350 /TMP-52 ⏎ END");
+        assert_eq!(HfdlAcars::default().one_line(), "");
+    }
+
+    #[test]
+    fn only_labels_the_decoder_dispatches_on_are_named() {
+        assert_eq!(hfdl_acars_label_name("H1"), Some("Company message"));
+        assert_eq!(hfdl_acars_label_name("B6"), Some("ATS (ADS-C / CPDLC)"));
+        assert_eq!(hfdl_acars_label_name("ZZ"), None);
     }
 }
