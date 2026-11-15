@@ -797,3 +797,132 @@ fn the_ways_into_the_new_windows_fit() {
     }
     assert!(bad.is_empty(), "{bad:#?}");
 }
+
+// ── HFDL aircraft table ─────────────────────────────────────────────────────
+
+/// A fleet like a busy hour's: names of every shape, ages from seconds to
+/// hours, a long and a short last message and one with none.
+fn hfdl_fleet() -> Vec<sdroxide_types::HfdlAircraft> {
+    let mut v = Vec::new();
+    for i in 0..8u32 {
+        let mut a = sdroxide_types::HfdlAircraft::new(format!("icao:A{i}B2C3"), 1_000);
+        a.icao = Some(format!("A{i}B2C3"));
+        if i % 3 != 2 {
+            a.registration =
+                Some(["N123AB", "G-EUUU", "VH-OQA", "9V-SMA", "D-AIXP"][i as usize % 5].into());
+        }
+        a.flight = Some(["UAL012", "BAW099", "QFA7", "SIA21"][i as usize % 4].into());
+        a.gs = Some(
+            ["Riverhead, New York", "Shannon, Ireland", "Johannesburg, South Africa"]
+                [i as usize % 3]
+                .into(),
+        );
+        a.gs_id = Some(4);
+        a.freq_khz = [8_912, 11_184, 21_931][i as usize % 3];
+        a.last_heard = 1_000 - i64::from(i) * 400;
+        a.msgs = 3 + i * 17;
+        a.snr_db = Some(8.0 + i as f32);
+        a.lat = Some(40.0 + f64::from(i));
+        a.lon = Some(-30.0 - f64::from(i));
+        a.fix_at = a.last_heard;
+        a.map_key = Some(format!("icao:A{i}B2C3"));
+        a.last_kind = "performance-data".into();
+        a.last_text = match i % 3 {
+            0 => Some(
+                "[H1] REQUEST CLEARANCE TO CLIMB FL380 DUE TO WEATHER AHEAD, ADVISE WHEN READY"
+                    .into(),
+            ),
+            1 => Some("[Q2] ETA Report".into()),
+            _ => None,
+        };
+        v.push(a);
+    }
+    v
+}
+
+/// Open the HFDL panel on the AIRCRAFT tab, filled, and draw it.
+fn hfdl_table_frame(
+    w: f32,
+    h: f32,
+    split: f32,
+    tag: &str,
+) -> (egui::Context, SdroxideApp, Vec<egui::epaint::ClippedShape>) {
+    let ctx = egui::Context::default();
+    let mut app = new_app(&ctx, LayoutMode::Auto, tag);
+    app.view.hfdl_split_fraction = split;
+    app.state.rx[0].mode = Mode::Hfdl;
+    app.state.hfdl.enabled = true;
+    app.view.hfdl_tab = super::hfdl::HFDL_TAB_AIRCRAFT;
+    app.hfdl_status = Some(sdroxide_types::HfdlStatus {
+        running: true,
+        aircraft: hfdl_fleet(),
+        ..Default::default()
+    });
+    let mut frame = eframe::Frame::_new_kittest();
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w, h));
+    let mut t0 = 0.0;
+    let shapes = run(&ctx, &mut app, &mut frame, screen, &mut t0, 30, |_| Vec::new());
+    (ctx, app, shapes)
+}
+
+/// The aircraft table, drawn for real at the window sizes people run and with
+/// the divider dragged to either side: no cell's text lies over another's, and
+/// a message that had to be cut is cut at the divider — the table reaches the
+/// map — rather than stopping short of it.
+///
+/// This replaced a measurement of the table's width, which passed while the last
+/// column was drawn over the first ones: it measured how wide the table was and
+/// never where its text was.
+#[test]
+#[ignore = "draws the whole app, which changes process-wide settings"]
+fn the_hfdl_aircraft_table_has_no_overlap_and_reaches_the_map() {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let mut bad = Vec::new();
+    for (w, h) in [(1920.0, 1080.0), (1366.0, 768.0), (1280.0, 720.0), (1024.0, 600.0)] {
+        for split in [0.3_f32, 0.5, 0.7] {
+            for tag in LANGUAGES {
+                let at = format!("{w:.0}x{h:.0} split {split} {tag}");
+                let (_ctx, _app, shapes) = hfdl_table_frame(w, h, split, tag);
+                let all = texts(&shapes);
+                // The table's own texts: those drawn in the same clip as its
+                // REG heading, from that heading down.
+                let Some((_, head, pane)) = all.iter().find(|(t, _, _)| t == "REG") else {
+                    bad.push(format!("{at}: no REG heading — the table was not drawn"));
+                    continue;
+                };
+                let table: Vec<_> = all
+                    .iter()
+                    .filter(|(_, r, c)| c == pane && r.top() >= head.top() - 1.0)
+                    .collect();
+                if table.len() < 15 {
+                    bad.push(format!("{at}: only {} texts in the table", table.len()));
+                }
+                // No two overlap (their visible parts, a point's slack).
+                for (i, (ta, ra, _)) in table.iter().enumerate() {
+                    for (tb, rb, _) in table.iter().skip(i + 1) {
+                        let o = ra.intersect(*rb);
+                        if o.width() > 1.0 && o.height() > 1.0 {
+                            bad.push(format!("{at}: {ta:?} overlaps {tb:?}"));
+                        }
+                    }
+                }
+                // A message that was cut reaches the divider; one that was not
+                // simply fits. (A pane too narrow scrolls, so what it cuts at
+                // the pane's edge is not the table's doing.)
+                for (t, r, _) in &table {
+                    if t.ends_with('…')
+                        && r.right() < pane.right() - 40.0
+                        && r.right() > head.left()
+                    {
+                        bad.push(format!(
+                            "{at}: {t:?} is cut at {:.0} but the pane goes to {:.0}",
+                            r.right(),
+                            pane.right()
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{bad:#?}");
+}

@@ -908,6 +908,32 @@ impl TableGeom {
     fn last_width(self, ui: &egui::Ui) -> f32 {
         (self.width - (ui.cursor().min.x - self.origin_x)).max(AIRCRAFT_LAST_MIN_W)
     }
+
+    /// Draw `text` as the last column's cell: one line, cut with an ellipsis
+    /// where the column ends, at the top of its cell like every other label.
+    ///
+    /// Laid out and painted directly. A child region for the cell, or
+    /// `ui.set_width` on it, both put the cell somewhere other than where a
+    /// grid puts a label — `set_width` at the grid's origin, over the first
+    /// columns; a region several points below the row.
+    fn last_text(
+        self,
+        ui: &mut egui::Ui,
+        text: &str,
+        font: egui::FontId,
+        color: egui::Color32,
+    ) -> egui::Response {
+        let w = self.last_width(ui);
+        let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), font, color);
+        job.wrap = egui::text::TextWrapping::truncate_at_width(w);
+        let galley = ui.painter().layout_job(job);
+        let (rect, resp) =
+            ui.allocate_exact_size(egui::vec2(w, galley.size().y), egui::Sense::hover());
+        if ui.is_rect_visible(rect) {
+            ui.painter().galley(rect.min, galley, color);
+        }
+        resp
+    }
 }
 
 /// How far the aircraft's last position is from `home`, in km.
@@ -1006,14 +1032,13 @@ fn hfdl_aircraft_header(ui: &mut egui::Ui, sorted: u8, asc: bool, geom: TableGeo
             clicked = Some(col);
         }
     }
-    // The last column's width is set here too, so the header does not leave it
-    // narrower than the rows under it.
-    ui.set_width(geom.last_width(ui));
-    ui.label(
-        RichText::new(tr!("hfdl-col-last"))
-            .size(AIRCRAFT_HEAD_PT)
-            .strong()
-            .color(crate::theme::CYAN_DIM()),
+    // Sized like the rows' cells, so the header does not leave the column
+    // narrower than what is under it.
+    geom.last_text(
+        ui,
+        &tr!("hfdl-col-last"),
+        egui::FontId::proportional(AIRCRAFT_HEAD_PT),
+        crate::theme::CYAN_DIM(),
     );
     clicked
 }
@@ -1166,28 +1191,22 @@ fn hfdl_aircraft_row(
     // The last message: what it said, or — for an aircraft that has sent no
     // ACARS — only what kind of event was last heard from it, dimmer. The cell
     // takes the rest of the pane and the text is cut to fit it.
-    ui.set_width(geom.last_width(ui));
     match &a.last_text {
         Some(t) => {
-            ui.add(
-                egui::Label::new(
-                    RichText::new(t)
-                        .monospace()
-                        .size(AIRCRAFT_LAST_PT)
-                        .color(crate::theme::gray(200)),
-                )
-                .truncate(),
+            geom.last_text(
+                ui,
+                t,
+                egui::FontId::monospace(AIRCRAFT_LAST_PT),
+                crate::theme::gray(200),
             )
             .on_hover_text(t.as_str());
         }
         None => {
-            ui.add(
-                egui::Label::new(
-                    RichText::new(&a.last_kind)
-                        .size(AIRCRAFT_LAST_PT)
-                        .color(crate::theme::gray(100)),
-                )
-                .truncate(),
+            geom.last_text(
+                ui,
+                &a.last_kind,
+                egui::FontId::proportional(AIRCRAFT_LAST_PT),
+                crate::theme::gray(100),
             );
         }
     }
