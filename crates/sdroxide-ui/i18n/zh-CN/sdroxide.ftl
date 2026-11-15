@@ -34,6 +34,7 @@ ui-theme-dracula = Dracula
 ui-theme-catppuccin-mocha = Catppuccin 摩卡
 ui-theme-catppuccin-latte = Catppuccin 拿铁
 ui-theme-modern-minimalist = 现代极简
+ui-theme-simplesdr = SimpleSDR
 
 chrome-style-angled = 斜角
 chrome-style-rectangular = 直角
