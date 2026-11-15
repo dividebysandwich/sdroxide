@@ -145,8 +145,8 @@ fn a_message_handed_to_the_rigs_keyer_is_sent_at_the_drive_the_operator_set() {
         vec![
             Command::SetMode { rx: RxId::Main, mode: Mode::Cw },
             Command::SetTxDrive(0.42),
+            Command::DigiTxText("cq de w1aw\n".into()),
             Command::DigiTxActive(true),
-            Command::DigiTxText("cq de w1aw".into()),
         ],
         Duration::from_millis(1200),
     );

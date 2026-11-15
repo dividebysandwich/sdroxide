@@ -533,6 +533,7 @@ pub fn update_atu(prev: AtuState, kvs: &Kvs) -> Option<AtuState> {
         status: status.unwrap_or(prev.status),
         enabled: enabled.unwrap_or(prev.enabled),
         using_memory: using_memory.unwrap_or(prev.using_memory),
+        ..prev
     })
 }
 

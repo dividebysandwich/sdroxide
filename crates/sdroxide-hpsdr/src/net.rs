@@ -661,6 +661,17 @@ pub enum HpsdrError {
     Msg(String),
 }
 
+/// Result of delivering an ATU command to the Pico over I2C.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HpsdrAtuCommandResult {
+    /// The network thread or I/O board rejected the request before the write.
+    Rejected,
+    /// The Pico acknowledged the I2C write. This is not tune completion.
+    Acknowledged,
+    /// The I2C write did not receive an acknowledgement before giving up.
+    Failed,
+}
+
 /// Control messages from the handles to the network thread.
 pub(crate) enum Ctrl {
     /// A DDC stream coming up: store its ring + liveness clock, enable it on
@@ -698,6 +709,10 @@ pub(crate) enum Ctrl {
     /// — changed while running, because the antenna memory keeps it per band
     /// (issue #292). Protocol 1 only; there is no accessory bus on Protocol 2.
     IoRxInput(HpsdrIoRxInput),
+    /// Request an antenna tuner operation (Protocol 1 accessory board only).
+    /// The reply reports whether the I2C write reached the Pico, not tune completion.
+    AtuTune(std::sync::mpsc::Sender<HpsdrAtuCommandResult>),
+    AtuBypass(std::sync::mpsc::Sender<HpsdrAtuCommandResult>),
     /// Where the radio *would* transmit, sent while receiving so an accessory
     /// board can switch bands before the operator keys. Loads the TX NCO
     /// register too, which is harmless: it does nothing until MOX.
@@ -860,6 +875,18 @@ impl AutoGain {
 /// enough that a light still on means the front end is still in trouble.
 pub const OVERLOAD_HOLD: Duration = Duration::from_millis(1500);
 
+/// Snapshot of the generic antenna tuner's discovery and runtime status.
+///
+/// `present` is None until discovery has completed or if the interface
+/// is unsupported. `raw_status` and `updated_at` describe the latest
+/// status byte received from the Pico.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HpsdrTunerStatus {
+    pub present: Option<bool>,
+    pub raw_status: Option<u8>,
+    pub updated_at: Option<Instant>,
+}
+
 /// Everything a protocol thread needs: the socket, the radio address, the
 /// rates, the TX ring and the control channel. The RX rings arrive per DDC
 /// with [`Ctrl::Attach`] — streams come and go while the connection runs.
@@ -901,6 +928,7 @@ pub(crate) struct ThreadCtx {
     pub adc_overload: Arc<AtomicBool>,
     /// The radio's own PTT line, published for [`HpsdrRx::radio_ptt`].
     pub radio_ptt: Arc<AtomicBool>,
+    pub tuner_status: Arc<Mutex<HpsdrTunerStatus>>,
     /// The board's temperature in hundredths of a degree Celsius, published for
     /// [`HpsdrRx::pa_temp_c`]. [`TEMP_UNKNOWN`] until the board reports one —
     /// which most of them never do.
@@ -978,6 +1006,7 @@ struct DevInner {
     /// Which DDCs have a live [`HpsdrRx`], so one cannot be vended twice: two
     /// engines draining one ring would each get half the samples.
     attached: Mutex<std::collections::HashSet<u8>>,
+    tuner_status: Arc<Mutex<HpsdrTunerStatus>>,
 }
 
 impl Drop for DevInner {
@@ -1138,6 +1167,7 @@ impl HpsdrBoard {
         // drops it a moment from now it will leave the stream alone.
         let conn_id = claim_connection(IpAddr::V4(ip));
         let radio_ptt = Arc::new(AtomicBool::new(false));
+        let tuner_status = Arc::new(Mutex::new(HpsdrTunerStatus::default()));
         let temp_centi_c = Arc::new(AtomicI32::new(TEMP_UNKNOWN));
         let fwd_power_raw = Arc::new(AtomicU16::new(POWER_UNKNOWN));
         let rev_power_raw = Arc::new(AtomicU16::new(POWER_UNKNOWN));
@@ -1173,6 +1203,7 @@ impl HpsdrBoard {
             temp_centi_c: Arc::clone(&temp_centi_c),
             fwd_power_raw: Arc::clone(&fwd_power_raw),
             rev_power_raw: Arc::clone(&rev_power_raw),
+            tuner_status: Arc::clone(&tuner_status),
             tx: tx_cons,
             ctrl: ctrl_rx,
         };
@@ -1210,6 +1241,7 @@ impl HpsdrBoard {
                 temp_centi_c,
                 fwd_power_raw,
                 rev_power_raw,
+                tuner_status,
                 tx_endpoint: Mutex::new(Some(tx_prod)),
                 attached: Mutex::new(std::collections::HashSet::new()),
             }),
@@ -1457,6 +1489,31 @@ impl HpsdrRx {
         }
     }
 
+    /// Request an antenna tuner tune operation.
+    ///
+    /// The returned receiver reports whether the I2C write reached the Pico.
+    /// It does not indicate that tuning has completed; Reg7 reports that separately.
+    /// Protocol 1 accessory board only; only DDC 0 sends board-level commands.
+    pub fn request_atu_tune(&self) -> Option<std::sync::mpsc::Receiver<HpsdrAtuCommandResult>> {
+        if self.ddc != 0 {
+            return None;
+        }
+        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+        self.dev.ctrl.send(Ctrl::AtuTune(reply_tx)).ok()?;
+        Some(reply_rx)
+    }
+
+    /// Request antenna tuner bypass. The returned result has the same meaning
+    /// as request_atu_tune: it confirms the I2C write, not tune completion.
+    pub fn request_atu_bypass(&self) -> Option<std::sync::mpsc::Receiver<HpsdrAtuCommandResult>> {
+        if self.ddc != 0 {
+            return None;
+        }
+        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+        self.dev.ctrl.send(Ctrl::AtuBypass(reply_tx)).ok()?;
+        Some(reply_rx)
+    }
+
     /// Whether this board has a front-end gain this crate can command.
     pub fn has_lna_gain(&self) -> bool {
         board_has_lna_gain(&self.dev.board)
@@ -1644,6 +1701,13 @@ impl HpsdrRx {
     /// unread for the length of somebody else's over.
     pub fn set_rx_paused(&self, paused: bool) {
         self.rx_paused.store(paused, Ordering::Relaxed);
+    }
+    /// Latest generic antenna tuner status reported by the accessory board.
+    ///
+    /// The returned snapshot is copied under a short-lived lock. Reading it
+    /// does not block the protocol thread or initiate an I2C transaction.
+    pub fn tuner_status(&self) -> HpsdrTunerStatus {
+        *self.dev.tuner_status.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
