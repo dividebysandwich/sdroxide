@@ -712,9 +712,13 @@ fn hfdl_station_row(ui: &mut egui::Ui, s: &HfdlStation, now: i64, cur_khz: u32) 
                 if khz == cur_khz {
                     t = t.underline().strong();
                 }
-                let resp = ui.add(egui::Label::new(t).sense(egui::Sense::click())).on_hover_text(
-                    tr!("hfdl-station-channel-hint", mhz = format!("{:.3}", khz as f32 / 1e3)),
-                );
+                let resp = ui
+                    .add(egui::Label::new(t).sense(egui::Sense::click()))
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(tr!(
+                        "hfdl-station-channel-hint",
+                        mhz = format!("{:.3}", khz as f32 / 1e3)
+                    ));
                 if resp.clicked() {
                     picked = Some(khz);
                 }
@@ -956,7 +960,10 @@ fn hfdl_aircraft_header(ui: &mut egui::Ui, sorted: u8, asc: bool) -> Option<u8> 
             )
             .sense(egui::Sense::click()),
         );
-        if r.on_hover_text(tr!("hfdl-aircraft-sort-hint")).clicked() {
+        if r.on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(tr!("hfdl-aircraft-sort-hint"))
+            .clicked()
+        {
             clicked = Some(col);
         }
     }
@@ -1012,6 +1019,7 @@ fn hfdl_aircraft_row(
             egui::Label::new(RichText::new("▸").size(11.0).color(crate::theme::CYAN_DIM()))
                 .sense(egui::Sense::click()),
         )
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(tr!("hfdl-aircraft-filter-hint"))
         .clicked()
     {
@@ -1042,6 +1050,9 @@ fn hfdl_aircraft_row(
     } else {
         egui::Sense::hover()
     }));
+    // The hand only where a click does something: an aircraft with no plot has
+    // nothing to blink.
+    let r = if plotted { r.on_hover_cursor(egui::CursorIcon::PointingHand) } else { r };
     let mut tip = String::new();
     if let Some(i) = &a.icao {
         tip.push_str(&format!("ICAO {i}\n"));
