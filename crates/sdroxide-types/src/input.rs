@@ -1070,6 +1070,65 @@ impl Tmate2TxReadout {
     }
 }
 
+/// The kinds of mode the TMate 2's backlight can be coloured by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tmate2ModeKind {
+    Ssb,
+    Cw,
+    AmFm,
+    Data,
+}
+
+/// The TMate 2's backlight colours (red, green, blue, 0-255 each) and LCD
+/// contrast: one colour in receive and one in transmit and, if `by_mode`,
+/// a receive colour for each kind of mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Tmate2Backlight {
+    pub rx: [u8; 3],
+    pub tx: [u8; 3],
+    pub by_mode: bool,
+    pub ssb: [u8; 3],
+    pub cw: [u8; 3],
+    pub am_fm: [u8; 3],
+    pub data: [u8; 3],
+    pub contrast: u8,
+}
+
+impl Default for Tmate2Backlight {
+    /// The receive colour and contrast are what ELAD's own software sends.
+    fn default() -> Self {
+        let blue = [0x00, 0x32, 0xFF];
+        Tmate2Backlight {
+            rx: blue,
+            tx: [0xFF, 0x20, 0x00],
+            by_mode: false,
+            ssb: blue,
+            cw: [0x00, 0xC0, 0x40],
+            am_fm: [0xFF, 0xA0, 0x00],
+            data: [0xA0, 0x00, 0xFF],
+            contrast: 0x28,
+        }
+    }
+}
+
+impl Tmate2Backlight {
+    /// The colour now: transmit's while transmitting, else the mode's (when
+    /// coloured by mode) or receive's.
+    pub fn pick(&self, tx: bool, mode: Option<Tmate2ModeKind>) -> [u8; 3] {
+        if tx {
+            return self.tx;
+        }
+        match (self.by_mode, mode) {
+            (true, Some(Tmate2ModeKind::Ssb)) => self.ssb,
+            (true, Some(Tmate2ModeKind::Cw)) => self.cw,
+            (true, Some(Tmate2ModeKind::AmFm)) => self.am_fm,
+            (true, Some(Tmate2ModeKind::Data)) => self.data,
+            _ => self.rx,
+        }
+    }
+}
+
 /// The ELAD / WoodBoxRadio TMate 2 USB controller.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -1078,6 +1137,8 @@ pub struct Tmate2Settings {
     pub bindings: Vec<Tmate2Binding>,
     /// What the small display shows while transmitting.
     pub tx_readout: Tmate2TxReadout,
+    /// Backlight colours and contrast.
+    pub backlight: Tmate2Backlight,
 }
 
 impl Default for Tmate2Settings {
@@ -1086,6 +1147,7 @@ impl Default for Tmate2Settings {
             enabled: false,
             bindings: Tmate2Binding::defaults(),
             tx_readout: Tmate2TxReadout::default(),
+            backlight: Tmate2Backlight::default(),
         }
     }
 }
@@ -1182,6 +1244,21 @@ impl InputSettings {
         }
         self.schema = Self::SCHEMA;
         true
+    }
+}
+
+#[cfg(test)]
+mod tmate2_backlight_tests {
+    use super::*;
+
+    #[test]
+    fn transmit_then_mode_then_receive() {
+        let b = Tmate2Backlight { by_mode: true, ..Tmate2Backlight::default() };
+        assert_eq!(b.pick(true, Some(Tmate2ModeKind::Cw)), b.tx);
+        assert_eq!(b.pick(false, Some(Tmate2ModeKind::Cw)), b.cw);
+        assert_eq!(b.pick(false, None), b.rx);
+        let plain = Tmate2Backlight::default();
+        assert_eq!(plain.pick(false, Some(Tmate2ModeKind::Cw)), plain.rx);
     }
 }
 

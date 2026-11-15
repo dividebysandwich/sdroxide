@@ -13625,6 +13625,13 @@ clicking the panadapter or a spot still tunes. The lock is not saved, so it is
 always off when sdroxide starts. Both can go on any TMate 2 button, key or MIDI
 pad.
 
+**Backlight and contrast.** Under **Backlight** in the TMate 2 section, pick
+a **Receive** and a **Transmit** colour for the LCD's backlight. Tick
+**Receive colour by mode** to give SSB, CW, AM and FM, and data modes a
+receive colour each. **Contrast** sets the LCD's contrast (0 to 63).
+**Default colours** puts back ELAD's own blue at contrast 40, with red for
+transmit. The colours change the moment the radio keys or the mode changes.
+
 **Switching VFOs after a transverter session.** The main-dial push tunes to
 whatever the other VFO last held, exactly as the on-screen A/B button does. If
 you last used VFO B with a transverter, that may be a VHF/UHF frequency the radio

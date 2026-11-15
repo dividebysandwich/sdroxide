@@ -386,6 +386,9 @@ fn settings_tmate2_section(
             });
     });
 
+    ui.add_space(6.0);
+    tmate2_backlight(ui, &mut cfg.tmate2.backlight);
+
     ui.add_space(8.0);
     let mut remove: Option<usize> = None;
     egui::Grid::new("tmate2-grid").num_columns(5).spacing([10.0, 6.0]).striped(true).show(
@@ -692,4 +695,33 @@ fn wheel_action_combo(ui: &mut egui::Ui, id: &str, act: &mut sdroxide_types::Whe
             }
         }
     });
+}
+
+/// The TMate 2's backlight colours and contrast.
+fn tmate2_backlight(ui: &mut egui::Ui, b: &mut sdroxide_types::Tmate2Backlight) {
+    ui.label(RichText::new(tr!("settings-controls-tmate2-backlight")).strong());
+    egui::Grid::new("tmate2-backlight").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+        let row = |ui: &mut egui::Ui, name: String, c: &mut [u8; 3]| {
+            ui.label(name);
+            ui.color_edit_button_srgb(c);
+            ui.end_row();
+        };
+        row(ui, tr!("settings-controls-tmate2-rx-colour"), &mut b.rx);
+        row(ui, tr!("settings-controls-tmate2-tx-colour"), &mut b.tx);
+        ui.label("");
+        crate::chrome::checkbox(ui, &mut b.by_mode, tr!("settings-controls-tmate2-by-mode"));
+        ui.end_row();
+        if b.by_mode {
+            row(ui, tr!("settings-controls-tmate2-ssb-colour"), &mut b.ssb);
+            row(ui, tr!("settings-controls-tmate2-cw-colour"), &mut b.cw);
+            row(ui, tr!("settings-controls-tmate2-am-fm-colour"), &mut b.am_fm);
+            row(ui, tr!("settings-controls-tmate2-data-colour"), &mut b.data);
+        }
+        ui.label(tr!("settings-controls-tmate2-contrast"));
+        ui.add(egui::Slider::new(&mut b.contrast, 0..=63));
+        ui.end_row();
+    });
+    if crate::chrome::chip(ui, false, tr!("settings-controls-tmate2-default-colours")).clicked() {
+        *b = sdroxide_types::Tmate2Backlight { by_mode: b.by_mode, ..Default::default() };
+    }
 }

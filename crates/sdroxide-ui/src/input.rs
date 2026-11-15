@@ -1260,6 +1260,7 @@ impl InputRuntime {
             sdroxide_types::Tmate2TxReadout::Swr => sdroxide_tmate2::TxReadout::Swr,
         };
         d.lock_led = tune_locked;
+        d.look = tmate2_look(&self.cfg.tmate2.backlight, d.tx, d.mode);
         // Underline the digit the main dial steps by, when its step is a
         // whole decade (1 Hz, 10 Hz, ... ) that names one digit.
         d.step_digit = self
@@ -1373,6 +1374,25 @@ fn next_tune_step(step: f32, up: bool) -> f32 {
     if step < 0.0 { -next } else { next }
 }
 
+/// The backlight and contrast the settings give for transmit or the mode.
+#[cfg(not(target_arch = "wasm32"))]
+fn tmate2_look(
+    b: &sdroxide_types::Tmate2Backlight,
+    tx: bool,
+    mode: Option<sdroxide_tmate2::ModeIcon>,
+) -> sdroxide_tmate2::Look {
+    use sdroxide_tmate2::ModeIcon;
+    use sdroxide_types::Tmate2ModeKind as K;
+    let kind = mode.map(|m| match m {
+        ModeIcon::Lsb | ModeIcon::Usb => K::Ssb,
+        ModeIcon::Cw => K::Cw,
+        ModeIcon::Am | ModeIcon::Sam | ModeIcon::Fm | ModeIcon::Dsb => K::AmFm,
+        ModeIcon::Drm | ModeIcon::Dig => K::Data,
+    });
+    let [red, green, blue] = b.pick(tx, kind);
+    sdroxide_tmate2::Look { red, green, blue, contrast: b.contrast }
+}
+
 /// What the TMate 2's LCD shows for this radio state: the frequency of the
 /// VFO in use, its mode, the receive meter (or forward power on transmit), and
 /// the legends for the toggles the panel has a word for.
@@ -1434,6 +1454,7 @@ fn tmate2_display_for(
         tx_readout: sdroxide_tmate2::TxReadout::Power,
         step_digit: None,
         lock_led: false,
+        look: sdroxide_tmate2::Look::default(),
     }
 }
 

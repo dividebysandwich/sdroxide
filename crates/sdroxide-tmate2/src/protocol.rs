@@ -288,6 +288,24 @@ pub struct Display {
     /// underlined.
     pub step_digit: Option<u8>,
     pub lock_led: bool,
+    /// Backlight colour and LCD contrast.
+    pub look: Look,
+}
+
+/// Backlight colour (0-255 each) and LCD contrast. The default is what
+/// ELAD's own software sends: a light blue at contrast 40.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Look {
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+    pub contrast: u8,
+}
+
+impl Default for Look {
+    fn default() -> Self {
+        Look { red: 0x00, green: 0x32, blue: 0xFF, contrast: 0x28 }
+    }
 }
 
 /// The underline under main digit `d` (1 = rightmost): bit 3 of the digit's
@@ -380,12 +398,12 @@ pub fn po_bars(pct: u8) -> usize {
 
 /// The settings part of every report: backlight, contrast, the dial
 /// acceleration ELAD ships (1, 5 and 10 counts per detent) and the LEDs.
-fn settings(r: &mut [u8; REPORT_LEN], lock: bool) {
+fn settings(r: &mut [u8; REPORT_LEN], lock: bool, look: Look) {
     r[STATUS] = LED_USB | if lock { LED_LOCK } else { 0 };
-    r[BACKLIGHT_R] = 0x00;
-    r[BACKLIGHT_G] = 0x32;
-    r[BACKLIGHT_B] = 0xFF;
-    r[CONTRAST] = 0x28;
+    r[BACKLIGHT_R] = look.red;
+    r[BACKLIGHT_G] = look.green;
+    r[BACKLIGHT_B] = look.blue;
+    r[CONTRAST] = look.contrast;
     // In 10 ms units. ELAD's DLL sends 40 (400 ms), which leaves the S-meter
     // visibly behind the signal; 100 ms keeps up with it.
     r[REFRESH] = LCD_REFRESH_10MS;
@@ -397,7 +415,7 @@ fn settings(r: &mut [u8; REPORT_LEN], lock: bool) {
 /// The full output report for `d`.
 pub fn output(d: &Display) -> [u8; REPORT_LEN] {
     let mut r = [0u8; REPORT_LEN];
-    settings(&mut r, d.lock_led);
+    settings(&mut r, d.lock_led, d.look);
 
     if let Some(hz) = d.freq_hz {
         if hz <= 999_999_999 {

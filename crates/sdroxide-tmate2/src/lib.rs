@@ -25,7 +25,7 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded, unbounded};
 use sdroxide_types::Tmate2Control;
 use tracing::{debug, info, warn};
 
-pub use protocol::{Display, ModeIcon, TxReadout};
+pub use protocol::{Display, Look, ModeIcon, TxReadout};
 use protocol::{InputReport, REPORT_LEN};
 
 /// How often a missing device is looked for.
