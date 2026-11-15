@@ -156,6 +156,8 @@ mod seg {
     pub const RX: Seg = Seg(0, 0x04);
     pub const TX: Seg = Seg(0, 0x08);
     pub const W: Seg = Seg(20, 0x20);
+    pub const MW_M: Seg = Seg(28, 0x01);
+    pub const MW_W: Seg = Seg(27, 0x01);
     pub const RIT: Seg = Seg(13, 0x10);
     pub const XIT: Seg = Seg(14, 0x10);
     /// The printed S-meter scale: 1 3 5 7 9 +20 +40 +60.
@@ -252,8 +254,13 @@ pub struct Display {
     /// Received signal in dBm: the bargraph and, on the small display, the
     /// figure itself. Ignored while transmitting.
     pub signal_dbm: Option<i32>,
-    /// Forward power while transmitting, on the small display.
-    pub tx_watts: Option<u32>,
+    /// Forward power while transmitting, in milliwatts, on the small display:
+    /// whole watts from 1 W up, milliwatts below (a QRP rig's 300 mW would
+    /// otherwise read 0).
+    pub tx_mw: Option<u32>,
+    /// Transmit output, 0–100 % of full scale: the bargraph, and the small
+    /// display where there is no power reading.
+    pub tx_po_pct: Option<u8>,
     pub lock_led: bool,
 }
 
@@ -309,6 +316,19 @@ pub fn smeter_bars(dbm: i32) -> usize {
         let over = dbm + 73;
         (9 + (over + 9) / 10).min(15) as usize
     }
+}
+
+/// Full scale for a forward-power bargraph: the smallest of the usual
+/// transceiver ratings that `peak_w` fits under, so a 5 W rig and a 100 W rig
+/// both swing the whole graph.
+pub fn power_scale_w(peak_w: f32) -> f32 {
+    const SCALES: [f32; 9] = [1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1_500.0];
+    SCALES.into_iter().find(|s| peak_w <= *s).unwrap_or(1_500.0)
+}
+
+/// Bars lit for a power-output reading of `pct` % of full scale.
+pub fn po_bars(pct: u8) -> usize {
+    ((u32::from(pct.min(100)) * seg::BARS.len() as u32 + 50) / 100) as usize
 }
 
 /// The settings part of every report: backlight, contrast, the dial
@@ -372,9 +392,24 @@ pub fn output(d: &Display) -> [u8; REPORT_LEN] {
     set(&mut r, seg::XIT, d.xit);
 
     if d.tx {
-        if let Some(w) = d.tx_watts {
-            small_digits(&mut r, w);
-            set(&mut r, seg::W, true);
+        if let Some(pct) = d.tx_po_pct {
+            set(&mut r, seg::SMETER_LINE, true);
+            for s in seg::BARS.iter().take(po_bars(pct)) {
+                set(&mut r, *s, true);
+            }
+        }
+        match (d.tx_mw, d.tx_po_pct) {
+            (Some(mw), _) if mw >= 1_000 => {
+                small_digits(&mut r, (mw + 500) / 1_000);
+                set(&mut r, seg::W, true);
+            }
+            (Some(mw), _) => {
+                small_digits(&mut r, mw);
+                set(&mut r, seg::MW_M, true);
+                set(&mut r, seg::MW_W, true);
+            }
+            (None, Some(pct)) => small_digits(&mut r, u32::from(pct.min(100))),
+            (None, None) => {}
         }
     } else if let Some(dbm) = d.signal_dbm {
         set(&mut r, seg::SMETER_LINE, true);
@@ -537,11 +572,48 @@ mod tests {
         let (h, l) = SMALL_DIGIT[3];
         assert_eq!((r[23] & 0xF0, r[24] & 0xE0), (h, l), "units digit 3 of 73");
 
-        let tx = Display { tx: true, tx_watts: Some(100), ..rx };
+        let tx = Display { tx: true, tx_mw: Some(100_000), ..rx.clone() };
         let r = output(&tx);
         assert_ne!(r[0] & 0x08, 0, "TX");
         assert_eq!(r[0] & 0x04, 0, "not RX");
         assert_eq!(seg::BARS.iter().filter(|s| r[s.0] & s.1 != 0).count(), 0);
         assert_ne!(r[20] & 0x20, 0, "W");
+
+        // PO on the bargraph, and as a percentage where there are no watts.
+        let po = Display { tx: true, tx_po_pct: Some(60), ..rx };
+        let r = output(&po);
+        assert_eq!(seg::BARS.iter().filter(|s| r[s.0] & s.1 != 0).count(), 9);
+        assert_eq!(r[20] & 0x20, 0, "no W without watts");
+        let (h, l) = SMALL_DIGIT[6];
+        assert_eq!((r[25] & 0xF0, r[26] & 0xE0), (h, l), "tens digit 6 of 60");
+    }
+
+    #[test]
+    fn po_bars_span_the_graph() {
+        assert_eq!(po_bars(0), 0);
+        assert_eq!(po_bars(50), 8);
+        assert_eq!(po_bars(100), 15);
+        assert_eq!(po_bars(255), 15);
+    }
+
+    #[test]
+    fn qrp_power_reads_in_milliwatts() {
+        let r = output(&Display { tx: true, tx_mw: Some(300), ..Default::default() });
+        assert_ne!(r[28] & 0x01, 0, "m");
+        assert_ne!(r[27] & 0x01, 0, "W of mW");
+        assert_eq!(r[20] & 0x20, 0, "not the watts W");
+        let r = output(&Display { tx: true, tx_mw: Some(4_600), ..Default::default() });
+        assert_ne!(r[20] & 0x20, 0, "W");
+        let (h, l) = SMALL_DIGIT[5];
+        assert_eq!((r[23] & 0xF0, r[24] & 0xE0), (h, l), "4.6 W reads 5");
+    }
+
+    #[test]
+    fn power_scale_fits_the_rig() {
+        assert_eq!(power_scale_w(0.3), 1.0);
+        assert_eq!(power_scale_w(4.8), 5.0);
+        assert_eq!(power_scale_w(6.1), 10.0);
+        assert_eq!(power_scale_w(95.0), 100.0);
+        assert_eq!(power_scale_w(5000.0), 1500.0);
     }
 }

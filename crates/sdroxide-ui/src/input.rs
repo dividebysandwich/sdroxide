@@ -549,6 +549,9 @@ pub struct InputRuntime {
     /// What the TMate 2's LCD was last told to show.
     #[cfg(not(target_arch = "wasm32"))]
     tmate2_shown: Option<sdroxide_tmate2::Display>,
+    /// Highest forward power seen this session, for the TX bargraph's scale.
+    #[cfg(not(target_arch = "wasm32"))]
+    tmate2_peak_w: f32,
 }
 
 impl InputRuntime {
@@ -598,6 +601,8 @@ impl InputRuntime {
             tmate2_sent,
             #[cfg(not(target_arch = "wasm32"))]
             tmate2_shown: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            tmate2_peak_w: 0.0,
         }
     }
 
@@ -1199,7 +1204,14 @@ impl InputRuntime {
         if !self.cfg.tmate2.enabled {
             return;
         }
-        let d = tmate2_display_for(state, meters);
+        // The highest forward power seen, which picks the bargraph's full
+        // scale. Kept across overs so the scale does not jump about.
+        if let Some(w) = meters.and_then(|m| m.tx.as_ref()).and_then(|t| t.fwd_w)
+            && w.is_finite()
+        {
+            self.tmate2_peak_w = self.tmate2_peak_w.max(w);
+        }
+        let d = tmate2_display_for(state, meters, self.tmate2_peak_w);
         if self.tmate2_shown.as_ref() != Some(&d) {
             if let Some(t) = self.tmate2.as_ref() {
                 t.set_display(d.clone());
@@ -1281,6 +1293,7 @@ impl InputRuntime {
 fn tmate2_display_for(
     state: &RadioState,
     meters: Option<&sdroxide_types::Meters>,
+    peak_w: f32,
 ) -> sdroxide_tmate2::Display {
     use sdroxide_tmate2::ModeIcon;
     use sdroxide_types::{Mode, NrLevel};
@@ -1303,6 +1316,9 @@ fn tmate2_display_for(
         _ => Some(ModeIcon::Dig),
     };
     let tx = state.tx.ptt;
+    let tx_meters = meters.and_then(|m| m.tx.as_ref());
+    let fwd_w = tx_meters.and_then(|t| t.fwd_w).filter(|w| w.is_finite() && *w >= 0.0);
+    let po = tx_meters.and_then(|t| t.po).filter(|p| p.is_finite());
     sdroxide_tmate2::Display {
         freq_hz: (hz.is_finite() && hz > 0.0).then_some(hz.round() as u64),
         mode,
@@ -1314,11 +1330,15 @@ fn tmate2_display_for(
         rit: state.rit.enabled,
         xit: state.xit.enabled,
         signal_dbm: meters.and_then(|m| m.s_dbm.is_finite().then_some(m.s_dbm.round() as i32)),
-        tx_watts: meters
-            .and_then(|m| m.tx.as_ref())
-            .and_then(|t| t.fwd_w)
-            .filter(|w| w.is_finite() && *w >= 0.0)
-            .map(|w| w.round() as u32),
+        tx_mw: fwd_w.map(|w| (w * 1_000.0).round() as u32),
+        // The rig's own power-output meter where it has one; otherwise forward
+        // watts against the smallest usual rating they fit under.
+        tx_po_pct: po.map(|p| (p.clamp(0.0, 1.0) * 100.0).round() as u8).or_else(|| {
+            fwd_w.map(|w| {
+                let full = sdroxide_tmate2::protocol::power_scale_w(peak_w.max(w));
+                ((w / full).clamp(0.0, 1.0) * 100.0).round() as u8
+            })
+        }),
         lock_led: false,
     }
 }
@@ -1693,6 +1713,7 @@ mod tests {
             tmate2: None,
             tmate2_sent: false,
             tmate2_shown: None,
+            tmate2_peak_w: 0.0,
         };
         runtime.cfg.midi.bindings.push(sdroxide_types::MidiBinding {
             action: Action::Ptt,
@@ -1732,6 +1753,7 @@ mod tests {
             tmate2: None,
             tmate2_sent: false,
             tmate2_shown: None,
+            tmate2_peak_w: 0.0,
         };
         runtime.cfg.tmate2.bindings = vec![sdroxide_types::Tmate2Binding {
             control: sdroxide_types::Tmate2Control::F6,
