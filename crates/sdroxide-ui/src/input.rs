@@ -392,7 +392,9 @@ pub(crate) fn apply_action(
         SwapVfos => cmds.push(Command::SwapVfos),
         CopyAtoB => cmds.push(Command::CopyAtoB),
         BandUp | BandDown => {
-            if let Some(b) = step_band(state.band, act == BandUp) {
+            let b = step_band(state.band, act == BandUp)
+                .or_else(|| band_beside(state.active_freq_hz(), act == BandUp));
+            if let Some(b) = b {
                 cmds.push(Command::SetBand(b));
             }
         }
@@ -494,6 +496,21 @@ fn step_band(cur: sdroxide_types::Band, up: bool) -> Option<sdroxide_types::Band
     let i = ham.iter().position(|b| *b == cur)?;
     let n = ham.len();
     Some(if up { ham[(i + 1) % n] } else { ham[(i + n - 1) % n] })
+}
+
+/// From outside every ham band (general coverage, e.g. 6 MHz after a big
+/// tuning step), the next ham band above `hz` (`up`) or below it, wrapping
+/// round at the ends as [`step_band`] does.
+fn band_beside(hz: f64, up: bool) -> Option<sdroxide_types::Band> {
+    use sdroxide_types::Band;
+    let ham: Vec<(Band, (f64, f64))> =
+        Band::ALL.iter().filter_map(|b| b.edges().map(|e| (*b, e))).collect();
+    let pick = if up {
+        ham.iter().find(|(_, (lo, _))| *lo > hz).or_else(|| ham.first())
+    } else {
+        ham.iter().rev().find(|(_, (_, hi))| *hi < hz).or_else(|| ham.last())
+    };
+    pick.map(|(b, _)| *b)
 }
 
 /// Does this chord's modifier set match what is physically held?
@@ -1995,6 +2012,30 @@ mod tests {
             );
         }
         assert!(state.rx[0].filter_hi - state.rx[0].filter_lo >= MIN_FILTER_HZ - 0.001);
+    }
+
+    #[test]
+    fn band_stepping_from_between_bands_goes_to_the_nearest() {
+        // 6 MHz: between 60 m and 40 m.
+        assert_eq!(band_beside(6_000_000.0, true), Some(Band::M40));
+        assert_eq!(band_beside(6_000_000.0, false), Some(Band::M60));
+        // Below 160 m going down wraps to the top, as band stepping does.
+        assert_eq!(band_beside(500_000.0, true), Some(Band::M160));
+        let mut state = RadioState { vfo_a_hz: 6_000_000.0, band: Band::Gen, ..Default::default() };
+        let mut view = ViewState::default();
+        let mut flags = [false; 6];
+        let mut speech_acts = Vec::new();
+        let mut ui = sink(&mut view, &mut flags, &mut speech_acts);
+        let mut cmds = Vec::new();
+        apply_action(
+            Action::BandUp,
+            ActionInput::Press,
+            ButtonMode::Toggle,
+            &mut state,
+            &mut ui,
+            &mut cmds,
+        );
+        assert_eq!(cmds, vec![Command::SetBand(Band::M40)]);
     }
 
     #[test]
