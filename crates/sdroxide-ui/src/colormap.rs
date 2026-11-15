@@ -1,6 +1,6 @@
 //! Waterfall colormap LUTs: 256×1 RGBA8.
 
-pub const NAMES: [&str; 11] = [
+pub const NAMES: [&str; 12] = [
     "Classic",
     "Viridis",
     "Gray",
@@ -12,6 +12,7 @@ pub const NAMES: [&str; 11] = [
     "Amber",
     "Rainbow",
     "Blue",
+    "SimpleSDR",
 ];
 
 /// Piecewise-linear gradient through (position, RGB) anchor points.
@@ -156,6 +157,21 @@ pub fn lut(index: usize) -> [u8; 256 * 4] {
             (0.78, [255, 0, 0]),
             (0.89, [198, 0, 0]),
             (1.00, [117, 0, 0]),
+        ]),
+        // SimpleSDR — a cool ramp on a charcoal floor: blue-black → navy →
+        // clear blue → aqua → yellow → orange → white. The floor is the dark
+        // blue-grey of a flat charcoal UI rather than pure black, so an empty
+        // band sits level with the panels around it, and there is no green
+        // step: the noise stays in the blues, a signal turns aqua, and only a
+        // strong one reaches the warm end.
+        11 => gradient(&[
+            (0.00, [11, 13, 17]),
+            (0.20, [10, 30, 90]),
+            (0.40, [16, 107, 216]),
+            (0.60, [46, 211, 200]),
+            (0.75, [245, 208, 59]),
+            (0.90, [242, 95, 44]),
+            (1.00, [255, 255, 255]),
         ]),
         // Gray (index 2) and any out-of-range fallback.
         _ => gradient(&[(0.0, [0, 0, 0]), (1.0, [255, 255, 255])]),
