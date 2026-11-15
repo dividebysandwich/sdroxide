@@ -1316,10 +1316,6 @@ impl InputRuntime {
     }
 }
 
-/// What the TMate 2's LCD shows for this radio state: the frequency of the
-/// VFO in use, its mode, the receive meter (or forward power on transmit), and
-/// the legends for the toggles the panel has a word for.
-#[cfg(not(target_arch = "wasm32"))]
 /// The step after `step` in [`sdroxide_types::TMATE2_TUNE_STEPS`], wrapping,
 /// keeping its sign (a reversed dial stays reversed). From a step not on the
 /// list it goes to the first one above.
@@ -1330,6 +1326,10 @@ fn next_tune_step(step: f32) -> f32 {
     if step < 0.0 { -next } else { next }
 }
 
+/// What the TMate 2's LCD shows for this radio state: the frequency of the
+/// VFO in use, its mode, the receive meter (or forward power on transmit), and
+/// the legends for the toggles the panel has a word for.
+#[cfg(not(target_arch = "wasm32"))]
 fn tmate2_display_for(
     state: &RadioState,
     meters: Option<&sdroxide_types::Meters>,
