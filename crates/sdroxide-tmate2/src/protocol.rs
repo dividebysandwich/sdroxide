@@ -282,7 +282,20 @@ pub struct Display {
     pub tx_swr_x10: Option<u32>,
     /// Which of the three the small display shows while transmitting.
     pub tx_readout: TxReadout,
+    /// The digit the main dial tunes by, underlined: 1 is the units (Hz)
+    /// digit, 4 is kHz. Counted on the Hz scale; where the display is in kHz
+    /// (above 1 GHz) it moves to match, and a step finer than shown is not
+    /// underlined.
+    pub step_digit: Option<u8>,
     pub lock_led: bool,
+}
+
+/// The underline under main digit `d` (1 = rightmost): bit 3 of the digit's
+/// A-B-C byte, beside the segments [`main_digits`] writes.
+fn underline(r: &mut [u8; REPORT_LEN], d: usize) {
+    if (1..=9).contains(&d) {
+        r[22 - 2 * d] |= 0x08;
+    }
 }
 
 /// Power on the small display: whole watts with the W legend from 1 W up,
@@ -392,12 +405,18 @@ pub fn output(d: &Display) -> [u8; REPORT_LEN] {
             set(&mut r, seg::DOT_MHZ, hz >= 1_000_000);
             set(&mut r, seg::DOT_KHZ, hz >= 1_000);
             set(&mut r, seg::HZ, true);
+            if let Some(s) = d.step_digit {
+                underline(&mut r, usize::from(s));
+            }
         } else {
             // GHz: shown in kHz, so the dots fall at GHz and MHz.
             let khz = hz / 1_000;
             main_digits(&mut r, khz);
             set(&mut r, seg::DOT_MHZ, true);
             set(&mut r, seg::DOT_KHZ, true);
+            if let Some(s) = d.step_digit.and_then(|s| s.checked_sub(3)) {
+                underline(&mut r, usize::from(s));
+            }
         }
     }
 
@@ -671,6 +690,27 @@ mod tests {
         // Nothing measured: blank rather than a stale or made-up figure.
         let r = output(&Display { tx_readout: TxReadout::Swr, tx_swr_x10: None, ..base });
         assert_eq!(units(&r), (0, 0));
+    }
+
+    #[test]
+    fn the_tuning_step_is_underlined() {
+        let plain = output(&Display { freq_hz: Some(14_074_000), ..Default::default() });
+        let r = output(&Display {
+            freq_hz: Some(14_074_000),
+            step_digit: Some(3),
+            ..Default::default()
+        });
+        // Digit 3 (hundreds of Hz): its A-B-C byte is 22 - 6 = 16, bit 3.
+        assert_eq!(r[16] & 0x08, 0x08);
+        let changed: Vec<usize> = (0..REPORT_LEN).filter(|&i| r[i] != plain[i]).collect();
+        assert_eq!(changed, vec![16], "only the underline changes");
+        // Above 1 GHz the display is in kHz: a 1 kHz step is the last digit.
+        let r = output(&Display {
+            freq_hz: Some(1_296_100_000),
+            step_digit: Some(4),
+            ..Default::default()
+        });
+        assert_eq!(r[20] & 0x08, 0x08);
     }
 
     #[test]

@@ -1243,6 +1243,15 @@ impl InputRuntime {
             sdroxide_types::Tmate2TxReadout::Swr => sdroxide_tmate2::TxReadout::Swr,
         };
         d.lock_led = tune_locked;
+        // Underline the digit the main dial steps by, when its step is a
+        // whole decade (1 Hz, 10 Hz, ... ) that names one digit.
+        d.step_digit = self
+            .cfg
+            .tmate2
+            .bindings
+            .iter()
+            .find(|b| b.enabled && b.action == Action::Tune && b.control.is_dial())
+            .and_then(|b| step_digit(b.tuning.step));
         // With a Hardrock keyed, the power figure is the amplifier's (the
         // engine's `amp_tx_meter`), but the engine does not carry the
         // amplifier's reflected power into the meters. Take it from the
@@ -1325,6 +1334,14 @@ impl InputRuntime {
     }
 }
 
+/// The display digit a tuning step of `step` Hz moves (1 = units), where
+/// it is a whole power of ten from 1 Hz to 100 MHz.
+#[cfg(not(target_arch = "wasm32"))]
+fn step_digit(step: f32) -> Option<u8> {
+    let s = step.abs().round();
+    (0..9u8).find(|&i| (10f32.powi(i32::from(i)) - s).abs() < 0.5).map(|i| i + 1)
+}
+
 /// The step after `step` in [`sdroxide_types::TMATE2_TUNE_STEPS`], wrapping,
 /// keeping its sign (a reversed dial stays reversed). From a step not on the
 /// list it goes to the first one above.
@@ -1394,6 +1411,7 @@ fn tmate2_display_for(
         tx_rfl_mw: rfl_w.map(|w| (w * 1_000.0).round() as u32),
         tx_swr_x10: swr.map(|s| (s * 10.0).round() as u32),
         tx_readout: sdroxide_tmate2::TxReadout::Power,
+        step_digit: None,
         lock_led: false,
     }
 }
@@ -1831,6 +1849,9 @@ mod tests {
         assert_eq!(next_tune_step(1_000.0), 1.0);
         assert_eq!(next_tune_step(-100.0), -1_000.0);
         assert_eq!(next_tune_step(50.0), 100.0);
+        assert_eq!(step_digit(1.0), Some(1));
+        assert_eq!(step_digit(-1_000.0), Some(4));
+        assert_eq!(step_digit(50.0), None);
     }
 
     #[cfg(not(target_arch = "wasm32"))]

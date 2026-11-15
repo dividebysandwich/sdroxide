@@ -13615,7 +13615,8 @@ connected, otherwise the radio), and a reading the station does not report is
 left blank.
 
 **Tuning step and lock.** **TMate 2 tuning step (1 / 10 / 100 Hz / 1 kHz)**
-steps the main dial's step on each press and saves it. **Tuning lock on/off**
+steps the main dial's step on each press and saves it. The digit the dial is
+stepping is underlined on the frequency display, as on ELAD's own software. **Tuning lock on/off**
 stops bound tuning controls (the TMate 2 dial, keys, MIDI and the panadapter
 mouse wheel) from moving the frequency and lights the TMate 2's LOCK LED;
 clicking the panadapter or a spot still tunes. The lock is not saved, so it is
