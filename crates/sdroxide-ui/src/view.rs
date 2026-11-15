@@ -426,6 +426,10 @@ pub struct ViewState {
     /// the aircraft map. User-draggable.
     #[serde(default = "hfdl_split_default")]
     pub hfdl_split_fraction: f32,
+    /// Which list the HFDL window's left pane shows: 0 the decode log, 1 the
+    /// ground stations.
+    #[serde(default)]
+    pub hfdl_tab: u8,
     /// Fraction of the QSO area's height given to the world map; the rest is the
     /// station card + transcript + buttons. User-draggable.
     ///
@@ -856,6 +860,7 @@ impl Default for ViewState {
             ais_split_fraction: ais_split_default(),
             ais_card_fraction: ais_card_default(),
             hfdl_split_fraction: hfdl_split_default(),
+            hfdl_tab: 0,
             digi_map_fraction: 0.6,
             digi_map_window: false,
             digi_map_links: false,

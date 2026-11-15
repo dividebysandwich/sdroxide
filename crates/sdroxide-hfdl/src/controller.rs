@@ -20,9 +20,11 @@ use std::thread::JoinHandle;
 
 use crossbeam_channel::{Receiver, Sender, bounded, select, unbounded};
 use sdroxide_dsp::Complex32;
-use sdroxide_types::{HFDL_LOG_DEPTH, HfdlDecode, HfdlFix, HfdlSettings, HfdlStatus};
+use sdroxide_types::{HFDL_LOG_DEPTH, HfdlDecode, HfdlFix, HfdlSettings, HfdlStation, HfdlStatus};
 use xng_mode_hfdl::HfdlChannelDecoder;
 use xng_mode_hfdl::pdu::{HfdlEvent, gs_name};
+
+use crate::stations::StationBook;
 
 /// Realtime data, dropped on backpressure.
 struct Iq {
@@ -32,6 +34,8 @@ struct Iq {
 /// Control traffic, never dropped.
 enum Ctl {
     Config(HfdlSettings),
+    /// A saved system table to fill the station book's channels from.
+    Seed(Vec<HfdlStation>),
     Stop,
 }
 
@@ -77,10 +81,19 @@ impl HfdlController {
                     let mut log: VecDeque<HfdlDecode> = VecDeque::with_capacity(HFDL_LOG_DEPTH);
                     let (mut bursts, mut decodes) = (0u64, 0u64);
                     let mut tick = 0u64;
+                    let mut book = StationBook::new();
+                    // Set by anything that changes the status without a decode
+                    // (a seeded table), so the next block carries it out rather
+                    // than the panel waiting for the idle tick.
+                    let mut force = false;
                     loop {
                         select! {
                             recv(ctl_rx) -> msg => match msg {
                                 Ok(Ctl::Config(next)) => cfg = next,
+                                Ok(Ctl::Seed(saved)) => {
+                                    book.seed(&saved);
+                                    force = true;
+                                }
                                 Ok(Ctl::Stop) | Err(_) => break,
                             },
                             recv(iq_rx) -> msg => match msg {
@@ -93,10 +106,12 @@ impl HfdlController {
                                         decodes += events.len() as u64;
                                         if !events.is_empty() {
                                             let now = now_unix();
+                                            let khz = (cfg.frequency_hz / 1000.0).round() as u32;
                                             for e in events {
                                                 if log.len() == HFDL_LOG_DEPTH {
                                                     log.pop_back();
                                                 }
+                                                book.observe(&e, khz, now);
                                                 log.push_front(mk_decode(&cfg, &e, now));
                                             }
                                             emitted = true;
@@ -107,13 +122,17 @@ impl HfdlController {
                                     // level immediately, then periodically even
                                     // through silence, and immediately whenever
                                     // anything decoded.
-                                    if emitted || tick % IDLE_TICK == 0 || tick == 1 {
+                                    if emitted || force || tick % IDLE_TICK == 0 || tick == 1 {
+                                        force = false;
+                                        let (stations, table_version) = book.snapshot();
                                         let _ = res_tx.send(HfdlStatus {
                                             running: cfg.enabled,
                                             level_dbfs: decoder.level_dbfs(),
                                             bursts,
                                             decodes,
                                             log: log.iter().cloned().collect(),
+                                            stations,
+                                            table_version,
                                         });
                                     }
                                 }
@@ -136,6 +155,13 @@ impl HfdlController {
     /// to the running worker.
     pub fn set_config(&self, cfg: HfdlSettings) {
         let _ = self.ctl_tx.send(Ctl::Config(cfg));
+    }
+
+    /// Hand the worker a saved system table (the stations' positions and
+    /// channels), so a station's squitter bitmap can be read as frequencies
+    /// before the network has broadcast the table again.
+    pub fn seed_stations(&self, saved: Vec<HfdlStation>) {
+        let _ = self.ctl_tx.send(Ctl::Seed(saved));
     }
 
     /// Drain the latest status, non-blocking. Only the newest matters.
@@ -326,6 +352,29 @@ mod tests {
         let s = wait_for(&c, |s| s.running).expect("an idle snapshot should arrive");
         assert!(s.running);
         assert_eq!(s.decodes, 0, "pure noise must never decode");
+    }
+
+    /// A saved system table handed to the worker comes back out in the status,
+    /// without waiting for a decode.
+    #[test]
+    fn a_seeded_table_reaches_the_status() {
+        use sdroxide_types::HfdlStationFreq;
+        let c = HfdlController::new(
+            24_000.0,
+            HfdlSettings { enabled: true, frequency_hz: 21_931_000.0 },
+        );
+        let mut riverhead = HfdlStation::new(4, Some("Riverhead, New York"));
+        riverhead.freqs = vec![HfdlStationFreq { freq_hz: 21_931_000, slot: 2, active: false }];
+        c.seed_stations(vec![riverhead]);
+        // The seed forces the next block's status out; feed short blocks so
+        // there is a next block whichever side of the seed the first lands on.
+        for _ in 0..4 {
+            c.on_rx_iq(&noise(2_400));
+        }
+        let s = wait_for(&c, |s| !s.stations.is_empty()).expect("the seeded station should arrive");
+        assert_eq!(s.stations[0].gs_id, 4);
+        assert_eq!(s.stations[0].freqs[0].khz(), 21_931);
+        assert_eq!(s.table_version, None, "a saved table is not an over-the-air version");
     }
 
     /// End to end on the reference off-air capture: the worker, the bounded

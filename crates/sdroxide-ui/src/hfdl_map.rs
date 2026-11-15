@@ -395,7 +395,7 @@ pub fn show(
 }
 
 /// A short age, for a tooltip: `12 s`, `4 min`, `2 h`.
-fn fmt_age(secs: i64) -> String {
+pub(crate) fn fmt_age(secs: i64) -> String {
     let s = secs.max(0);
     if s < 90 {
         format!("{s} s")

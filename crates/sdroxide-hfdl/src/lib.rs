@@ -11,5 +11,6 @@
 //! [`sdroxide_types::HfdlStatus`]'s rolling decode log.
 
 pub mod controller;
+pub mod stations;
 
 pub use controller::HfdlController;

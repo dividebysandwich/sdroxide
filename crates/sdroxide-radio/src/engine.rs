@@ -3228,6 +3228,10 @@ struct Engine {
     /// `state.hfdl` for symmetry with `qo100_cfg`. Nothing reads it back yet,
     /// and it is not persisted — the same convention `qo100_cfg` follows.
     hfdl_cfg: sdroxide_types::HfdlSettings,
+    /// The version of the HFDL system table last written to disk, so a table
+    /// the network keeps rebroadcasting is saved once rather than on every
+    /// status.
+    hfdl_saved_table: Option<u16>,
     /// Weather-satellite (NOAA APT / Meteor LRPT) decoder lane: one channel
     /// mixed from the wide window, only while the operator has it enabled. See
     /// `sdroxide_wxsat::WxsatLane`.
@@ -4749,6 +4753,7 @@ fn engine_thread(
         hfdl_in_rate: 0.0,
         // Session-scoped only, for the same reason as `qo100_cfg`.
         hfdl_cfg: sdroxide_types::HfdlSettings::default(),
+        hfdl_saved_table: None,
         wxsat: None,
         wxsat_pass: 0,
         wxsat_cfg,
@@ -11989,7 +11994,7 @@ impl Engine {
                 let mut ddc = Ddc::new(self.state.sample_rate, sdroxide_types::HFDL_LANE_RATE_HZ);
                 ddc.set_offset_hz(self.state.hfdl.frequency_hz - self.state.center_hz);
                 let out_rate = ddc.out_rate();
-                self.hfdl = Some(HfdlController::new(out_rate, self.state.hfdl));
+                self.hfdl = Some(Self::new_hfdl_controller(out_rate, self.state.hfdl));
                 self.hfdl_ddc = Some(ddc);
                 self.hfdl_in_rate = self.state.sample_rate;
                 info!(rate = out_rate, "HFDL decoder started");
@@ -12020,7 +12025,7 @@ impl Engine {
             let out_rate = ddc.out_rate();
             self.hfdl_ddc = Some(ddc);
             self.hfdl_in_rate = self.state.sample_rate;
-            self.hfdl = Some(HfdlController::new(out_rate, self.state.hfdl));
+            self.hfdl = Some(Self::new_hfdl_controller(out_rate, self.state.hfdl));
             info!(rate = out_rate, "HFDL window rebuilt");
             return;
         }
@@ -12028,10 +12033,32 @@ impl Engine {
         ddc.set_offset_hz(self.state.hfdl.frequency_hz - self.state.center_hz);
     }
 
-    /// Drain the HFDL decoder's latest status and forward it.
+    /// A fresh HFDL worker, seeded with the system table saved from the last
+    /// time the network broadcast one — so a squitter's channel bitmap can be
+    /// read as frequencies from the first burst rather than after the stations
+    /// next send the table, which they do only now and then.
+    fn new_hfdl_controller(rate_hz: f64, cfg: sdroxide_types::HfdlSettings) -> HfdlController {
+        let c = HfdlController::new(rate_hz, cfg);
+        let saved = sdroxide_config::load_hfdl_stations();
+        if !saved.is_empty() {
+            c.seed_stations(saved);
+        }
+        c
+    }
+
+    /// Drain the HFDL decoder's latest status and forward it, keeping the
+    /// system table on disk up to date as new versions arrive.
     fn poll_hfdl(&mut self) {
         let Some(c) = self.hfdl.as_ref() else { return };
         let Some(status) = c.poll() else { return };
+        if status.table_version.is_some() && status.table_version != self.hfdl_saved_table {
+            let entries: Vec<_> =
+                status.stations.iter().filter(|s| s.has_table()).map(|s| s.table_entry()).collect();
+            match sdroxide_config::save_hfdl_stations(&entries) {
+                Ok(()) => self.hfdl_saved_table = status.table_version,
+                Err(e) => warn!(%e, "could not save the HFDL system table"),
+            }
+        }
         let _ = self.event_tx.send(RadioEvent::HfdlStatus(status));
     }
 

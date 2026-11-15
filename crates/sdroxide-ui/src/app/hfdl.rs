@@ -17,7 +17,10 @@
 
 use crate::i18n::tr;
 use eframe::egui::{self, RichText};
-use sdroxide_types::{Command, HfdlDecode, HfdlStatus, Mode};
+use sdroxide_types::{
+    Command, HfdlDecode, HfdlStation, HfdlStatus, Mode, hfdl_plan_khz, hfdl_stations_on,
+    hfdl_working_khz,
+};
 
 use crate::app::SdroxideApp;
 
@@ -84,20 +87,27 @@ impl SdroxideApp {
         ui.add_space(4.0);
 
         // The plan as pick chips, so a spot of a few kHz on the band is a
-        // single click away rather than a DragValue spin. The operator's own
-        // saved channels follow it, then a "+" to save the one in force — the
-        // busy assigned frequencies that are not in the published plan.
+        // single click away rather than a DragValue spin. The channels are the
+        // network's own once its system table is known (received over the air,
+        // or kept from last time), the published plan until then. A channel a
+        // ground station is known to be working lights green: heard on, or
+        // listed in a fresh squitter's "in use" bitmap. The operator's own
+        // saved channels follow, then a "+" to save the one in force — the
+        // busy assigned frequencies that are not in the plan.
+        let stations: &[HfdlStation] =
+            self.hfdl_status.as_ref().map(|s| s.stations.as_slice()).unwrap_or(&[]);
+        let plan = hfdl_plan_khz(stations, HFDL_PLAN_KHZ);
+        let working = hfdl_working_khz(stations, now);
         let mut remove_khz: Option<u32> = None;
         let mut add_now = false;
         ui.horizontal_wrapped(|ui| {
-            for &khz in HFDL_PLAN_KHZ {
+            for &khz in &plan {
                 let on = (cfg.frequency_hz / 1e3).round() as u32 == khz;
-                if crate::chrome::chip(ui, on, format!("{:.3} M", khz as f32 / 1e3))
-                    .on_hover_text(if khz == 21_931 {
-                        tr!("hfdl-riverhead-northern-atlantic-north-america")
-                    } else {
-                        tr!("hfdl-hfdl-assigned-frequency")
-                    })
+                let live = working.contains(&khz);
+                let text = RichText::new(format!("{:.3} M", khz as f32 / 1e3));
+                let text = if live { text.color(crate::theme::GREEN()) } else { text };
+                if crate::chrome::chip(ui, on, text)
+                    .on_hover_text(hfdl_chip_hint(stations, khz, live, now))
                     .clicked()
                 {
                     cfg.frequency_hz = f64::from(khz) * 1e3;
@@ -115,7 +125,7 @@ impl SdroxideApp {
                     remove_khz = Some(khz);
                 }
             }
-            let already = self.hfdl_channels.contains(&cur_khz) || HFDL_PLAN_KHZ.contains(&cur_khz);
+            let already = self.hfdl_channels.contains(&cur_khz) || plan.contains(&cur_khz);
             let add = crate::chrome::chip_enabled(ui, !already, false, "+");
             let add = if already {
                 add.on_disabled_hover_text(tr!("hfdl-khz-already-has-chip", cur_khz = cur_khz))
@@ -132,9 +142,7 @@ impl SdroxideApp {
         }
         if add_now {
             let cur_khz = (cfg.frequency_hz / 1e3).round() as u32;
-            if !HFDL_PLAN_KHZ.contains(&cur_khz)
-                && add_hfdl_channel(&mut self.hfdl_channels, cur_khz)
-            {
+            if !plan.contains(&cur_khz) && add_hfdl_channel(&mut self.hfdl_channels, cur_khz) {
                 crate::app::persist::persist_hfdl_channels(&self.hfdl_channels);
             }
         }
@@ -173,7 +181,11 @@ impl SdroxideApp {
                 ui.allocate_ui_with_layout(
                     egui::vec2(if pane.is_some() { full_w } else { log_w }, avail_h),
                     egui::Layout::top_down(egui::Align::Min),
-                    |ui| self.hfdl_log_pane(ui),
+                    |ui| {
+                        if let Some(khz) = self.hfdl_left_pane(ui, now, cfg.frequency_hz) {
+                            cfg.frequency_hz = f64::from(khz) * 1e3;
+                        }
+                    },
                 );
             }
             if pane.is_none() {
@@ -199,23 +211,68 @@ impl SdroxideApp {
         }
     }
 
-    /// The decode log, newest first, with a filter over it.
-    fn hfdl_log_pane(&mut self, ui: &mut egui::Ui) {
+    /// The left pane: the decode log or the ground stations, by the chips in
+    /// its header. Returns a channel (kHz) the operator clicked in the stations
+    /// list, for the panel to tune to.
+    fn hfdl_left_pane(&mut self, ui: &mut egui::Ui, now: i64, cur_hz: f64) -> Option<u32> {
         ui.horizontal_wrapped(|ui| {
             ui.set_min_height(20.0);
-            ui.label(
-                RichText::new(tr!("hfdl-decodes"))
-                    .size(10.5)
-                    .strong()
-                    .color(crate::theme::CYAN_DIM()),
-            );
-            ui.add(
-                egui::TextEdit::singleline(&mut self.hfdl_filter)
-                    .hint_text("filter")
-                    .desired_width(90.0),
-            );
+            for (tab, label) in
+                [(HFDL_TAB_DECODES, tr!("hfdl-decodes")), (HFDL_TAB_STATIONS, tr!("hfdl-stations"))]
+            {
+                if crate::chrome::chip(ui, self.view.hfdl_tab == tab, label.to_string()).clicked() {
+                    self.view.hfdl_tab = tab;
+                }
+            }
+            if self.view.hfdl_tab == HFDL_TAB_DECODES {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.hfdl_filter)
+                        .hint_text("filter")
+                        .desired_width(90.0),
+                );
+            }
         });
+        match self.view.hfdl_tab {
+            HFDL_TAB_STATIONS => self.hfdl_stations_pane(ui, now, (cur_hz / 1e3).round() as u32),
+            _ => {
+                self.hfdl_log_pane(ui);
+                None
+            }
+        }
+    }
 
+    /// The ground stations the decoder knows of: when each was last heard and
+    /// how strongly, and its channels — green where it is working them now. A
+    /// channel is a click away from being tuned.
+    fn hfdl_stations_pane(&self, ui: &mut egui::Ui, now: i64, cur_khz: u32) -> Option<u32> {
+        let stations: &[HfdlStation] =
+            self.hfdl_status.as_ref().map(|s| s.stations.as_slice()).unwrap_or(&[]);
+        let room = ui.available_height().max(48.0);
+        let mut picked = None;
+        egui::ScrollArea::vertical()
+            .id_salt("hfdl-stations")
+            .max_height(room)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if stations.is_empty() {
+                    ui.label(
+                        RichText::new(tr!("hfdl-no-station-heard-yet"))
+                            .size(10.5)
+                            .color(crate::theme::gray(120)),
+                    );
+                    return;
+                }
+                for s in hfdl_station_order(stations) {
+                    if let Some(khz) = hfdl_station_row(ui, s, now, cur_khz) {
+                        picked = Some(khz);
+                    }
+                }
+            });
+        picked
+    }
+
+    /// The decode log, newest first, with a filter over it.
+    fn hfdl_log_pane(&mut self, ui: &mut egui::Ui) {
         let filter = self.hfdl_filter.trim().to_ascii_uppercase();
         // The log is carried whole in every status snapshot, oldest *last*.
         let log = self.hfdl_status.as_ref().map(|s| s.log.as_slice()).unwrap_or(&[]);
@@ -407,6 +464,129 @@ fn slot(ui: &mut egui::Ui, w: f32, text: &str, color: egui::Color32) {
     );
 }
 
+/// The left pane's tabs, as stored in the view state.
+pub(in crate::app) const HFDL_TAB_DECODES: u8 = 0;
+pub(in crate::app) const HFDL_TAB_STATIONS: u8 = 1;
+
+/// The stations in the order the list shows them: those heard most recently
+/// first, and the ones never heard (known only from the saved table) after,
+/// by id.
+fn hfdl_station_order(stations: &[HfdlStation]) -> Vec<&HfdlStation> {
+    let mut v: Vec<&HfdlStation> = stations.iter().collect();
+    v.sort_by_key(|s| (std::cmp::Reverse(s.heard_at), s.gs_id));
+    v
+}
+
+/// What a channel chip says on hover: which ground stations the table gives
+/// the channel to, and whether any is working it now.
+fn hfdl_chip_hint(stations: &[HfdlStation], khz: u32, live: bool, now: i64) -> String {
+    let on = hfdl_stations_on(stations, khz);
+    if on.is_empty() {
+        return if khz == 21_931 {
+            tr!("hfdl-riverhead-northern-atlantic-north-america").to_string()
+        } else {
+            tr!("hfdl-hfdl-assigned-frequency").to_string()
+        };
+    }
+    let names: Vec<&str> = on.iter().map(|s| s.name.as_str()).collect();
+    let mut tip = tr!("hfdl-chip-stations", stations = names.join(", ")).to_string();
+    if live {
+        // The stations known to be working it, and how long ago that was heard.
+        for s in &on {
+            if s.working_khz(now).contains(&khz) {
+                tip.push('\n');
+                tip.push_str(
+                    &tr!(
+                        "hfdl-chip-working",
+                        station = s.name.clone(),
+                        age = crate::hfdl_map::fmt_age(now - s.heard_at.max(s.active_at))
+                    )
+                    .to_string(),
+                );
+            }
+        }
+    }
+    tip
+}
+
+/// One ground station in the stations list: its name and how recently and how
+/// well it was heard, then its channels. Returns a channel the operator clicked.
+fn hfdl_station_row(ui: &mut egui::Ui, s: &HfdlStation, now: i64, cur_khz: u32) -> Option<u32> {
+    let mut picked = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new(&s.name).size(11.0).strong());
+        if s.heard_at > 0 {
+            let fresh = s.is_fresh(now);
+            ui.label(
+                RichText::new(tr!(
+                    "hfdl-station-heard",
+                    age = crate::hfdl_map::fmt_age(now - s.heard_at),
+                    mhz = format!("{:.3}", s.heard_khz as f32 / 1e3)
+                ))
+                .size(10.5)
+                .color(if fresh {
+                    crate::theme::GREEN()
+                } else {
+                    crate::theme::gray(120)
+                }),
+            );
+            if let Some(snr) = s.snr_db {
+                ui.label(RichText::new(format!("{snr:.0} dB")).size(10.5).color(if snr >= 12.0 {
+                    crate::theme::GREEN()
+                } else {
+                    crate::theme::YELLOW()
+                }));
+            }
+            if s.squitters > 0 {
+                ui.label(
+                    RichText::new(tr!("hfdl-station-squitters", n = count(u64::from(s.squitters))))
+                        .size(10.5)
+                        .color(crate::theme::gray(120)),
+                );
+            }
+        } else {
+            ui.label(
+                RichText::new(tr!("hfdl-station-not-heard"))
+                    .size(10.5)
+                    .color(crate::theme::gray(100)),
+            );
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        ui.add_space(10.0);
+        if s.has_table() {
+            let working = s.working_khz(now);
+            for f in &s.freqs {
+                let khz = f.khz();
+                let live = working.contains(&khz);
+                let mut t = RichText::new(format!("{:.3}", khz as f32 / 1e3)).size(10.5);
+                t = if live {
+                    t.color(crate::theme::GREEN())
+                } else {
+                    t.color(crate::theme::gray(130))
+                };
+                if khz == cur_khz {
+                    t = t.underline().strong();
+                }
+                let resp = ui.add(egui::Label::new(t).sense(egui::Sense::click())).on_hover_text(
+                    tr!("hfdl-station-channel-hint", mhz = format!("{:.3}", khz as f32 / 1e3)),
+                );
+                if resp.clicked() {
+                    picked = Some(khz);
+                }
+            }
+        } else {
+            ui.label(
+                RichText::new(tr!("hfdl-station-channels-unknown"))
+                    .size(10.0)
+                    .color(crate::theme::gray(100)),
+            );
+        }
+    });
+    ui.add_space(3.0);
+    picked
+}
+
 /// Save the channel in force as one of the operator's own chips, keeping the
 /// list sorted and refusing a channel already on it — so the file is written
 /// only on a real edit and the chip row does not reshuffle under the pointer.
@@ -422,7 +602,7 @@ fn add_hfdl_channel(list: &mut Vec<u32>, khz: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sdroxide_types::{HFDL_DEFAULT_HZ, HfdlFix};
+    use sdroxide_types::{HFDL_DEFAULT_HZ, HfdlFix, HfdlStationFreq};
 
     /// Saving the channel in force is idempotent and keeps the chips sorted, so
     /// the file is only written on a real edit and the row does not reshuffle.
@@ -474,6 +654,78 @@ mod tests {
         // rows could not fit under this however the spacing is set.
         assert!(tall > 0.0, "the strip drew nothing, so this measures nothing");
         assert!(tall < 40.0, "the status strip is {tall} points tall — it has stacked again");
+    }
+
+    fn gs(id: u8, name: &str, khz: &[u32], heard_at: i64) -> HfdlStation {
+        let mut s = HfdlStation::new(id, Some(name));
+        s.freqs = khz
+            .iter()
+            .enumerate()
+            .map(|(i, k)| HfdlStationFreq { freq_hz: k * 1000, slot: i as u8, active: false })
+            .collect();
+        s.heard_at = heard_at;
+        s
+    }
+
+    /// The most recently heard station leads; the ones never heard follow by id.
+    #[test]
+    fn the_stations_list_leads_with_the_latest_heard() {
+        let list = [
+            gs(7, "Shannon", &[], 0),
+            gs(4, "Riverhead", &[], 900),
+            gs(2, "Molokai", &[], 0),
+            gs(3, "Reykjavik", &[], 950),
+        ];
+        let ids: Vec<u8> = hfdl_station_order(&list).iter().map(|s| s.gs_id).collect();
+        assert_eq!(ids, vec![3, 4, 2, 7]);
+    }
+
+    #[test]
+    fn a_chip_names_the_stations_that_use_its_channel() {
+        let mut riverhead = gs(4, "Riverhead", &[5_451, 21_931], 1_000);
+        riverhead.heard_khz = 21_931;
+        let list = [riverhead, gs(7, "Shannon", &[3_455, 5_451], 0)];
+        // Two stations carry 5 451 kHz; neither is known to be working it yet.
+        let tip = hfdl_chip_hint(&list, 5_451, false, 1_010);
+        assert!(tip.contains("Riverhead") && tip.contains("Shannon"), "{tip}");
+        assert!(!tip.contains("working"), "{tip}");
+        // Riverhead was just heard on 21 931 kHz: the hint says so.
+        let tip = hfdl_chip_hint(&list, 21_931, true, 1_010);
+        assert!(tip.contains("Riverhead") && tip.contains("working"), "{tip}");
+        // A channel the table does not give to anyone falls back to the plain text.
+        assert_eq!(hfdl_chip_hint(&list, 9_999, false, 1_010), tr!("hfdl-hfdl-assigned-frequency"));
+    }
+
+    /// A station row is two lines of wrapped labels, not one tall stack — with
+    /// the whole 20-channel table of a busy station it must not run away.
+    #[test]
+    fn a_station_row_stays_compact_and_reports_a_clicked_channel() {
+        let mut s =
+            gs(4, "Riverhead, New York", &[2_941, 5_451, 8_912, 11_184, 13_306, 17_919], 990);
+        s.heard_khz = 8_912;
+        s.snr_db = Some(14.0);
+        s.squitters = 6;
+        let mut tall = 0.0;
+        let mut picked = Some(0);
+        egui::__run_test_ui(|ui| {
+            let before = ui.min_rect().height();
+            picked = hfdl_station_row(ui, &s, 1_000, 8_912);
+            tall = ui.min_rect().height() - before;
+        });
+        assert_eq!(picked, None, "nothing was clicked");
+        assert!(tall > 0.0 && tall < 90.0, "a station row is {tall} points tall");
+    }
+
+    #[test]
+    fn a_station_without_a_table_says_its_channels_are_unknown() {
+        let s = gs(4, "Riverhead", &[], 0);
+        let mut tall = 0.0;
+        egui::__run_test_ui(|ui| {
+            let before = ui.min_rect().height();
+            let _ = hfdl_station_row(ui, &s, 1_000, 21_931);
+            tall = ui.min_rect().height() - before;
+        });
+        assert!(tall > 0.0, "a station with nothing known still gets a row");
     }
 
     #[test]

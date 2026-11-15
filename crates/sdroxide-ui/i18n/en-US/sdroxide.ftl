@@ -6392,3 +6392,15 @@ textmodem-psk-coded-hint =
         }, { $code }, { $bw } Hz wide
 textmodem-psk-rx-only = receive only
 textmodem-psk-rx-only-hint = This bank receives — fldigi's recording of it reads — but our own transmission of it does not read back through the same receiver yet, so transmit is refused rather than putting an unproven signal on the air.
+
+## hfdl: ground stations (src/app/hfdl.rs)
+
+hfdl-stations = STATIONS
+hfdl-no-station-heard-yet = No ground station heard yet. A station's squitter repeats every ~32 s on the channels it uses; the list also fills from the network's system table once that has been received.
+hfdl-station-heard = heard { $age } ago on { $mhz } MHz
+hfdl-station-squitters = { $n } squitters
+hfdl-station-not-heard = not heard yet
+hfdl-station-channel-hint = Tune to { $mhz } MHz. Green: the station is working this channel now.
+hfdl-station-channels-unknown = Channels unknown until the network broadcasts its system table.
+hfdl-chip-stations = Used by { $stations }
+hfdl-chip-working = { $station } is working this channel — heard { $age } ago
