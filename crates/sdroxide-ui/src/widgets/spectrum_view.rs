@@ -1093,9 +1093,13 @@ fn draw_ism_box(p: &egui::Painter, b: &IsmBox, label: &IsmLabel, hovered: bool) 
     p.galley(pos2(b.rect.left() + ISM_PAD_X, b.rect.top() + ISM_PAD_Y), b.galley.clone(), border);
 }
 
-/// Kind tint, brightened on hover.
+/// How much of a TCI spot's text its hover label shows: one line that fits
+/// a narrow waterfall. The SPOTS list carries the rest.
+const TCI_TIP_CHARS: usize = 60;
+
+/// The spot's colour (its own, or its kind's tint), brightened on hover.
 fn net_spot_color(spot: &Spot, hovered: bool) -> Color32 {
-    let (r, g, b) = crate::theme::spot_color(spot.kind);
+    let (r, g, b) = crate::theme::spot_rgb(spot);
     if hovered { Color32::from_rgb(r, g, b) } else { Color32::from_rgba_unmultiplied(r, g, b, 225) }
 }
 
@@ -2998,6 +3002,7 @@ pub fn show_ext(
 
     // Network spot boxes (bottom-anchored lanes) — DX cluster / POTA / SOTA /
     // PSK. A vertical tick over the signal, a leader up/down to the box.
+    let mut net_tip: Option<(Pos2, String, Color32)> = None;
     for b in &net_boxes {
         let spot = &net_spots[b.idx];
         let a = net_alpha.get(b.idx).copied().unwrap_or(1.0).clamp(0.0, 1.0);
@@ -3023,6 +3028,19 @@ pub fn show_ext(
         );
         painter.circle_filled(pos2(b.sig_x, cy), 1.8, fade(border, a));
         draw_net_box(&painter, b, spot, hovered, a);
+        // A TCI spot's text — a logger's "new DXCC", a bridge's cluster
+        // comment — has no room in the box, and the box is all a TCI spot has
+        // on the waterfall; so the pointer on it shows the text beside it.
+        if hovered && spot.kind == sdroxide_types::SpotKind::Tci && !spot.comment.is_empty() {
+            let line_h = 11.0 * crate::theme::panadapter_font_scale() + 6.0;
+            let y = if view.waterfall_flip { b.rect.bottom() + 2.0 } else { b.rect.top() - line_h };
+            let text: String = spot.comment.chars().take(TCI_TIP_CHARS).collect();
+            net_tip = Some((pos2(b.rect.left(), y), text, border));
+        }
+    }
+    // After every box, so no later box is painted over it.
+    if let Some((at, text, col)) = net_tip {
+        label_box(&painter, at, &text, col, rect);
     }
 
     // ISM device labels. No fade: a device that has stopped transmitting is

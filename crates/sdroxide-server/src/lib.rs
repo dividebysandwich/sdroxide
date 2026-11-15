@@ -258,6 +258,10 @@ pub(crate) struct Latest {
     /// panel for a minute before the first row appeared — and would have no way
     /// to tell that from a decoder that is not running.
     pub ism_reports: Vec<sdroxide_types::IsmReport>,
+    /// The labels TCI clients have placed on this radio. Replayed on connect
+    /// for `ism_reports`' reason: a label is a condition that is only sent
+    /// again when it changes, and a logger may not re-send one for minutes.
+    pub tci_spots: Vec<sdroxide_types::Spot>,
     pub ism_status: Option<sdroxide_types::IsmStatus>,
     /// The aircraft the ADS-B decoder is tracking. Replayed on connect for the
     /// same reason the ISM table is: a target that has been overhead for five
@@ -1232,6 +1236,10 @@ fn handle_event(shared: &Shared, ev: RadioEvent) {
                 Some(ServerMsg::VoiceStatus(v))
             }
             RadioEvent::Spots(s) => Some(ServerMsg::Spots(s)),
+            RadioEvent::TciSpots(s) => {
+                latest.tci_spots = s.clone();
+                Some(ServerMsg::TciSpots(s))
+            }
             RadioEvent::NetStatus(s) => Some(ServerMsg::NetStatus(s)),
             RadioEvent::CallsignResult(c) => Some(ServerMsg::CallsignResult(c)),
             RadioEvent::Upload(r) => Some(ServerMsg::Upload(r)),

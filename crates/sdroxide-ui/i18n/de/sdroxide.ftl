@@ -4522,6 +4522,9 @@ spots-sota = SOTA
 spots-freedv = FREEDV
 spots-spots = SPOTS
 spots-longwave-shortwave-broadcast-stations-air = Lang- und Kurzwellen-Rundfunksender, die jetzt auf Sendung sind
+spots-tci-tip =
+    Labels, die TCI-Clients per SPOT setzen
+    Je 10 min sichtbar
 spots-view = IM BLICK
 spots-only-spots-inside-panadapter-span = Nur Spots innerhalb des Frequenzbereichs des Panoramas
 spots-view-list = LISTE

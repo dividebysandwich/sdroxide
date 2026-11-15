@@ -26,11 +26,19 @@
 //! optimisation. The state diff in [`text::diff_lines`] is only for *unsolicited*
 //! changes (the operator moved the dial); acknowledgements come from the hub.
 //!
+//! **Spots.** `SPOT:` / `SPOT_DELETE:` / `SPOT_CLEAR` put labels on this
+//! radio's waterfall; see `spots.rs` for the book they are kept in and how long
+//! they live. They are not echoed: the specification lists no reply for any of
+//! the three ("Sent only by the TCI client"), unlike `IQ_SAMPLERATE` beside
+//! them, and a spot line arriving at a client is not something any client
+//! expects to receive.
+//!
 //! To debug a client that won't talk to us, `RUST_LOG=sdroxide_tci=debug` logs
 //! the whole conversation in both directions.
 
 mod client;
 mod hub;
+mod spots;
 mod text;
 
 use std::net::TcpListener;
@@ -39,7 +47,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::thread::JoinHandle;
 
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
-use sdroxide_types::{Command, DeviceCaps, Mode, TciServerConfig, TxTelemetry};
+use sdroxide_types::{Command, DeviceCaps, Mode, Spot, TciServerConfig, TxTelemetry};
 
 /// TCI protocol version we claim in the `protocol:` line.
 const TCI_VERSION: &str = "1.9";
@@ -68,6 +76,10 @@ pub enum ServerRequest {
     Key(bool),
     /// The connected-client count changed.
     Clients(usize),
+    /// The spots clients have placed changed: every live one, in frequency
+    /// order. Sent whole, like the feed manager's spots, so the engine keeps
+    /// no copy of its own.
+    Spots(Vec<Spot>),
 }
 
 /// The slice of radio state TCI clients can see. The hub diffs successive

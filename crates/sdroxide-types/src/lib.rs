@@ -301,7 +301,7 @@ pub use speech::{
     CallsignStyle, CategoryFlags, DecodeSpeech, FreqStyle, SpeechSettings, TextSpeech, TuneSpeech,
     Verbosity,
 };
-pub use spot::{Spot, SpotKind};
+pub use spot::{Spot, SpotKind, TCI_SPOT_LIFETIME_SECS};
 pub use sstv::{SstvMode, SstvStatus};
 pub use state::{
     AtuState, AtuStatus, CESSB_MAX_DB, FM_DECRACKLE_DEFAULT_DIP, FM_DECRACKLE_DIP_RANGE,

@@ -1721,7 +1721,14 @@ use sdroxide_types::{
 ///
 /// v211: ELAD monitoring. `CatConfig` gains `elad_mute_on_radio_ptt` and
 /// `EladConfig` gains `hear_own_tx`, which changes every `RadioConfig`.
-pub const PROTO_VERSION: u16 = 211;
+///
+/// v212: TCI spots. `SpotKind::Tci` is appended, so no surviving discriminant
+/// moves, but `Spot` gains `color` at its tail — the colour a TCI client chose
+/// for one spot — and postcard is not self-describing, so every `Spots` message
+/// changes layout. The labels travel in the new `ServerMsg::TciSpots`, appended
+/// last, apart from `Spots` because they belong to one radio and the feeds to
+/// the station.
+pub const PROTO_VERSION: u16 = 212;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
@@ -2231,6 +2238,14 @@ pub enum ServerMsg {
     ///
     /// Appended last, for the usual reason.
     SondeStatus(Box<sdroxide_types::SondeStatus>),
+
+    /// `RadioEvent::TciSpots`: every label TCI clients have placed on this
+    /// radio with `SPOT:`. A whole book each time, kept by the station and
+    /// replayed to a client that attaches late: a label is a condition, and
+    /// a logger may not re-send it for minutes.
+    ///
+    /// Appended last, for the usual reason.
+    TciSpots(Vec<Spot>),
 }
 
 /// One radio in a station's roster, as a client sees it.
@@ -3302,6 +3317,33 @@ mod tests {
     /// These three are the only messages that cross before the handshake has
     /// finished, so a client and server that disagree about their encoding
     /// cannot recover — there is no established session to report the fault on.
+    /// A TCI spot with its own colour, and a feed spot without one, both
+    /// survive the wire — `color` sits at `Spot`'s tail, where a field-order
+    /// slip would show.
+    #[test]
+    fn roundtrip_tci_spots() {
+        use sdroxide_types::SpotKind;
+        let spot = |kind, color| Spot {
+            id: Spot::make_id(kind, "RN6LHF", 7_100_000.0),
+            kind,
+            freq_hz: 7_100_000.0,
+            call: "RN6LHF".into(),
+            spotter: String::new(),
+            mode: "CW".into(),
+            comment: "ANY_TEXT".into(),
+            reference: None,
+            grid: None,
+            loc: None,
+            when_utc: 1_763_200_000,
+            snr_db: None,
+            color,
+        };
+        let m = ServerMsg::TciSpots(vec![spot(SpotKind::Tci, Some([255, 0, 0]))]);
+        assert_eq!(decode::<ServerMsg>(&encode(&m).unwrap()).unwrap(), m);
+        let m = ServerMsg::Spots(vec![spot(SpotKind::DxCluster, None)]);
+        assert_eq!(decode::<ServerMsg>(&encode(&m).unwrap()).unwrap(), m);
+    }
+
     #[test]
     fn roundtrip_sign_in() {
         let ask = ServerMsg::AuthRequired;

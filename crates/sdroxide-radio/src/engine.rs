@@ -13218,6 +13218,9 @@ impl Engine {
                 self.tci_tx = false;
                 self.tci_last_snap = None;
                 self.sync_audio_tap();
+                // With the server gone nobody can delete its spots any more,
+                // so they go with it rather than linger out their lifetime.
+                let _ = self.event_tx.send(RadioEvent::TciSpots(Vec::new()));
                 info!("TCI server stopped");
                 self.emit_tci_status();
             }
@@ -13322,6 +13325,11 @@ impl Engine {
 
     fn start_tci_server(&mut self) {
         self.tci_srv_err = None;
+        // Whatever server came before — a rebind, or an engine restarted under
+        // the same window — its spot book is gone, and a new server starts
+        // with an empty one, if it starts at all. Said out loud so the old
+        // labels do not linger on the waterfall.
+        let _ = self.event_tx.send(RadioEvent::TciSpots(Vec::new()));
         // The most likely first-run failure by far: sdroxide is itself a TCI
         // client of a rig on this machine, and that rig already owns the port.
         // Diagnose it rather than leaving the operator with "address in use".
@@ -13436,6 +13444,11 @@ impl Engine {
                 ServerRequest::Cmd(c) => self.apply(c),
                 ServerRequest::Key(on) => self.tci_key(on),
                 ServerRequest::Clients(_) => clients_changed = true,
+                // The labels clients placed: straight on to this radio's
+                // waterfall. The server keeps the book and its lifetimes.
+                ServerRequest::Spots(s) => {
+                    let _ = self.event_tx.send(RadioEvent::TciSpots(s));
+                }
             }
         }
         if clients_changed {

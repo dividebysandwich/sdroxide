@@ -991,6 +991,9 @@ impl SdroxideApp {
             // A scheduled broadcast station has no age: the fade and the
             // max-age cut are both about how stale a *report* is, and a
             // transmitter that is on the air now is not a stale report.
+            // A kind with a lifetime of its own (TCI's ten minutes) fades over
+            // the last quarter of that instead of the feeds' max age.
+            let max_age = s.kind.lifetime_secs().unwrap_or(max_age);
             let a = if s.kind == SpotKind::Broadcast {
                 1.0
             } else {

@@ -1013,6 +1013,10 @@ pub struct SdroxideApp {
     /// UTC minute rolls over — the finest granularity a schedule changes at —
     /// rather than every frame.
     broadcast_spots: Vec<Spot>,
+    /// The labels TCI clients placed on this radio with `SPOT:`, from its own
+    /// engine — never borrowed from the station radio as `spots` are, because
+    /// they mark this radio's panorama.
+    tci_spots: Vec<Spot>,
     /// The UTC minute `broadcast_spots` was built for.
     broadcast_minute: i64,
     /// An in-flight schedule download, if one is running.
@@ -1920,6 +1924,7 @@ impl SdroxideApp {
             spot_search: String::new(),
             broadcast: load_broadcast_stations(),
             broadcast_spots: Vec::new(),
+            tci_spots: Vec::new(),
             broadcast_minute: -1,
             // Kicked off at startup: the first run has no cached schedule, and
             // after that this only fires again when the season turns over.

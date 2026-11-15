@@ -510,6 +510,7 @@ pub fn extra_label_candidates(now_utc: i64) -> Vec<sdroxide_types::Spot> {
             loc,
             when_utc: now_utc,
             snr_db: None,
+            color: None,
         };
     let mut out = Vec::new();
     for st in sdroxide_types::WEFAX_STATIONS {

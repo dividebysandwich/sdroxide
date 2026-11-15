@@ -14102,6 +14102,33 @@ A few things worth knowing:
   and one that runs ahead is not asked at all. When the client unkeys, the
   audio it has already handed over is played out before the transmitter stops,
   so the tail of a timed burst is not cut off. Nothing to set.
+- **Clients can label the waterfall.** A logger, cluster bridge or skimmer
+  that speaks TCI can put a callsign on the waterfall with `SPOT:`, exactly as
+  it would on ExpertSDR3's panorama:
+
+  ```
+  SPOT:RN6LHF,CW,7100000,16711680,ANY_TEXT;
+  ```
+
+  — callsign, mode, frequency in Hz, colour as a decimal ARGB number, and a
+  free text. The label appears at that frequency as a **TCI** spot, on the
+  waterfall of the radio whose server received it, in the SPOTS list, and
+  under its own **TCI** button there. It is drawn in the colour the client
+  sent (the alpha byte is ignored: the TCI specification's own example sends
+  red with alpha 0); a colour of 0 or one that is not a number gives the
+  TCI tint from **Spot label colours** instead. Point at the label to read
+  the text. A second `SPOT:` for the same callsign moves its label;
+  `SPOT_DELETE:RN6LHF;` removes it, and `SPOT_CLEAR;` removes every label
+  the clients of this server have placed. A spot without callsign,
+  frequency or colour is ignored, as the specification says.
+
+  Each label lasts **ten minutes** from the `SPOT:` that placed it — the
+  lifetime the TCI specification gives — fading over the last two and a
+  half. A client that wants a label kept sends it again. Labels stay up when
+  the client that placed them disconnects, so a logger that reconnects does
+  not blank your waterfall; they go when you turn the TCI server off or
+  move it to another address. sdroxide does not echo spot commands back:
+  the specification has no reply for them.
 - **A client that mislabels its transmit audio is still understood.** The TCI
   header carries a channel count, and WSJT-X leaves it uninitialised — a
   different random number in every packet. Taken at face value that collapses
@@ -15950,13 +15977,14 @@ Spots then appear two ways:
 
 - **On the panadapter** — colour-coded, clickable boxes along the bottom of the
   waterfall (DX = cyan, POTA = green, SOTA = amber, PSK = violet, FREEDV = pink,
-  BC = yellow-green — any of which you can retint under **Spot label colours**
+  BC = yellow-green, TCI = white or the colour the client sent — any of which
+  you can retint under **Spot label colours**
   on the UI tab, [§6.3](#63-ui-display-preferences-and-voice-announcements)),
   each with a leader line down to the spotted frequency. Located spots (POTA
   parks, PSK reporters, FreeDV stations, broadcast transmitters) also appear as
   dots on the FT8 world map.
 - **In the SPOTS window** — a filterable list (toggle **DX / POTA / SOTA / PSK /
-  FREEDV / BC**, or **IN VIEW** to show only spots inside the current panadapter
+  FREEDV / BC / TCI**, or **IN VIEW** to show only spots inside the current panadapter
   span). Each row
   shows the source, callsign, frequency, mode, age and reference/comment, and a
   green **NEW** flag when it is a DXCC entity you haven't worked yet. The row
@@ -15988,7 +16016,7 @@ Spots then appear two ways:
   dots (on to start with), **CITIES** the cities on this map; the status line says how many spots have no location and so no dot.
 
 Switching a category off hides it everywhere at once — the list, the panadapter
-labels and the world-map dots — and the six category buttons are remembered
+labels and the world-map dots — and the seven category buttons are remembered
 between sessions, so a category you have no use for stays off. (**IN VIEW** is
 not: it is a way to read a crowded band for a moment, not a standing
 preference.)

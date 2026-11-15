@@ -379,7 +379,7 @@ pub struct ViewState {
     /// Which spot kinds are shown in the SPOTS list, on the panadapter and on
     /// the world map — indexed by `SpotKind::index`, so the chip order in the
     /// SPOTS window and this array have to stay in lockstep.
-    #[serde(default = "spot_kinds_default")]
+    #[serde(default = "spot_kinds_default", deserialize_with = "spot_kinds")]
     pub spot_kinds_shown: [bool; SPOT_KINDS],
     /// The SPOTS window shows its spots on a world map instead of as a list.
     #[serde(default)]
@@ -1131,6 +1131,40 @@ fn spot_kinds_default() -> [bool; SPOT_KINDS] {
     [true; SPOT_KINDS]
 }
 
+/// Read [`ViewState::spot_kinds_shown`] from a list of any length, so a view
+/// stored before a spot kind was added — or by a newer build with one more —
+/// still loads. A short list leaves the kinds it doesn't reach shown; a long
+/// one has its tail ignored. A fixed-size array would refuse the stored list
+/// outright, and with it the whole view would fall back to its defaults: zoom,
+/// levels and every panel divider lost over one new chip.
+fn spot_kinds<'de, D>(d: D) -> Result<[bool; SPOT_KINDS], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct Kinds;
+    impl<'de> serde::de::Visitor<'de> for Kinds {
+        type Value = [bool; SPOT_KINDS];
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a list of spot-kind switches")
+        }
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: serde::de::SeqAccess<'de>,
+        {
+            let mut out = spot_kinds_default();
+            let mut i = 0;
+            while let Some(on) = seq.next_element::<bool>()? {
+                if let Some(slot) = out.get_mut(i) {
+                    *slot = on;
+                }
+                i += 1;
+            }
+            Ok(out)
+        }
+    }
+    d.deserialize_tuple(SPOT_KINDS, Kinds)
+}
+
 fn spot_labels_default() -> bool {
     true
 }
@@ -1419,8 +1453,24 @@ mod tests {
         let mut v = ViewState { wide_waterfall: false, ..ViewState::default() };
         v.spot_kinds_shown[3] = false; // PSK off
         let back: ViewState = ron::from_str(&ron::to_string(&v).unwrap()).unwrap();
-        assert_eq!(back.spot_kinds_shown, [true, true, true, false, true, true]);
+        assert_eq!(back.spot_kinds_shown, [true, true, true, false, true, true, true]);
         assert!(!back.wide_waterfall);
+    }
+
+    /// A view stored before the TCI kind was added carries six chips. It must
+    /// load with the six as they were and TCI shown — not fall back to a
+    /// default view, which would throw away the operator's zoom and layout.
+    #[test]
+    fn a_view_with_fewer_spot_chips_still_loads() {
+        let stored = "(view_lo_hz:7000000.0,view_hi_hz:7200000.0,fft_size:8192,\
+                      spot_kinds_shown:(true,false,true,true,true,false))";
+        let v: ViewState = ron::from_str(stored).expect("a six-chip view must parse");
+        assert_eq!(v.fft_size, 8192, "the rest of the view survived");
+        assert_eq!(v.spot_kinds_shown, [true, false, true, true, true, false, true]);
+        // And one from a newer build with a chip more than this one knows.
+        let stored = "(fft_size:8192,spot_kinds_shown:(false,true,true,true,true,true,false,true))";
+        let v: ViewState = ron::from_str(stored).expect("an eight-chip view must parse");
+        assert_eq!(v.spot_kinds_shown, [false, true, true, true, true, true, false]);
     }
 
     /// The SPEC popup's two chips are independent switches, so all four

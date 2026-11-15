@@ -1743,6 +1743,13 @@ pub fn spot_color(kind: SpotKind) -> (u8, u8, u8) {
     (r, g, b)
 }
 
+/// The colour one spot is drawn in: its own, where a TCI client chose one,
+/// otherwise its kind's tint from [`spot_color`].
+#[inline]
+pub fn spot_rgb(spot: &sdroxide_types::Spot) -> (u8, u8, u8) {
+    spot.rgb(spot_color(spot.kind))
+}
+
 // The band-plan strip's shades, packed 0x00RRGGBB, one per `BandplanKind`.
 // `UNSET` for the same reason as the spot tints above.
 static BANDPLAN_COLORS: [AtomicU32; BandplanKind::COUNT] =

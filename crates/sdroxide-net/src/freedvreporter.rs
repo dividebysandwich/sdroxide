@@ -327,6 +327,7 @@ impl Roster {
                     // pruning. Removal is driven by `remove_connection`.
                     when_utc: now,
                     snr_db,
+                    color: None,
                 }
             })
             .collect()

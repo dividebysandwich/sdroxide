@@ -4592,6 +4592,9 @@ spots-sota = SOTA
 spots-freedv = FREEDV
 spots-spots = SPOTS
 spots-longwave-shortwave-broadcast-stations-air = Longwave & shortwave broadcast stations on air now
+spots-tci-tip =
+    Labels TCI clients set with SPOT
+    Each lives 10 min
 spots-view = IN VIEW
 spots-only-spots-inside-panadapter-span = Only spots inside the panadapter span
 spots-view-list = LIST
