@@ -52,6 +52,22 @@ const EASE: f64 = 0.06;
 /// and a marker that old would be a stale claim about where it is.
 pub const PLOT_STALE_S: i64 = 30 * 60;
 
+/// How many past positions a plot keeps and draws behind it. HFDL fixes are
+/// minutes apart, so five is most of an hour of flight — enough to show which
+/// way the aircraft is going and how fast, not so many that a busy ocean turns
+/// to dots.
+pub const TRAIL_MAX: usize = 5;
+
+/// A past position nearer than this to the one after it is dropped: the same
+/// fix reported twice (a performance-data and a frequency-data record from the
+/// same minute) would otherwise stack two dots on one spot.
+const TRAIL_MIN_STEP_KM: f64 = 2.0;
+
+/// A past position older than this is dropped however few there are, so a
+/// trail never reaches back across a gap in which the aircraft could have gone
+/// anywhere.
+pub const TRAIL_STALE_S: i64 = 60 * 60;
+
 /// How long a plot blinks after the list asks for it, in seconds. Long enough
 /// to find it by eye across a world map, short enough not to be left running.
 pub const BLINK_S: f64 = 3.0;
@@ -72,6 +88,15 @@ pub(crate) fn blink_phase(start: f64, now: f64) -> Option<(bool, f32)> {
     Some((cycle.fract() < 0.5, cycle.fract() as f32))
 }
 
+/// A position an aircraft reported before its latest.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TrailPoint {
+    pub lat: f64,
+    pub lon: f64,
+    /// Unix second the fix was decoded.
+    pub at: i64,
+}
+
 /// One aircraft's latest known position, as the map holds it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HfdlPlot {
@@ -88,6 +113,39 @@ pub struct HfdlPlot {
     /// How many fixes this aircraft has contributed — a lone fix is a plot, a
     /// dozen is a track.
     pub fixes: u32,
+    /// Where it was before [`Self::lat`]/[`Self::lon`]: at most [`TRAIL_MAX`]
+    /// positions, oldest first, none within [`TRAIL_MIN_STEP_KM`] of the
+    /// next, none older than [`TRAIL_STALE_S`].
+    pub trail: Vec<TrailPoint>,
+}
+
+impl HfdlPlot {
+    /// File a past position, unless one is already held for that second.
+    fn remember(&mut self, pt: TrailPoint) {
+        if pt.at != self.last_at && !self.trail.iter().any(|t| t.at == pt.at) {
+            self.trail.push(pt);
+        }
+    }
+
+    /// Put the trail in order and within bounds: oldest first, expired points
+    /// gone, a point that sits on the one after it gone, and only the newest
+    /// [`TRAIL_MAX`] kept. Idempotent, so it can run after every snapshot.
+    fn tidy_trail(&mut self, now: i64) {
+        self.trail.sort_by_key(|t| t.at);
+        self.trail.retain(|t| now - t.at <= TRAIL_STALE_S);
+        let mut kept: Vec<TrailPoint> = Vec::with_capacity(self.trail.len());
+        let mut next = (self.lat, self.lon);
+        for t in self.trail.iter().rev() {
+            if sdroxide_types::distance_km(next, (t.lat, t.lon)) >= TRAIL_MIN_STEP_KM {
+                kept.push(*t);
+                next = (t.lat, t.lon);
+            }
+        }
+        kept.reverse();
+        let excess = kept.len().saturating_sub(TRAIL_MAX);
+        kept.drain(..excess);
+        self.trail = kept;
+    }
 }
 
 /// The map's state, owned by the app so the view survives across frames and the
@@ -113,8 +171,11 @@ impl HfdlMapState {
         for d in log {
             let Some(fix) = &d.position else { continue };
             let key = fix.key();
+            let here = TrailPoint { lat: fix.lat, lon: fix.lon, at: d.unix };
             match self.plots.get_mut(&key) {
                 Some(p) if d.unix > p.last_at => {
+                    // The position it was at becomes the newest of its trail.
+                    let was = TrailPoint { lat: p.lat, lon: p.lon, at: p.last_at };
                     p.label = fix.label();
                     p.lat = fix.lat;
                     p.lon = fix.lon;
@@ -122,8 +183,11 @@ impl HfdlMapState {
                     p.snr_db = d.snr_db;
                     p.freq_khz = d.freq_khz;
                     p.fixes = p.fixes.saturating_add(1);
+                    p.remember(was);
                 }
-                Some(_) => {}
+                // An older fix than the one held — the log carries several per
+                // aircraft, newest first — is a place it has been.
+                Some(p) => p.remember(here),
                 None => {
                     self.plots.insert(
                         key,
@@ -135,10 +199,14 @@ impl HfdlMapState {
                             snr_db: d.snr_db,
                             freq_khz: d.freq_khz,
                             fixes: 1,
+                            trail: Vec::new(),
                         },
                     );
                 }
             }
+        }
+        for p in self.plots.values_mut() {
+            p.tidy_trail(now);
         }
         // Retire what nothing has refreshed for a long time.
         self.plots.retain(|_, p| now - p.last_at <= PLOT_STALE_S);
@@ -321,6 +389,25 @@ pub fn show(
 
     let font = FontId::monospace(9.0);
     let selected = state.selected.clone();
+
+    // ── where each aircraft has been ──
+    // Dots, the oldest smallest and faintest, under the squares so the present
+    // position is always the clearest thing on the map. Drawn for every
+    // aircraft; the selected one's in the selection's colour.
+    for (key, a) in &live {
+        let tint = if selected.as_deref() == Some(key.as_str()) { map.dx } else { map.station };
+        let n = a.trail.len();
+        for (i, t) in a.trail.iter().enumerate() {
+            let c = project(t.lat, t.lon);
+            if !rect.contains(c) {
+                continue;
+            }
+            // 1/n for the oldest up to 1 for the newest.
+            let f = (i + 1) as f32 / n as f32;
+            p.circle_filled(c, 1.8 + 0.8 * f, alpha(map.sea, 150.0));
+            p.circle_filled(c, 1.2 + 0.8 * f, alpha(tint, 70.0 + 140.0 * f));
+        }
+    }
     let tint_for = |key: &str, top: bool| -> eframe::egui::Color32 {
         if selected.as_deref() == Some(key) {
             map.dx
@@ -552,6 +639,110 @@ mod tests {
         m.observe(&[decode(1_000, Some(fix(Some("040087"), None, 50.0, -3.0)))], 1_000);
         m.observe(&[], 1_000 + PLOT_STALE_S + 1);
         assert!(m.is_empty(), "a plot nothing refreshes must come off the map");
+    }
+
+    /// Fixes of one aircraft a degree of latitude (~111 km) and ten minutes
+    /// apart, oldest first: `n` of them from `t0`.
+    fn flight(n: usize, t0: i64) -> Vec<HfdlDecode> {
+        (0..n)
+            .map(|i| {
+                decode(t0 + 600 * i as i64, Some(fix(Some("484123"), None, 40.0 + i as f64, -30.0)))
+            })
+            .collect()
+    }
+
+    fn newest_first(mut v: Vec<HfdlDecode>) -> Vec<HfdlDecode> {
+        v.reverse();
+        v
+    }
+
+    fn trail_ats(m: &HfdlMapState) -> Vec<i64> {
+        plot_of(m, "icao:484123").unwrap().trail.iter().map(|t| t.at).collect()
+    }
+
+    /// The log carries several fixes per aircraft, so the first snapshot already
+    /// has a history: the older ones are where it has been.
+    #[test]
+    fn the_first_snapshot_already_gives_a_trail() {
+        let mut m = HfdlMapState::default();
+        m.observe(&newest_first(flight(3, 1_000)), 3_000);
+        let p = plot_of(&m, "icao:484123").unwrap();
+        assert_eq!((p.last_at, p.lat), (2_200, 42.0), "the latest is the plot");
+        assert_eq!(trail_ats(&m), vec![1_000, 1_600]);
+        assert_eq!(p.trail[0].lat, 40.0);
+        assert_eq!(p.fixes, 1, "history is not counted as new fixes");
+    }
+
+    /// Snapshots repeat the whole log; a trail must not grow with each.
+    #[test]
+    fn a_repeated_snapshot_leaves_the_trail_alone() {
+        let mut m = HfdlMapState::default();
+        let log = newest_first(flight(4, 1_000));
+        m.observe(&log, 3_000);
+        let once = trail_ats(&m);
+        m.observe(&log, 3_001);
+        m.observe(&log, 3_002);
+        assert_eq!(trail_ats(&m), once);
+        assert_eq!(once, vec![1_000, 1_600, 2_200]);
+    }
+
+    #[test]
+    fn a_newer_fix_pushes_the_old_position_onto_the_trail() {
+        let mut m = HfdlMapState::default();
+        m.observe(&flight(1, 1_000), 1_100);
+        assert!(trail_ats(&m).is_empty(), "a lone fix has no past");
+        m.observe(&newest_first(flight(2, 1_000)), 1_700);
+        assert_eq!(trail_ats(&m), vec![1_000]);
+        m.observe(&newest_first(flight(3, 1_000)), 2_300);
+        assert_eq!(trail_ats(&m), vec![1_000, 1_600]);
+        assert_eq!(plot_of(&m, "icao:484123").unwrap().last_at, 2_200);
+    }
+
+    #[test]
+    fn a_trail_keeps_only_the_newest_few() {
+        let mut m = HfdlMapState::default();
+        m.observe(&newest_first(flight(9, 1_000)), 6_000);
+        let ats = trail_ats(&m);
+        assert_eq!(ats.len(), TRAIL_MAX);
+        // Of the eight past fixes the five latest, oldest first.
+        assert_eq!(ats, vec![2_800, 3_400, 4_000, 4_600, 5_200]);
+    }
+
+    #[test]
+    fn a_fix_reported_twice_does_not_stack_two_dots() {
+        let mut m = HfdlMapState::default();
+        let mut log = flight(3, 1_000);
+        // A second record from the same spot as the first, a minute later.
+        log.insert(1, decode(1_060, Some(fix(Some("484123"), None, 40.0001, -30.0))));
+        m.observe(&newest_first(log), 3_000);
+        assert_eq!(trail_ats(&m).len(), 2, "{:?}", trail_ats(&m));
+    }
+
+    /// An aircraft that reports only every twenty minutes would otherwise carry
+    /// a trail reaching back across hours: points over an hour old go.
+    #[test]
+    fn a_position_from_long_ago_is_not_part_of_the_trail() {
+        let mut m = HfdlMapState::default();
+        let sparse: Vec<HfdlDecode> = (0..6)
+            .map(|i| {
+                decode(1_000 + 1_200 * i, Some(fix(Some("484123"), None, 40.0 + i as f64, -30.0)))
+            })
+            .collect();
+        // Fixes at 1000, 2200, 3400, 4600, 5800, 7000; it is 7010.
+        m.observe(&newest_first(sparse), 7_010);
+        assert_eq!(trail_ats(&m), vec![4_600, 5_800], "1000..3400 are over an hour old");
+    }
+
+    #[test]
+    fn two_aircraft_keep_separate_trails() {
+        let mut m = HfdlMapState::default();
+        let mut log = flight(3, 1_000);
+        log.extend((0..3).map(|i| {
+            decode(1_000 + 600 * i, Some(fix(Some("A1B2C3"), None, 10.0 + i as f64, 100.0)))
+        }));
+        m.observe(&newest_first(log), 3_000);
+        assert_eq!(trail_ats(&m).len(), 2);
+        assert_eq!(plot_of(&m, "icao:A1B2C3").unwrap().trail.len(), 2);
     }
 
     #[test]
