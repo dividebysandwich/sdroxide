@@ -984,7 +984,15 @@ impl SdroxideApp {
                 continue;
             }
             let carrier = ["AM", "CW"].iter().any(|m| s.mode.eq_ignore_ascii_case(m));
-            let snr_alpha = self.snr_label_alpha(s.id, s.freq_hz, carrier, recheck, step);
+            // A TCI label is placed by a program that has already decided it
+            // matters — a decoder's result for a burst long gone, or a note to
+            // the operator with no signal under it at all. Judging it by the S/N
+            // at its frequency would hide nearly every one of them.
+            let snr_alpha = if s.kind == SpotKind::Tci {
+                1.0
+            } else {
+                self.snr_label_alpha(s.id, s.freq_hz, carrier, recheck, step)
+            };
             if snr_alpha < 0.15 {
                 continue;
             }

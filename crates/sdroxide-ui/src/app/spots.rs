@@ -425,7 +425,7 @@ impl SdroxideApp {
     /// log or look up on QRZ, so clicking one only tunes. Guarding here rather
     /// than at each call site covers both the SPOTS list and the panadapter.
     pub(in crate::app) fn prefill_from_spot(&mut self, spot: &Spot) {
-        if spot.kind == SpotKind::Broadcast {
+        if spot.kind == SpotKind::Broadcast || is_tci_note(spot) {
             return;
         }
         let mut form = LogEditForm::new_entry(now_unix(), spot.freq_hz, &spot.mode);
@@ -1520,5 +1520,45 @@ mod tests {
         c.refresh(&[&sited]);
         assert_eq!(c.placed.len(), 1);
         assert!(c.approx_ids.is_empty());
+    }
+}
+
+/// A TCI label whose callsign starts with `TCI-` is a program's note — a
+/// decoder's reading, a status line — not a station to log. Clicking it tunes
+/// and leaves the log alone. The prefix needs the hyphen: `:` is reserved in
+/// TCI arguments, and no amateur callsign contains a hyphen.
+// Why: HDZ 2026-11-15: „alles was mit TCI anfängt wird halt nicht ins Logbuch angeboten“.
+fn is_tci_note(spot: &Spot) -> bool {
+    spot.kind == SpotKind::Tci && spot.call.to_ascii_uppercase().starts_with("TCI-")
+}
+
+#[cfg(test)]
+mod tci_note_tests {
+    use super::*;
+
+    fn tci(call: &str) -> Spot {
+        Spot {
+            id: 1,
+            kind: SpotKind::Tci,
+            freq_hz: 433_920_000.0,
+            call: call.into(),
+            spotter: String::new(),
+            mode: "INFO".into(),
+            comment: String::new(),
+            reference: None,
+            grid: None,
+            loc: None,
+            when_utc: 0,
+            snr_db: None,
+            color: None,
+        }
+    }
+
+    #[test]
+    fn tci_prefix_is_a_note_and_a_callsign_is_not() {
+        assert!(is_tci_note(&tci("TCI-DIAG")));
+        assert!(is_tci_note(&tci("tci-rtl433")));
+        assert!(!is_tci_note(&tci("DL1ABC")));
+        assert!(!is_tci_note(&tci("TCIDIAG")));
     }
 }

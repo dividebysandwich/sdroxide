@@ -14128,7 +14128,12 @@ A few things worth knowing:
   the client that placed them disconnects, so a logger that reconnects does
   not blank your waterfall; they go when you turn the TCI server off or
   move it to another address. sdroxide does not echo spot commands back:
-  the specification has no reply for them.
+  the specification has no reply for them. The S/N label filter leaves TCI
+  labels alone: a client places one because it has decided the label matters,
+  often for a burst already gone or with no signal under it at all.
+  Clicking a TCI label tunes to it; a label whose callsign starts with `TCI-`
+  (a program's note, such as `TCI-DIAG` or a decoder's reading) does not open
+  a log entry, every other one does, as with the network spots.
 - **A client that mislabels its transmit audio is still understood.** The TCI
   header carries a channel count, and WSJT-X leaves it uninitialised — a
   different random number in every packet. Taken at face value that collapses
