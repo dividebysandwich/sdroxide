@@ -14046,7 +14046,9 @@ decode, and transmit audio to put on the air. It is **on by default**.
   but never key the transmitter.
 - **TCI Client** — dial out to another TCI server and send this radio's VFO
   whenever you tune. It works the other way too: tune the far radio from its
-  own knob and the dial here follows. Control only: no audio, no IQ, and it
+  own knob and the dial here follows. When the link comes up the far radio
+  speaks first: the dial here goes to wherever that radio already is, so
+  starting sdroxide does not move it. Control only: no audio, no IQ, and it
   does not key the transmitter. Off by default. The address is `127.0.0.1:50001`, which is
   where 590Ctrl listens. Leave the server above off, or on another port, when
   590Ctrl is already using 50001.

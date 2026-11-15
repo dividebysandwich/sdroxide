@@ -13283,8 +13283,10 @@ impl Engine {
                 self.tci_tune_err = None;
             }
         }
-        // The dial may already be somewhere. Send it without waiting for the
-        // next click; the worker holds it until the socket is up.
+        // The dial may already be somewhere. Hand it over without waiting for
+        // the next click. The worker listens first once the socket is up: if
+        // the server says where its radio is, that comes back through
+        // `poll_tci_client` and this is never sent.
         self.push_tci_client();
         self.emit_tci_status();
     }
