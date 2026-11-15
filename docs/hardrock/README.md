@@ -22,7 +22,7 @@ An amplifier this size can damage itself. The panel never switches a relay that 
 
 ## More
 
-- [atu-values.md](atu-values.md): how the tuner's L and C values are estimated.
+- [atu-values.md](atu-values.md): how the tuner's L and C values are estimated, and how the ATU-500 tunes.
 - [design-decisions.md](design-decisions.md): where the panel deliberately differs from the amplifier, and why.
 
 ## Planned: standalone app

@@ -419,6 +419,79 @@ fn swr_past(r: &AmpReadings, warn: f32) -> bool {
     r.swr >= 1.0 && r.swr >= warn
 }
 
+/// Where the SWR tile turns red at the latest on an HR500 with its tuner.
+/// The ATU-500 gives up at about 6:1 (under 2.5 dB return loss it stays
+/// bypassed and reports "SWR above 6:1"; WA2EUJ to AJ3G, 14 Nov 2026). Set
+/// just above that, at 6.1:1, so the tuner's own bypass at 6:1 comes first
+/// and the tile isn't red over a load the tuner would still try (AJ3G).
+const ATU_500_SWR_RED: f32 = 6.1;
+
+/// The SWR at which the SWR tile turns red. SDRoxide's tune limit, except on
+/// an HR500 with its tuner, where nothing past 6:1 will be tuned, so the tile
+/// is red from 6.1:1 at the latest; never below the operator's own limit.
+/// Display only: the engine's guard serves every radio and tuner, some of
+/// which start at 10:1, and is left as it is.
+fn swr_warn_at(model: AmpModel, tuner: bool, limit: f32) -> f32 {
+    let tune = sdroxide_types::swr_tune_limit(limit);
+    if model == AmpModel::Hr500 && tuner { tune.min(ATU_500_SWR_RED.max(limit)) } else { tune }
+}
+
+/// Why the last tune failed, from the result the link reports
+/// (`result_text` in `sdroxide-hardrock`). These light TUNE red.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum TuneFailure {
+    /// Return loss under 2.5 dB: the tuner didn't try.
+    SwrAbove,
+    /// No match under 2:1 found.
+    NoMatch,
+    /// Under 0.5 W at the tuner.
+    LoPower,
+    PowerHigh,
+}
+
+impl TuneFailure {
+    fn of(result: Option<&str>) -> Option<Self> {
+        let r = result?;
+        [
+            ("SWR above", TuneFailure::SwrAbove),
+            ("Failed", TuneFailure::NoMatch),
+            ("Lo power", TuneFailure::LoPower),
+            ("Power too high", TuneFailure::PowerHigh),
+        ]
+        .into_iter()
+        .find_map(|(f, why)| r.starts_with(f).then_some(why))
+    }
+
+    /// The short line under TUNE.
+    fn line(self) -> String {
+        match self {
+            TuneFailure::SwrAbove => tr!("amp-tune-swr-above"),
+            TuneFailure::NoMatch => tr!("amp-tune-no-match"),
+            TuneFailure::LoPower => tr!("amp-tune-lo-power"),
+            TuneFailure::PowerHigh => tr!("amp-tune-power-high"),
+        }
+        .to_string()
+    }
+
+    /// What to do about it, on that line and on TUNE.
+    fn hover(self) -> String {
+        match self {
+            TuneFailure::SwrAbove => tr!("amp-tune-swr-above-hover"),
+            TuneFailure::NoMatch => tr!("amp-tune-no-match-hover"),
+            TuneFailure::LoPower => tr!("amp-tune-lo-power-hover"),
+            TuneFailure::PowerHigh => tr!("amp-tune-power-high-hover"),
+        }
+        .to_string()
+    }
+}
+
+/// A tune that succeeded with the tuner on but its network left bypassed: the
+/// load was already better than 1.3:1, and the ATU-500 leaves a load that
+/// close alone (WA2EUJ, 14 Nov 2026). Expected, not a failure.
+fn tuned_without_tuner(tuned: bool, active: bool, net: Option<AtuNetwork>) -> bool {
+    tuned && active && net.is_some_and(|n| n.bypassed)
+}
+
 /// The legend's font size: 12 points (scaled) when a legend `width` wide at
 /// that size fits the `room` left of the needles, smaller in proportion when it
 /// doesn't, down to 8.
@@ -699,7 +772,8 @@ impl SdroxideApp {
             let (r, fill) = from_rig(r, tx, self.duo_presets_apply());
             st.readings = Some(r);
             self.amp_meter.rig = fill;
-            self.amp_meter.swr_warn = sdroxide_types::swr_tune_limit(self.state.tx.swr_limit);
+            self.amp_meter.swr_warn =
+                swr_warn_at(st.model, st.atu.is_some(), self.state.tx.swr_limit);
         }
         // The browser has one canvas and no second window to put it in.
         let pop = (!cfg!(target_arch = "wasm32")).then_some(self.ui_settings.amp_popped);
@@ -1129,10 +1203,10 @@ fn amp_panel_inner(
         // Blinking blue while tuning (busy, not a warning), green once a
         // tune has succeeded and the tuner is in line, red when the last one
         // failed (AJ3G).
-        let failed = atu.last_result.as_deref().is_some_and(|r| {
-            ["Failed", "SWR above", "Lo power", "Power too high"].iter().any(|f| r.starts_with(f))
-        });
+        let failure = TuneFailure::of(atu.last_result.as_deref());
+        let failed = failure.is_some();
         let tuned = atu.active && atu.last_result.as_deref() == Some(&tr!("amp-tuned"));
+        let unneeded = !atu.tuning && tuned_without_tuner(tuned, atu.active, net);
         let (lit, tune_fill) = if atu.tuning {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
             (now.rem_euclid(1.0) < 0.5, theme::CYAN())
@@ -1141,8 +1215,12 @@ fn amp_panel_inner(
         } else {
             (failed, theme::ALERT())
         };
+        let tune_hover = match failure {
+            Some(f) if !atu.tuning => f.hover(),
+            _ => tr!("amp-start-tune-then-key-steady").to_string(),
+        };
         if button(&mut inside, s, lit, &tr!("amp-tune"), Some(tune_fill))
-            .on_hover_text(tr!("amp-start-tune-then-key-steady"))
+            .on_hover_text(tune_hover)
             .clicked()
         {
             actions.push(AmpAction::Tune);
@@ -1164,14 +1242,21 @@ fn amp_panel_inner(
             actions.push(AmpAction::SetAtu(!atu.active));
         }
 
-        if atu.tuning || !bypassed {
+        if atu.tuning || !bypassed || failed || unneeded {
             ui.horizontal(|ui| {
-                let state = if atu.tuning {
-                    tr!("amp-tuning").to_string()
+                let (state, hover) = if atu.tuning {
+                    (tr!("amp-tuning").to_string(), None)
+                } else if let Some(f) = failure {
+                    (f.line(), Some(f.hover()))
+                } else if unneeded {
+                    (
+                        tr!("amp-tuned-without-tuner").to_string(),
+                        Some(tr!("amp-tuned-without-tuner-hover").to_string()),
+                    )
                 } else if let Some(res) = &atu.last_result {
-                    res.clone()
+                    (res.clone(), None)
                 } else {
-                    "ON".into()
+                    ("ON".into(), None)
                 };
                 let col = if atu.tuning {
                     theme::CYAN()
@@ -1180,7 +1265,11 @@ fn amp_panel_inner(
                 } else {
                     theme::GREEN()
                 };
-                ui.label(RichText::new(state).size(14.0 * s).strong().color(col));
+                let label =
+                    ui.label(RichText::new(state).size(14.0 * s).strong().color(col));
+                if let Some(hover) = hover {
+                    label.on_hover_text(hover);
+                }
                 if let Some(swr) = net.and_then(|n| n.swr).filter(|_| !bypassed) {
                     ui.label(
                         RichText::new(if swr >= 10.0 {
@@ -1192,7 +1281,8 @@ fn amp_panel_inner(
                         })
                         .size(14.0 * s)
                         .color(theme::TEXT()),
-                    );
+                    )
+                    .on_hover_text(tr!("amp-tuner-swr"));
                 }
             });
         }
@@ -2124,6 +2214,45 @@ mod tests {
         assert!(!swr_past(&at(1.9), 5.0));
         // No SWR, no warning.
         assert!(!swr_past(&at(0.0), 0.5));
+    }
+
+    #[test]
+    fn with_the_hr500_tuner_the_swr_is_red_just_past_where_it_gives_up() {
+        // The default limit, 2.5:1, makes a tune limit of 5:1: already lower.
+        assert_eq!(swr_warn_at(AmpModel::Hr500, true, 2.5), 5.0);
+        // A limit of 4:1 makes 8:1; the tuner gives up at 6:1, so 6.1:1.
+        assert_eq!(swr_warn_at(AmpModel::Hr500, true, 4.0), 6.1);
+        // Never below the operator's own limit.
+        assert_eq!(swr_warn_at(AmpModel::Hr500, true, 8.0), 8.0);
+        // No tuner, or an HR50: the tune limit as before.
+        assert_eq!(swr_warn_at(AmpModel::Hr500, false, 4.0), 8.0);
+        assert_eq!(swr_warn_at(AmpModel::Hr50, true, 4.0), 8.0);
+    }
+
+    #[test]
+    fn a_failed_tune_is_read_from_the_link_s_words() {
+        // As `result_text` in sdroxide-hardrock writes them.
+        assert_eq!(TuneFailure::of(Some("SWR above 6:1")), Some(TuneFailure::SwrAbove));
+        assert_eq!(TuneFailure::of(Some("Failed (above 2:1)")), Some(TuneFailure::NoMatch));
+        assert_eq!(TuneFailure::of(Some("Lo power")), Some(TuneFailure::LoPower));
+        assert_eq!(TuneFailure::of(Some("Power too high")), Some(TuneFailure::PowerHigh));
+        for ok in [Some("Tuned"), Some("Aborted"), Some("Result 7"), None] {
+            assert_eq!(TuneFailure::of(ok), None, "{ok:?}");
+        }
+        assert_eq!(TuneFailure::SwrAbove.line(), "SWR above 6:1: check the antenna");
+        assert!(TuneFailure::SwrAbove.hover().contains("feed line"));
+    }
+
+    #[test]
+    fn a_load_already_matched_is_tuned_without_the_tuner() {
+        let net = |bypassed| Some(AtuNetwork { bypassed, ..AtuNetwork::default() });
+        assert!(tuned_without_tuner(true, true, net(true)));
+        // In line: the network drawing says it all.
+        assert!(!tuned_without_tuner(true, true, net(false)));
+        // Switched to BYP by hand, or not tuned, or no network read yet.
+        assert!(!tuned_without_tuner(true, false, net(true)));
+        assert!(!tuned_without_tuner(false, true, net(true)));
+        assert!(!tuned_without_tuner(true, true, None));
     }
 
     #[test]

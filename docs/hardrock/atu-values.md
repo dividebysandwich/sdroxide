@@ -186,3 +186,23 @@ With C as the sum of the bits, the floor was refitted to the two 20 m readings (
 10 pF fits best. It gives the same 170 pF at step 12 as the earlier 50 pF + 10 pF a step, so the 20 m bench tune reads the same as before. The floor is now much smaller, which is more believable for relay and trace strays alone.
 
 The other two points can't separate the readings. On 80 m (step 9) every reading predicts about 1.62:1, as before. On 10 m (step 3) the sum of the bits gives 45 pF and predicts 1.83:1 into 30.5 Ω, against the tuner's 1.13:1; the old linear reading predicted about 1.45:1. But the load wasn't measured at 28 MHz, and the T and cable change a lot there, so this isn't taken as evidence against the firmware, which shows how the relays are actually driven.
+
+## How the ATU-500 tunes (14 Nov 2026)
+
+Jim, WA2EUJ (HobbyPCB), explained the tuner's search to AJ3G by email on 14 Nov 2026. Until then SDRoxide's handling and these notes rested on what had been seen of the tuner, and it had been assumed that it stops at the first match that is "good enough". It doesn't: it aims for 1.3:1 and always keeps the best setting it has seen.
+
+The tuner works on return loss, read on its own coupler. On a TUNE it:
+
+1. Reads the load with the tuner bypassed. If that is already better than 1.3:1 (17.7 dB return loss), it stays bypassed and is done. If the return loss is under 2.5 dB (about 6:1), it doesn't try: it stays bypassed and reports the error the AMP window shows as "SWR above 6:1".
+2. Puts back the setting it last tuned to. If that gives better than 1.2:1 (20 dB), it keeps it. Steps 1 and 2 take a few milliseconds.
+3. If that setting gives better than 1.5:1 (14 dB), it fine-tunes from there and stops at 1.3:1 or better.
+4. Otherwise it sweeps widely, stops when it reaches 1.3:1 (19 dB), then follows that contour to the best match it can find.
+5. Whatever happens, it applies the best setting it saw, so a tune never ends worse than the load it started from.
+
+What this means in the AMP window:
+
+- A load already under 1.3:1 is left bypassed after a successful tune. The tuner drawing shows the bypass relays, and the line under TUNE reads, in green, "Tuned: under 1.3:1 without the tuner". A stepped L/C tuner can rarely improve a load that close, so this is the expected result, not a failure.
+- A load over about 6:1 is not tuned at all: TUNE turns red and the line under it reads "SWR above 6:1: check the antenna". Check the antenna and the feed line. On an HR500 with its tuner the SWR tile turns red from 6.1:1 at the latest, just past where the tuner gives up.
+- With a stored setting that still fits, a tune is over almost at once. A wide sweep takes longer.
+- The SWR tile comes from the coupler on the amplifier's low-pass filter board; the tuner's own reading (the SWR shown beside the tuner's state, under TUNE) comes from the tuner's coupler. They can differ by up to about 0.2.
+- Tune once on each band or antenna before an over. The tuner keeps the setting, so the over starts matched.

@@ -95,6 +95,24 @@ The meter legend and the tiles' hover text say where each came from. Any reading
 
 **Why.** Into an open circuit on 20 m, with the amp in OFF, the DUO reported 7.75 W forward and 6 to 7 W reflected, so the panel showed FWD 8 W and RFL 6–7 W "from the rig". AJ3G's known-good LP-100A digital vector wattmeter read 2.62 W forward and 2.93 W reflected: the DUO was folding back and its own watts read about three times high. The SWR it reported, 22.5:1, was the honest figure. So at a very high SWR the panel points the operator at the SWR, in red, and warns across the top of each meter showing the radio's FWD or RFL, centred in large red letters ("FWD UNRELIABLE AT THIS SWR"), with the reason on hover. AJ3G first saw it as a legend note and asked for it at the top, red and larger, because a legend is too easy to miss. Red is a warning, in line with the rule that yellow and red mean warnings only.
 
-**Limits.** It does not stop anything; SDRoxide's own SWR guard already stops TUNE and transmit at its limits. The threshold is the tune limit so there is one figure for the operator to find in the settings.
+**Limits.** It does not stop anything; SDRoxide's own SWR guard already stops TUNE and transmit at its limits. The threshold is the tune limit so there is one figure for the operator to find in the settings. (On an HR500 with its tuner it is now 6.1:1 at the latest: see decision 6.)
 
 **Where.** `crates/sdroxide-ui/src/app/amp.rs`, `swr_past` and `readings_row`; User manual section 2.23, "Readings".
+
+## 6. The tuner panel follows how the ATU-500 really searches
+
+**Decided:** AJ3G, 14 Nov 2026, from Jim WA2EUJ's (HobbyPCB) written explanation of the tuner's algorithm.
+
+**What changed it.** The panel's tuner handling and its notes had been worked out from watching the tuner, and assumed things it doesn't do: for example, that it stops at the first match that is "good enough", and that a successful tune leaves the tuner's network in line. WA2EUJ explained by email how the search actually works (see "How the ATU-500 tunes" in [atu-values.md](atu-values.md)): it aims for 1.3:1 and always keeps the best setting it has seen; it leaves a load already better than 1.3:1 bypassed; and it doesn't try at all above about 6:1. His explanation corrected those assumptions, and the panel now says what the tuner did.
+
+**What the panel does now.**
+
+- A tune that ends "Tuned" with the tuner ON but its network bypassed reads, in green, "Tuned: under 1.3:1 without the tuner", with a hover saying this is expected. Before, it showed only the bypass drawing, which looked as if nothing had happened.
+- A failed tune (TUNE red) shows a short red line under TUNE saying what to do, with the reason on hover and on TUNE: above about 6:1 the tuner stays bypassed, so check the antenna and feed line; Lo power means under 0.5 W reached it, so keep a steady carrier of a few watts; Failed (above 2:1) means try again or check the antenna; Power too high means lower the drive. Before, a failure with the tuner bypassed showed nothing but the red TUNE.
+- The tuner's SWR, beside its state, says on hover that it comes from the tuner's own coupler, while the SWR tile comes from the low-pass filter board's coupler, so they can differ by up to about 0.2.
+- The TUNE hover says the tuner aims for 1.3:1 and keeps the best match it has seen.
+- On an HR500 with its tuner, the SWR tile (decision 5) is red from 6.1:1 at the latest, rather than at the tune limit (up to 10:1). 6.1:1 is just above the tuner's 6:1, so the tuner's own refusal at 6:1 comes first and the tile isn't red over a load the tuner would still try (AJ3G). It is never below the operator's SWR limit itself.
+
+**Limits.** Display only: nothing changes what or when the amplifier transmits or switches. SDRoxide's own SWR guard (`swr_tune_limit`, used by the engine) is unchanged, because it serves every radio and external tuner, some of which start their search at 10:1.
+
+**Where.** `crates/sdroxide-ui/src/app/amp.rs`, `swr_warn_at`, `ATU_500_SWR_RED`, `TuneFailure`, `tuned_without_tuner` and the tuner section of the window; `docs/hardrock/atu-values.md`, "How the ATU-500 tunes"; User manual section 2.23, "Readings" and "Tuner".

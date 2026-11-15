@@ -4015,8 +4015,9 @@ nothing wrong now, and from remote that would look like a fault. A red (a
 trip) always shows. From your first key-up the tiles follow the amplifier's
 lights exactly, so its own screen and this one can differ only before then.
 SWR has no colour of its own, as on the amplifier, except that it turns **red**
-at or past the tune limit (Settings → General, shown beside the SWR limit).
-There, a meter showing FWD or RFL measured by the radio says so across its
+at or past the tune limit (Settings → General, shown beside the SWR limit),
+or on an HR500 with its tuner from 6.1:1 at the latest, just past the 6:1
+where the tuner stops trying (never below the SWR limit itself). There, a meter showing FWD or RFL measured by the radio says so across its
 top in large red letters, for example *FWD UNRELIABLE AT THIS SWR*, and the
 tiles say why on hover: into an open the FDM-DUO reported about three times
 the power a wattmeter read, and only its SWR was right. Click
@@ -4040,7 +4041,13 @@ has switched in, with values, and which side the capacitor is on. When the
 tuner is bypassed, the drawing shows the bypass relays instead.
 
 - **TUNE** starts a tune. It blinks blue while tuning, turns green when tuned
-  and red if the tune fails, with the result and SWR on the line below.
+  and red if the tune fails, with the result and SWR on the line below. A
+  failed tune says what to do there and on hover (for *SWR above 6:1*: the
+  tuner doesn't try above about 6:1, so check the antenna and feed line). A
+  load already better than 1.3:1 is left bypassed and reads *Tuned: under
+  1.3:1 without the tuner*: that is expected. The tuner aims for 1.3:1 and
+  keeps the best match it has seen; its SWR, read on its own coupler, can
+  differ from the amplifier's SWR tile by up to about 0.2.
 - **ON / BYP** puts the tuner in line or bypasses it.
 
 The tuner only reports step numbers. The values shown (for example "~0.20 µH ·
