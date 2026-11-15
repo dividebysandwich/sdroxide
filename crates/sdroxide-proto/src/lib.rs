@@ -1701,9 +1701,31 @@ use sdroxide_types::{
 /// `RxState` gains `fm_decrackle`, `fm_deemph` and `fm_decrackle_dip`, and
 /// `SpectrumConfig` gains `smooth`, `reassign`, `reassign_floor_db` and
 /// `reassign_dim_db` at its tail.
-/// v206: `AtuState` gains optional Reg7 diagnostics and a host command-delivery
-/// error, appended to the state carried by `RadioState`.
-pub const PROTO_VERSION: u16 = 206;
+///
+/// v206: PANO. `Command::ScanBack` and `ScanKind::Panorama` appended,
+/// `ScannerConfig` gains `stop_snr`, `snr_db` and `pano_usable` after
+/// `follow_squelch`, and `ScanState` gains `sweeps` and `sweep_ms`, which
+/// changes the layout of every state frame.
+///
+/// v207: PANO pause. `ScannerConfig` gains `pano_pause_s` after `pano_usable`,
+/// which changes the layout of `SetScannerConfig` and of the scanner echo.
+///
+/// v208: SDRplay low IF. `SdrPlayConfig` gains `low_if` at its tail, which
+/// changes the layout of every `RadioConfig` sent.
+///
+/// v209: SK boost. `RxState` gains `sk_filter_boost_db` after
+/// `sk_filter_after_nr`, and `Command::SetSkFilter` gains `boost_db`.
+///
+/// v210: truSDX `TrUsdxAudio::OneCableMute` appended, a new value inside
+/// `CatConfig` and so inside every `RadioConfig`.
+///
+/// v211: ELAD monitoring. `CatConfig` gains `elad_mute_on_radio_ptt` and
+/// `EladConfig` gains `hear_own_tx`, which changes every `RadioConfig`.
+///
+/// v212: HPSDR ATU diagnostics. `AtuState` gains `reg7_supported`,
+/// `reg7_status`, `reg7_fresh` and `command_error`, changing the serialized
+/// `RadioState` layout.
+pub const PROTO_VERSION: u16 = 212;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
