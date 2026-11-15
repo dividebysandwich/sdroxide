@@ -1112,6 +1112,12 @@ and Linux; on Linux install `packaging/linux/60-sdroxide-tmate2.rules` so it can
 be opened without root. The LCD shows the frequency, mode and S-meter (forward
 power while transmitting) and the A/B, RX/TX, NB, NR, AN, RIT and XIT legends.
 
+Switching VFOs from the TM2 (the main-dial push, by default) tunes to whatever
+the other VFO last held, exactly as the on-screen A/B button does. After a
+transverter session that may be a VHF/UHF frequency the radio cannot receive
+on its own, and it is then pulled back into range with a warning. Press A→B
+once to give VFO B the current frequency.
+
 Bindings are stored with the *user interface*, not the engine, so a knob plugged
 into your laptop works against a remote radio over `--connect` too.
 
