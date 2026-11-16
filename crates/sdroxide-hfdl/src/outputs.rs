@@ -74,6 +74,8 @@ pub struct Outputs {
     airframes_endpoint: String,
     sock: Option<UdpSocket>,
     airframes: Option<Target>,
+    /// The local JSON targets, by the `host:port` they were given as.
+    json: Vec<(String, Target)>,
     status: HfdlOutputStatus,
 }
 
@@ -90,6 +92,7 @@ impl Outputs {
             airframes_endpoint: format!("{HFDL_AIRFRAMES_HOST}:{HFDL_AIRFRAMES_PORT}"),
             sock: None,
             airframes: None,
+            json: Vec::new(),
             status: HfdlOutputStatus::default(),
         }
     }
@@ -108,6 +111,19 @@ impl Outputs {
         if !airframes_on {
             self.status.airframes_error = None;
         }
+        // The JSON targets: keep the ones still asked for (and their looked-up
+        // addresses), start the new ones.
+        let mut old = std::mem::take(&mut self.json);
+        for t in cfg.json_targets() {
+            let target = match old.iter().position(|(k, _)| *k == t) {
+                Some(i) => old.remove(i).1,
+                None => Target::new(t.clone()),
+            };
+            self.json.push((t, target));
+        }
+        if self.json.is_empty() {
+            self.status.json_error = None;
+        }
         self.cfg = cfg;
         if self.wants_udp() && self.sock.is_none() {
             match UdpSocket::bind("0.0.0.0:0").and_then(|s| s.set_nonblocking(true).map(|()| s)) {
@@ -121,7 +137,7 @@ impl Outputs {
     }
 
     fn wants_udp(&self) -> bool {
-        self.airframes.is_some()
+        self.airframes.is_some() || !self.json.is_empty()
     }
 
     /// Whether anything is switched on — when nothing is, the worker skips
@@ -154,6 +170,17 @@ impl Outputs {
                     Err(e) => self.status.airframes_error = Some(e.to_string()),
                 },
                 Err(why) => self.status.airframes_error = Some(why),
+            }
+        }
+        if let Some(sock) = self.sock.as_ref() {
+            for (name, t) in &self.json {
+                match t
+                    .addr()
+                    .and_then(|a| sock.send_to(&bytes, a).map_err(|e| format!("{name}: {e}")))
+                {
+                    Ok(_) => self.status.json_sent += 1,
+                    Err(why) => self.status.json_error = Some(why),
+                }
             }
         }
     }
@@ -231,6 +258,53 @@ mod tests {
         assert_eq!(v["hfdl"]["station"], "XX-TEST-HFDL");
         assert_eq!(v["hfdl"]["spdu"]["src"]["id"], 4);
         assert_eq!(o.status().airframes_error, None);
+    }
+
+    /// Local JSON targets get the same lines, and a station id is not needed
+    /// for them — the id is Airframes' requirement, not the format's.
+    #[test]
+    fn local_targets_get_the_lines_without_a_station_id() {
+        let rx_a = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let rx_b = UdpSocket::bind("127.0.0.1:0").unwrap();
+        for r in [&rx_a, &rx_b] {
+            r.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        }
+        let mut o = Outputs::new();
+        o.configure(HfdlOutputs {
+            json_udp: vec![
+                rx_a.local_addr().unwrap().to_string(),
+                rx_b.local_addr().unwrap().to_string(),
+            ],
+            ..Default::default()
+        });
+        assert!(o.active());
+        let e = xng_mode_hfdl::pdu::PduParser::new()
+            .parse(&xng_mode_hfdl::pdu::build_spdu(7, 9, 52), 300)
+            .remove(0);
+        let meta =
+            FrameMeta { sec: 1, usec: 2, freq_hz: 8_942_000, sig_level: -30.0, station: None };
+        let none = |_: u8| None;
+        for _ in 0..200 {
+            o.emit(&e, &meta, &none);
+            if o.status().json_sent >= 2 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let mut buf = [0u8; 4096];
+        for r in [&rx_a, &rx_b] {
+            let (n, _) = r.recv_from(&mut buf).expect("each target gets the line");
+            let v: serde_json::Value =
+                serde_json::from_str(String::from_utf8_lossy(&buf[..n]).trim()).unwrap();
+            assert_eq!(v["hfdl"]["spdu"]["src"]["id"], 7);
+            assert!(v["hfdl"].get("station").is_none(), "no id was given");
+        }
+        // Dropping a target keeps the other (and its looked-up address).
+        let keep = rx_b.local_addr().unwrap().to_string();
+        o.configure(HfdlOutputs { json_udp: vec![keep.clone()], ..Default::default() });
+        assert_eq!(o.json.len(), 1);
+        assert_eq!(o.json[0].0, keep);
+        assert!(o.json[0].1.addr().is_ok(), "kept, not looked up again");
     }
 
     #[test]

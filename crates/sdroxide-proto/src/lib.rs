@@ -2412,6 +2412,7 @@ mod tests {
         let feeds = sdroxide_types::HfdlOutputs {
             station_id: "XX-TEST-HFDL".into(),
             airframes: true,
+            json_udp: vec!["127.0.0.1:5556".into()],
             ..Default::default()
         };
         let cmd = Command::SetHfdlOutputs(feeds.clone());

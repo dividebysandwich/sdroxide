@@ -84,6 +84,12 @@ pub struct HfdlOutputs {
     /// Feed Airframes' HFDL ingest ([`HFDL_AIRFRAMES_HOST`]:[`HFDL_AIRFRAMES_PORT`]).
     #[serde(default)]
     pub airframes: bool,
+    /// Further places to send the same JSON lines, as `host:port` — acarshub,
+    /// a logger, a program of the operator's own. UDP, one datagram per frame,
+    /// as dumphfdl's `--output decoded:json:udp:…` sends them. Appended last:
+    /// the wire is positional.
+    #[serde(default)]
+    pub json_udp: Vec<String>,
 }
 
 impl HfdlOutputs {
@@ -99,6 +105,29 @@ impl HfdlOutputs {
     pub fn airframes_ready(&self) -> bool {
         self.airframes && self.station_id_ok()
     }
+    /// The JSON targets that are a `host:port` with a port that is one, in
+    /// order, each once.
+    pub fn json_targets(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for t in self.json_udp.iter().map(|t| t.trim()) {
+            if hfdl_target_ok(t) && !out.iter().any(|o| o == t) {
+                out.push(t.to_string());
+            }
+        }
+        out
+    }
+}
+
+/// Whether `t` is a `host:port` a datagram can be sent to: a non-empty host
+/// (a name, an IPv4 address, or an IPv6 one in brackets) and a port 1..=65535.
+pub fn hfdl_target_ok(t: &str) -> bool {
+    let Some((host, port)) = t.rsplit_once(':') else { return false };
+    let host_ok = if let Some(inner) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        inner.parse::<std::net::Ipv6Addr>().is_ok()
+    } else {
+        !host.is_empty() && !host.contains(':') && !host.contains(char::is_whitespace)
+    };
+    host_ok && port.parse::<u16>().is_ok_and(|p| p > 0)
 }
 
 /// What the outputs have done since the decoder started.
@@ -108,6 +137,10 @@ pub struct HfdlOutputStatus {
     pub airframes_sent: u64,
     /// Why the last one could not be sent, while that is still the case.
     pub airframes_error: Option<String>,
+    /// Frames sent to the local JSON targets (one count per datagram).
+    pub json_sent: u64,
+    /// Why the last one to some target could not be sent, naming it.
+    pub json_error: Option<String>,
 }
 
 /// What auto-follow is doing.
@@ -1474,5 +1507,27 @@ mod tests {
         o.station_id = "XX-KSEA-HFDL".into();
         o.airframes = false;
         assert!(!o.airframes_ready(), "a good id is not consent to feed");
+    }
+
+    #[test]
+    fn json_targets_are_host_and_port() {
+        assert!(hfdl_target_ok("127.0.0.1:5556"));
+        assert!(hfdl_target_ok("acarshub.local:5556"));
+        assert!(hfdl_target_ok("[::1]:5556"));
+        assert!(!hfdl_target_ok("127.0.0.1"), "no port");
+        assert!(!hfdl_target_ok(":5556"), "no host");
+        assert!(!hfdl_target_ok("host:0"));
+        assert!(!hfdl_target_ok("host:70000"));
+        assert!(!hfdl_target_ok("::1:5556"), "a bare IPv6 address is ambiguous");
+        let o = HfdlOutputs {
+            json_udp: vec![
+                " 127.0.0.1:5556 ".into(),
+                "bad".into(),
+                "127.0.0.1:5556".into(),
+                "h:1".into(),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(o.json_targets(), vec!["127.0.0.1:5556".to_string(), "h:1".to_string()]);
     }
 }

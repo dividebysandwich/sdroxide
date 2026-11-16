@@ -79,6 +79,9 @@ impl SdroxideApp {
             if open.is_none()
                 && let Some(mut e) = self.hfdl_outputs_edit.take()
             {
+                if let Some(d) = self.hfdl_json_draft.take() {
+                    e.json_udp = split_targets(&d);
+                }
                 e.station_id = e.station_id.trim().to_string();
                 if e != self.state.hfdl_outputs {
                     cmds.push(Command::SetHfdlOutputs(e));
@@ -432,6 +435,42 @@ impl SdroxideApp {
             };
             ui.label(RichText::new(text).size(10.5).color(ink));
         }
+
+        // Local JSON targets: the same lines, to programs of the operator's own.
+        ui.add_space(8.0);
+        ui.label(tr!("hfdl-feed-json"));
+        let draft = self.hfdl_json_draft.get_or_insert_with(|| edit.json_udp.join(", "));
+        let r = ui
+            .add(egui::TextEdit::singleline(draft).hint_text("127.0.0.1:5556").desired_width(300.0))
+            .on_hover_text(tr!("hfdl-feed-json-hint"));
+        if r.lost_focus() {
+            let next = split_targets(draft);
+            if next != edit.json_udp {
+                edit.json_udp = next;
+                send = true;
+            }
+        }
+        let bad: Vec<String> = split_targets(draft)
+            .into_iter()
+            .filter(|t| !sdroxide_types::hfdl_target_ok(t))
+            .collect();
+        if !bad.is_empty() {
+            ui.label(
+                RichText::new(tr!("hfdl-feed-json-bad", targets = bad.join(", ")))
+                    .size(10.5)
+                    .color(crate::theme::HAZARD()),
+            );
+        } else if !edit.json_targets().is_empty() {
+            let (text, ink) = match &st.json_error {
+                Some(err) => (err.clone(), crate::theme::HAZARD()),
+                None => (
+                    tr!("hfdl-feed-sent", n = count(st.json_sent)).to_string(),
+                    crate::theme::GREEN(),
+                ),
+            };
+            ui.label(RichText::new(text).size(10.5).color(ink));
+        }
+
         if send {
             let mut o = edit.clone();
             o.station_id = o.station_id.trim().to_string();
@@ -841,6 +880,11 @@ fn slot(ui: &mut egui::Ui, w: f32, text: &str, color: egui::Color32) {
         font,
         color,
     );
+}
+
+/// Targets as typed — `a:1, b:2` — one per comma, trimmed, none empty.
+fn split_targets(s: &str) -> Vec<String> {
+    s.split(',').map(str::trim).filter(|t| !t.is_empty()).map(str::to_owned).collect()
 }
 
 /// What auto-follow says it is doing, as one line and its colour.
@@ -1911,6 +1955,12 @@ mod tests {
         assert_eq!(hfdl_calc_cells(&a), ("≈072°".to_string(), "≈465".to_string()));
         a.calc_track_deg = Some(359.7);
         assert_eq!(hfdl_calc_cells(&a).0, "≈000°", "a course wraps at north");
+    }
+
+    #[test]
+    fn typed_targets_split_on_commas() {
+        assert_eq!(split_targets(" 127.0.0.1:5556 ,, host:1 , "), vec!["127.0.0.1:5556", "host:1"]);
+        assert!(split_targets("").is_empty());
     }
 
     #[test]

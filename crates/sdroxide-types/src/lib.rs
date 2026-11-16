@@ -176,7 +176,7 @@ pub use hfdl::{
     HfdlFix, HfdlFollow, HfdlFollowState, HfdlLanePlan, HfdlMotion, HfdlOutputStatus, HfdlOutputs,
     HfdlSettings, HfdlStation, HfdlStationFreq, HfdlStatus, hfdl_acars_label_name,
     hfdl_builtin_plan_khz, hfdl_builtin_stations, hfdl_lane_plan, hfdl_motion, hfdl_nearby_khz,
-    hfdl_plan_khz, hfdl_stations_on, hfdl_utc_dt, hfdl_working_khz,
+    hfdl_plan_khz, hfdl_stations_on, hfdl_target_ok, hfdl_utc_dt, hfdl_working_khz,
 };
 pub use ibp::{
     Active as IbpActive, BANDS as IBP_BANDS, BEACONS as IBP_BEACONS, Beacon as IbpBeacon,

@@ -6483,3 +6483,6 @@ hfdl-feed-airframes = Feed Airframes (feed.airframes.io)
 hfdl-feed-airframes-hint = Send every decoded frame — squitters, positions, ACARS messages — with your station ID to Airframes' HFDL ingest (UDP, port 5556), in dumphfdl's JSON, the format it reads. Your feed then appears on airframes.io under that ID. Nothing is sent while this is off.
 hfdl-feed-needs-id = Not sending: give a station ID first.
 hfdl-feed-sent = { $n } frames sent
+hfdl-feed-json = Send the same JSON to (UDP host:port, comma-separated)
+hfdl-feed-json-hint = Programs of your own that read dumphfdl's JSON — acarshub (whose HFDL input is usually UDP port 5556), a logger, a script. One datagram per frame to each, as dumphfdl's decoded:json UDP output sends them. No station ID needed. Applied when you leave the field.
+hfdl-feed-json-bad = Not a host:port: { $targets }
