@@ -142,7 +142,6 @@ impl TcpFeed {
                         continue;
                     }
                 };
-                while rx.try_recv().is_ok() {}
                 set(&|s| {
                     s.connected = true;
                     s.error = None;
