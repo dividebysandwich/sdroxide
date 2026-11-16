@@ -926,3 +926,67 @@ fn the_hfdl_aircraft_table_has_no_overlap_and_reaches_the_map() {
     }
     assert!(bad.is_empty(), "{bad:#?}");
 }
+
+/// The line from an aircraft to its ground station is drawn while the aircraft
+/// blinks, and only then: the station's name (drawn at the line's end for a
+/// station not otherwise labelled) is on the map during the blink and gone
+/// after it.
+#[test]
+#[ignore = "draws the whole app, which changes process-wide settings"]
+fn the_hfdl_station_line_is_drawn_only_while_blinking() {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let ctx = egui::Context::default();
+    let mut app = new_app(&ctx, LayoutMode::Auto, "en");
+    app.state.rx[0].mode = Mode::Hfdl;
+    app.state.hfdl.enabled = true;
+    app.view.hfdl_tab = super::hfdl::HFDL_TAB_AIRCRAFT;
+    let mut fleet = hfdl_fleet();
+    fleet[0].gs_id = Some(7);
+    app.hfdl_status = Some(sdroxide_types::HfdlStatus {
+        running: true,
+        aircraft: fleet,
+        // The built-in table: every station placed, none heard, so none is
+        // labelled except at the end of a blink's line.
+        stations: sdroxide_types::hfdl_builtin_stations(),
+        ..Default::default()
+    });
+    let now = crate::time::now_unix();
+    let fix = sdroxide_types::HfdlFix {
+        lat: 50.0,
+        lon: -30.0,
+        aircraft_id: None,
+        icao: Some("A0B2C3".into()),
+        flight: Some("UAL012".into()),
+    };
+    let d = sdroxide_types::HfdlDecode {
+        unix: now,
+        kind: "performance-data".into(),
+        gs: None,
+        freq_khz: 8_942,
+        snr_db: Some(12.0),
+        freq_skew_hz: None,
+        fec_corrected: None,
+        details: "{}".into(),
+        position: Some(fix),
+        acars: None,
+    };
+    app.hfdl_map.observe(&[d], now);
+    let mut frame = eframe::Frame::_new_kittest();
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1920.0, 1080.0));
+    let mut t0 = 0.0;
+    // On the map, that is: right of the table pane, whose STATION column says
+    // "Shannon" too.
+    let shannon = |shapes: &[egui::epaint::ClippedShape]| {
+        let all = texts(shapes);
+        let pane_right =
+            all.iter().find(|(t, _, _)| t == "REG").map(|(_, _, c)| c.right()).unwrap();
+        all.iter().any(|(t, r, _)| t == "Shannon" && r.left() > pane_right)
+    };
+    let shapes = run(&ctx, &mut app, &mut frame, screen, &mut t0, 10, |_| Vec::new());
+    assert!(!shannon(&shapes), "not labelled before the blink");
+    assert!(app.hfdl_map.blink("icao:A0B2C3", t0, Some(7)));
+    let shapes = run(&ctx, &mut app, &mut frame, screen, &mut t0, 3, |_| Vec::new());
+    assert!(shannon(&shapes), "the line's end is labelled while it blinks");
+    let shapes = run(&ctx, &mut app, &mut frame, screen, &mut t0, 40, |_| Vec::new());
+    assert!(!shannon(&shapes), "and gone once the blink is over");
+}

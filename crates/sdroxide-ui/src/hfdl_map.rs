@@ -20,7 +20,7 @@
 use crate::i18n::tr;
 use std::collections::BTreeMap;
 
-use eframe::egui::{Align2, FontId, Rect, Sense, Ui, pos2, vec2};
+use eframe::egui::{Align2, FontId, Pos2, Rect, Sense, Ui, pos2, vec2};
 use sdroxide_types::HfdlDecode;
 
 use crate::theme;
@@ -86,6 +86,45 @@ pub(crate) fn blink_phase(start: f64, now: f64) -> Option<(bool, f32)> {
     }
     let cycle = t * BLINK_HZ;
     Some((cycle.fract() < 0.5, cycle.fract() as f32))
+}
+
+/// An HFDL ground station, as the map draws it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MapStation {
+    pub id: u8,
+    pub name: String,
+    pub lat: f64,
+    pub lon: f64,
+    /// How long ago it was heard, while that is recent enough to count; `None`
+    /// for a station known only from the table.
+    pub heard_age: Option<i64>,
+}
+
+/// The town of a station's name, for a label: `Shannon, Ireland` → `Shannon`.
+fn town(name: &str) -> &str {
+    name.split(',').next().unwrap_or(name).trim()
+}
+
+/// Projected points of a path, split wherever it crosses the map's edge — a
+/// step longer than half the map's width is the path leaving one side and
+/// coming back on the other, and joining it would draw a line across the whole
+/// map.
+pub(crate) fn split_on_wrap(pts: &[Pos2], width: f32) -> Vec<Vec<Pos2>> {
+    let mut out: Vec<Vec<Pos2>> = Vec::new();
+    let mut cur: Vec<Pos2> = Vec::new();
+    for &q in pts {
+        if let Some(last) = cur.last()
+            && (q.x - last.x).abs() > width / 2.0
+        {
+            out.push(std::mem::take(&mut cur));
+        }
+        cur.push(q);
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out.retain(|seg| seg.len() >= 2);
+    out
 }
 
 /// A position an aircraft reported before its latest.
@@ -157,8 +196,10 @@ pub struct HfdlMapState {
     pub selected: Option<String>,
     /// Latest fix per identity, keyed by [`sdroxide_types::HfdlFix::key`].
     plots: BTreeMap<String, HfdlPlot>,
-    /// The plot asked to blink and the time (egui seconds) it started.
-    blink: Option<(String, f64)>,
+    /// The plot asked to blink, the time (egui seconds) it started, and the
+    /// ground station the aircraft is talking to — the line to it is drawn for
+    /// as long as the blink lasts, and only then.
+    blink: Option<(String, f64, Option<u8>)>,
 }
 
 impl HfdlMapState {
@@ -228,11 +269,15 @@ impl HfdlMapState {
     ///
     /// The view is handed back to the auto-fit, which frames every plot, so a
     /// plot panned or zoomed out of sight is in view for the blink.
-    pub fn blink(&mut self, key: &str, now: f64) -> bool {
+    ///
+    /// `gs` is the ground station the aircraft is talking to: while it blinks a
+    /// line is drawn from it to that station, where the station's position is
+    /// known.
+    pub fn blink(&mut self, key: &str, now: f64, gs: Option<u8>) -> bool {
         if !self.plots.contains_key(key) {
             return false;
         }
-        self.blink = Some((key.to_owned(), now));
+        self.blink = Some((key.to_owned(), now, gs));
         self.selected = Some(key.to_owned());
         self.view.manual = false;
         true
@@ -293,6 +338,7 @@ pub fn show(
     ui: &mut Ui,
     state: &mut HfdlMapState,
     home: Option<(f64, f64)>,
+    stations: &[MapStation],
     now: i64,
     max_h: f32,
 ) -> Option<String> {
@@ -390,6 +436,32 @@ pub fn show(
     let font = FontId::monospace(9.0);
     let selected = state.selected.clone();
 
+    // ── the ground stations ──
+    // Small triangles: lit and named while heard, dim and unnamed while known
+    // only from the table — a world of sixteen labels would bury the aircraft.
+    let heard_ink = crate::theme::GREEN();
+    for st in stations {
+        let c = project(st.lat, st.lon);
+        if !rect.contains(c) {
+            continue;
+        }
+        let (fill, edge) = match st.heard_age {
+            Some(_) => (alpha(heard_ink, 220.0), alpha(map.sea, 200.0)),
+            None => (alpha(map.city, 150.0), alpha(map.sea, 160.0)),
+        };
+        let tri = vec![c + vec2(0.0, -4.5), c + vec2(4.2, 3.0), c + vec2(-4.2, 3.0)];
+        p.add(eframe::egui::Shape::convex_polygon(tri, fill, (1.0, edge)));
+        if st.heard_age.is_some() {
+            p.text(
+                c + vec2(6.0, 0.0),
+                Align2::LEFT_CENTER,
+                town(&st.name),
+                FontId::proportional(9.0),
+                alpha(heard_ink, 200.0),
+            );
+        }
+    }
+
     // ── where each aircraft has been ──
     // Dots, the oldest smallest and faintest, under the squares so the present
     // position is always the clearest thing on the map. Drawn for every
@@ -447,13 +519,38 @@ pub fn show(
 
     // ── the blink asked for from the list ──
     let t_now = ui.input(|i| i.time);
-    if let Some((key, start)) = state.blink.clone() {
+    if let Some((key, start, gs)) = state.blink.clone() {
         match blink_phase(start, t_now) {
             None => state.blink = None,
             Some((lit, ring)) => {
                 if let Some((_, a)) = live.iter().find(|(k, _)| *k == key) {
                     let c = project(a.lat, a.lon);
                     let tint = map.dx;
+                    // The great circle to the station it is talking to, for as
+                    // long as it blinks — the only time it is drawn — and the
+                    // station marked at its end.
+                    if let Some(st) = gs.and_then(|id| stations.iter().find(|s| s.id == id)) {
+                        let path: Vec<Pos2> = sdroxide_types::great_circle_points(
+                            (a.lat, a.lon),
+                            (st.lat, st.lon),
+                            64,
+                        )
+                        .into_iter()
+                        .map(|(la, lo)| project(la, lo))
+                        .collect();
+                        for seg in split_on_wrap(&path, rect.width()) {
+                            p.add(eframe::egui::Shape::line(seg, (1.6, alpha(map.trail, 220.0))));
+                        }
+                        let sc = project(st.lat, st.lon);
+                        p.circle_stroke(sc, 7.0, (1.6, alpha(map.trail, 230.0)));
+                        p.text(
+                            sc + vec2(9.0, 0.0),
+                            Align2::LEFT_CENTER,
+                            town(&st.name),
+                            FontId::proportional(10.0),
+                            alpha(map.trail, 240.0),
+                        );
+                    }
                     // The ring spreads and fades once per half-second cycle; the
                     // disc under the square flashes with it.
                     let spread = TARGET_R + 3.0 + 16.0 * ring;
@@ -538,10 +635,27 @@ pub fn show(
             state.selected = Some(key.clone());
             clicked = Some(key.clone());
         }
-    } else if resp.clicked() {
-        // A click on empty map clears the selection, the way the ADS-B picture
-        // does.
-        state.selected = None;
+    } else {
+        // Over a ground station: what it is, and whether it has been heard.
+        if let Some(m) = pointer
+            && let Some(st) = stations
+                .iter()
+                .map(|st| (st, project(st.lat, st.lon).distance(m)))
+                .filter(|(_, d)| *d <= HIT_RADIUS)
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(st, _)| st)
+        {
+            let heard = match st.heard_age {
+                Some(age) => tr!("hfdlmap-gs-heard", age = fmt_age(age)).to_string(),
+                None => tr!("hfdlmap-gs-not-heard").to_string(),
+            };
+            resp.clone().on_hover_text(format!("{} (GS {})\n{heard}", st.name, st.id));
+        }
+        if resp.clicked() {
+            // A click on empty map clears the selection, the way the ADS-B
+            // picture does.
+            state.selected = None;
+        }
     }
 
     clicked
@@ -766,12 +880,40 @@ mod tests {
         let mut m = HfdlMapState::default();
         m.observe(&[decode(1_000, Some(fix(Some("484123"), None, 52.0, -30.0)))], 1_010);
         m.view.manual = true;
-        assert!(!m.blink("icao:999999", 5.0), "nothing plotted under that key");
+        assert!(!m.blink("icao:999999", 5.0, None), "nothing plotted under that key");
         assert!(m.view.manual, "a miss leaves the view alone");
         assert_eq!(m.selected, None);
-        assert!(m.blink("icao:484123", 5.0));
+        assert!(m.blink("icao:484123", 5.0, Some(4)));
         assert!(!m.view.manual, "the plot is framed so the blink is seen");
         assert_eq!(m.selected.as_deref(), Some("icao:484123"));
+    }
+
+    #[test]
+    fn a_path_is_split_where_it_crosses_the_edge_of_the_map() {
+        let p = |x: f32| pos2(x, 10.0);
+        // Straight across: one piece.
+        assert_eq!(split_on_wrap(&[p(10.0), p(20.0), p(30.0)], 100.0).len(), 1);
+        // Off the right edge and back on the left: two pieces, no line across.
+        let segs = split_on_wrap(&[p(80.0), p(95.0), p(3.0), p(15.0)], 100.0);
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].len(), 2);
+        assert_eq!(segs[1].len(), 2);
+        // A lone point either side of a wrap draws nothing on its own.
+        assert_eq!(split_on_wrap(&[p(95.0), p(3.0)], 100.0).len(), 0);
+    }
+
+    #[test]
+    fn a_station_is_labelled_by_its_town() {
+        assert_eq!(town("Shannon, Ireland"), "Shannon");
+        assert_eq!(town("GS 12"), "GS 12");
+    }
+
+    #[test]
+    fn the_blink_remembers_the_station_for_its_line() {
+        let mut m = HfdlMapState::default();
+        m.observe(&[decode(1_000, Some(fix(Some("484123"), None, 52.0, -30.0)))], 1_010);
+        assert!(m.blink("icao:484123", 5.0, Some(7)));
+        assert_eq!(m.blink.as_ref().map(|b| b.2), Some(Some(7)));
     }
 
     #[test]

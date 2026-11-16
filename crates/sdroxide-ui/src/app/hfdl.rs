@@ -450,9 +450,9 @@ impl SdroxideApp {
                     });
             });
         match act {
-            AircraftAction::Blink(key) => {
+            AircraftAction::Blink(key, gs) => {
                 let t = ui.input(|i| i.time);
-                self.hfdl_map.blink(&key, t);
+                self.hfdl_map.blink(&key, t, gs);
             }
             AircraftAction::Filter(text) => {
                 self.hfdl_filter = text;
@@ -545,7 +545,25 @@ impl SdroxideApp {
     /// The aircraft map, fed by the app's plot table.
     fn hfdl_map_pane(&mut self, ui: &mut egui::Ui, now: i64, avail_h: f32) {
         let home = self.hfdl_home();
-        crate::hfdl_map::show(ui, &mut self.hfdl_map, home, now, avail_h);
+        // Every station with a position — from the table, built-in or received —
+        // lit while it is being heard.
+        let stations: Vec<crate::hfdl_map::MapStation> = self
+            .hfdl_status
+            .as_ref()
+            .map(|s| s.stations.as_slice())
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|s| {
+                Some(crate::hfdl_map::MapStation {
+                    id: s.gs_id,
+                    name: s.name.clone(),
+                    lat: s.lat?,
+                    lon: s.lon?,
+                    heard_age: s.is_fresh(now).then_some(now - s.heard_at),
+                })
+            })
+            .collect();
+        crate::hfdl_map::show(ui, &mut self.hfdl_map, home, &stations, now, avail_h);
     }
 
     /// The operator's own position, from the grid in the digital-mode setup —
@@ -980,7 +998,7 @@ fn hfdl_message_row(ui: &mut egui::Ui, d: &HfdlDecode) {
 enum AircraftAction {
     None,
     /// Blink (and select) the aircraft's plot on the map, by the map's key.
-    Blink(String),
+    Blink(String, Option<u8>),
     /// Filter the decode log to this text and show it.
     Filter(String),
     /// Sort by this column.
@@ -1267,7 +1285,7 @@ fn hfdl_aircraft_row(
         && plotted
         && let Some(k) = &a.map_key
     {
-        action = AircraftAction::Blink(k.clone());
+        action = AircraftAction::Blink(k.clone(), a.gs_id);
     }
 
     ui.label(

@@ -6455,3 +6455,8 @@ hfdl-auto-hint = Find an open band by itself: stay while ground stations are hea
 hfdl-follow-starting = AUTO · waiting for the decoder…
 hfdl-follow-parked = AUTO · { $mhz } MHz is open — { $station } heard { $age } ago
 hfdl-follow-listening = AUTO · listening on { $mhz } MHz; the next band in { $secs } s if nothing is heard
+
+## hfdlmap: ground stations (src/hfdl_map.rs)
+
+hfdlmap-gs-heard = heard { $age } ago
+hfdlmap-gs-not-heard = not heard lately — known from the system table
