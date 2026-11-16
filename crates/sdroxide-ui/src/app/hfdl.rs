@@ -119,6 +119,50 @@ impl SdroxideApp {
         let window = Some((self.state.center_hz, self.state.sample_rate / 2.0));
         let lane = sdroxide_types::hfdl_lane_plan(&cfg, window);
         let multi = lane.channels.len() > 1;
+        // The channels by band: a row of bands, then the shown band's channels.
+        // All of the network's channels at once — over a hundred — wrapped
+        // into enough rows to squeeze the log and the map out of a small
+        // window. The row follows the dial to another band (auto-follow's hops
+        // included) unless a band has been picked to look at.
+        let dial_band = cfg.primary_khz() / 1000;
+        if dial_band != self.hfdl_band_seen {
+            self.hfdl_band_seen = dial_band;
+            self.hfdl_band_shown = None;
+        }
+        let mut bands: Vec<u32> = plan.iter().map(|k| k / 1000).collect();
+        bands.dedup();
+        let band = self.hfdl_band_shown.filter(|b| bands.contains(b)).unwrap_or(dial_band);
+        let asked_bands: Vec<u32> =
+            std::iter::once(cfg.primary_khz()).chain(cfg.also()).map(|k| k / 1000).collect();
+        let mut band_pick: Option<u32> = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                RichText::new(tr!("hfdl-band-label"))
+                    .size(10.5)
+                    .strong()
+                    .color(crate::theme::CYAN_DIM()),
+            );
+            for &b in &bands {
+                let live = working.iter().any(|k| k / 1000 == b);
+                let mut t = RichText::new(b.to_string());
+                if live {
+                    t = t.color(crate::theme::GREEN());
+                }
+                if asked_bands.contains(&b) {
+                    t = t.underline();
+                }
+                if crate::chrome::chip(ui, b == band, t)
+                    .on_hover_text(tr!("hfdl-band-hint", mhz = b))
+                    .clicked()
+                {
+                    band_pick = Some(b);
+                }
+            }
+        });
+        if let Some(b) = band_pick {
+            self.hfdl_band_shown = (b != dial_band).then_some(b);
+        }
+
         // Drawn from a snapshot; a click is applied after the row.
         let (primary, also_now) = (cfg.primary_khz(), cfg.also());
         let mut picked: Option<(u32, bool)> = None;
@@ -138,7 +182,7 @@ impl SdroxideApp {
                 t
             };
             let asked = |khz: u32| khz == primary || also_now.contains(&khz);
-            for &khz in &plan {
+            for &khz in plan.iter().filter(|&&k| k / 1000 == band) {
                 let live = working.contains(&khz);
                 let mut hint = hfdl_chip_hint(stations, khz, live, now);
                 if lane.left_out.contains(&khz) {

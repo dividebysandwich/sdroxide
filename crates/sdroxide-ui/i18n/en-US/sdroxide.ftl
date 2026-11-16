@@ -6460,3 +6460,8 @@ hfdl-follow-listening = AUTO · listening on { $mhz } MHz; the next band in { $s
 
 hfdlmap-gs-heard = heard { $age } ago
 hfdlmap-gs-not-heard = not heard lately — known from the system table
+
+## hfdl: channels by band (src/app/hfdl.rs)
+
+hfdl-band-label = MHz
+hfdl-band-hint = Show the { $mhz } MHz channels. Green: a station is working one of them now; underlined: one of them is being decoded.

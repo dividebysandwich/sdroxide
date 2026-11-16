@@ -518,6 +518,11 @@ pub struct SdroxideApp {
     /// busy assigned frequencies that are not in the published plan, drawn as
     /// one-click chips beside it in the HFDL panel.
     hfdl_channels: Vec<u32>,
+    /// HFDL: the band whose channels the chip row shows, when the operator has
+    /// picked one other than the dial's; and the dial's band last frame, so a
+    /// retune to another band brings the row with it.
+    hfdl_band_shown: Option<u32>,
+    hfdl_band_seen: u32,
     /// The operator's own filter presets (`filter_presets.json`), each in
     /// place of one of a mode's built-in chips in the BW popup.
     filter_presets: Vec<sdroxide_types::CustomFilterPreset>,
@@ -1722,6 +1727,8 @@ impl SdroxideApp {
             hfdl_map: crate::hfdl_map::HfdlMapState::default(),
             hfdl_filter: String::new(),
             hfdl_channels: load_hfdl_channels(storage),
+            hfdl_band_shown: None,
+            hfdl_band_seen: 0,
             filter_presets: load_filter_presets(storage),
             preset_edit: None,
             show_settings: false,
