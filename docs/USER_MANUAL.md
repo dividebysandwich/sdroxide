@@ -14038,8 +14038,8 @@ decode, and transmit audio to put on the air. It is **on by default** for the
 station radio; every further radio has a server of its own, off by default.
 
 - **Radio** — shown with more than one radio. One chip per radio of the
-  station, each with its server's port or *off* (⚠ when the port could not be
-  bound). The lit chip is the radio this section edits; click another to move
+  station: its name behind ● (server on), ○ (off) or ⚠ (port could not be
+  bound); hovering shows the state with the port. The lit chip is the radio this section edits; click another to move
   the Settings dialog to that radio, on this tab.
 - **Enable** — turn this radio's server on or off. Switching it on at a port
   another radio's server already uses moves it to the first free port from

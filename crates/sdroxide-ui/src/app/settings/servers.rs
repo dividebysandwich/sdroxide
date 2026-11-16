@@ -62,20 +62,30 @@ pub(in crate::app) fn first_free_tci_port(radios: &[TciRadio]) -> u16 {
     port
 }
 
-/// What a radio's picker chip says about its server: the port, "off", or
-/// nothing while its engine has not announced one. Ports go in as text:
-/// a port is a name, not a quantity to be grouped by thousands.
+/// A radio's picker chip: its name behind a mark for its server's state
+/// (● on, ○ off, ⚠ bind failed), plain while its engine has not announced
+/// one. The name stays the radio's name.
+// Why: HDZ 2026-11-15: "der Status aus ist in den Namen gerutscht" — "RX-888 · aus"
+//      read as if the radio were called that; the port moved to the tooltip.
 fn tci_chip_text(r: &TciRadio) -> String {
     match r.tci {
-        Some(b) if b.enabled && b.failed => {
-            tr!("settings-servers-tci-radio-failed", name = r.name, port = b.port.to_string())
-        }
-        Some(b) if b.enabled => {
-            tr!("settings-servers-tci-radio-on", name = r.name, port = b.port.to_string())
-        }
+        Some(b) if b.enabled && b.failed => tr!("settings-servers-tci-radio-failed", name = r.name),
+        Some(b) if b.enabled => tr!("settings-servers-tci-radio-on", name = r.name),
         Some(_) => tr!("settings-servers-tci-radio-off", name = r.name),
         None => r.name.clone(),
     }
+}
+
+/// First tooltip line of a radio's chip: its server's state with the port.
+fn tci_chip_state(r: &TciRadio) -> Option<String> {
+    let b = r.tci?;
+    Some(if b.enabled && b.failed {
+        tr!("settings-servers-tci-radio-state-failed", port = b.port.to_string())
+    } else if b.enabled {
+        tr!("settings-servers-tci-radio-state-on", port = b.port.to_string())
+    } else {
+        tr!("settings-servers-tci-radio-state-off")
+    })
 }
 
 pub(in crate::app) fn settings_wsjtx_tab(
@@ -509,11 +519,16 @@ pub(in crate::app) fn settings_tci_server_tab(
                 if r.own {
                     text = text.strong().color(crate::theme::INK_ON_CYAN());
                 }
-                let chip = crate::chrome::chip(ui, r.own, text).on_hover_text(if r.own {
+                let action = if r.own {
                     tr!("settings-servers-tci-radio-own-tip")
                 } else {
                     tr!("settings-servers-tci-radio-other-tip")
-                });
+                };
+                let tip = match tci_chip_state(r) {
+                    Some(state) => format!("{state}\n{action}"),
+                    None => action,
+                };
+                let chip = crate::chrome::chip(ui, r.own, text).on_hover_text(tip);
                 if chip.clicked() && !r.own {
                     requests.push(crate::app::RadioTabRequest::FocusServers(r.id));
                 }
