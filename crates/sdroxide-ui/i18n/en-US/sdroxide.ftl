@@ -6437,3 +6437,13 @@ hfdl-col-dist = KM
 hfdl-col-last = LAST MESSAGE
 hfdl-aircraft-sort-hint = Sort by this column; click again to reverse
 hfdl-aircraft-blink-hint = Blink this aircraft on the map
+
+## hfdl: several channels at once (src/app/hfdl.rs)
+
+hfdl-chip-multi-hint = Click to listen to this channel alone; Ctrl-click (⌘-click on a Mac) to decode it alongside the others.
+hfdl-left-out-hint = Asked for but not decoded: too far from the other channels to share their lane (200 kHz at most), or outside the receiver's window.
+hfdl-nearby = + NEARBY
+hfdl-nearby-hint = Also decode every channel close enough to share one lane with the one in force — within 200 kHz of each other and inside the receiver's window, eight at most.
+hfdl-nearby-none-hint = No other channel can share the lane: none is close enough, all eight places are taken, or the receiver's window is too narrow.
+hfdl-single-hint = Back to the one channel the dial is on
+hfdl-lane-label = CHANNELS

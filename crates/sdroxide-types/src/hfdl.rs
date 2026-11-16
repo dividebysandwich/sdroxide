@@ -39,12 +39,180 @@ pub struct HfdlSettings {
     /// lane is a fixed 24 kS/s channel centred on this — so it works wherever
     /// the radio itself is tuned, exactly like the QO-100 beacon lane.
     pub frequency_hz: f64,
+    /// Further channels to decode alongside [`Self::frequency_hz`], in kHz; 0
+    /// is an empty slot. They share one wider lane with it, so only those
+    /// within [`HFDL_MAX_SPAN_HZ`] of each other and inside the receiver's
+    /// window are decoded — see [`hfdl_lane_plan`]. A fixed array rather than
+    /// a list so the settings stay `Copy`. Appended last: the wire is
+    /// positional.
+    #[serde(default)]
+    pub also_khz: [u32; HFDL_MAX_CHANNELS - 1],
 }
 
 impl Default for HfdlSettings {
     fn default() -> Self {
-        Self { enabled: false, frequency_hz: HFDL_DEFAULT_HZ }
+        Self { enabled: false, frequency_hz: HFDL_DEFAULT_HZ, also_khz: [0; HFDL_MAX_CHANNELS - 1] }
     }
+}
+
+impl HfdlSettings {
+    /// The channel the dial is on, in kHz.
+    pub fn primary_khz(&self) -> u32 {
+        (self.frequency_hz / 1000.0).round() as u32
+    }
+
+    /// The further channels asked for, in kHz: no empty slots, no repeat of
+    /// the primary or of each other, in the order they were added.
+    pub fn also(&self) -> Vec<u32> {
+        let p = self.primary_khz();
+        let mut out: Vec<u32> = Vec::new();
+        for &k in &self.also_khz {
+            if k != 0 && k != p && !out.contains(&k) {
+                out.push(k);
+            }
+        }
+        out
+    }
+
+    /// Ask for exactly `khz` alongside the primary (anything past the slots is
+    /// dropped).
+    pub fn set_also(&mut self, khz: &[u32]) {
+        self.also_khz = [0; HFDL_MAX_CHANNELS - 1];
+        let p = self.primary_khz();
+        let mut n = 0;
+        for &k in khz {
+            if n == self.also_khz.len() {
+                break;
+            }
+            if k != 0 && k != p && !self.also_khz[..n].contains(&k) {
+                self.also_khz[n] = k;
+                n += 1;
+            }
+        }
+    }
+
+    /// Add `khz` alongside the primary if it is not there, remove it if it is.
+    /// Returns whether it is now asked for.
+    pub fn toggle_also(&mut self, khz: u32) -> bool {
+        let mut v = self.also();
+        let on = if let Some(i) = v.iter().position(|&k| k == khz) {
+            v.remove(i);
+            false
+        } else if khz != self.primary_khz() && v.len() < HFDL_MAX_CHANNELS - 1 {
+            v.push(khz);
+            true
+        } else {
+            false
+        };
+        self.set_also(&v);
+        on
+    }
+}
+
+/// The most channels decoded at once: the primary and seven more. Each costs
+/// a channel decoder on the worker thread (a mixer and filter at the lane rate,
+/// then the demodulator at 12 kS/s).
+pub const HFDL_MAX_CHANNELS: usize = 8;
+
+/// The widest stretch of spectrum, lowest channel to highest, one lane spans.
+/// HFDL's channels come in groups a few tens of kilohertz wide inside each band
+/// (13 264-13 351 kHz, 8 825-8 977 kHz …); 200 kHz takes in the widest of them
+/// without asking for a lane so wide that every channel decoder in it pays for
+/// filtering a megahertz of air.
+pub const HFDL_MAX_SPAN_HZ: f64 = 200_000.0;
+
+/// Room kept either side of the outermost channels inside the lane: the same
+/// ±12 kHz a single channel's 24 kS/s lane has always had.
+pub const HFDL_LANE_MARGIN_HZ: f64 = 12_000.0;
+
+/// Which channels one HFDL lane can decode, and where it sits.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HfdlLanePlan {
+    /// The lane's centre, in Hz.
+    pub center_hz: f64,
+    /// The rate the lane needs at least: the span plus the margins, and never
+    /// less than the single-channel 24 kS/s.
+    pub min_rate_hz: f64,
+    /// The channels it decodes, primary first, in kHz.
+    pub channels: Vec<u32>,
+    /// Channels asked for that it cannot take, in kHz: too far from the others
+    /// to share the lane, or outside the receiver's window.
+    pub left_out: Vec<u32>,
+}
+
+/// Plan the lane for `cfg`. `window` is the receiver's sample window — its
+/// centre and half-width, Hz — when it is known; a channel outside it cannot be
+/// mixed out of the stream and is left out. The primary is always taken, as it
+/// always has been: it is where the dial is.
+///
+/// One channel gives exactly the lane HFDL has always had — centred on it,
+/// 24 kS/s — so the validated single-channel path does not change.
+pub fn hfdl_lane_plan(cfg: &HfdlSettings, window: Option<(f64, f64)>) -> HfdlLanePlan {
+    let primary = cfg.primary_khz();
+    let hz = |k: u32| f64::from(k) * 1000.0;
+    let in_window = |k: u32| match window {
+        Some((c, half)) => (hz(k) - c).abs() <= half - HFDL_LANE_MARGIN_HZ,
+        None => true,
+    };
+    let mut channels = vec![primary];
+    let mut left_out = Vec::new();
+    let (mut lo, mut hi) = (hz(primary), hz(primary));
+    for k in cfg.also() {
+        let (nlo, nhi) = (lo.min(hz(k)), hi.max(hz(k)));
+        if nhi - nlo <= HFDL_MAX_SPAN_HZ && in_window(k) {
+            channels.push(k);
+            lo = nlo;
+            hi = nhi;
+        } else {
+            left_out.push(k);
+        }
+    }
+    HfdlLanePlan {
+        center_hz: (lo + hi) / 2.0,
+        min_rate_hz: (hi - lo + 2.0 * HFDL_LANE_MARGIN_HZ).max(HFDL_LANE_RATE_HZ),
+        channels,
+        left_out,
+    }
+}
+
+/// The channels of `candidates` that can join `cfg`'s lane — sharing it within
+/// [`HFDL_MAX_SPAN_HZ`], inside `window` — nearest to the primary first, as
+/// many as there are free slots. What "+ NEARBY" adds.
+pub fn hfdl_nearby_khz(
+    cfg: &HfdlSettings,
+    candidates: &[u32],
+    window: Option<(f64, f64)>,
+) -> Vec<u32> {
+    let p = cfg.primary_khz();
+    let mut c: Vec<u32> = candidates.iter().copied().filter(|&k| k != p).collect();
+    c.sort_by_key(|&k| (k.abs_diff(p), k));
+    c.dedup();
+    let mut trial = *cfg;
+    let mut out = cfg.also();
+    for k in c {
+        if out.len() >= HFDL_MAX_CHANNELS - 1 || out.contains(&k) {
+            continue;
+        }
+        let mut with = out.clone();
+        with.push(k);
+        trial.set_also(&with);
+        if hfdl_lane_plan(&trial, window).left_out.is_empty() {
+            out = with;
+        }
+    }
+    out
+}
+
+/// One channel's decoder, as the status reports it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HfdlChannelStatus {
+    pub khz: u32,
+    /// Burst average level in the channel, dBFS.
+    pub level_dbfs: f32,
+    /// Blocks in which this channel's demodulator found a transmission.
+    pub bursts: u64,
+    /// Events decoded on this channel.
+    pub decodes: u64,
 }
 
 /// One aircraft position an HFDL downlink carried.
@@ -282,6 +450,10 @@ pub struct HfdlStatus {
     /// started, or `None` while none has been — [`Self::stations`] may still
     /// carry channels from the copy saved last time.
     pub table_version: Option<u16>,
+    /// Each channel being decoded, primary first. [`Self::level_dbfs`],
+    /// [`Self::bursts`] and [`Self::decodes`] are the primary's and the totals.
+    /// Appended last: the wire is positional.
+    pub channels: Vec<HfdlChannelStatus>,
 }
 
 impl Default for HfdlStatus {
@@ -296,6 +468,7 @@ impl Default for HfdlStatus {
             acars: Vec::new(),
             aircraft: Vec::new(),
             table_version: None,
+            channels: Vec::new(),
         }
     }
 }
@@ -1007,5 +1180,80 @@ mod tests {
         assert!(plan.windows(2).all(|w| w[0] < w[1]), "ascending, unique");
         assert!(plan.contains(&21_931) && plan.contains(&2_941) && plan.contains(&8_912));
         assert_eq!(hfdl_plan_khz(&hfdl_builtin_stations(), &[]), plan);
+    }
+
+    fn cfg(primary: u32, also: &[u32]) -> HfdlSettings {
+        let mut c =
+            HfdlSettings { frequency_hz: f64::from(primary) * 1000.0, ..Default::default() };
+        c.set_also(also);
+        c
+    }
+
+    #[test]
+    fn one_channel_is_the_lane_hfdl_has_always_had() {
+        let p = hfdl_lane_plan(&HfdlSettings::default(), None);
+        assert_eq!(p.channels, vec![21_931]);
+        assert_eq!(p.center_hz, HFDL_DEFAULT_HZ);
+        assert_eq!(p.min_rate_hz, HFDL_LANE_RATE_HZ);
+        assert!(p.left_out.is_empty());
+    }
+
+    #[test]
+    fn channels_in_one_band_share_a_lane_centred_between_them() {
+        let p = hfdl_lane_plan(&cfg(13_276, &[13_312, 13_324]), None);
+        assert_eq!(p.channels, vec![13_276, 13_312, 13_324]);
+        assert_eq!(p.center_hz, 13_300_000.0);
+        assert_eq!(p.min_rate_hz, 48_000.0 + 24_000.0);
+        // Another band is too far to share it.
+        let p = hfdl_lane_plan(&cfg(13_276, &[13_312, 8_912]), None);
+        assert_eq!(p.channels, vec![13_276, 13_312]);
+        assert_eq!(p.left_out, vec![8_912]);
+    }
+
+    #[test]
+    fn a_channel_outside_the_receivers_window_is_left_out_but_the_primary_never_is() {
+        // A 96 kHz window centred on 13 300 kHz: 48 kHz either side, 12 of it margin.
+        let w = Some((13_300_000.0, 48_000.0));
+        let p = hfdl_lane_plan(&cfg(13_276, &[13_312, 13_351]), w);
+        assert_eq!(p.channels, vec![13_276, 13_312]);
+        assert_eq!(p.left_out, vec![13_351]);
+        let p = hfdl_lane_plan(&cfg(21_931, &[]), w);
+        assert_eq!(p.channels, vec![21_931], "the primary is where the dial is");
+    }
+
+    #[test]
+    fn the_extra_channels_are_tidy_and_bounded() {
+        let mut c = cfg(8_912, &[0, 8_912, 8_927, 8_927, 8_936]);
+        assert_eq!(c.also(), vec![8_927, 8_936], "no empties, no primary, no repeats");
+        assert!(c.toggle_also(8_942));
+        assert!(!c.toggle_also(8_927));
+        assert_eq!(c.also(), vec![8_936, 8_942]);
+        assert!(!c.toggle_also(8_912), "the primary cannot be an extra");
+        c.set_also(&(1..=20).map(|i| 8_900 + i).collect::<Vec<_>>());
+        assert_eq!(c.also().len(), HFDL_MAX_CHANNELS - 1);
+    }
+
+    #[test]
+    fn nearby_adds_what_fits_nearest_first() {
+        let plan = hfdl_builtin_plan_khz();
+        let near = hfdl_nearby_khz(&cfg(13_276, &[]), &plan, None);
+        assert!(!near.is_empty());
+        assert!(near.iter().all(|&k| k.abs_diff(13_276) <= 200), "{near:?}");
+        assert!(near.len() <= HFDL_MAX_CHANNELS - 1);
+        let mut c = cfg(13_276, &[]);
+        c.set_also(&near);
+        assert!(hfdl_lane_plan(&c, None).left_out.is_empty(), "everything added is decoded");
+        // Nearest first: the first one added is the closest channel.
+        let closest =
+            plan.iter().filter(|&&k| k != 13_276).min_by_key(|&&k| k.abs_diff(13_276)).unwrap();
+        assert_eq!(near[0], *closest);
+    }
+
+    #[test]
+    fn old_settings_without_extra_channels_still_read() {
+        let old = r#"{"enabled":true,"frequency_hz":8912000.0}"#;
+        let c: HfdlSettings = serde_json::from_str(old).unwrap();
+        assert!(c.also().is_empty());
+        assert_eq!(c.primary_khz(), 8_912);
     }
 }

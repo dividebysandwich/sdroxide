@@ -31,6 +31,7 @@ use sdroxide_dsp::{
     channel_target_at, hd_radio_is_am, make_demod, make_modulator,
 };
 use sdroxide_hfdl::HfdlController;
+use sdroxide_hfdl::controller::LaneChannel;
 use sdroxide_ism::{IsmAction, IsmController};
 use sdroxide_nrsc5::{HdDemod, Mode as HdMode};
 use sdroxide_qo100::Qo100Controller;
@@ -3224,6 +3225,9 @@ struct Engine {
     /// The stream rate `hfdl_ddc` was built to decimate — the same reason
     /// `qo100_in_rate` exists.
     hfdl_in_rate: f64,
+    /// The lane the HFDL worker was last given — its centre and channels — so a
+    /// retune that leaves them as they were only re-seats the mixer.
+    hfdl_lane: (f64, Vec<u32>),
     /// The last HFDL setting the operator chose, held in step with
     /// `state.hfdl` for symmetry with `qo100_cfg`. Nothing reads it back yet,
     /// and it is not persisted — the same convention `qo100_cfg` follows.
@@ -4751,6 +4755,7 @@ fn engine_thread(
         hfdl: None,
         hfdl_buf: Vec::new(),
         hfdl_in_rate: 0.0,
+        hfdl_lane: (0.0, Vec::new()),
         // Session-scoped only, for the same reason as `qo100_cfg`.
         hfdl_cfg: sdroxide_types::HfdlSettings::default(),
         hfdl_saved_table: None,
@@ -11991,18 +11996,22 @@ impl Engine {
         }
         match (self.hfdl_wanted(), self.hfdl.is_some()) {
             (true, false) => {
-                let mut ddc = Ddc::new(self.state.sample_rate, sdroxide_types::HFDL_LANE_RATE_HZ);
-                ddc.set_offset_hz(self.state.hfdl.frequency_hz - self.state.center_hz);
+                let (plan, target) = self.hfdl_lane_plan();
+                let mut ddc = Ddc::new(self.state.sample_rate, target);
+                ddc.set_offset_hz(plan.center_hz - self.state.center_hz);
                 let out_rate = ddc.out_rate();
-                self.hfdl = Some(Self::new_hfdl_controller(out_rate, self.state.hfdl));
+                let lane = Self::hfdl_lane_channels(&plan);
+                self.hfdl = Some(Self::new_hfdl_controller(out_rate, lane, self.state.hfdl));
                 self.hfdl_ddc = Some(ddc);
                 self.hfdl_in_rate = self.state.sample_rate;
-                info!(rate = out_rate, "HFDL decoder started");
+                self.hfdl_lane = (plan.center_hz, plan.channels.clone());
+                info!(rate = out_rate, channels = ?plan.channels, "HFDL decoder started");
             }
             (false, true) => {
                 self.hfdl = None;
                 self.hfdl_ddc = None;
                 self.hfdl_buf.clear();
+                self.hfdl_lane = (0.0, Vec::new());
                 info!("HFDL decoder stopped");
             }
             (true, true) => self.sync_hfdl_window(),
@@ -12010,35 +12019,75 @@ impl Engine {
         }
     }
 
-    /// Re-seat the HFDL downconverter's mixer after a retune, and rebuild it
-    /// outright if the sample rate feeding it has changed — a `Ddc` bakes its
-    /// input rate and its decimation chain in at construction. The target rate
-    /// is fixed, so a retune never resizes the lane; it only moves the mixer.
+    /// The lane the HFDL settings ask for, inside the receiver's window, and
+    /// the rate to ask the downconverter for. One channel is the 24 kS/s lane
+    /// HFDL has always had; several share a lane wide enough for all of them.
+    fn hfdl_lane_plan(&self) -> (sdroxide_types::HfdlLanePlan, f64) {
+        let window = Some((self.state.center_hz, self.state.sample_rate / 2.0));
+        let plan = sdroxide_types::hfdl_lane_plan(&self.state.hfdl, window);
+        if plan.channels.len() == 1 {
+            return (plan, sdroxide_types::HFDL_LANE_RATE_HZ);
+        }
+        // The DDC rounds to a rate its halfband chain can reach, which can land
+        // a little under what was asked; ask for more until it is enough, never
+        // past the stream itself.
+        let mut target = plan.min_rate_hz;
+        while Ddc::rate_for(self.state.sample_rate, target) < plan.min_rate_hz
+            && target < self.state.sample_rate
+        {
+            target *= 1.15;
+        }
+        (plan, target.min(self.state.sample_rate))
+    }
+
+    /// Each planned channel at its offset from the lane's centre.
+    fn hfdl_lane_channels(plan: &sdroxide_types::HfdlLanePlan) -> Vec<LaneChannel> {
+        plan.channels
+            .iter()
+            .map(|&khz| LaneChannel { khz, offset_hz: f64::from(khz) * 1000.0 - plan.center_hz })
+            .collect()
+    }
+
+    /// Re-seat the HFDL downconverter's mixer after a retune, and re-plan the
+    /// lane when the channels asked for, or the window they must fit, change.
+    /// The worker keeps its log and its station and aircraft books through a
+    /// new lane: only the channel decoders are rebuilt.
     fn sync_hfdl_window(&mut self) {
         if self.hfdl_ddc.is_none() {
             return;
         }
-        let rebuild = (self.state.sample_rate - self.hfdl_in_rate).abs() >= 1.0;
-        if rebuild {
-            let mut ddc = Ddc::new(self.state.sample_rate, sdroxide_types::HFDL_LANE_RATE_HZ);
-            ddc.set_offset_hz(self.state.hfdl.frequency_hz - self.state.center_hz);
-            let out_rate = ddc.out_rate();
-            self.hfdl_ddc = Some(ddc);
+        let (plan, target) = self.hfdl_lane_plan();
+        let want_rate = Ddc::rate_for(self.state.sample_rate, target);
+        let rate_changed = (self.state.sample_rate - self.hfdl_in_rate).abs() >= 1.0
+            || self.hfdl_ddc.as_ref().is_some_and(|d| (d.out_rate() - want_rate).abs() >= 1.0);
+        if rate_changed {
+            self.hfdl_ddc = Some(Ddc::new(self.state.sample_rate, target));
             self.hfdl_in_rate = self.state.sample_rate;
-            self.hfdl = Some(Self::new_hfdl_controller(out_rate, self.state.hfdl));
-            info!(rate = out_rate, "HFDL window rebuilt");
-            return;
         }
         let Some(ddc) = self.hfdl_ddc.as_mut() else { return };
-        ddc.set_offset_hz(self.state.hfdl.frequency_hz - self.state.center_hz);
+        ddc.set_offset_hz(plan.center_hz - self.state.center_hz);
+        let out_rate = ddc.out_rate();
+        let moved =
+            (plan.center_hz - self.hfdl_lane.0).abs() >= 0.5 || plan.channels != self.hfdl_lane.1;
+        if rate_changed || moved {
+            if let Some(c) = self.hfdl.as_ref() {
+                c.set_lane(out_rate, Self::hfdl_lane_channels(&plan));
+            }
+            self.hfdl_lane = (plan.center_hz, plan.channels.clone());
+            info!(rate = out_rate, channels = ?plan.channels, "HFDL lane re-planned");
+        }
     }
 
     /// A fresh HFDL worker, seeded with the system table saved from the last
     /// time the network broadcast one (or the built-in copy before that) — so a squitter's channel bitmap can be
     /// read as frequencies from the first burst rather than after the stations
     /// next send the table, which they do only now and then.
-    fn new_hfdl_controller(rate_hz: f64, cfg: sdroxide_types::HfdlSettings) -> HfdlController {
-        let c = HfdlController::new(rate_hz, cfg);
+    fn new_hfdl_controller(
+        rate_hz: f64,
+        lane: Vec<LaneChannel>,
+        cfg: sdroxide_types::HfdlSettings,
+    ) -> HfdlController {
+        let c = HfdlController::with_lane(rate_hz, lane, cfg);
         // The table saved from the air when there is one, the built-in copy
         // (version 52) on a first run — so stations can be placed on the map and
         // squitters read as frequencies from the start.

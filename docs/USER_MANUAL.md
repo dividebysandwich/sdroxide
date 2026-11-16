@@ -7015,7 +7015,11 @@ HFDL (High Frequency Data Link, ARINC 635) is the datalink airliners use where n
 
 Choose **HFDL** from the end of the **DIGITAL** row, or press the **HFDL** chip in the Display box, beside SKIM. The panel docks under the waterfall: the decode log on the left, an aircraft map on the right, with a draggable divider between them that is remembered with the rest of the layout.
 
-**One channel at a time, and you choose which.** This is the difference between HFDL and the other aircraft lanes. ADS-B has exactly one frequency and AIS and VDL2 cover all of their channels at once, because theirs sit next to each other. HFDL's do not — they are scattered across the whole shortwave spectrum — so the decoder listens to one 24 kHz lane and the frequency is yours to pick.
+**A handful of channels at a time, and you choose which.** This is the difference between HFDL and the other aircraft lanes. ADS-B has exactly one frequency and AIS and VDL2 cover all of their channels at once, because theirs sit next to each other. HFDL's do not — they are scattered across the whole shortwave spectrum, a few in each band — so the decoder listens to one lane and the channels in it are yours to pick.
+
+By default that is one channel: click a chip and the decoder listens to it alone, on the 24 kHz lane HFDL has always used. **Ctrl-click** a chip (**⌘-click** on a Mac) to decode it *as well*, and again to take it away; **+ NEARBY** adds, in one go, every channel close enough to the one in force to share its lane, nearest first; **×** goes back to the one channel. Up to eight channels can be decoded at once, as long as the lowest and the highest are no more than 200 kHz apart — HFDL's channels within a band are well inside that (13 264–13 351 kHz, for instance) — and all of them lie inside the receiver's window. A channel asked for that cannot be fitted in turns **amber**, and its tooltip says why; the one the dial is on is underlined. With more than one, a **CHANNELS** row under the chips gives each its decode count and level.
+
+Every channel decodes into the same log, station list, message list and aircraft table, each event marked with the channel it came in on. The cost is one more channel decoder on the HFDL worker for each channel: a mixer and filter at the lane's rate, then the demodulator. When a very strong burst on one channel also reaches the decoder of its neighbour, the copy that came in weaker is dropped, so a frame is filed only under the channel it was sent on.
 
 | Control | What it does |
 | --- | --- |

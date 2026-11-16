@@ -21,8 +21,8 @@ use std::thread::JoinHandle;
 use crossbeam_channel::{Receiver, Sender, bounded, select, unbounded};
 use sdroxide_dsp::Complex32;
 use sdroxide_types::{
-    HFDL_ACARS_DEPTH, HFDL_LOG_DEPTH, HfdlAcars, HfdlDecode, HfdlFix, HfdlSettings, HfdlStation,
-    HfdlStatus,
+    HFDL_ACARS_DEPTH, HFDL_LOG_DEPTH, HfdlAcars, HfdlChannelStatus, HfdlDecode, HfdlFix,
+    HfdlSettings, HfdlStation, HfdlStatus,
 };
 use xng_mode_hfdl::HfdlChannelDecoder;
 use xng_mode_hfdl::pdu::{HfdlEvent, gs_name};
@@ -35,9 +35,45 @@ struct Iq {
     samples: Vec<Complex32>,
 }
 
+/// One channel of the lane: which, and where it sits relative to the lane's
+/// centre.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LaneChannel {
+    pub khz: u32,
+    /// The channel's (suppressed-carrier) frequency minus the lane's centre, Hz.
+    /// The +1440 Hz subcarrier is the decoder's own business on top of this.
+    pub offset_hz: f64,
+}
+
+/// A channel decoder and its counts.
+struct Chan {
+    khz: u32,
+    decoder: HfdlChannelDecoder,
+    bursts: u64,
+    decodes: u64,
+}
+
+/// Build the decoders for a lane at `rate_hz`. A channel whose decoder will
+/// not build (a rate it cannot take) is skipped with a log line rather than
+/// taking the others down with it.
+fn build_chans(rate_hz: f64, lane: &[LaneChannel]) -> Vec<Chan> {
+    lane.iter()
+        .filter_map(|c| match HfdlChannelDecoder::new(rate_hz, c.offset_hz) {
+            Ok(decoder) => Some(Chan { khz: c.khz, decoder, bursts: 0, decodes: 0 }),
+            Err(e) => {
+                tracing::error!(%e, khz = c.khz, "HFDL channel decoder could not start");
+                None
+            }
+        })
+        .collect()
+}
+
 /// Control traffic, never dropped.
 enum Ctl {
     Config(HfdlSettings),
+    /// A new lane: its rate and channels. The decoders are rebuilt (each bakes
+    /// its offset in); the logs and the station and aircraft books carry on.
+    Lane(f64, Vec<LaneChannel>),
     /// A saved system table to fill the station book's channels from.
     Seed(Vec<HfdlStation>),
     Stop,
@@ -62,11 +98,18 @@ pub struct HfdlController {
 }
 
 impl HfdlController {
-    /// `rate_hz` is the rate the engine is feeding (the DDC's actual output,
-    /// [`sdroxide_types::HFDL_LANE_RATE_HZ`] or the nearest the DDC can make).
-    /// The lane is centred on the channel, so the decoder is built with a
-    /// zero offset — the +1440 Hz subcarrier is the decoder's own business.
+    /// One channel, the lane centred on it: `rate_hz` is the rate the engine is
+    /// feeding (the DDC's actual output, [`sdroxide_types::HFDL_LANE_RATE_HZ`]
+    /// or the nearest the DDC can make), and the decoder is built with a zero
+    /// offset — the +1440 Hz subcarrier is the decoder's own business.
     pub fn new(rate_hz: f64, cfg: HfdlSettings) -> Self {
+        Self::with_lane(rate_hz, vec![LaneChannel { khz: cfg.primary_khz(), offset_hz: 0.0 }], cfg)
+    }
+
+    /// Several channels sharing one lane at `rate_hz`, each at its offset from
+    /// the lane's centre — every channel decoder sees the same samples and
+    /// mixes its own channel out of them.
+    pub fn with_lane(rate_hz: f64, lane: Vec<LaneChannel>, cfg: HfdlSettings) -> Self {
         let (iq_tx, iq_rx) = bounded::<Iq>(IQ_QUEUE_DEPTH);
         let (ctl_tx, ctl_rx) = unbounded::<Ctl>();
         let (res_tx, res_rx) = unbounded::<HfdlStatus>();
@@ -75,19 +118,16 @@ impl HfdlController {
             .spawn({
                 move || {
                     let mut cfg = cfg;
-                    let mut decoder = match HfdlChannelDecoder::new(rate_hz, 0.0) {
-                        Ok(d) => d,
-                        Err(e) => {
-                            tracing::error!(%e, "HFDL decoder could not start");
-                            return;
-                        }
-                    };
+                    let mut chans = build_chans(rate_hz, &lane);
+                    if chans.is_empty() {
+                        tracing::error!("HFDL decoder could not start");
+                        return;
+                    }
                     let mut log: VecDeque<HfdlDecode> = VecDeque::with_capacity(HFDL_LOG_DEPTH);
                     // The ACARS messages among them, kept longer than the log
                     // keeps anything: squitters fill the log's 64 entries in
                     // half an hour and a message should outlast that.
                     let mut acars: VecDeque<HfdlDecode> = VecDeque::new();
-                    let (mut bursts, mut decodes) = (0u64, 0u64);
                     let mut tick = 0u64;
                     let mut book = StationBook::new();
                     let mut fleet = AircraftBook::new();
@@ -99,6 +139,13 @@ impl HfdlController {
                         select! {
                             recv(ctl_rx) -> msg => match msg {
                                 Ok(Ctl::Config(next)) => cfg = next,
+                                Ok(Ctl::Lane(rate, lane)) => {
+                                    let next = build_chans(rate, &lane);
+                                    if !next.is_empty() {
+                                        chans = next;
+                                    }
+                                    force = true;
+                                }
                                 Ok(Ctl::Seed(saved)) => {
                                     book.seed(&saved);
                                     force = true;
@@ -110,18 +157,24 @@ impl HfdlController {
                                     tick += 1;
                                     let mut emitted = false;
                                     if cfg.enabled {
-                                        let events: Vec<HfdlEvent> = decoder.process(&samples);
-                                        bursts += u64::from(!events.is_empty());
-                                        decodes += events.len() as u64;
-                                        if !events.is_empty() {
-                                            let now = now_unix();
-                                            let khz = (cfg.frequency_hz / 1000.0).round() as u32;
-                                            for e in events {
-                                                book.observe(&e, khz, now);
-                                                fleet.observe(&e, khz, now);
-                                                record(&mut log, &mut acars, mk_decode(&cfg, &e, now));
-                                            }
+                                        let mut batch: Vec<(usize, HfdlEvent)> = Vec::new();
+                                        for (i, ch) in chans.iter_mut().enumerate() {
+                                            batch.extend(ch.decoder.process(&samples).into_iter().map(|e| (i, e)));
+                                        }
+                                        let batch = keep_strongest(batch);
+                                        let now = now_unix();
+                                        let mut hit = vec![false; chans.len()];
+                                        for (i, e) in batch {
+                                            let ch = &mut chans[i];
+                                            hit[i] = true;
+                                            ch.decodes += 1;
+                                            book.observe(&e, ch.khz, now);
+                                            fleet.observe(&e, ch.khz, now);
+                                            record(&mut log, &mut acars, mk_decode(ch.khz, &e, now));
                                             emitted = true;
+                                        }
+                                        for (ch, h) in chans.iter_mut().zip(hit) {
+                                            ch.bursts += u64::from(h);
                                         }
                                     }
                                     // A status always comes back once (tick 1)
@@ -133,16 +186,26 @@ impl HfdlController {
                                         force = false;
                                         let (stations, table_version) = book.snapshot();
                                         let aircraft = fleet.snapshot(now_unix());
+                                        let channels: Vec<HfdlChannelStatus> = chans
+                                            .iter()
+                                            .map(|c| HfdlChannelStatus {
+                                                khz: c.khz,
+                                                level_dbfs: c.decoder.level_dbfs(),
+                                                bursts: c.bursts,
+                                                decodes: c.decodes,
+                                            })
+                                            .collect();
                                         let _ = res_tx.send(HfdlStatus {
                                             running: cfg.enabled,
-                                            level_dbfs: decoder.level_dbfs(),
-                                            bursts,
-                                            decodes,
+                                            level_dbfs: channels[0].level_dbfs,
+                                            bursts: channels.iter().map(|c| c.bursts).sum(),
+                                            decodes: channels.iter().map(|c| c.decodes).sum(),
                                             log: log.iter().cloned().collect(),
                                             acars: acars.iter().cloned().collect(),
                                             aircraft,
                                             stations,
                                             table_version,
+                                            channels,
                                         });
                                     }
                                 }
@@ -165,6 +228,11 @@ impl HfdlController {
     /// to the running worker.
     pub fn set_config(&self, cfg: HfdlSettings) {
         let _ = self.ctl_tx.send(Ctl::Config(cfg));
+    }
+
+    /// Move to a new lane: rate and channels. See [`Self::with_lane`].
+    pub fn set_lane(&self, rate_hz: f64, lane: Vec<LaneChannel>) {
+        let _ = self.ctl_tx.send(Ctl::Lane(rate_hz, lane));
     }
 
     /// Hand the worker a saved system table (the stations' positions and
@@ -200,12 +268,12 @@ fn gs_of(e: &HfdlEvent) -> Option<String> {
 }
 
 /// Map one decoded event onto the wire type's log entry.
-fn mk_decode(cfg: &HfdlSettings, e: &HfdlEvent, unix: i64) -> HfdlDecode {
+fn mk_decode(khz: u32, e: &HfdlEvent, unix: i64) -> HfdlDecode {
     HfdlDecode {
         unix,
         kind: e.kind.clone(),
         gs: gs_of(e),
-        freq_khz: (cfg.frequency_hz / 1000.0).round() as u32,
+        freq_khz: khz,
         snr_db: e.snr_db,
         freq_skew_hz: e.freq_skew_hz,
         fec_corrected: e.fec_corrected,
@@ -213,6 +281,34 @@ fn mk_decode(cfg: &HfdlSettings, e: &HfdlEvent, unix: i64) -> HfdlDecode {
         position: fix_of(e),
         acars: acars_of(e),
     }
+}
+
+/// Drop the copies of a frame that decoded on more than one channel of the
+/// lane from the same samples, keeping the strongest.
+///
+/// A very strong burst leaks into a neighbouring channel's decoder — at a lane
+/// spacing that folds it onto the neighbour's own frequency it can decode
+/// there too, some 45 dB down (seen with a synthesised squitter) — and would
+/// then be filed under the wrong channel, marking a station heard where it is
+/// not. The same bytes cannot have been sent on two channels in the same
+/// instant, so the copy with the best SNR is the one that was on air there.
+/// Events with no raw bytes (a reassembled system table) are kept as they are.
+fn keep_strongest(batch: Vec<(usize, HfdlEvent)>) -> Vec<(usize, HfdlEvent)> {
+    let snr = |e: &HfdlEvent| e.snr_db.unwrap_or(f32::NEG_INFINITY);
+    let mut out: Vec<(usize, HfdlEvent)> = Vec::with_capacity(batch.len());
+    for (i, e) in batch {
+        let dup = if e.raw.is_empty() {
+            None
+        } else {
+            out.iter().position(|(j, o)| *j != i && o.kind == e.kind && o.raw == e.raw)
+        };
+        match dup {
+            Some(k) if snr(&e) > snr(&out[k].1) => out[k] = (i, e),
+            Some(_) => {}
+            None => out.push((i, e)),
+        }
+    }
+    out
 }
 
 /// File one decode: into the rolling log, and — if it carried an ACARS message
@@ -432,7 +528,7 @@ mod tests {
     fn the_worker_reports_running_and_survives_pure_noise() {
         let c = HfdlController::new(
             24_000.0,
-            HfdlSettings { enabled: true, frequency_hz: 21_931_000.0 },
+            HfdlSettings { enabled: true, frequency_hz: 21_931_000.0, ..Default::default() },
         );
         c.on_rx_iq(&noise(24_000 * 2));
         let s = wait_for(&c, |s| s.running).expect("an idle snapshot should arrive");
@@ -484,7 +580,7 @@ mod tests {
         assert_eq!(a.parity_errors, 0);
         assert_eq!(a.who(), "N123AB");
         // The decode the log shows carries it, and an event with no ACARS does not.
-        let d = mk_decode(&HfdlSettings::default(), &e, 1_000);
+        let d = mk_decode(21_931, &e, 1_000);
         assert!(d.acars.is_some());
         assert!(acars_of(&event("squitter", serde_json::json!({}))).is_none());
     }
@@ -510,13 +606,12 @@ mod tests {
     /// (newest first) and within their own bound.
     #[test]
     fn the_acars_list_outlives_the_log() {
-        let cfg = HfdlSettings::default();
         let mut log = VecDeque::new();
         let mut acars = VecDeque::new();
-        let msg = |unix| mk_decode(&cfg, &acars_event("H1", '4', Some("UAL012"), "WORDS"), unix);
+        let msg = |unix| mk_decode(21_931, &acars_event("H1", '4', Some("UAL012"), "WORDS"), unix);
         record(&mut log, &mut acars, msg(1));
         for i in 0..(HFDL_LOG_DEPTH as i64 + 5) {
-            let sq = mk_decode(&cfg, &event("squitter", serde_json::json!({})), 2 + i);
+            let sq = mk_decode(21_931, &event("squitter", serde_json::json!({})), 2 + i);
             record(&mut log, &mut acars, sq);
         }
         assert_eq!(log.len(), HFDL_LOG_DEPTH, "the log is bounded");
@@ -539,7 +634,7 @@ mod tests {
         use sdroxide_types::HfdlStationFreq;
         let c = HfdlController::new(
             24_000.0,
-            HfdlSettings { enabled: true, frequency_hz: 21_931_000.0 },
+            HfdlSettings { enabled: true, frequency_hz: 21_931_000.0, ..Default::default() },
         );
         let mut riverhead = HfdlStation::new(4, Some("Riverhead, New York"));
         riverhead.freqs = vec![HfdlStationFreq { freq_hz: 21_931_000, slot: 2, active: false }];
@@ -553,6 +648,106 @@ mod tests {
         assert_eq!(s.stations[0].gs_id, 4);
         assert_eq!(s.stations[0].freqs[0].khz(), 21_931);
         assert_eq!(s.table_version, None, "a saved table is not an over-the-air version");
+    }
+
+    /// A squitter synthesised at the lane rate, `offset_hz` from the lane's
+    /// centre (plus the +1440 Hz subcarrier), with a little noise.
+    fn squitter_at(rate: f64, offset_hz: f64, gs: u8) -> Vec<Complex32> {
+        use xng_mode_hfdl::fec::SETTINGS;
+        use xng_mode_hfdl::modulate::{burst_symbols, modulate};
+        let syms = burst_symbols(&xng_mode_hfdl::pdu::build_spdu(gs, 1234, 52), &SETTINGS[0]);
+        let mut iq = vec![Complex32::new(0.0, 0.0); (rate * 0.3) as usize];
+        iq.extend(modulate(&syms, rate, offset_hz + 1440.0, 0.5));
+        iq.extend(vec![Complex32::new(0.0, 0.0); (rate * 0.3) as usize]);
+        let mut n = noise(iq.len());
+        for (x, w) in iq.iter_mut().zip(n.drain(..)) {
+            *x += w * 0.01;
+        }
+        iq
+    }
+
+    /// Two channels share one lane: a squitter on the upper one decodes, and it
+    /// is filed under that channel — not the other, and not the lane's centre.
+    ///
+    /// The spacing here (36 kHz in a 72 kS/s lane) puts the burst on the other
+    /// channel's Nyquist fold, where it leaks into that decoder strongly enough
+    /// to decode too; `keep_strongest` is what keeps it to one channel.
+    #[test]
+    fn a_two_channel_lane_decodes_each_channel_as_itself() {
+        let rate = 72_000.0;
+        let lane = vec![
+            LaneChannel { khz: 13_276, offset_hz: -18_000.0 },
+            LaneChannel { khz: 13_312, offset_hz: 18_000.0 },
+        ];
+        let c = HfdlController::with_lane(
+            rate,
+            lane,
+            HfdlSettings { enabled: true, frequency_hz: 13_276_000.0, ..Default::default() },
+        );
+        for chunk in squitter_at(rate, 18_000.0, 7).chunks(4096) {
+            c.on_rx_iq(chunk);
+        }
+        let s = wait_for(&c, |s| s.decodes > 0).expect("the squitter should decode");
+        let sq = s.log.iter().find(|d| d.kind == "squitter").expect("a squitter in the log");
+        assert_eq!(sq.freq_khz, 13_312, "filed under the channel it was on");
+        assert_eq!(s.channels.len(), 2);
+        assert_eq!(s.channels[0].khz, 13_276);
+        assert_eq!(s.channels[0].decodes, 0, "nothing on the other channel");
+        assert!(s.channels[1].decodes > 0);
+        // The station book hears it on that channel too.
+        let gs = s.stations.iter().find(|st| st.gs_id == 7).expect("Shannon heard");
+        assert_eq!(gs.heard_khz, 13_312);
+    }
+
+    #[test]
+    fn a_frame_decoded_on_two_channels_is_kept_once_at_the_stronger() {
+        let ev = |snr: f32, raw: &[u8]| HfdlEvent {
+            kind: "squitter".into(),
+            details: serde_json::json!({}),
+            acars: None,
+            fec_corrected: None,
+            freq_skew_hz: None,
+            snr_db: Some(snr),
+            raw: raw.to_vec(),
+        };
+        let kept =
+            keep_strongest(vec![(0, ev(1.4, &[1, 2])), (1, ev(46.0, &[1, 2])), (0, ev(9.0, &[3]))]);
+        assert_eq!(kept.len(), 2);
+        assert_eq!(
+            (kept[0].0, kept[0].1.snr_db),
+            (1, Some(46.0)),
+            "the strong copy, on its channel"
+        );
+        assert_eq!(kept[1].1.raw, vec![3], "a different frame is not a duplicate");
+        // Two frames with the same bytes on the same channel are two
+        // transmissions (a repeated squitter), not a leak.
+        assert_eq!(keep_strongest(vec![(0, ev(5.0, &[1])), (0, ev(5.0, &[1]))]).len(), 2);
+    }
+
+    /// A new lane rebuilds the decoders but keeps what has been heard.
+    #[test]
+    fn moving_the_lane_keeps_the_log() {
+        let rate = 24_000.0;
+        let c = HfdlController::new(
+            rate,
+            HfdlSettings { enabled: true, frequency_hz: 8_912_000.0, ..Default::default() },
+        );
+        for chunk in squitter_at(rate, 0.0, 4).chunks(4096) {
+            c.on_rx_iq(chunk);
+        }
+        wait_for(&c, |s| s.decodes > 0).expect("the squitter should decode");
+        c.set_lane(rate, vec![LaneChannel { khz: 5_652, offset_hz: 0.0 }]);
+        c.on_rx_iq(&noise(4096));
+        let s = wait_for(&c, |s| s.channels.first().is_some_and(|ch| ch.khz == 5_652))
+            .expect("the new lane reports");
+        assert!(
+            s.log.iter().any(|d| d.kind == "squitter" && d.freq_khz == 8_912),
+            "the log carries on"
+        );
+        assert!(
+            s.stations.iter().any(|st| st.gs_id == 4 && st.heard_at > 0),
+            "so does the station book"
+        );
     }
 
     /// End to end on the reference off-air capture: the worker, the bounded
@@ -575,7 +770,7 @@ mod tests {
             .collect();
         let c = HfdlController::new(
             24_000.0,
-            HfdlSettings { enabled: true, frequency_hz: 21_931_000.0 },
+            HfdlSettings { enabled: true, frequency_hz: 21_931_000.0, ..Default::default() },
         );
         let before = now_unix();
         for chunk in samples.chunks(65_536) {

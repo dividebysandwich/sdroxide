@@ -106,26 +106,53 @@ impl SdroxideApp {
         let working = hfdl_working_khz(stations, now);
         let mut remove_khz: Option<u32> = None;
         let mut add_now = false;
+        // Several channels can be decoded at once when they are close enough to
+        // share one lane: a plain click listens to that channel alone, a
+        // Ctrl-click (⌘ on a Mac) adds it to, or takes it from, the ones being
+        // decoded. The lane plan says which of those asked for it can take.
+        let window = Some((self.state.center_hz, self.state.sample_rate / 2.0));
+        let lane = sdroxide_types::hfdl_lane_plan(&cfg, window);
+        let multi = lane.channels.len() > 1;
+        // Drawn from a snapshot; a click is applied after the row.
+        let (primary, also_now) = (cfg.primary_khz(), cfg.also());
+        let mut picked: Option<(u32, bool)> = None;
+        let mut set_also: Option<Vec<u32>> = None;
         ui.horizontal_wrapped(|ui| {
+            let chip_text = |khz: u32, live: bool| {
+                let mut t = RichText::new(format!("{:.3} M", khz as f32 / 1e3));
+                if lane.left_out.contains(&khz) {
+                    t = t.color(crate::theme::HAZARD());
+                } else if live {
+                    t = t.color(crate::theme::GREEN());
+                }
+                if multi && khz == primary {
+                    t = t.underline();
+                }
+                t
+            };
+            let asked = |khz: u32| khz == primary || also_now.contains(&khz);
             for &khz in &plan {
-                let on = (cfg.frequency_hz / 1e3).round() as u32 == khz;
                 let live = working.contains(&khz);
-                let text = RichText::new(format!("{:.3} M", khz as f32 / 1e3));
-                let text = if live { text.color(crate::theme::GREEN()) } else { text };
-                if crate::chrome::chip(ui, on, text)
-                    .on_hover_text(hfdl_chip_hint(stations, khz, live, now))
+                let mut hint = hfdl_chip_hint(stations, khz, live, now);
+                if lane.left_out.contains(&khz) {
+                    hint.push_str("\n");
+                    hint.push_str(&tr!("hfdl-left-out-hint"));
+                }
+                hint.push_str("\n");
+                hint.push_str(&tr!("hfdl-chip-multi-hint"));
+                if crate::chrome::chip(ui, asked(khz), chip_text(khz, live))
+                    .on_hover_text(hint)
                     .clicked()
                 {
-                    cfg.frequency_hz = f64::from(khz) * 1e3;
+                    picked = Some((khz, ui.input(|i| i.modifiers.command)));
                 }
             }
-            let cur_khz = (cfg.frequency_hz / 1e3).round() as u32;
+            let cur_khz = primary;
             for &khz in &self.hfdl_channels {
-                let resp =
-                    crate::chrome::chip(ui, cur_khz == khz, format!("{:.3} M", khz as f32 / 1e3))
-                        .on_hover_text(tr!("hfdl-one-your-saved-channels-click"));
+                let resp = crate::chrome::chip(ui, asked(khz), chip_text(khz, false))
+                    .on_hover_text(tr!("hfdl-one-your-saved-channels-click"));
                 if resp.clicked() {
-                    cfg.frequency_hz = f64::from(khz) * 1e3;
+                    picked = Some((khz, ui.input(|i| i.modifiers.command)));
                 }
                 if resp.secondary_clicked() {
                     remove_khz = Some(khz);
@@ -141,13 +168,77 @@ impl SdroxideApp {
             if add.clicked() {
                 add_now = true;
             }
+            // Every channel that can share the lane with the one in force, in
+            // one click — and back to that one alone.
+            let near = sdroxide_types::hfdl_nearby_khz(&cfg, &plan, window);
+            let more = near.len() > also_now.len();
+            let r = crate::chrome::chip_enabled(ui, more, false, &tr!("hfdl-nearby"));
+            let r = if more {
+                r.on_hover_text(tr!("hfdl-nearby-hint"))
+            } else {
+                r.on_disabled_hover_text(tr!("hfdl-nearby-none-hint"))
+            };
+            if r.clicked() {
+                set_also = Some(near);
+            }
+            if !also_now.is_empty()
+                && crate::chrome::chip(ui, false, "×")
+                    .on_hover_text(tr!("hfdl-single-hint"))
+                    .clicked()
+            {
+                set_also = Some(Vec::new());
+            }
         });
+        match picked {
+            Some((khz, true)) => {
+                cfg.toggle_also(khz);
+            }
+            Some((khz, false)) => {
+                cfg.frequency_hz = f64::from(khz) * 1e3;
+                cfg.set_also(&[]);
+            }
+            None => {}
+        }
+        if let Some(v) = set_also {
+            cfg.set_also(&v);
+        }
+        // With more than one channel, what each is doing.
+        if let Some(st) = self.hfdl_status.as_ref().filter(|s| s.channels.len() > 1) {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new(tr!("hfdl-lane-label"))
+                        .size(10.5)
+                        .strong()
+                        .color(crate::theme::CYAN_DIM()),
+                );
+                for ch in &st.channels {
+                    let level = if ch.level_dbfs > -90.0 {
+                        format!(" {:.0} dBFS", ch.level_dbfs)
+                    } else {
+                        String::new()
+                    };
+                    ui.label(
+                        RichText::new(format!(
+                            "{:.3} M · {}{level}",
+                            ch.khz as f32 / 1e3,
+                            tr!("hfdl-decodes-2", decodes = count(ch.decodes))
+                        ))
+                        .size(10.5)
+                        .color(if ch.decodes > 0 {
+                            crate::theme::GREEN()
+                        } else {
+                            crate::theme::gray(140)
+                        }),
+                    );
+                }
+            });
+        }
         if let Some(khz) = remove_khz {
             self.hfdl_channels.retain(|&k| k != khz);
             crate::app::persist::persist_hfdl_channels(&self.hfdl_channels);
         }
         if add_now {
-            let cur_khz = (cfg.frequency_hz / 1e3).round() as u32;
+            let cur_khz = cfg.primary_khz();
             if !plan.contains(&cur_khz) && add_hfdl_channel(&mut self.hfdl_channels, cur_khz) {
                 crate::app::persist::persist_hfdl_channels(&self.hfdl_channels);
             }
