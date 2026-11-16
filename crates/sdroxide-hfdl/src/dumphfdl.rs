@@ -9,8 +9,8 @@
 //! as xng does). One JSON object per line, one line per LPDU or squitter:
 //!
 //! ```text
-//! {"hfdl":{"app":{…},"station":…,"t":{"sec":…,"usec":…},"freq":…,"sig_level":…,
-//!          "noise_level":…,"freq_skew":…,
+//! {"hfdl":{"app":{…},"station":…,"t":{"sec":…,"usec":…},"freq":…,"bit_rate":…,
+//!          "sig_level":…,"noise_level":…,"freq_skew":…,"slot":"S"|"D",
 //!          "spdu":{…}                                   (a squitter)
 //!          "lpdu":{…, "hfnpdu":{…, "acars":{…}}}}}      (anything else)
 //! ```
@@ -18,10 +18,10 @@
 //! Where it differs, and why:
 //!
 //! * `app.name` is `sdroxide`, not `dumphfdl` — it is not dumphfdl.
-//! * `bit_rate` is present only when it is known. xng hands the burst's bit
-//!   rate to its parser but reports it only on ACARS events; elsewhere it is
-//!   left out rather than made up. `slot` (single/double) is never known here
-//!   and is left out for the same reason.
+//! * `bit_rate` and `slot` are the burst's own (300/600/1200/1800 and
+//!   single/double slot), which the channel decoder carries on every event it
+//!   makes (`details.burst`, see [`crate::channel`]). They are left out only for an event that did
+//!   not come from a burst, which is never the case on the air.
 //! * `sig_level` is the channel's burst level in dBFS and `noise_level` that
 //!   less the burst's SNR — the same quantities, measured by a different demod.
 //! * An LPDU carried in an *acknowledged* data LPDU (0x1D) is reported as
@@ -73,7 +73,12 @@ pub fn format(e: &HfdlEvent, meta: &FrameMeta, gs: StationLookup<'_>) -> Option<
     }
     h.insert("t".into(), json!({ "sec": meta.sec, "usec": meta.usec }));
     h.insert("freq".into(), json!(meta.freq_hz));
-    if let Some(bps) = e.details.get("bps").and_then(Value::as_u64) {
+    let burst = e.details.get("burst");
+    if let Some(bps) = burst
+        .and_then(|b| b.get("bit_rate"))
+        .or_else(|| e.details.get("bps"))
+        .and_then(Value::as_u64)
+    {
         h.insert("bit_rate".into(), json!(bps));
     }
     h.insert("sig_level".into(), json!(round1(meta.sig_level)));
@@ -82,6 +87,9 @@ pub fn format(e: &HfdlEvent, meta: &FrameMeta, gs: StationLookup<'_>) -> Option<
     }
     if let Some(skew) = e.freq_skew_hz {
         h.insert("freq_skew".into(), json!(round1(skew)));
+    }
+    if let Some(slot) = burst.and_then(|b| b.get("slot")).and_then(Value::as_str) {
+        h.insert("slot".into(), json!(slot));
     }
     h.insert(body.0.into(), body.1);
     Some(json!({ "hfdl": Value::Object(h) }))
@@ -455,8 +463,25 @@ mod tests {
         assert_eq!(h["sig_level"], -40.0);
         assert_eq!(h["noise_level"], -54.0);
         assert_eq!(h["freq_skew"], -1.3);
-        assert!(h.get("bit_rate").is_none(), "unknown for a squitter: left out, not made up");
+        assert!(h.get("bit_rate").is_none(), "a byte-built event has no burst to take it from");
         assert!(h.get("slot").is_none());
+    }
+
+    /// Every line from a burst carries the burst's rate and slot, as dumphfdl's
+    /// does, and the keys come in dumphfdl's order.
+    #[test]
+    fn a_burst_gives_every_line_its_bit_rate_and_slot() {
+        let mut e =
+            xng_mode_hfdl::pdu::PduParser::new().parse(&build_spdu(7, 1234, 52), 300).remove(0);
+        e.details["burst"] = json!({ "bit_rate": 1200, "slot": "D" });
+        let none = |_: u8| None;
+        let v = format(&e, &meta(), &none).unwrap();
+        assert_eq!(v["hfdl"]["bit_rate"], 1200);
+        assert_eq!(v["hfdl"]["slot"], "D");
+        let keys: Vec<&str> = v["hfdl"].as_object().unwrap().keys().map(String::as_str).collect();
+        for k in ["app", "t", "freq", "bit_rate", "sig_level", "slot", "spdu"] {
+            assert!(keys.contains(&k), "{k} in {keys:?}");
+        }
     }
 
     #[test]

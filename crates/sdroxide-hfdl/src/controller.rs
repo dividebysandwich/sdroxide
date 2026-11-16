@@ -1,4 +1,5 @@
-//! Threading wrapper around `xng_mode_hfdl::HfdlChannelDecoder`, mirroring
+//! Threading wrapper around [`crate::channel::ChannelDecoder`] (xng's HFDL decoder, assembled
+//! from its public parts), mirroring
 //! `sdroxide_qo100::Qo100Controller`'s shape: the realtime engine thread ships
 //! I/Q blocks to a worker over a bounded channel and drains status updates
 //! non-blocking via [`HfdlController::poll`]. All the DSP runs on the worker.
@@ -24,10 +25,10 @@ use sdroxide_types::{
     HFDL_ACARS_DEPTH, HFDL_LOG_DEPTH, HfdlAcars, HfdlChannelStatus, HfdlDecode, HfdlFix,
     HfdlOutputs, HfdlSettings, HfdlStation, HfdlStatus,
 };
-use xng_mode_hfdl::HfdlChannelDecoder;
 use xng_mode_hfdl::pdu::{HfdlEvent, gs_name};
 
 use crate::aircraft::AircraftBook;
+use crate::channel::ChannelDecoder;
 use crate::dumphfdl::FrameMeta;
 use crate::outputs::Outputs;
 use crate::stations::StationBook;
@@ -50,7 +51,7 @@ pub struct LaneChannel {
 /// A channel decoder and its counts.
 struct Chan {
     khz: u32,
-    decoder: HfdlChannelDecoder,
+    decoder: ChannelDecoder,
     bursts: u64,
     decodes: u64,
 }
@@ -60,7 +61,7 @@ struct Chan {
 /// taking the others down with it.
 fn build_chans(rate_hz: f64, lane: &[LaneChannel]) -> Vec<Chan> {
     lane.iter()
-        .filter_map(|c| match HfdlChannelDecoder::new(rate_hz, c.offset_hz) {
+        .filter_map(|c| match ChannelDecoder::new(rate_hz, c.offset_hz) {
             Ok(decoder) => Some(Chan { khz: c.khz, decoder, bursts: 0, decodes: 0 }),
             Err(e) => {
                 tracing::error!(%e, khz = c.khz, "HFDL channel decoder could not start");
@@ -689,9 +690,15 @@ mod tests {
     /// A squitter synthesised at the lane rate, `offset_hz` from the lane's
     /// centre (plus the +1440 Hz subcarrier), with a little noise.
     fn squitter_at(rate: f64, offset_hz: f64, gs: u8) -> Vec<Complex32> {
+        squitter_with(rate, offset_hz, gs, 0)
+    }
+
+    /// The same, sent with rate/slot setting number `setting` (xng's
+    /// `fec::SETTINGS` order: 300/600/1200/1800 bit/s single slot, then double).
+    fn squitter_with(rate: f64, offset_hz: f64, gs: u8, setting: usize) -> Vec<Complex32> {
         use xng_mode_hfdl::fec::SETTINGS;
         use xng_mode_hfdl::modulate::{burst_symbols, modulate};
-        let syms = burst_symbols(&xng_mode_hfdl::pdu::build_spdu(gs, 1234, 52), &SETTINGS[0]);
+        let syms = burst_symbols(&xng_mode_hfdl::pdu::build_spdu(gs, 1234, 52), &SETTINGS[setting]);
         let mut iq = vec![Complex32::new(0.0, 0.0); (rate * 0.3) as usize];
         iq.extend(modulate(&syms, rate, offset_hz + 1440.0, 0.5));
         iq.extend(vec![Complex32::new(0.0, 0.0); (rate * 0.3) as usize]);
@@ -726,6 +733,10 @@ mod tests {
         let s = wait_for(&c, |s| s.decodes > 0).expect("the squitter should decode");
         let sq = s.log.iter().find(|d| d.kind == "squitter").expect("a squitter in the log");
         assert_eq!(sq.freq_khz, 13_312, "filed under the channel it was on");
+        // The burst's own rate and slot (the synthesised one is 300 bit/s in a
+        // single slot) ride along for the writers of dumphfdl's JSON.
+        let d: serde_json::Value = serde_json::from_str(&sq.details).unwrap();
+        assert_eq!(d["burst"], serde_json::json!({ "bit_rate": 300, "slot": "S" }));
         assert_eq!(s.channels.len(), 2);
         assert_eq!(s.channels[0].khz, 13_276);
         assert_eq!(s.channels[0].decodes, 0, "nothing on the other channel");
@@ -733,6 +744,33 @@ mod tests {
         // The station book hears it on that channel too.
         let gs = s.stations.iter().find(|st| st.gs_id == 7).expect("Shannon heard");
         assert_eq!(gs.heard_khz, 13_312);
+    }
+
+    /// The rate and slot size of a burst come back on its events, for every
+    /// one of the settings dumphfdl's `bit_rate` and `slot` can name.
+    #[test]
+    fn each_burst_reports_its_own_rate_and_slot() {
+        let rate = 24_000.0;
+        for (setting, bit_rate, slot) in
+            [(1, 600, "S"), (2, 1200, "S"), (4, 300, "D"), (6, 1200, "D")]
+        {
+            let c = HfdlController::new(
+                rate,
+                HfdlSettings { enabled: true, frequency_hz: 8_912_000.0, ..Default::default() },
+            );
+            for chunk in squitter_with(rate, 0.0, 4, setting).chunks(4096) {
+                c.on_rx_iq(chunk);
+            }
+            let s = wait_for(&c, |s| s.decodes > 0)
+                .unwrap_or_else(|| panic!("setting {setting} should decode"));
+            let sq = s.log.iter().find(|d| d.kind == "squitter").expect("a squitter");
+            let d: serde_json::Value = serde_json::from_str(&sq.details).unwrap();
+            assert_eq!(
+                d["burst"],
+                serde_json::json!({ "bit_rate": bit_rate, "slot": slot }),
+                "setting {setting}"
+            );
+        }
     }
 
     #[test]

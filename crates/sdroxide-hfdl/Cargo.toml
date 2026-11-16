@@ -21,3 +21,5 @@ serde_json.workspace = true
 tracing.workspace = true
 xng-mode-hfdl.workspace = true
 xng-acars.workspace = true
+xng-dsp.workspace = true
+num-complex.workspace = true
