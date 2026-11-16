@@ -245,6 +245,61 @@ fn absorb_es(
             }
             e.ac.emergency = emergency.map(|s| s.to_string());
         }
+        Es::Airspeed { heading_deg, airspeed_kt, tas, vertical_rate_fpm } => {
+            // Into fields of their own, never the track: see `message::airspeed`.
+            let av = &mut e.ac.avionics;
+            if heading_deg.is_some() {
+                av.heading_deg = *heading_deg;
+            }
+            if airspeed_kt.is_some() {
+                if *tas {
+                    av.tas_kt = *airspeed_kt;
+                } else {
+                    av.ias_kt = *airspeed_kt;
+                }
+            }
+            if vertical_rate_fpm.is_some() {
+                e.ac.vertical_rate_fpm = *vertical_rate_fpm;
+            }
+        }
+        Es::TargetState(t) => {
+            let av = &mut e.ac.avionics;
+            if t.selected_alt_ft.is_some() {
+                av.selected_alt_ft = t.selected_alt_ft;
+                av.selected_alt_fms = t.selected_alt_fms;
+            }
+            if t.qnh_hpa.is_some() {
+                av.qnh_hpa = t.qnh_hpa;
+            }
+            if t.selected_heading_deg.is_some() {
+                av.selected_heading_deg = t.selected_heading_deg;
+            }
+            if let Some(m) = t.modes {
+                av.autopilot = Some(m.autopilot);
+                av.tcas = Some(m.tcas);
+                av.modes =
+                    [(m.vnav, "VNAV"), (m.alt_hold, "ALT"), (m.approach, "APP"), (m.lnav, "LNAV")]
+                        .iter()
+                        .filter(|(on, _)| *on)
+                        .map(|(_, n)| (*n).to_string())
+                        .collect();
+            }
+            // Version 2 by definition of the subtype: TC 31 may not have
+            // been heard yet.
+            av.version.get_or_insert(2);
+            av.nac_p = Some(t.nac_p);
+            av.sil = Some(t.sil);
+        }
+        Es::OpStatus { version, nac_p, sil } => {
+            let av = &mut e.ac.avionics;
+            av.version = Some(*version);
+            if nac_p.is_some() {
+                av.nac_p = *nac_p;
+            }
+            if sil.is_some() {
+                av.sil = *sil;
+            }
+        }
         Es::Other => {}
     }
 }

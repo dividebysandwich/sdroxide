@@ -51,10 +51,58 @@ pub enum Es {
     },
     /// TC 28: the squawk and whether anything is wrong.
     Status { squawk: Option<u16>, emergency: Option<&'static str> },
+    /// TC 19, subtypes 3 and 4: what the aircraft does through the air — its
+    /// heading and an airspeed, indicated or true — sent when it has no
+    /// velocity over the ground to give.
+    Airspeed {
+        heading_deg: Option<f32>,
+        airspeed_kt: Option<f32>,
+        /// The airspeed is true airspeed; otherwise indicated.
+        tas: bool,
+        vertical_rate_fpm: Option<i32>,
+    },
+    /// TC 29, subtype 1 (ADS-B version 2): what the crew has set the aircraft
+    /// to do — selected altitude and heading, the barometer setting, and the
+    /// autopilot's modes.
+    TargetState(TargetState),
+    /// TC 31: the transponder's ADS-B version, and from version 1 on the
+    /// accuracy and integrity of its position.
+    OpStatus { version: u8, nac_p: Option<u8>, sil: Option<u8> },
     /// A type code this decoder does not read. Kept as a variant rather than
     /// dropped so the frame still counts as heard, which is what keeps an
     /// aircraft on the list between position reports.
     Other,
+}
+
+/// The fields of a target state and status message (TC 29, subtype 1).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TargetState {
+    /// Selected altitude, feet.
+    pub selected_alt_ft: Option<i32>,
+    /// The selected altitude comes from the flight management system rather
+    /// than the mode control panel.
+    pub selected_alt_fms: bool,
+    /// Barometric pressure setting, hectopascals.
+    pub qnh_hpa: Option<f32>,
+    /// Selected heading, degrees.
+    pub selected_heading_deg: Option<f32>,
+    /// Autopilot and mode flags, when the aircraft says they are valid.
+    pub modes: Option<Modes>,
+    /// Navigation accuracy category for position.
+    pub nac_p: u8,
+    /// Source integrity level.
+    pub sil: u8,
+}
+
+/// The mode bits of a target state message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Modes {
+    pub autopilot: bool,
+    pub vnav: bool,
+    pub alt_hold: bool,
+    pub approach: bool,
+    pub tcas: bool,
+    pub lnav: bool,
 }
 
 /// One half of a position, as broadcast.
@@ -190,6 +238,18 @@ fn decode_es(me: &[u8]) -> Es {
             cpr: Cpr { odd: bits(me, 21, 1) == 1, lat: bits(me, 22, 17), lon: bits(me, 39, 17) },
         },
         19 => velocity(me),
+        29 => target_state(me),
+        31 => {
+            // Version 0 transponders lay the rest of this message out
+            // differently, so only the version is read from them.
+            let version = bits(me, 40, 3) as u8;
+            let v1 = version >= 1;
+            Es::OpStatus {
+                version,
+                nac_p: v1.then(|| bits(me, 44, 4) as u8),
+                sil: v1.then(|| bits(me, 50, 2) as u8),
+            }
+        }
         28 => {
             // Subtype 1 is the emergency/priority status; the rest are ACAS
             // resolution advisories, which say what a collision-avoidance box
@@ -218,16 +278,17 @@ fn decode_es(me: &[u8]) -> Es {
 /// TC 19, subtypes 1 and 2: velocity over the ground.
 ///
 /// Subtypes 3 and 4 give an airspeed and a heading instead, which are what the
-/// aircraft is doing through the air rather than over the map. They are not
-/// decoded: a leader line drawn from an airspeed points somewhere the aircraft
-/// is not going, and the two cannot be told apart once they are in the same
-/// field.
+/// aircraft is doing through the air rather than over the map. They go to
+/// [`airspeed`] and into fields of their own: a leader line drawn from an
+/// airspeed points somewhere the aircraft is not going, and the two cannot be
+/// told apart once they are in the same field.
 fn velocity(me: &[u8]) -> Es {
     let st = bits(me, 5, 3);
     // The supersonic subtypes carry the same fields with four times the scale.
     let scale = match st {
         1 => 1.0f32,
         2 => 4.0,
+        3 | 4 => return airspeed(me, if st == 4 { 4.0 } else { 1.0 }),
         _ => return Es::Other,
     };
     let ew_west = bits(me, 13, 1) == 1;
@@ -246,13 +307,63 @@ fn velocity(me: &[u8]) -> Es {
         (Some(vx.hypot(vy)), Some(if deg < 0.0 { deg + 360.0 } else { deg }))
     };
 
-    let vr_raw = bits(me, 37, 9);
-    let vr = (vr_raw != 0).then(|| {
-        let mag = (vr_raw as i32 - 1) * 64;
-        if bits(me, 36, 1) == 1 { -mag } else { mag }
-    });
+    Es::Velocity { ground_speed_kt: speed, track_deg: track, vertical_rate_fpm: vertical_rate(me) }
+}
 
-    Es::Velocity { ground_speed_kt: speed, track_deg: track, vertical_rate_fpm: vr }
+/// The vertical rate field of TC 19, all subtypes alike: 64 ft/min steps,
+/// zero meaning absent.
+fn vertical_rate(me: &[u8]) -> Option<i32> {
+    let raw = bits(me, 37, 9);
+    (raw != 0).then(|| {
+        let mag = (raw as i32 - 1) * 64;
+        if bits(me, 36, 1) == 1 { -mag } else { mag }
+    })
+}
+
+/// TC 19, subtypes 3 and 4: heading and airspeed.
+///
+/// Kept apart from the ground velocity on purpose: the heading is where the
+/// nose points and the airspeed is through the air, so neither may feed the
+/// track or the leader line (see [`velocity`]).
+fn airspeed(me: &[u8], scale: f32) -> Es {
+    let heading_deg = (bits(me, 13, 1) == 1).then(|| bits(me, 14, 10) as f32 * 360.0 / 1024.0);
+    let raw = bits(me, 25, 10);
+    Es::Airspeed {
+        heading_deg,
+        airspeed_kt: (raw != 0).then_some((raw as f32 - 1.0) * scale),
+        tas: bits(me, 24, 1) == 1,
+        vertical_rate_fpm: vertical_rate(me),
+    }
+}
+
+/// TC 29: target state and status. Only subtype 1 (DO-260B, ADS-B version 2)
+/// is read; subtype 0 is the older, differently laid out message.
+fn target_state(me: &[u8]) -> Es {
+    if bits(me, 5, 2) != 1 {
+        return Es::Other;
+    }
+    let alt = bits(me, 9, 11);
+    let baro = bits(me, 20, 9);
+    // Heading: a sign bit and eight bits, 180/256 of a degree each — the same
+    // as nine bits of 360/512 read unsigned.
+    let hdg = (bits(me, 29, 1) == 1).then(|| bits(me, 30, 9) as f32 * 360.0 / 512.0);
+    let modes = (bits(me, 46, 1) == 1).then(|| Modes {
+        autopilot: bits(me, 47, 1) == 1,
+        vnav: bits(me, 48, 1) == 1,
+        alt_hold: bits(me, 49, 1) == 1,
+        approach: bits(me, 51, 1) == 1,
+        tcas: bits(me, 52, 1) == 1,
+        lnav: bits(me, 53, 1) == 1,
+    });
+    Es::TargetState(TargetState {
+        selected_alt_ft: (alt != 0).then(|| (alt as i32 - 1) * 32),
+        selected_alt_fms: bits(me, 8, 1) == 1,
+        qnh_hpa: (baro != 0).then_some(800.0 + (baro as f32 - 1.0) * 0.8),
+        selected_heading_deg: hdg,
+        modes,
+        nac_p: bits(me, 39, 4) as u8,
+        sil: bits(me, 44, 2) as u8,
+    })
 }
 
 /// The surface movement code, which is a speed on a piecewise scale that gets
@@ -398,6 +509,57 @@ mod tests {
         assert!((gs - 417.655).abs() < 0.01, "ground speed {gs}");
         assert!((trk - 322.197).abs() < 0.01, "track {trk}");
         assert_eq!(vertical_rate_fpm, Some(0));
+    }
+
+    /// The published airspeed squitter (TC 19 subtype 3), against the figures
+    /// quoted with it: heading 243.98°, true airspeed 375 kt, 2304 ft/min down.
+    #[test]
+    fn an_airspeed_squitter_reads_back_heading_and_true_airspeed() {
+        let Es::Airspeed { heading_deg, airspeed_kt, tas, vertical_rate_fpm } =
+            es_of("8DA05F219B06B6AF189400CBC33F")
+        else {
+            panic!("not an airspeed message");
+        };
+        let h = heading_deg.expect("a heading");
+        assert!((h - 243.98).abs() < 0.01, "heading {h}");
+        assert_eq!(airspeed_kt, Some(375.0));
+        assert!(tas);
+        assert_eq!(vertical_rate_fpm, Some(-2304));
+    }
+
+    /// The published target state squitter (TC 29 subtype 1): selected
+    /// altitude 16 992 ft from the MCP, 1012.8 hPa, selected heading 66.8°,
+    /// autopilot, VNAV, LNAV and TCAS on, NACp 9, SIL 3 — the figures the
+    /// vendored `xng-mode-adsb` tests expect for it (rs1090 rounds the
+    /// altitude to 17 000).
+    #[test]
+    fn a_target_state_squitter_reads_back_what_the_crew_has_set() {
+        let Es::TargetState(t) = es_of("8DA05629EA21485CBF3F8CADAEEB") else {
+            panic!("not a target state");
+        };
+        assert_eq!(t.selected_alt_ft, Some(16_992));
+        assert!(!t.selected_alt_fms);
+        let q = t.qnh_hpa.expect("a baro setting");
+        assert!((q - 1012.8).abs() < 0.05, "qnh {q}");
+        let h = t.selected_heading_deg.expect("a selected heading");
+        assert!((h - 66.8).abs() < 0.1, "selected heading {h}");
+        let m = t.modes.expect("modes");
+        assert!(m.autopilot && m.vnav && m.lnav && m.tcas);
+        assert!(!m.alt_hold && !m.approach);
+        assert_eq!((t.nac_p, t.sil), (9, 3));
+    }
+
+    /// An operational status message names its version; a version 0 one gives
+    /// nothing else.
+    #[test]
+    fn an_operational_status_gives_the_version() {
+        let mut me = [0u8; 7];
+        me[0] = 31 << 3;
+        let es = |me: &[u8; 7]| decode_es(me);
+        assert_eq!(es(&me), Es::OpStatus { version: 0, nac_p: None, sil: None });
+        me[5] = 0b0100_1010; // version 2, NIC-A 0, NACp 10
+        me[6] = 0b0011_0000; // SIL 3
+        assert_eq!(es(&me), Es::OpStatus { version: 2, nac_p: Some(10), sil: Some(3) });
     }
 
     /// The published position pair, at 38 000 feet, one even and one odd.
