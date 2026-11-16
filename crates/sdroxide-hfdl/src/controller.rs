@@ -205,6 +205,7 @@ impl HfdlController {
                                             aircraft,
                                             stations,
                                             table_version,
+                                            follow: None,
                                             channels,
                                         });
                                     }

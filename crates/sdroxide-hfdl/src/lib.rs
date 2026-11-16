@@ -12,6 +12,7 @@
 
 pub mod aircraft;
 pub mod controller;
+pub mod follow;
 pub mod stations;
 
 pub use controller::HfdlController;

@@ -6447,3 +6447,11 @@ hfdl-nearby-hint = Also decode every channel close enough to share one lane with
 hfdl-nearby-none-hint = No other channel can share the lane: none is close enough, all eight places are taken, or the receiver's window is too narrow.
 hfdl-single-hint = Back to the one channel the dial is on
 hfdl-lane-label = CHANNELS
+
+## hfdl: auto-follow (src/app/hfdl.rs)
+
+hfdl-auto = AUTO
+hfdl-auto-hint = Find an open band by itself: stay while ground stations are heard on it, and when none has been for about a minute and a half, move to the next band — the higher ones by day and the lower ones by night at your grid square, a band some station says it is working before any other — taking all of that band's channels at once. Picking a channel by hand turns it off.
+hfdl-follow-starting = AUTO · waiting for the decoder…
+hfdl-follow-parked = AUTO · { $mhz } MHz is open — { $station } heard { $age } ago
+hfdl-follow-listening = AUTO · listening on { $mhz } MHz; the next band in { $secs } s if nothing is heard

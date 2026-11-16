@@ -47,12 +47,46 @@ pub struct HfdlSettings {
     /// positional.
     #[serde(default)]
     pub also_khz: [u32; HFDL_MAX_CHANNELS - 1],
+    /// Find an open band by itself: stay while ground stations are heard, and
+    /// when none has been for a while, move to the next band the time of day
+    /// suggests, all of its channels at once. Off by default. Appended last:
+    /// the wire is positional.
+    #[serde(default)]
+    pub auto_follow: bool,
 }
 
 impl Default for HfdlSettings {
     fn default() -> Self {
-        Self { enabled: false, frequency_hz: HFDL_DEFAULT_HZ, also_khz: [0; HFDL_MAX_CHANNELS - 1] }
+        Self {
+            enabled: false,
+            frequency_hz: HFDL_DEFAULT_HZ,
+            also_khz: [0; HFDL_MAX_CHANNELS - 1],
+            auto_follow: false,
+        }
     }
+}
+
+/// What auto-follow is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HfdlFollowState {
+    /// A ground station was heard lately on a channel being decoded: staying.
+    Parked,
+    /// Nothing heard on this band yet: listening until
+    /// [`HfdlFollow::next_hop_at`], then moving on.
+    Listening,
+}
+
+/// Auto-follow's report, for the panel.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HfdlFollow {
+    pub state: HfdlFollowState,
+    /// The band being decoded, by its whole megahertz.
+    pub band_mhz: u32,
+    /// Parked: the station most recently heard, and when.
+    pub station: Option<String>,
+    pub heard_at: i64,
+    /// Listening: when it will move on if nothing is heard; 0 when parked.
+    pub next_hop_at: i64,
 }
 
 impl HfdlSettings {
@@ -450,6 +484,9 @@ pub struct HfdlStatus {
     /// started, or `None` while none has been — [`Self::stations`] may still
     /// carry channels from the copy saved last time.
     pub table_version: Option<u16>,
+    /// Auto-follow's state, while it is on. Appended last: the wire is
+    /// positional.
+    pub follow: Option<HfdlFollow>,
     /// Each channel being decoded, primary first. [`Self::level_dbfs`],
     /// [`Self::bursts`] and [`Self::decodes`] are the primary's and the totals.
     /// Appended last: the wire is positional.
@@ -468,6 +505,7 @@ impl Default for HfdlStatus {
             acars: Vec::new(),
             aircraft: Vec::new(),
             table_version: None,
+            follow: None,
             channels: Vec::new(),
         }
     }

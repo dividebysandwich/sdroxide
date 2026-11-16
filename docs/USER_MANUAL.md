@@ -7024,6 +7024,7 @@ Every channel decodes into the same log, station list, message list and aircraft
 | Control | What it does |
 | --- | --- |
 | **LISTEN** | Switches the decoder on and off. It costs a downconverter and a worker thread whether the panel is on screen or not, so it starts off, and it is off again next time you start sdroxide. |
+| **AUTO** | Auto-follow: the decoder finds an open band by itself (below). Picking a channel by hand turns it off. |
 | The kHz field | The channel to listen on. Anything from 2 800 to 30 000 kHz. |
 | The frequency chips | The assigned frequencies, one click each. **21.931 M** — Riverhead, covering the northern Atlantic and North America — is the default. The chips are the channels the ground stations use, from the network's system table (see **STATIONS** below): a copy built into sdroxide (version 52, from the table dumphfdl distributes) until a newer one has been received over the air. A chip turns **green** while a station is known to be working that channel, and its tooltip names the stations that use it. Your own channels follow them: **+** saves the channel in force as a chip, a click tunes to one, a right-click removes it. They are kept per machine in `hfdl_channels.json`. |
 
@@ -7034,6 +7035,8 @@ Changing the channel moves the dial with it, so the panadapter shows the signal 
 **An HF antenna and a receiver that hands over raw I/Q.** HFDL rides its own downconversion of the I/Q stream, like ADS-B, AIS, VDL2 and the QO-100 beacon, so it needs a wideband front end — an RSP, an Airspy HF+, an RX-888, a KiwiSDR, a directly-connected SDR of any kind. A transceiver driven over CAT with its audio on a sound card hands sdroxide demodulated audio and no I/Q to mix a lane out of, and the decoder cannot run on it. The **LISTEN** switch turns itself off on such a radio rather than pretending.
 
 **The right band for the time of day.** This is ordinary shortwave propagation and it matters more than anything in the panel. The higher channels — 17 and 21 MHz — are daytime paths; 5, 6 and 8 MHz are the night ones; 11 and 13 MHz work around the changes. A channel that is dead is usually dead because the band is closed, not because the decoder is failing.
+
+**AUTO does that choosing for you.** Every ground station sends a squitter on each of its channels about every 32 seconds, so an open band announces itself within a minute. With **AUTO** on, the decoder stays where it is as long as a station has been heard on one of its channels in the last two minutes; when none has been heard for a minute and forty seconds — about three squitter periods, so one lost to fading does not move it — it moves to the next band, taking *every* channel of that band that fits one lane at once (see *several channels* above), the one most stations share on the dial. Which band comes next: by the sun at your grid square (the digital-mode setup's locator; UTC without one), the higher bands by day, the lower ones by night and the middle around dawn and dusk — and before all of them, a band where some station's latest squitter says it is working a channel. A line under the chips says what it is doing: *13 MHz is open — Shannon heard 20 s ago* in green, or *listening on 8 MHz; the next band in 40 s* in yellow. It moves the dial, so on a radio whose tuning is shared with other listening, leave it off.
 
 #### What you see
 

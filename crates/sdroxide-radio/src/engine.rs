@@ -3228,6 +3228,8 @@ struct Engine {
     /// The lane the HFDL worker was last given — its centre and channels — so a
     /// retune that leaves them as they were only re-seats the mixer.
     hfdl_lane: (f64, Vec<u32>),
+    /// HFDL auto-follow, while `state.hfdl.auto_follow` is on.
+    hfdl_follow: Option<sdroxide_hfdl::follow::Follow>,
     /// The last HFDL setting the operator chose, held in step with
     /// `state.hfdl` for symmetry with `qo100_cfg`. Nothing reads it back yet,
     /// and it is not persisted — the same convention `qo100_cfg` follows.
@@ -4756,6 +4758,7 @@ fn engine_thread(
         hfdl_buf: Vec::new(),
         hfdl_in_rate: 0.0,
         hfdl_lane: (0.0, Vec::new()),
+        hfdl_follow: None,
         // Session-scoped only, for the same reason as `qo100_cfg`.
         hfdl_cfg: sdroxide_types::HfdlSettings::default(),
         hfdl_saved_table: None,
@@ -12103,8 +12106,7 @@ impl Engine {
     /// Drain the HFDL decoder's latest status and forward it, keeping the
     /// system table on disk up to date as new versions arrive.
     fn poll_hfdl(&mut self) {
-        let Some(c) = self.hfdl.as_ref() else { return };
-        let Some(status) = c.poll() else { return };
+        let Some(mut status) = self.hfdl.as_ref().and_then(|c| c.poll()) else { return };
         if status.table_version.is_some() && status.table_version != self.hfdl_saved_table {
             let entries: Vec<_> =
                 status.stations.iter().filter(|s| s.has_table()).map(|s| s.table_entry()).collect();
@@ -12113,7 +12115,35 @@ impl Engine {
                 Err(e) => warn!(%e, "could not save the HFDL system table"),
             }
         }
+        self.step_hfdl_follow(&mut status);
         let _ = self.event_tx.send(RadioEvent::HfdlStatus(status));
+    }
+
+    /// Auto-follow: report what it is doing on the status, and when the band in
+    /// use has been silent for its dwell, move to the next — through the same
+    /// commands the panel sends, so the dial and the lane move together exactly
+    /// as they would for a click.
+    fn step_hfdl_follow(&mut self, status: &mut sdroxide_types::HfdlStatus) {
+        if !(self.state.hfdl.auto_follow && self.state.hfdl.enabled) {
+            self.hfdl_follow = None;
+            return;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        let decoding: Vec<u32> = status.channels.iter().map(|c| c.khz).collect();
+        let lon = sdroxide_types::grid_to_latlon(&self.digi_config.my_grid).map(|p| p.1);
+        let follow = self.hfdl_follow.get_or_insert_with(sdroxide_hfdl::follow::Follow::new);
+        let (report, hop) = follow.step(now, &decoding, &status.stations, lon);
+        status.follow = Some(report);
+        if let Some(lane) = hop {
+            let mut cfg = self.state.hfdl;
+            cfg.frequency_hz = f64::from(lane.primary_khz) * 1000.0;
+            cfg.set_also(&lane.also_khz);
+            info!(band = lane.band_mhz, channels = ?lane.also_khz, primary = lane.primary_khz, "HFDL auto-follow: moving on");
+            self.apply(Command::SetHfdlConfig(cfg));
+            self.apply(Command::SetVfo { vfo: self.state.active_vfo, hz: cfg.frequency_hz });
+        }
     }
 
     /// Construct or tear down the weather-satellite lane: one fixed-frequency

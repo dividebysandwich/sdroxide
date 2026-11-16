@@ -54,6 +54,12 @@ impl SdroxideApp {
             {
                 cfg.enabled = !cfg.enabled;
             }
+            if crate::chrome::chip_enabled(ui, cfg.enabled, cfg.auto_follow, &tr!("hfdl-auto"))
+                .on_hover_text(tr!("hfdl-auto-hint"))
+                .clicked()
+            {
+                cfg.auto_follow = !cfg.auto_follow;
+            }
             let mut khz = (cfg.frequency_hz / 1e3).round();
             let old_khz = khz;
             ui.add(
@@ -117,6 +123,7 @@ impl SdroxideApp {
         let (primary, also_now) = (cfg.primary_khz(), cfg.also());
         let mut picked: Option<(u32, bool)> = None;
         let mut set_also: Option<Vec<u32>> = None;
+        let mut set_also_clicked = false;
         ui.horizontal_wrapped(|ui| {
             let chip_text = |khz: u32, live: bool| {
                 let mut t = RichText::new(format!("{:.3} M", khz as f32 / 1e3));
@@ -200,7 +207,18 @@ impl SdroxideApp {
             None => {}
         }
         if let Some(v) = set_also {
+            set_also_clicked = true;
             cfg.set_also(&v);
+        }
+        // A channel picked by hand is the operator taking over from auto-follow.
+        if picked.is_some() || set_also_clicked {
+            cfg.auto_follow = false;
+        }
+        if cfg.auto_follow && cfg.enabled {
+            let now = crate::time::now_unix();
+            let follow = self.hfdl_status.as_ref().and_then(|s| s.follow.as_ref());
+            let (text, ink) = hfdl_follow_line(follow, now);
+            ui.label(RichText::new(text).size(10.5).color(ink));
         }
         // With more than one channel, what each is doing.
         if let Some(st) = self.hfdl_status.as_ref().filter(|s| s.channels.len() > 1) {
@@ -692,6 +710,29 @@ fn slot(ui: &mut egui::Ui, w: f32, text: &str, color: egui::Color32) {
         font,
         color,
     );
+}
+
+/// What auto-follow says it is doing, as one line and its colour.
+fn hfdl_follow_line(f: Option<&sdroxide_types::HfdlFollow>, now: i64) -> (String, egui::Color32) {
+    use sdroxide_types::HfdlFollowState;
+    match f {
+        None => (tr!("hfdl-follow-starting").to_string(), crate::theme::gray(140)),
+        Some(f) if f.state == HfdlFollowState::Parked => (
+            tr!(
+                "hfdl-follow-parked",
+                mhz = f.band_mhz,
+                station = f.station.clone().unwrap_or_default(),
+                age = crate::hfdl_map::fmt_age(now - f.heard_at)
+            )
+            .to_string(),
+            crate::theme::GREEN(),
+        ),
+        Some(f) => (
+            tr!("hfdl-follow-listening", mhz = f.band_mhz, secs = (f.next_hop_at - now).max(0))
+                .to_string(),
+            crate::theme::YELLOW(),
+        ),
+    }
 }
 
 /// The left pane's tabs, as stored in the view state.
@@ -1671,6 +1712,31 @@ mod tests {
         chatty.last_text = Some(format!("[H1] {}", "WORD ".repeat(80)));
         let (tall, _, _) = run_table(&chatty, true, 900.0);
         assert!(tall < 70.0, "a long last message made the row {tall} points tall");
+    }
+
+    #[test]
+    fn the_follow_line_says_what_auto_follow_is_doing() {
+        use sdroxide_types::{HfdlFollow, HfdlFollowState};
+        let parked = HfdlFollow {
+            state: HfdlFollowState::Parked,
+            band_mhz: 13,
+            station: Some("Shannon, Ireland".into()),
+            heard_at: 980,
+            next_hop_at: 0,
+        };
+        let (t, _) = hfdl_follow_line(Some(&parked), 1_000);
+        assert!(t.contains("13 MHz") && t.contains("Shannon") && t.contains("20 s"), "{t}");
+        let listening = HfdlFollow {
+            state: HfdlFollowState::Listening,
+            station: None,
+            heard_at: 0,
+            next_hop_at: 1_045,
+            ..parked
+        };
+        let (t, _) = hfdl_follow_line(Some(&listening), 1_000);
+        assert!(t.contains("13 MHz") && t.contains("45"), "{t}");
+        let (t, _) = hfdl_follow_line(None, 1_000);
+        assert!(!t.is_empty());
     }
 
     #[test]
