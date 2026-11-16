@@ -16,6 +16,7 @@ use eframe::egui;
 use sdroxide_types::{LayoutMode, Mode, UiLanguage};
 
 use super::SdroxideApp;
+use crate::i18n::tr;
 
 /// One at a time: the language and the tier are process-wide.
 static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -686,7 +687,6 @@ fn drawn_whole(
 #[test]
 #[ignore = "draws the whole app, which changes process-wide settings"]
 fn the_ways_into_the_new_windows_fit() {
-    use crate::i18n::tr;
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let mut bad = Vec::new();
     let screens = [
@@ -889,9 +889,11 @@ fn the_hfdl_aircraft_table_has_no_overlap_and_reaches_the_map() {
                 let (_ctx, _app, shapes) = hfdl_table_frame(w, h, split, tag);
                 let all = texts(&shapes);
                 // The table's own texts: those drawn in the same clip as its
-                // REG heading, from that heading down.
-                let Some((_, head, pane)) = all.iter().find(|(t, _, _)| t == "REG") else {
-                    bad.push(format!("{at}: no REG heading — the table was not drawn"));
+                // registration heading, from that heading down.
+                // (Its heading is in the language being drawn.)
+                let reg = tr!("hfdl-col-reg").to_string();
+                let Some((_, head, pane)) = all.iter().find(|(t, _, _)| *t == reg) else {
+                    bad.push(format!("{at}: no {reg} heading — the table was not drawn"));
                     continue;
                 };
                 let table: Vec<_> = all
@@ -982,8 +984,11 @@ fn the_hfdl_station_line_is_drawn_only_while_blinking() {
     // "Shannon" too.
     let shannon = |shapes: &[egui::epaint::ClippedShape]| {
         let all = texts(shapes);
-        let pane_right =
-            all.iter().find(|(t, _, _)| t == "REG").map(|(_, _, c)| c.right()).unwrap();
+        let pane_right = all
+            .iter()
+            .find(|(t, _, _)| *t == tr!("hfdl-col-reg"))
+            .map(|(_, _, c)| c.right())
+            .unwrap();
         all.iter().any(|(t, r, _)| t == "Shannon" && r.left() > pane_right)
     };
     let shapes = run(&ctx, &mut app, &mut frame, screen, &mut t0, 10, |_| Vec::new());
