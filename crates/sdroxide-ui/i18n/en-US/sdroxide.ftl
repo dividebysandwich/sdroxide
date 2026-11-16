@@ -953,6 +953,7 @@ settings-servers-tci-radio-failed = { $name } · { $port } ⚠
 settings-servers-tci-radio-own-tip = TCI server of this radio, edited below
 settings-servers-tci-radio-other-tip = Switch to radio; dialog follows on Servers
 settings-servers-tci-port-taken = ⚠ Port { $port } is also the TCI port of { $radios } — only one server can bind it. Free: { $free }.
+settings-servers-tci-not-applied = ⚠ Not applied — the server still runs as before. Press APPLY, or close Settings to discard.
 settings-servers-device-name = Device name
 settings-servers-off-leaves-control-receive-streams = Off leaves control and the receive streams working, but every key request is refused.
 settings-servers-tci-has-no-authentication-0 = ⚠ TCI has no authentication. On 0.0.0.0, anyone who can reach this port can tune and key your transmitter.

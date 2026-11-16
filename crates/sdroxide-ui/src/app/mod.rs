@@ -2489,6 +2489,7 @@ impl SdroxideApp {
     }
 
     pub(crate) fn open_radio_settings(&mut self) {
+        self.reseed_tci_form();
         self.show_settings = true;
         self.settings_tab = SettingsTab::Radio;
     }
@@ -2496,8 +2497,23 @@ impl SdroxideApp {
     /// Open the Settings dialog on the Servers tab — where the radio picker of
     /// the TCI server section lands the operator on another radio.
     pub(crate) fn open_servers_settings(&mut self) {
+        self.reseed_tci_form();
         self.show_settings = true;
         self.settings_tab = SettingsTab::Servers;
+    }
+
+    /// Put the TCI server form back on the config this radio's engine last
+    /// announced, dropping what was typed and never applied.
+    /// Why: the form was seeded once per tab and kept every unapplied tick for
+    ///      good, so a radio reached through the picker showed Aktivieren for a
+    ///      server that was off, or off for one that was listening (Befund
+    ///      2026-11-16). Called where the dialog closes and where the shell
+    ///      opens it on another tab — that tab's closed-dialog pass may not
+    ///      have run, as it was not on screen.
+    pub(crate) fn reseed_tci_form(&mut self) {
+        if let Some(c) = &self.tci_srv_cfg {
+            self.tci_srv_edit = c.clone();
+        }
     }
 
     /// This radio's TCI server for the roster (see [`RadioChip::tci`]).

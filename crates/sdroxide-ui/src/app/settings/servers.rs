@@ -481,10 +481,12 @@ pub(in crate::app) fn settings_rotator_tab(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(in crate::app) fn settings_tci_server_tab(
     ui: &mut egui::Ui,
     cfg: &mut sdroxide_types::TciServerConfig,
     seeded: bool,
+    applied: Option<&sdroxide_types::TciServerConfig>,
     status: &Option<TciServerStatus>,
     radios: &[TciRadio],
     apply: &mut bool,
@@ -612,34 +614,59 @@ pub(in crate::app) fn settings_tci_server_tab(
         );
     }
 
+    // APPLY beside the server's own status as well as at the foot of the page:
+    // the one at the foot sits under the TCI client, out of sight once the
+    // client is open, and a server switched on but never applied looks like
+    // one that is running.
+    // Why: HDZ 2026-11-16: "du musst am Server noch einen Übernehmen-Knopf
+    //      eine Reihe höher machen" — RTL-SDR showed Aktivieren and 50003 while
+    //      nothing had been applied.
     ui.add_space(8.0);
-    match status {
-        Some(s) if s.running => {
-            let clients = match s.clients {
-                1 => tr!("settings-servers-t-1-client").to_string(),
-                n => tr!("settings-servers-n-clients", n = n),
-            };
-            ui.label(
-                RichText::new(tr!(
-                    "settings-servers-listening",
-                    addr = s.addr.to_string(),
-                    clients = clients
-                ))
-                .color(Color32::from_rgb(90, 200, 110)),
-            );
+    ui.horizontal(|ui| {
+        if tci_apply_chip(ui).clicked() {
+            *apply = true;
         }
-        Some(s) => match &s.error {
-            Some(e) => {
-                let msg = RichText::new(tr!("settings-servers-failed", error = e.to_string()));
-                ui.label(msg.color(Color32::from_rgb(230, 90, 80)));
+        ui.add_space(8.0);
+        match status {
+            Some(s) if s.running => {
+                let clients = match s.clients {
+                    1 => tr!("settings-servers-t-1-client").to_string(),
+                    n => tr!("settings-servers-n-clients", n = n),
+                };
+                ui.label(
+                    RichText::new(tr!(
+                        "settings-servers-listening",
+                        addr = s.addr.to_string(),
+                        clients = clients
+                    ))
+                    .color(Color32::from_rgb(90, 200, 110)),
+                );
             }
+            Some(s) => match &s.error {
+                Some(e) => {
+                    let msg = RichText::new(tr!("settings-servers-failed", error = e.to_string()));
+                    ui.label(msg.color(Color32::from_rgb(230, 90, 80)));
+                }
+                None => {
+                    ui.label(RichText::new(tr!("settings-servers-not-running")).weak());
+                }
+            },
             None => {
-                ui.label(RichText::new(tr!("settings-servers-not-running")).weak());
+                ui.label(RichText::new(tr!("settings-servers-status-unknown-press-apply")).weak());
             }
-        },
-        None => {
-            ui.label(RichText::new(tr!("settings-servers-status-unknown-press-apply")).weak());
         }
+    });
+    // The form differs from what this radio's engine runs: say so beside the
+    // status, which describes the running server, not the form above it.
+    // Why: Befund 2026-11-16 — RTL-SDR showed Aktivieren and 50003 while its
+    //      server was off; the ticks had never been applied, and nothing on
+    //      the page told the form from the server.
+    if tci_form_unapplied(cfg, applied) {
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new(tr!("settings-servers-tci-not-applied"))
+                .color(Color32::from_rgb(230, 170, 60)),
+        );
     }
 
     ui.add_space(12.0);
@@ -704,16 +731,7 @@ pub(in crate::app) fn settings_tci_server_tab(
     }
 
     ui.add_space(8.0);
-    if crate::chrome::chip_accent(
-        ui,
-        false,
-        RichText::new(tr!("settings-servers-apply")).strong(),
-        crate::theme::GREEN(),
-        crate::theme::INK_ON_CYAN(),
-    )
-    .on_hover_text(tr!("settings-servers-persist-re-bind-server-connect"))
-    .clicked()
-    {
+    if tci_apply_chip(ui).clicked() {
         *apply = true;
     }
 
@@ -721,8 +739,43 @@ pub(in crate::app) fn settings_tci_server_tab(
     ui.label(RichText::new(tr!("settings-servers-server-lets-tci-capable-programs")).weak());
 }
 
+/// Whether the TCI form holds changes this radio's engine has not applied.
+/// `None` (the engine has not announced its config yet) counts as no change:
+/// the status line already says the state is unknown.
+fn tci_form_unapplied(
+    edit: &sdroxide_types::TciServerConfig,
+    applied: Option<&sdroxide_types::TciServerConfig>,
+) -> bool {
+    applied.is_some_and(|a| a != edit)
+}
+
+/// The TCI page's APPLY chip, shown twice: beside the server's status and at
+/// the foot of the page.
+fn tci_apply_chip(ui: &mut egui::Ui) -> egui::Response {
+    crate::chrome::chip_accent(
+        ui,
+        false,
+        RichText::new(tr!("settings-servers-apply")).strong(),
+        crate::theme::GREEN(),
+        crate::theme::INK_ON_CYAN(),
+    )
+    .on_hover_text(tr!("settings-servers-persist-re-bind-server-connect"))
+}
+
 #[cfg(test)]
 mod tci_port_tests {
+    #[test]
+    fn the_tci_form_is_unapplied_only_when_it_differs_from_the_engine() {
+        use sdroxide_types::TciServerConfig;
+        let applied = TciServerConfig { enabled: false, port: 50003, ..Default::default() };
+        let mut edit = applied.clone();
+        assert!(!super::tci_form_unapplied(&edit, Some(&applied)));
+        assert!(!super::tci_form_unapplied(&edit, None));
+        edit.enabled = true;
+        assert!(super::tci_form_unapplied(&edit, Some(&applied)));
+        assert!(!super::tci_form_unapplied(&edit, None));
+    }
+
     use super::*;
     use crate::app::TciBrief;
 

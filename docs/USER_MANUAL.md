@@ -14065,7 +14065,11 @@ station radio; every further radio has a server of its own, off by default.
 
 The green status line shows whether the server is listening, on which address,
 and **how many clients are connected right now**. Press **APPLY** to save and
-(re)bind.
+(re)bind; the same **APPLY** sits at the start of the status line and at the
+foot of the section. The form shows what this radio's server runs each time
+the dialog opens or the **Radio** chips move it to another radio. A change not
+yet applied is named in an amber line, *Not applied*; closing Settings
+discards it.
 
 Setting up WSJT-X: under *Settings → Radio*, choose the **TCI Client RX1** rig,
 put sdroxide's address in **TCI Server** (e.g. `127.0.0.1:50002`), set PTT to

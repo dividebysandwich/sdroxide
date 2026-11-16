@@ -904,6 +904,9 @@ impl SdroxideApp {
             self.converter_edit_hz = None;
             self.range_edit = None;
             self.rx_site_edit = None;
+            // Likewise the TCI server form: the next open shows the server
+            // this radio runs.
+            self.reseed_tci_form();
             // The next open starts at the tab bar, not wherever the window was
             // last scrolled to — the offset is one shared egui memory for all
             // the tabs, and it outlives the process.
@@ -3389,6 +3392,7 @@ impl SdroxideApp {
                     ui,
                     io.tci_srv_edit,
                     self.tci_srv_seeded,
+                    self.tci_srv_cfg.as_ref(),
                     &self.tci_srv_status,
                     &self.tci_radios(),
                     io.tci_srv_apply,

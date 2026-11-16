@@ -947,6 +947,7 @@ settings-servers-tci-radio-failed = { $name } · { $port } ⚠
 settings-servers-tci-radio-own-tip = TCI-Server dieses Funkgeräts, unten bearbeitet
 settings-servers-tci-radio-other-tip = Zum Funkgerät wechseln; Dialog folgt auf Server
 settings-servers-tci-port-taken = ⚠ Port { $port } ist auch der TCI-Port von { $radios } — nur ein Server kann ihn belegen. Frei: { $free }.
+settings-servers-tci-not-applied = ⚠ Nicht übernommen — der Server läuft noch wie vorher. ÜBERNEHMEN drücken oder Einstellungen schließen zum Verwerfen.
 settings-servers-device-name = Gerätename
 settings-servers-off-leaves-control-receive-streams = Aus lässt Steuerung und Empfangsströme laufen, aber jede Tastanforderung wird abgelehnt.
 settings-servers-tci-has-no-authentication-0 = ⚠ TCI hat keine Authentifizierung. Auf 0.0.0.0 kann jeder, der diesen Port erreicht, Ihren Sender abstimmen und tasten.
