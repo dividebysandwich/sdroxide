@@ -1721,7 +1721,13 @@ use sdroxide_types::{
 ///
 /// v211: ELAD monitoring. `CatConfig` gains `elad_mute_on_radio_ptt` and
 /// `EladConfig` gains `hear_own_tx`, which changes every `RadioConfig`.
-pub const PROTO_VERSION: u16 = 211;
+///
+/// v212: HFDL channels, auto-follow and feeds. `HfdlSettings` gains `also_khz`
+/// (the channels decoded alongside the primary) and `auto_follow` at its tail;
+/// it crosses whole inside `RadioState` and `Command::SetHfdlConfig`.
+/// `RadioState` gains `hfdl_outputs` at its tail, and `Command` gains
+/// `SetHfdlOutputs` after `ScanBack`.
+pub const PROTO_VERSION: u16 = 212;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
