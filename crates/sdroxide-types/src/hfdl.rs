@@ -90,6 +90,14 @@ pub struct HfdlOutputs {
     /// the wire is positional.
     #[serde(default)]
     pub json_udp: Vec<String>,
+    /// Serve aircraft positions as BaseStation (SBS-1) lines on this TCP port,
+    /// for Virtual Radar Server, PlanePlotter and the like; 0 is off. Appended
+    /// last: the wire is positional.
+    #[serde(default)]
+    pub sbs_port: u16,
+    /// Let other computers connect to it; otherwise only this one can.
+    #[serde(default)]
+    pub sbs_lan: bool,
 }
 
 impl HfdlOutputs {
@@ -141,6 +149,11 @@ pub struct HfdlOutputStatus {
     pub json_sent: u64,
     /// Why the last one to some target could not be sent, naming it.
     pub json_error: Option<String>,
+    /// BaseStation clients connected, and lines written.
+    pub sbs_clients: u32,
+    pub sbs_sent: u64,
+    /// Why the server is not listening (the port is taken, …).
+    pub sbs_error: Option<String>,
 }
 
 /// What auto-follow is doing.

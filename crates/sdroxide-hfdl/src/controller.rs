@@ -164,6 +164,7 @@ impl HfdlController {
                             recv(iq_rx) -> msg => match msg {
                                 Ok(Iq { samples }) => {
                                     tick += 1;
+                                    outputs.poll();
                                     let mut emitted = false;
                                     if cfg.enabled {
                                         let mut batch: Vec<(usize, HfdlEvent)> = Vec::new();

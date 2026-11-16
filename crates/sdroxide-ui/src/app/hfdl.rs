@@ -471,6 +471,42 @@ impl SdroxideApp {
             ui.label(RichText::new(text).size(10.5).color(ink));
         }
 
+        // Positions as BaseStation lines, for a plotting program.
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.label(tr!("hfdl-feed-sbs"));
+            let mut port = edit.sbs_port;
+            let r = ui
+                .add(egui::DragValue::new(&mut port).range(0..=65_535).speed(0.0))
+                .on_hover_text(tr!("hfdl-feed-sbs-hint"));
+            // Applied when the field is left, not on every digit typed — each
+            // change of port reopens the server.
+            if port != edit.sbs_port {
+                edit.sbs_port = port;
+            }
+            if (r.lost_focus() || r.drag_stopped()) && edit.sbs_port != live.sbs_port {
+                send = true;
+            }
+        });
+        if ui
+            .checkbox(&mut edit.sbs_lan, tr!("hfdl-feed-sbs-lan"))
+            .on_hover_text(tr!("hfdl-feed-sbs-lan-hint"))
+            .changed()
+        {
+            send = true;
+        }
+        if live.sbs_port != 0 {
+            let (text, ink) = match &st.sbs_error {
+                Some(err) => (err.clone(), crate::theme::HAZARD()),
+                None => (
+                    tr!("hfdl-feed-sbs-status", clients = st.sbs_clients, n = count(st.sbs_sent))
+                        .to_string(),
+                    crate::theme::GREEN(),
+                ),
+            };
+            ui.label(RichText::new(text).size(10.5).color(ink));
+        }
+
         if send {
             let mut o = edit.clone();
             o.station_id = o.station_id.trim().to_string();

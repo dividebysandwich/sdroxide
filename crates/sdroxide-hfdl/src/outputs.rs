@@ -21,6 +21,7 @@ use sdroxide_types::{
 use xng_mode_hfdl::pdu::HfdlEvent;
 
 use crate::dumphfdl::{self, FrameMeta};
+use crate::sbs::{SbsServer, sbs_line};
 
 /// How often a target's name is looked up again.
 const RESOLVE_EVERY: Duration = Duration::from_secs(600);
@@ -76,6 +77,8 @@ pub struct Outputs {
     airframes: Option<Target>,
     /// The local JSON targets, by the `host:port` they were given as.
     json: Vec<(String, Target)>,
+    /// The BaseStation server, while one is asked for and could listen.
+    sbs: Option<SbsServer>,
     status: HfdlOutputStatus,
 }
 
@@ -93,6 +96,7 @@ impl Outputs {
             sock: None,
             airframes: None,
             json: Vec::new(),
+            sbs: None,
             status: HfdlOutputStatus::default(),
         }
     }
@@ -124,6 +128,17 @@ impl Outputs {
         if self.json.is_empty() {
             self.status.json_error = None;
         }
+        // The BaseStation server: (re)opened when its port or reach changes.
+        if cfg.sbs_port != self.cfg.sbs_port || cfg.sbs_lan != self.cfg.sbs_lan {
+            self.sbs = None;
+            self.status.sbs_error = None;
+            if cfg.sbs_port != 0 {
+                match SbsServer::bind(cfg.sbs_port, cfg.sbs_lan) {
+                    Ok(s) => self.sbs = Some(s),
+                    Err(e) => self.status.sbs_error = Some(format!("port {}: {e}", cfg.sbs_port)),
+                }
+            }
+        }
         self.cfg = cfg;
         if self.wants_udp() && self.sock.is_none() {
             match UdpSocket::bind("0.0.0.0:0").and_then(|s| s.set_nonblocking(true).map(|()| s)) {
@@ -143,7 +158,16 @@ impl Outputs {
     /// Whether anything is switched on — when nothing is, the worker skips
     /// serializing altogether.
     pub fn active(&self) -> bool {
-        self.wants_udp()
+        self.wants_udp() || self.sbs.is_some()
+    }
+
+    /// Housekeeping between frames: take in new BaseStation clients. Cheap,
+    /// and never blocks.
+    pub fn poll(&mut self) {
+        if let Some(s) = self.sbs.as_mut() {
+            s.accept();
+            self.status.sbs_clients = s.clients() as u32;
+        }
     }
 
     /// Send one decoded event to every output that wants it.
@@ -154,6 +178,17 @@ impl Outputs {
         gs: &'a dyn Fn(u8) -> Option<&'a HfdlStation>,
     ) {
         if !self.active() {
+            return;
+        }
+        if let Some(srv) = self.sbs.as_mut()
+            && let Some(line) = sbs_line(e, meta.sec)
+        {
+            if srv.send(&line) {
+                self.status.sbs_sent += 1;
+            }
+            self.status.sbs_clients = srv.clients() as u32;
+        }
+        if !self.wants_udp() {
             return;
         }
         let meta = FrameMeta { station: Some(self.cfg.station_id.clone()), ..meta.clone() };
@@ -305,6 +340,60 @@ mod tests {
         assert_eq!(o.json.len(), 1);
         assert_eq!(o.json[0].0, keep);
         assert!(o.json[0].1.addr().is_ok(), "kept, not looked up again");
+    }
+
+    /// A position report with a known ICAO reaches a connected BaseStation
+    /// client; turning the port off closes the server.
+    #[test]
+    fn positions_reach_a_basestation_client() {
+        use std::io::{BufRead, BufReader};
+        // An ephemeral port: find one free, then hand it to the outputs.
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let mut o = Outputs::new();
+        o.configure(HfdlOutputs { sbs_port: port, ..Default::default() });
+        assert!(o.active(), "{:?}", o.status().sbs_error);
+        let client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        for _ in 0..200 {
+            o.poll();
+            if o.status().sbs_clients == 1 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(o.status().sbs_clients, 1);
+        let now = 1_700_000_000; // 22:13:20 UTC
+        let e = HfdlEvent {
+            kind: "frequency-data".into(),
+            details: serde_json::json!({
+                "utc": { "hour": 22, "min": 13, "sec": 0 },
+                "position": { "lat": 10.0, "lon": 20.0, "flight": "QFA7", "icao": "7C1234" },
+            }),
+            acars: None,
+            fec_corrected: None,
+            freq_skew_hz: None,
+            snr_db: None,
+            raw: Vec::new(),
+        };
+        let meta =
+            FrameMeta { sec: now, usec: 0, freq_hz: 8_912_000, sig_level: -30.0, station: None };
+        o.emit(&e, &meta, &|_| None);
+        let mut line = String::new();
+        BufReader::new(&client).read_line(&mut line).unwrap();
+        assert!(line.starts_with("MSG,3,1,1,7C1234,1,2023/11/14,22:13:00.000,"), "{line}");
+        assert_eq!(o.status().sbs_sent, 1);
+        o.configure(HfdlOutputs::default());
+        assert!(!o.active());
+    }
+
+    #[test]
+    fn a_port_already_taken_is_reported_not_fatal() {
+        let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = held.local_addr().unwrap().port();
+        let mut o = Outputs::new();
+        o.configure(HfdlOutputs { sbs_port: port, ..Default::default() });
+        assert!(!o.active());
+        assert!(o.status().sbs_error.unwrap().contains(&port.to_string()));
     }
 
     #[test]

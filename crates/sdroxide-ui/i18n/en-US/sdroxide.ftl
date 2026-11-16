@@ -6486,3 +6486,11 @@ hfdl-feed-sent = { $n } frames sent
 hfdl-feed-json = Send the same JSON to (UDP host:port, comma-separated)
 hfdl-feed-json-hint = Programs of your own that read dumphfdl's JSON — acarshub (whose HFDL input is usually UDP port 5556), a logger, a script. One datagram per frame to each, as dumphfdl's decoded:json UDP output sends them. No station ID needed. Applied when you leave the field.
 hfdl-feed-json-bad = Not a host:port: { $targets }
+hfdl-feed-sbs = BaseStation (SBS) port
+hfdl-feed-sbs-hint = Serve aircraft positions as BaseStation lines on this TCP port, for Virtual Radar Server, PlanePlotter and the like — the same lines dumphfdl's basestation output writes. 0 is off. 30003 is the usual BaseStation port; pick another if an ADS-B decoder on this computer already serves it. Applied when you leave the field.
+hfdl-feed-sbs-lan = Let other computers connect
+hfdl-feed-sbs-lan-hint = Off: only programs on this computer can connect. On: any computer that can reach this one on the network can.
+hfdl-feed-sbs-status = { $clients ->
+        [one] 1 client
+       *[other] { $clients } clients
+    } connected · { $n } positions sent

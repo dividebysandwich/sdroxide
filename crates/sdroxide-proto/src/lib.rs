@@ -2413,7 +2413,8 @@ mod tests {
             station_id: "XX-TEST-HFDL".into(),
             airframes: true,
             json_udp: vec!["127.0.0.1:5556".into()],
-            ..Default::default()
+            sbs_port: 30_003,
+            sbs_lan: true,
         };
         let cmd = Command::SetHfdlOutputs(feeds.clone());
         assert_eq!(decode::<Command>(&encode(&cmd).unwrap()).unwrap(), cmd);

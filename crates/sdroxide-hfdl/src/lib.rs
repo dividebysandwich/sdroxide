@@ -15,6 +15,7 @@ pub mod controller;
 pub mod dumphfdl;
 pub mod follow;
 pub mod outputs;
+pub mod sbs;
 pub mod stations;
 
 pub use controller::HfdlController;
