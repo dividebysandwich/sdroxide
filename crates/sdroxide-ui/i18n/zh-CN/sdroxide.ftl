@@ -5977,3 +5977,104 @@ textmodem-psk-coded-hint =
 topbar-sk-filter-after-nr-hint = SK 位于 RNN/DFNR 之后——因而也在 AGC 之后：滤波器削去的电平不会恢复（见旁边的提升）；关闭：位于恢复电平的 AGC 之前
 topbar-sk-filter-boost-hint = SK 滤波后的提升 0–18 dB（5 dB），在满刻度以下软限幅：NR 之后没有任何环节恢复滤波器削去的电平
 topbar-sk-filter-boost-before-nr = NR 之前由 AGC 恢复电平；提升仅在 NR 之后生效
+
+## hfdl：地面站（src/app/hfdl.rs）
+
+hfdl-stations = 地面站
+hfdl-no-station-heard-yet = 尚未收听到任何地面站。电台的信标会在其使用的信道上每约 32 秒重复一次；网络的系统表收到后，列表也会由它补充。
+hfdl-station-heard = 在 { $mhz } MHz 上 { $age } 前收听到
+hfdl-station-squitters = { $n } 次信标
+hfdl-station-not-heard = 尚未收听到
+hfdl-station-channel-hint = 调谐到 { $mhz } MHz。绿色：该电台目前正在此信道上工作。
+hfdl-station-channels-unknown = 在网络广播其系统表之前，信道未知。
+hfdl-chip-stations = 使用者：{ $stations }
+hfdl-chip-working = { $station } 正在此信道上工作——{ $age } 前收听到
+
+## hfdl：ACARS 报文（src/app/hfdl.rs）
+
+hfdl-messages = 报文
+hfdl-no-acars-yet = 尚无 ACARS 报文。航空公司的报文在信标之间的数据链路中传输，频率远低于 VHF 上的情况；收听到的报文会在解码日志滚动过去之后保留在此处。
+hfdl-save-hfdl-acars-messages-csv = 将 ACARS 报文保存为 CSV 文件
+hfdl-acars-downlink = 飞机到地面
+hfdl-acars-uplink = 地面到飞机
+hfdl-acars-crc-bad = CRC
+hfdl-acars-crc-bad-hint = 报文自身的校验序列不匹配，因此部分文本可能有误。而承载该报文的数据链路帧通过了自身的校验。
+hfdl-acars-more = 更多…
+hfdl-acars-more-hint = 较长报文的一部分——后面还有更多数据块。
+
+## hfdl：飞机列表（src/app/hfdl.rs）
+
+hfdl-aircraft-list = 飞机
+hfdl-no-aircraft-heard-yet = 尚未收听到任何飞机。飞机会在其首次下行（登录、位置报告、ACARS 报文）时出现在此处，无论它是否为地图发送过位置。
+hfdl-aircraft-position = 位于 { $lat }，{ $lon } · { $age } 前
+hfdl-aircraft-from-you = 距你 { $km } km，方位 { $bearing }°
+hfdl-aircraft-logged-off = 已登出
+hfdl-aircraft-no-position-hint = 尚未报告位置，因此地图上没有可闪烁的内容
+hfdl-aircraft-filter-hint = 仅显示此飞机的解码内容：设置过滤器并打开解码
+hfdl-col-reg = 注册号
+hfdl-col-flight = 航班
+hfdl-col-heard = 收听
+hfdl-col-station = 地面站
+hfdl-col-mhz = MHz
+hfdl-col-snr = dB
+hfdl-col-msgs = 报文数
+hfdl-col-dist = km
+hfdl-col-last = 最近报文
+hfdl-aircraft-sort-hint = 按此列排序；再次点击可反向排序
+hfdl-aircraft-blink-hint = 让此飞机在地图上闪烁
+
+## hfdl：同时收听多个信道（src/app/hfdl.rs）
+
+hfdl-chip-multi-hint = 点击即只收听此信道；Ctrl+点击（Mac 上为 ⌘+点击）可与其他信道一同解码。
+hfdl-left-out-hint = 已请求但未解码：与其他信道相距太远，无法共享其通道（最多 200 kHz），或超出接收机的窗口。
+hfdl-nearby = + 相邻
+hfdl-nearby-hint = 同时解码所有与当前信道足够接近、能共享同一通道的信道——彼此相距 200 kHz 以内，且位于接收机窗口内，最多八个。
+hfdl-nearby-none-hint = 没有其他信道能共享该通道：没有足够接近的信道，八个位置已全部占用，或接收机窗口过窄。
+hfdl-single-hint = 返回当前刻度盘所在的那一个信道
+hfdl-lane-label = 信道
+
+## hfdl：自动跟随（src/app/hfdl.rs）
+
+hfdl-auto = AUTO
+hfdl-auto-hint = 自动寻找开放的频段：当该频段上仍能收听到地面站时保持不动；当约一分半钟内都没有收听到任何地面站时，切换到下一个频段——白天选较高的频段，夜间选较低的频段，以你的网格方块为准；若有电台表示正在该频段工作，则优先选它——并一次性接收该频段的所有信道。手动选择一个信道会关闭此功能。
+hfdl-follow-starting = AUTO · 等待解码器…
+hfdl-follow-parked = AUTO · { $mhz } MHz 已开放——{ $age } 前收听到 { $station }
+hfdl-follow-listening = AUTO · 正在 { $mhz } MHz 上收听；若未收听到任何内容，{ $secs } 秒后切换到下一个频段
+
+## hfdlmap：地面站（src/hfdl_map.rs）
+
+hfdlmap-gs-heard = { $age } 前收听到
+hfdlmap-gs-not-heard = 近期未收听到——来自系统表的已知电台
+
+## hfdl：按频段划分的信道（src/app/hfdl.rs）
+
+hfdl-band-label = MHz
+hfdl-band-hint = 显示 { $mhz } MHz 的信道。绿色：目前有电台在其中一个信道上工作；下划线：其中一个信道正在解码。
+
+## hfdl：计算得出的航向和速度（src/app/hfdl.rs）
+
+hfdl-col-calc-trk = 计算航向
+hfdl-col-calc-kt = 计算 kt
+hfdl-col-calc-hint = 根据飞机最近两次位置报告计算得出——对地航向，以及两者之间的平均对地速度。并非飞机报告的数值：HFDL 位置报告中两者都不包含。
+
+## hfdl：转发（src/app/hfdl.rs）
+
+hfdl-feeds = 馈送
+hfdl-feeds-hint = 将解码内容发送到此面板以外的地方——发送至 Airframes，或发送至你自己的程序。在你开启之前，全部处于关闭状态。
+hfdl-station-id = 电台 ID
+hfdl-station-id-hint = 会标记在每个发送的帧上。Airframes 会将你的馈送归属到此 ID，并要求其格式为 XX-YYYY-HFDL：你的姓名缩写、机场代码或网格定位，以及模式。可使用字母、数字、-和 _，最多 32 个字符。
+hfdl-station-id-bad = 仅限字母、数字、-和 _，最多 32 个字符。
+hfdl-feed-airframes = 发送至 Airframes（feed.airframes.io）
+hfdl-feed-airframes-hint = 将每个解码帧（信标、位置、ACARS 报文）连同你的电台 ID，以 dumphfdl 的 JSON 格式（Airframes 所读取的格式）通过 UDP 5556 端口发送至 Airframes 的 HFDL 接收端。此后，你的馈送会在 airframes.io 上以该 ID 显示。此项关闭时，不发送任何内容。
+hfdl-feed-needs-id = 未发送：请先填写电台 ID。
+hfdl-feed-sent = 已发送 { $n } 帧
+hfdl-feed-json = 将相同的 JSON 发送至（UDP host:port，以逗号分隔）
+hfdl-feed-json-hint = 读取 dumphfdl JSON 的你自己的程序——acarshub（其 HFDL 输入通常为 UDP 5556 端口）、记录程序、脚本等。每帧向每个目标发送一个数据报，与 dumphfdl 的 decoded:json UDP 输出相同。无需电台 ID。离开此输入框时生效。
+hfdl-feed-json-bad = 不是 host:port：{ $targets }
+hfdl-feed-sbs = BaseStation（SBS）端口
+hfdl-feed-sbs-hint = 在此 TCP 端口以 BaseStation 行的形式提供飞机位置，用于 Virtual Radar Server、PlanePlotter 等类似程序——与 dumphfdl 的 basestation 输出所写的行相同。0 表示关闭。30003 是常用的 BaseStation 端口；如果本机的某个 ADS-B 解码器已占用该端口，请选择其他端口。离开此输入框时生效。
+hfdl-feed-sbs-lan = 允许其他计算机连接
+hfdl-feed-sbs-lan-hint = 关闭：只有本机上的程序可以连接。开启：网络上任何能够访问本机的计算机都可以连接。
+hfdl-feed-sbs-status = { $clients ->
+       *[other] 已连接 { $clients } 个客户端 · 已发送 { $n } 个位置
+    }
