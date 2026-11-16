@@ -14,7 +14,7 @@ use crate::i18n::tr;
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Stroke, Vec2};
 use sdroxide_types::{
     AmpAction, AmpGauge, AmpLevel, AmpLimits, AmpModel, AmpReadings, AmpStatus, AtuNetwork,
-    Command, amp_band_label,
+    Command, TUNE_RESULT_BYPASSED, TUNE_RESULT_TUNED, TuneRecord, amp_band_label,
 };
 
 use super::SdroxideApp;
@@ -490,6 +490,79 @@ impl TuneFailure {
 /// close alone (WA2EUJ, 14 Nov 2026). Expected, not a failure.
 fn tuned_without_tuner(tuned: bool, active: bool, net: Option<AtuNetwork>) -> bool {
     tuned && active && net.is_some_and(|n| n.bypassed)
+}
+
+/// The last tune succeeded: the tuner's `S`, or its `T` (the load was already
+/// under 1.3:1 and left bypassed). Compared with the link's own words, which
+/// are the same whatever language the window is in.
+fn tune_succeeded(result: Option<&str>) -> bool {
+    matches!(result, Some(TUNE_RESULT_TUNED | TUNE_RESULT_BYPASSED))
+}
+
+/// How a tune ended, in the window's language where it has the words, as the
+/// link reports it otherwise.
+fn result_words(result: &str) -> String {
+    match result {
+        TUNE_RESULT_TUNED => tr!("amp-tuned").to_string(),
+        TUNE_RESULT_BYPASSED => tr!("amp-tuned-without-tuner").to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// An SWR as the tuner's line shows it.
+fn swr_words(swr: f32) -> String {
+    if swr >= 10.0 {
+        // A refused tune into an open wire reads near total reflection; a
+        // three-figure ratio means nothing.
+        "> 10:1".to_string()
+    } else {
+        format!("{swr:.2}:1")
+    }
+}
+
+/// The tuner's SWR beside its state with the network in line: after a tune,
+/// with the SWR it started from (the tuner's `S`), as in `1.46:1 (from
+/// 3.44:1)`. While tuning, only the live figure.
+fn tuner_swr_words(n: AtuNetwork, tuning: bool) -> Option<String> {
+    let now = swr_words(n.swr?);
+    Some(match n.start_swr.filter(|_| !tuning) {
+        Some(from) => tr!("amp-tuner-swr-from", now = now, from = swr_words(from)).to_string(),
+        None => now,
+    })
+}
+
+/// One line of the Last tunes list: when, the band, the SWR before and after
+/// from the tuner's own coupler, and the network it left in. With no
+/// capacitor in (step 0) no side is named for it (AJ3G, 16 Nov 2026). A tune
+/// that didn't succeed says how it ended.
+fn tune_row(r: &TuneRecord, when: &str) -> String {
+    let band = r.band.map_or("?", amp_band_label);
+    let Some(n) = r.network else {
+        return format!("{when}  {band:>4}  {}", result_words(&r.result));
+    };
+    let swr = |s: Option<f32>| s.map_or("?".to_string(), swr_words);
+    let net = if n.bypassed {
+        tr!("amp-tune-row-bypassed").to_string()
+    } else if n.c_step == 0 {
+        format!("L{} C0", n.l_step)
+    } else {
+        format!("L{} C{} {}", n.l_step, n.c_step, if n.cap_output { "ANT" } else { "TX" })
+    };
+    let how = if tune_succeeded(Some(&r.result)) {
+        String::new()
+    } else {
+        format!("  {}", result_words(&r.result))
+    };
+    let swrs = tr!("amp-tune-row-swr", from = swr(n.start_swr), to = swr(n.swr));
+    format!("{when}  {band:>4}  {swrs}  {net}{how}")
+}
+
+/// A tune's end time as `HH:MM` on the operator's clock, `offset` seconds
+/// east of UTC.
+fn tune_time(at_unix: u64, offset: i64) -> String {
+    let at = i64::try_from(at_unix).unwrap_or(0) + offset;
+    let (_, _, _, h, mi, _) = sdroxide_types::utc_ymd_hms(at);
+    format!("{h:02}:{mi:02}")
 }
 
 /// The legend's font size: 12 points (scaled) when a legend `width` wide at
@@ -1205,7 +1278,7 @@ fn amp_panel_inner(
         // failed (AJ3G).
         let failure = TuneFailure::of(atu.last_result.as_deref());
         let failed = failure.is_some();
-        let tuned = atu.active && atu.last_result.as_deref() == Some(&tr!("amp-tuned"));
+        let tuned = atu.active && tune_succeeded(atu.last_result.as_deref());
         let unneeded = !atu.tuning && tuned_without_tuner(tuned, atu.active, net);
         let (lit, tune_fill) = if atu.tuning {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
@@ -1254,9 +1327,9 @@ fn amp_panel_inner(
                         Some(tr!("amp-tuned-without-tuner-hover").to_string()),
                     )
                 } else if let Some(res) = &atu.last_result {
-                    (res.clone(), None)
+                    (result_words(res), Some(tr!("amp-tuner-state-hover").to_string()))
                 } else {
-                    ("ON".into(), None)
+                    ("ON".into(), Some(tr!("amp-tuner-state-hover").to_string()))
                 };
                 let col = if atu.tuning {
                     theme::CYAN()
@@ -1270,21 +1343,37 @@ fn amp_panel_inner(
                 if let Some(hover) = hover {
                     label.on_hover_text(hover);
                 }
-                if let Some(swr) = net.and_then(|n| n.swr).filter(|_| !bypassed) {
-                    ui.label(
-                        RichText::new(if swr >= 10.0 {
-                            // A refused tune into an open wire reads near total
-                            // reflection; a three-figure ratio means nothing.
-                            "> 10:1".to_string()
-                        } else {
-                            format!("{swr:.2}:1")
-                        })
-                        .size(14.0 * s)
-                        .color(theme::TEXT()),
-                    )
-                    .on_hover_text(tr!("amp-tuner-swr"));
+                // In line, the tuned SWR and where it started from; left
+                // bypassed as unneeded, the load's own SWR (the tuner's `S`).
+                let swr = if unneeded {
+                    net.and_then(|n| n.start_swr)
+                        .map(|swr| (swr_words(swr), tr!("amp-tuner-load-swr").to_string()))
+                } else {
+                    net.filter(|_| !bypassed)
+                        .and_then(|n| tuner_swr_words(n, atu.tuning))
+                        .map(|words| (words, tr!("amp-tuner-swr").to_string()))
+                };
+                if let Some((words, hover)) = swr {
+                    ui.label(RichText::new(words).size(14.0 * s).color(theme::TEXT()))
+                        .on_hover_text(hover);
                 }
             });
+        }
+
+        // The last few tunes, newest first, as the tuner reported them.
+        if !atu.history.is_empty() {
+            ui.add_space(4.0 * s);
+            caption(ui, s, &tr!("amp-last-tunes"));
+            for r in &atu.history {
+                let offset = crate::time::local_offset_at(r.at_unix as i64);
+                ui.label(
+                    RichText::new(tune_row(r, &tune_time(r.at_unix, offset)))
+                        .size(12.0 * s)
+                        .monospace()
+                        .color(theme::TEXT()),
+                )
+                .on_hover_text(tr!("amp-last-tunes-hover"));
+            }
         }
     }
     false
@@ -2253,6 +2342,93 @@ mod tests {
         assert!(!tuned_without_tuner(true, false, net(true)));
         assert!(!tuned_without_tuner(false, true, net(true)));
         assert!(!tuned_without_tuner(true, true, None));
+    }
+
+    #[test]
+    fn either_of_the_tuner_s_good_endings_is_a_success() {
+        // As `result_text` in sdroxide-hardrock writes them, whatever the
+        // window's language.
+        assert!(tune_succeeded(Some("Tuned")));
+        assert!(tune_succeeded(Some("Tuned: under 1.3:1, bypassed")));
+        for no in [Some("Aborted"), Some("SWR above 6:1"), Some("Result 7"), None] {
+            assert!(!tune_succeeded(no), "{no:?}");
+        }
+        assert_eq!(result_words(TUNE_RESULT_TUNED), "Tuned");
+        assert_eq!(result_words(TUNE_RESULT_BYPASSED), "Tuned: under 1.3:1 without the tuner");
+        assert_eq!(result_words("Aborted"), "Aborted");
+    }
+
+    #[test]
+    fn a_tune_shows_where_it_started_from() {
+        let n = AtuNetwork { swr: Some(1.46), start_swr: Some(3.44), ..AtuNetwork::default() };
+        assert_eq!(tuner_swr_words(n, false).as_deref(), Some("1.46:1 (from 3.44:1)"));
+        // While tuning, the starting figure is the last tune's: left out.
+        assert_eq!(tuner_swr_words(n, true).as_deref(), Some("1.46:1"));
+        // No tune yet since power-up (S255): the SWR alone.
+        let fresh = AtuNetwork { start_swr: None, ..n };
+        assert_eq!(tuner_swr_words(fresh, false).as_deref(), Some("1.46:1"));
+        let open = AtuNetwork { swr: Some(40.0), start_swr: Some(40.0), ..n };
+        assert_eq!(tuner_swr_words(open, false).as_deref(), Some("> 10:1 (from > 10:1)"));
+        assert_eq!(tuner_swr_words(AtuNetwork::default(), false), None);
+    }
+
+    #[test]
+    fn the_last_tunes_read_before_and_after() {
+        let n = AtuNetwork {
+            l_step: 12,
+            c_step: 34,
+            cap_output: true,
+            swr: Some(1.46),
+            start_swr: Some(3.44),
+            ..AtuNetwork::default()
+        };
+        let r = TuneRecord { at_unix: 0, band: Some(5), result: "Tuned".into(), network: Some(n) };
+        assert_eq!(tune_row(&r, "08:31"), "08:31   20M  3.44:1 to 1.46:1  L12 C34 ANT");
+        let r = TuneRecord {
+            result: "Failed (above 2:1)".into(),
+            network: Some(AtuNetwork {
+                swr: Some(2.4),
+                start_swr: Some(6.0),
+                cap_output: false,
+                ..n
+            }),
+            ..r
+        };
+        assert_eq!(
+            tune_row(&r, "08:40"),
+            "08:40   20M  6.00:1 to 2.40:1  L12 C34 TX  Failed (above 2:1)"
+        );
+        // No capacitor in: no side for it.
+        let r = TuneRecord {
+            result: "Tuned".into(),
+            network: Some(AtuNetwork { l_step: 3, c_step: 0, cap_output: false, ..n }),
+            ..r
+        };
+        assert_eq!(tune_row(&r, "12:21"), "12:21   20M  3.44:1 to 1.46:1  L3 C0");
+        // Left bypassed, already under 1.3:1.
+        let r = TuneRecord {
+            band: Some(10),
+            result: TUNE_RESULT_BYPASSED.into(),
+            network: Some(AtuNetwork {
+                bypassed: true,
+                swr: Some(1.25),
+                start_swr: Some(1.25),
+                ..AtuNetwork::default()
+            }),
+            ..r
+        };
+        assert_eq!(tune_row(&r, "12:30"), "12:30  160M  1.25:1 to 1.25:1  bypassed");
+        // Nothing read back after it.
+        let r = TuneRecord { band: None, result: "Aborted".into(), network: None, ..r };
+        assert_eq!(tune_row(&r, "12:31"), "12:31     ?  Aborted");
+    }
+
+    #[test]
+    fn a_tune_s_time_is_on_the_operator_s_clock() {
+        // 1_700_000_000 is 22:13:20 UTC.
+        assert_eq!(tune_time(1_700_000_000, 0), "22:13");
+        assert_eq!(tune_time(1_700_000_000, -5 * 3600), "17:13");
+        assert_eq!(tune_time(1_700_000_000, 2 * 3600), "00:13");
     }
 
     #[test]

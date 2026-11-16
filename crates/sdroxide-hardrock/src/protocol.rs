@@ -144,6 +144,9 @@ pub enum TuneResult {
     PowerTooHigh,
     PowerTooLow,
     Tuned,
+    /// The untuned load was already better than 1.3:1, so the tuner left its
+    /// network bypassed (WA2EUJ explained, 16 Nov 2026).
+    Bypassed,
     Unknown(char),
 }
 
@@ -155,8 +158,11 @@ impl TuneResult {
             'F' => TuneResult::NotBelow2to1,
             'H' => TuneResult::PowerTooHigh,
             'L' => TuneResult::PowerTooLow,
-            // The manual lists both T and S as "tuned successfully".
-            'T' | 'S' => TuneResult::Tuned,
+            // WA2EUJ explained (16 Nov 2026): S is a completed tune, T a
+            // load already better than 1.3:1, left bypassed. The manual had
+            // listed both as "tuned successfully".
+            'S' => TuneResult::Tuned,
+            'T' => TuneResult::Bypassed,
             other => TuneResult::Unknown(other),
         }
     }
@@ -339,27 +345,32 @@ impl Status {
 /// The tuner's answer to `HRTMP;`.
 ///
 /// The manual lists the `P` message ("reports the tuning parameters") but not
-/// its layout. A real ATU-500 answers `HRTM-L000-C000-H0-B1-S255-F255-`: each
-/// field is the letter of the tuner command that sets or reports it, then
-/// its value. So `L` and `C` are the steps, `H` the capacitor side, `B` the
-/// tuner's band, `S` the last autotune's status and `F` its final return
-/// loss, 255 meaning none. It is read by letter, not position, so a firmware
-/// that orders the fields differently still reads. The step sizes are the
-/// ones HobbyPCB's own HR500 Control Panel multiplies by.
+/// its layout. A real ATU-500 answers `HRTM-L000-C000-H0-B1-S255-F255-`.
+/// WA2EUJ explained the fields (16 Nov 2026): `L` and `C` are the steps, `H`
+/// is 1 when the capacitor is on the output side, `B` is 1 when the network
+/// is bypassed because the match was already good enough, `S` is the
+/// starting (untuned) return loss and `F` the final (tuned) one, both in
+/// tenths of a dB; 255 means none yet. It is read by letter, not position,
+/// so a firmware that orders the fields differently still reads. The step
+/// sizes are the ones HobbyPCB's own HR500 Control Panel multiplies by.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AtuParams {
     /// Inductor step, 0-63.
     pub l_step: u8,
     /// Capacitor step, 0-127.
     pub c_step: u8,
-    /// The tuner reports itself bypassed (a `Y1` field). The `P` reply seen so
-    /// far carries no `Y`; the amplifier's `HRTB` is the reliable answer.
+    /// The tuner has left its network bypassed (`B1`, or a `Y1` field should
+    /// a firmware send one): the load was good enough without it. This is
+    /// the tuner's own bypass; `HRTB` switches the amplifier's relay round
+    /// the whole tuner and leaves it as it was.
     pub bypassed: bool,
     /// The capacitor sits on the antenna side of the inductor rather than the
     /// amplifier side (`H1`).
     pub cap_output: bool,
     /// Return loss in tenths of a dB; `None` when there is nothing to read.
     pub return_loss_tenths: Option<u16>,
+    /// The return loss before the last tune (`S`), in tenths of a dB.
+    pub start_return_loss_tenths: Option<u16>,
 }
 
 impl AtuParams {
@@ -375,7 +386,9 @@ impl AtuParams {
         let mut c = None;
         let mut h = None;
         let mut y = None;
+        let mut b = None;
         let mut rl = None;
+        let mut start = None;
         for field in rest.split('-').map(str::trim).filter(|f| !f.is_empty()) {
             let mut chars = field.chars();
             let tag = chars.next()?.to_ascii_uppercase();
@@ -385,6 +398,8 @@ impl AtuParams {
                 'C' => c = Some(value),
                 'H' => h = Some(value),
                 'Y' => y = Some(value),
+                'B' => b = Some(value),
+                'S' => start = Some(value),
                 // The final return loss after a tune; `R` is the tuner's
                 // command for the current one, should a firmware send that.
                 'F' => rl = Some(value),
@@ -397,10 +412,11 @@ impl AtuParams {
         Some(AtuParams {
             l_step,
             c_step,
-            bypassed: y == Some(1),
+            bypassed: b == Some(1) || y == Some(1),
             cap_output: h? == 1,
             // The Control Panel only trusts 0 < RL < 241; 255 is "none".
             return_loss_tenths: rl.filter(|&rl| rl > 0 && rl < 241),
+            start_return_loss_tenths: start.filter(|&rl| rl > 0 && rl < 241),
         })
     }
 
@@ -416,8 +432,46 @@ impl AtuParams {
 
     /// SWR from the return loss, the way the Control Panel works it out.
     pub fn swr(&self) -> Option<f32> {
-        let k = 10f32.powf(f32::from(self.return_loss_tenths?) / 200.0);
-        Some((k + 1.0) / (k - 1.0))
+        Some(swr_of_return_loss(self.return_loss_tenths?))
+    }
+
+    /// The SWR before the last tune, from its starting return loss.
+    pub fn start_swr(&self) -> Option<f32> {
+        Some(swr_of_return_loss(self.start_return_loss_tenths?))
+    }
+}
+
+/// SWR from a return loss in tenths of a dB, the way the Control Panel works
+/// it out.
+fn swr_of_return_loss(tenths: u16) -> f32 {
+    let k = 10f32.powf(f32::from(tenths) / 200.0);
+    (k + 1.0) / (k - 1.0)
+}
+
+/// The tuner commands that only report, as WA2EUJ listed them (16 Nov 2026):
+/// the info string, firmware version, tuning parameters, last tune's status,
+/// final and current return loss.
+const TUNER_READS: [char; 6] = ['I', 'V', 'P', 'S', 'F', 'R'];
+
+/// SAFETY INTERLOCK (docs/hardrock/safety-interlocks.md, #5): whether a frame
+/// may be sent. Every frame may except a tuner pass-through (`HRTM…`) that
+/// isn't a read: one of [`TUNER_READS`] alone, or any command letter followed
+/// by `?` (which reports its value). Refused are `A` (an autotune: TUNE goes
+/// as the amplifier's own `HRTU`), `D` (the tuner's coupler in or out of
+/// line; it is built to see 20 to 40 W, and in line at full power it can be
+/// damaged), `E` (wipes the tuner's memory), `Q` (writes its EEPROM), `U`
+/// (waits for a bootloader), and every set (`B`, `C`, `H`, `L`, `N`, `Y` with
+/// a value).
+pub fn passthrough_allowed(frame: &str) -> bool {
+    let up = frame.trim().trim_end_matches(';').trim().to_ascii_uppercase();
+    let Some(rest) = up.strip_prefix("HRTM") else {
+        return true;
+    };
+    let mut chars = rest.chars();
+    match (chars.next(), chars.as_str()) {
+        (Some(c), "") => TUNER_READS.contains(&c),
+        (Some(c), "?") => c.is_ascii_alphabetic(),
+        _ => false,
     }
 }
 
@@ -591,6 +645,45 @@ mod tests {
     }
 
     #[test]
+    fn only_reads_pass_through_to_the_tuner() {
+        for ok in [
+            "HRTMP;",
+            "HRTMS;",
+            "HRTMF;",
+            "HRTMR;",
+            "HRTMV;",
+            "HRTMI;",
+            "hrtmc?;",
+            "HRTMD?",
+            "HRTMA?;",
+            "HRST;",
+            "HRTU;",
+            "HRTB1;",
+            "FA00014074000;",
+        ] {
+            assert!(passthrough_allowed(ok), "{ok} refused");
+        }
+        for no in [
+            "HRTMD1;",
+            "HRTMD0;",
+            "HRTMA;",
+            "HRTME;",
+            "HRTMQ;",
+            "HRTMU;",
+            "HRTMC064;",
+            "HRTML12;",
+            "HRTMY1;",
+            "HRTMN2;",
+            "HRTMB3;",
+            "HRTMH1;",
+            "HRTM;",
+            "HRTMPP;",
+        ] {
+            assert!(!passthrough_allowed(no), "{no} allowed");
+        }
+    }
+
+    #[test]
     fn band_codes_round_trip() {
         for b in Band::ALL {
             assert_eq!(Band::from_code(b.code()), Some(b));
@@ -670,7 +763,9 @@ mod tests {
 
     #[test]
     fn tune_result_in_either_spelling() {
-        assert_eq!(Response::parse("HRTRT;"), Response::TuneResult(TuneResult::Tuned));
+        assert_eq!(Response::parse("HRTRS;"), Response::TuneResult(TuneResult::Tuned));
+        // T: the load was already better than 1.3:1 and was left bypassed.
+        assert_eq!(Response::parse("HRTRT;"), Response::TuneResult(TuneResult::Bypassed));
         assert_eq!(Response::parse("HRTTE;"), Response::TuneResult(TuneResult::SwrTooHigh));
     }
 
@@ -680,11 +775,15 @@ mod tests {
         let r = Response::parse("HRTM-L000-C000-H0-B1-S255-F255-;");
         let Response::AtuParams(p) = r else { panic!("{r:?}") };
         assert_eq!((p.l_step, p.c_step), (0, 0));
-        // H0: capacitor on the input side. B1 is the tuner's band, not bypass:
-        // switching HRTB0/HRTB1 left both digits unchanged.
-        assert_eq!((p.bypassed, p.cap_output), (false, false));
+        // H0: capacitor on the input side. B1: the tuner's own network is
+        // bypassed (WA2EUJ explained, 16 Nov 2026). Switching the amplifier's
+        // HRTB0/1 left it unchanged: HRTB switches the amplifier's relay round
+        // the whole tuner, not the tuner's network.
+        assert_eq!((p.bypassed, p.cap_output), (true, false));
         // 255 is the "nothing measured" value, past the panel's 240 limit.
         assert_eq!(p.return_loss_tenths, None);
+        assert_eq!(p.start_return_loss_tenths, None);
+        assert_eq!(p.start_swr(), None);
         // No tune attempted yet: a bare HRTR.
         assert!(matches!(Response::parse("HRTR;"), Response::Other(_)));
     }
@@ -692,7 +791,7 @@ mod tests {
     #[test]
     fn atu_params_by_position() {
         // A tuned network in the real tuner's layout.
-        let r = Response::parse("HRTM-L012-C034-H1-B5-S000-F145-;");
+        let r = Response::parse("HRTM-L012-C034-H1-B0-S052-F145-;");
         let Response::AtuParams(p) = r else { panic!("{r:?}") };
         assert_eq!((p.l_step, p.c_step), (12, 34));
         assert!(!p.bypassed);
@@ -700,16 +799,18 @@ mod tests {
         assert!((p.inductance_uh() - 0.60).abs() < 1e-4);
         assert_eq!(p.capacitance_pf(), 340.0);
         assert_eq!(p.return_loss_tenths, Some(145));
-        // 14.5 dB return loss is about 1.46:1.
+        // 14.5 dB return loss is about 1.46:1, from 5.2 dB (about 3.4:1).
         assert!((p.swr().unwrap() - 1.46).abs() < 0.01);
+        assert_eq!(p.start_return_loss_tenths, Some(52));
+        assert!((p.start_swr().unwrap() - 3.44).abs() < 0.01);
         assert_eq!(Command::AtuParams.encode(), "HRTMP;");
     }
 
     #[test]
     fn atu_params_reject_nonsense() {
         assert!(AtuParams::parse("HRTM 8").is_none());
-        assert!(AtuParams::parse("HRTM-L099-C034-H1-B5-S000-F145-").is_none());
-        assert!(AtuParams::parse("HRTM-L012-C034-B5-F145-").is_none());
+        assert!(AtuParams::parse("HRTM-L099-C034-H1-B0-S000-F145-").is_none());
+        assert!(AtuParams::parse("HRTM-L012-C034-B0-F145-").is_none());
         // Fields in another order, and a tuner that says it is bypassed.
         let p = AtuParams::parse("HRTM-F000-Y1-C000-L000-H0-").unwrap();
         assert!(p.bypassed);

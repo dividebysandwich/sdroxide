@@ -116,3 +116,23 @@ The meter legend and the tiles' hover text say where each came from. Any reading
 **Limits.** Display only: nothing changes what or when the amplifier transmits or switches. SDRoxide's own SWR guard (`swr_tune_limit`, used by the engine) is unchanged, because it serves every radio and external tuner, some of which start their search at 10:1.
 
 **Where.** `crates/sdroxide-ui/src/app/amp.rs`, `swr_warn_at`, `ATU_500_SWR_RED`, `TuneFailure`, `tuned_without_tuner` and the tuner section of the window; `docs/hardrock/atu-values.md`, "How the ATU-500 tunes"; User manual section 2.23, "Readings" and "Tuner".
+
+## 7. The tuner's starting SWR, its T result, Last tunes and a read-only pass-through
+
+**Decided:** AJ3G, 16 Nov 2026, from WA2EUJ's answer about the ATU-500's status reply and result letters (AJ3G to vet, 16 Nov 2026).
+
+**What changed it.** In the tuner's `P` reply, `S` is the starting (untuned) return loss and `F` the final one, both in tenths of a dB, and `B` is 1 when the network is bypassed because the match was already good enough (see "The tuner's status reply and results" in [atu-values.md](atu-values.md)). In the result, `T` means the untuned load was better than 1.3:1 and was left bypassed, and `S` a completed tune. SDRoxide had dropped `S`, read `B` as the band and taken `T` and `S` alike as "Tuned".
+
+**What the panel does now.**
+
+- `AtuParams` reads `B` as bypassed and `S` as the starting return loss (`start_swr`); `TuneResult::Bypassed` comes from `T`. Reading `B` makes decision 6's *Tuned: under 1.3:1 without the tuner* work on a real tuner, which never sends the `Y` field the panel had looked for.
+- After a tune the tuner's line shows where it started from, as in *1.46:1 (from 3.44:1)*; after a bypass, the load's own SWR. Both come from the tuner's own coupler.
+- When a tune ends the link keeps a `TuneRecord` (time, band, result, network with both SWRs), the last four, newest first, and logs a line for it. The AMP window lists them under **LAST TUNES**. With the capacitor at step 0 no side is named for it (AJ3G).
+- The tuner's state line has a hover for every state, saying how the tuner tunes and whose SWR it shows.
+- Whether the last tune succeeded is judged on the link's own words, not on the translated "Tuned", which never matched in other languages.
+- Every tuner pass-through that isn't a read is refused before it is sent: safety interlock #5. He warned that switching the tuner's coupler in (`D1`) at full power can damage it, and other commands wipe or rewrite the tuner.
+- The wire protocol goes to v212: `AtuNetwork` and `AtuReadout` carry the new fields.
+
+**Not ported.** Hardrock Panel also raised TUNE's drive limit to 10 W on the HR500 (`tune_max_w`). SDRoxide has nothing to raise: it never judges TUNE against the amplifier's drive limit. The 8 W limit there is OFF to PTT (#4) and the DRV colours only, and both stay.
+
+**Where.** `crates/sdroxide-hardrock/src/protocol.rs` (`AtuParams`, `TuneResult`, `passthrough_allowed`), `lib.rs` (`Amp::send`), `link.rs` (`tune_log_line`, the tune's end); `crates/sdroxide-types/src/amp.rs` (`TuneRecord`, `TUNE_HISTORY`, `TUNE_RESULT_*`); `crates/sdroxide-ui/src/app/amp.rs` (`tuner_swr_words`, `tune_row`, `tune_time`, `tune_succeeded`, the tuner section); User manual section 2.23, "Tuner".

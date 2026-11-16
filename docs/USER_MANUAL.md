@@ -4048,6 +4048,14 @@ tuner is bypassed, the drawing shows the bypass relays instead.
   1.3:1 without the tuner*: that is expected. The tuner aims for 1.3:1 and
   keeps the best match it has seen; its SWR, read on its own coupler, can
   differ from the amplifier's SWR tile by up to about 0.2.
+- **Where a tune started from.** After a tune the line shows the SWR it
+  started from as well, as in *1.46:1 (from 3.44:1)*; after a load was left
+  bypassed it shows the load's own SWR. Under it, **LAST TUNES** lists the
+  last four tunes, newest first: the time, the band, the SWR before and
+  after, and the network left in (L and C steps, and ANT or TX for the
+  capacitor's side; no side when no capacitor is in), or *bypassed*. Each
+  tune is also written to the log, for example *hardrock: tune ended on 20m:
+  Tuned; SWR 3.44:1 -> 1.46:1; L 12 C 34 on the antenna side*.
 - **ON / BYP** puts the tuner in line or bypasses it.
 
 The tuner only reports step numbers. The values shown (for example "~0.20 µH ·
@@ -4080,6 +4088,10 @@ won't switch the antenna, band or tuner:
 - **PTT** can't be switched on (OFF to PTT) while the drive is over the
   amplifier's drive limit, 8 W on the HR500, as with a 100 W radio running
   barefoot through the bypassed amp. Lower the drive first.
+- Only reads are passed through to the tuner. Some tuner commands wipe or
+  rewrite its memory, and one switches its coupler in line, where full power
+  can damage it; sdroxide itself only ever reads the tuner, and the `hrctl`
+  tool refuses anything else.
 
 Each of these is marked *SAFETY INTERLOCK* in the code and explained in
 `docs/hardrock/safety-interlocks.md`.

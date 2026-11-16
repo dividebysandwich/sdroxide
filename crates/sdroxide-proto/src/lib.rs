@@ -1721,7 +1721,11 @@ use sdroxide_types::{
 ///
 /// v211: ELAD monitoring. `CatConfig` gains `elad_mute_on_radio_ptt` and
 /// `EladConfig` gains `hear_own_tx`, which changes every `RadioConfig`.
-pub const PROTO_VERSION: u16 = 211;
+///
+/// v212: the Hardrock tuner's last tunes. `AtuNetwork` gains `start_swr` and
+/// `AtuReadout` gains `history` (`Vec<TuneRecord>`) on their tails, which
+/// changes the layout of every `ServerMsg::AmpStatus` with a tuner.
+pub const PROTO_VERSION: u16 = 212;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
