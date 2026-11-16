@@ -323,7 +323,7 @@ settings-added-radio-s-s-meter =
 settings-t-0-db = 0 dB
 settings-antenna-somewhere-else-no-locator = La antena está en otro lugar y no hay locátor configurado, así que nada de lo que oye esta radio se informa a PSK Reporter, WSPRnet ni FreeDV Reporter. Escribe arriba el locátor del receptor para informar desde él.
 settings-ranges-are-mhz-low-high = Los rangos están en MHz, bajo-alto, separados por comas: 144-146, 430-440 — es decir, 144000000-146000000 Hz y 430000000-440000000 Hz. Son frecuencias de dial: un desplazamiento de conversor no las mueve. El desplazamiento del conversor de arriba es el campo en hercios. Deja un rango vacío para usar lo que el dispositivo informe de sí mismo; un dispositivo que no informa de nada se toma al pie de la letra.
-settings-careful-rtl-sdr-blog-v4 = Cuidado con un RTL-SDR: el Blog V4 convierte hacia arriba por sí solo por debajo de 28,8 MHz, así que un desplazamiento negativo que deje el hardware allí desplaza dos veces.
+settings-careful-rtl-sdr-blog-v4 = Cuidado con un RTL-SDR: el Blog V4/V4L convierte hacia arriba por sí solo por debajo de 28,8 MHz, así que un desplazamiento negativo que deje el hardware allí desplaza dos veces.
 settings-transmit-audio = Audio de transmisión
 settings-use = en uso
 settings-every-stage-off = todas las etapas desactivadas
@@ -1397,7 +1397,7 @@ settings-radio-applies-immediately-no-reconnect-tuner = Se aplica al instante �
 settings-radio-crystal-error-parts-per-million = Error del cristal en partes por millón. Ejecuta con RUST_LOG=sdroxide_rtlsdr=debug y el registro imprime el error de reloj medido tras unos 20 segundos — ese es el número que hay que introducir. Se aplica al instante.
 settings-radio-hf-reception = Recepción de HF
 settings-radio-tuner-itself-starts-24-mhz =
-    El sintonizador en sí empieza en 24 MHz. Un RTL-SDR Blog V4 convierte hacia arriba por debajo de eso por hardware; otros dongles llegan a HF solo muestreando el ADC directamente, a través del puerto HF del V3. Automático entrega al ADC todo lo que está por debajo de 24 MHz y al sintonizador todo lo que está por encima.
+    El sintonizador en sí empieza en 24 MHz. Un RTL-SDR Blog V4/V4L convierte hacia arriba por debajo de eso por hardware; otros dongles llegan a HF solo muestreando el ADC directamente, a través del puerto HF del V3. Automático entrega al ADC todo lo que está por debajo de 24 MHz y al sintonizador todo lo que está por encima.
 
     El muestreo directo cubre todas las bandas de HF, incluidas 17 m y 15 m — llegan en la segunda zona de Nyquist del ADC, del derecho. Sin embargo, nada filtra la entrada del ADC, así que lo que haya en 28,8 MHz menos el dial viene con ellas: 10,7 MHz bajo 17 m, 7,726 MHz bajo 15 m.
 

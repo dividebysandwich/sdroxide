@@ -336,7 +336,7 @@ settings-antenna-somewhere-else-no-locator = Die Antenne steht woanders und es i
 settings-ranges-are-mhz-low-high = Bereiche sind in MHz angegeben, untere-obere Grenze, durch Kommas getrennt: 144-146, 430-440 — das sind 144000000-146000000 Hz und 430000000-440000000 Hz. Es sind Skalenfrequenzen: Ein Konverter-Versatz verschiebt sie nicht. Der Konverter-Versatz oben ist das Feld in Hertz. Einen Bereich leer lassen, um zu verwenden, was das Gerät über sich selbst meldet; ein Gerät, das nichts meldet, wird beim Wort genommen.
 settings-dwell-recentre = Fenster auf ruhende Abstimmung zentrieren
 settings-dwell-recentre-hover = Ruht die Abstimmung 5 s mehr als ein Zwanzigstel des Fensters neben seiner Mitte, wird das I/Q-Fenster einmal auf sie zentriert. Aus: Das Fenster bleibt, bis die Abstimmung es verlässt.
-settings-careful-rtl-sdr-blog-v4 = Vorsicht bei einem RTL-SDR: Der Blog V4 setzt unterhalb von 28,8 MHz selbst aufwärts um, daher wird ein negativer Versatz, der die Hardware dorthin bringt, zweimal verschoben.
+settings-careful-rtl-sdr-blog-v4 = Vorsicht bei einem RTL-SDR: Der Blog V4/V4L setzt unterhalb von 28,8 MHz selbst aufwärts um, daher wird ein negativer Versatz, der die Hardware dorthin bringt, zweimal verschoben.
 settings-transmit-audio = Sendeaudio
 settings-use = in Benutzung
 settings-every-stage-off = jede Stufe aus
@@ -1415,7 +1415,7 @@ settings-radio-applies-immediately-no-reconnect-tuner = Wirkt sofort — ohne er
 settings-radio-crystal-error-parts-per-million = Quarzfehler in Teilen pro Million. Mit RUST_LOG=sdroxide_rtlsdr=debug starten, dann gibt das Protokoll nach etwa 20 Sekunden den gemessenen Takt-Fehler aus — das ist die Zahl, die man eingibt. Wirkt sofort.
 settings-radio-hf-reception = KW-Empfang
 settings-radio-tuner-itself-starts-24-mhz =
-    Der Tuner selbst beginnt bei 24 MHz. Ein RTL-SDR Blog V4 setzt darunter in der Hardware aufwärts um; andere Sticks erreichen KW nur, indem sie den ADC direkt abtasten, über den KW-Anschluss des V3. Automatisch gibt alles unter 24 MHz an den ADC und alles darüber an den Tuner.
+    Der Tuner selbst beginnt bei 24 MHz. Ein RTL-SDR Blog V4/V4L setzt darunter in der Hardware aufwärts um; andere Sticks erreichen KW nur, indem sie den ADC direkt abtasten, über den KW-Anschluss des V3. Automatisch gibt alles unter 24 MHz an den ADC und alles darüber an den Tuner.
 
     Die Direktabtastung deckt jedes KW-Band ab, einschließlich 17 m und 15 m — sie kommen in der zweiten Nyquist-Zone des ADC an, richtig herum. Am Eingang des ADC wird jedoch nichts gefiltert, daher kommt alles mit, was bei 28,8 MHz minus der Skala liegt: 10,7 MHz unter 17 m, 7,726 MHz unter 15 m.
 

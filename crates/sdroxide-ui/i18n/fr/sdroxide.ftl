@@ -324,7 +324,7 @@ settings-added-radio-s-s-meter =
 settings-t-0-db = 0 dB
 settings-antenna-somewhere-else-no-locator = L'antenne est ailleurs et aucun locator n'est défini, donc rien de ce qu'entend cette radio n'est transmis à PSK Reporter, WSPRnet ou FreeDV Reporter. Saisissez le locator du récepteur ci-dessus pour transmettre depuis lui.
 settings-ranges-are-mhz-low-high = Les plages sont en MHz, bas-haut, séparées par des virgules : 144-146, 430-440 — soit 144000000-146000000 Hz et 430000000-440000000 Hz. Ce sont des fréquences de cadran : un décalage de convertisseur ne les déplace pas. Le décalage de convertisseur ci-dessus est le champ en hertz. Laissez une plage vide pour utiliser ce que le périphérique annonce de lui-même ; un périphérique qui n'annonce rien est pris au mot.
-settings-careful-rtl-sdr-blog-v4 = Attention avec un RTL-SDR : le Blog V4 convertit déjà vers le haut en dessous de 28,8 MHz ; un décalage négatif qui amène le matériel dans cette zone se décale donc deux fois.
+settings-careful-rtl-sdr-blog-v4 = Attention avec un RTL-SDR : le Blog V4/V4L convertit déjà vers le haut en dessous de 28,8 MHz ; un décalage négatif qui amène le matériel dans cette zone se décale donc deux fois.
 settings-transmit-audio = Audio d'émission
 settings-use = utilisé
 settings-every-stage-off = tous les étages désactivés
@@ -1402,7 +1402,7 @@ settings-radio-applies-immediately-no-reconnect-tuner = S'applique immédiatemen
 settings-radio-crystal-error-parts-per-million = Erreur du quartz en parties par million. Lancez avec RUST_LOG=sdroxide_rtlsdr=debug et le journal affiche l'erreur d'horloge mesurée après environ 20 secondes — c'est ce nombre-là qu'il faut saisir. S'applique immédiatement.
 settings-radio-hf-reception = Réception HF
 settings-radio-tuner-itself-starts-24-mhz =
-    L'accord lui-même commence à 24 MHz. Un RTL-SDR Blog V4 convertit vers le haut en dessous de cette valeur, matériellement ; les autres clés n'atteignent la HF qu'en échantillonnant directement le CAN, par le port HF du V3. Automatique confie tout ce qui est sous 24 MHz au CAN et tout ce qui est au-dessus à l'accord.
+    L'accord lui-même commence à 24 MHz. Un RTL-SDR Blog V4/V4L convertit vers le haut en dessous de cette valeur, matériellement ; les autres clés n'atteignent la HF qu'en échantillonnant directement le CAN, par le port HF du V3. Automatique confie tout ce qui est sous 24 MHz au CAN et tout ce qui est au-dessus à l'accord.
 
     L'échantillonnage direct couvre toutes les bandes HF, 17 m et 15 m compris — elles arrivent dans la seconde zone de Nyquist du CAN, dans le bon sens. Rien ne filtre toutefois l'entrée du CAN, donc ce qui se trouve à 28,8 MHz moins le cadran arrive avec elles : 10,7 MHz sous le 17 m, 7,726 MHz sous le 15 m.
 

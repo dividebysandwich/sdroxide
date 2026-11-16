@@ -8601,7 +8601,7 @@ A few things to know:
   frequency all hold the receiver's numbers (135.1008 MHz). Once the offset is
   set those are read as dial frequencies and everything jumps 125 MHz. Re-enter
   them once and they stay right.
-- **RTL-SDR Blog V4 owners:** the V4 has an upconverter of its own that switches
+- **RTL-SDR Blog V4 and V4L owners:** both have an upconverter of their own that switches
   in below 28.8 MHz. A positive offset is fine — the converter's output lands
   well above that — but a *negative* offset that drops the hardware frequency
   below 28.8 MHz would be shifted a second time by the dongle.
@@ -10209,7 +10209,7 @@ Receive only — there is no transmit path in this hardware.
   the same oscillator the tuner runs from, so correcting it corrects your
   frequency readout too.
 - **HF reception** — the tuner itself starts at 24 MHz. Below that:
-  - an **RTL-SDR Blog V4** upconverts in hardware, so HF simply works and the
+  - an **RTL-SDR Blog V4** or **V4L** upconverts in hardware, so HF simply works and the
     dial reads correctly with no offset to apply anywhere. On that path the
     tuner's own tracking filter is switched out of circuit: what reaches it is
     the upconverter's output, already filtered on the way in, so the
@@ -11519,7 +11519,11 @@ because it is the same radio; only these differ:
   server's own tuning call — and switches anything else to direct sampling below
   24 MHz. If your remote dongle is a *plain* R828D that hears nothing on HF,
   choose **Direct sampling (Q branch)** explicitly; that is always obeyed. The
-  second-Nyquist note above applies at the far end just the same.
+  second-Nyquist note above applies at the far end just the same. A **Blog
+  V4L** cannot be told apart either, and is worse placed: its R828S reports
+  itself as an R820T, so *Automatic* sends it to direct sampling, which it has
+  no wiring for. Over `rtl_tcp` a V4L is for 24 MHz and up; for HF, plug it in
+  over USB, where sdroxide reads its name and uses the upconverter.
 - **Bias tee** — feeds the coax at the far end, which may be out of sight and up
   a mast. sdroxide turns it off when the connection closes cleanly, and warns
   while it is on. Older servers do not implement the command at all; because the
@@ -17564,7 +17568,7 @@ All in [§6.2.6](#626-smartsdr-flexradio-network-radios):
 [§6.2.5](#625-rtl-sdr-usb-dongles) and, remotely,
 [§6.2.11](#6211-rtl-sdr-over-rtl_tcp-network-dongles):
 
-- **HF:** a Blog V4 upconverts in hardware — HF just works, no offset
+- **HF:** a Blog V4 or V4L upconverts in hardware — HF just works, no offset
   anywhere (and don't put one in Converter: below 28.8 MHz the dongle would
   shift it a second time). Any other dongle reaches HF by direct-sampling
   the Q branch — a V3's HF port — with `Automatic` switching at the tuner's

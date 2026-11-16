@@ -329,7 +329,7 @@ settings-added-radio-s-s-meter =
 settings-t-0-db = 0 dB
 settings-antenna-somewhere-else-no-locator = 天线位于别处且未设置网格定位，因此此电台收听到的内容不会报告给 PSK Reporter、WSPRnet 或 FreeDV Reporter。请在上面输入接收机的网格定位，即可以它的位置报告。
 settings-ranges-are-mhz-low-high = 范围以 MHz 为单位，写作“低-高”，用逗号分隔：144-146、430-440——即 144000000-146000000 Hz 和 430000000-440000000 Hz。它们是表盘频率：变频器偏移不会改变它们。上面的变频器偏移是以赫兹为单位的字段。留空某个范围则使用设备自行报告的范围；设备若不报告任何内容，则以其所言为准。
-settings-careful-rtl-sdr-blog-v4 = 使用 RTL-SDR 时要小心：Blog V4 自己会在 28.8 MHz 以下做上变频，因此若负偏移把硬件调到那里，频率会被移动两次。
+settings-careful-rtl-sdr-blog-v4 = 使用 RTL-SDR 时要小心：Blog V4/V4L 自己会在 28.8 MHz 以下做上变频，因此若负偏移把硬件调到那里，频率会被移动两次。
 settings-transmit-audio = 发射音频
 settings-use = 使用中
 settings-every-stage-off = 所有级均关闭
@@ -1383,7 +1383,7 @@ settings-radio-applies-immediately-no-reconnect-tuner = 立即生效——无需
 settings-radio-crystal-error-parts-per-million = 晶体误差，单位为百万分之一。以 RUST_LOG=sdroxide_rtlsdr=debug 运行，日志会在约 20 秒后打印测得的时钟误差——这就是应当输入的数值。立即生效。
 settings-radio-hf-reception = HF 接收
 settings-radio-tuner-itself-starts-24-mhz =
-    调谐器本身从 24 MHz 开始。RTL-SDR Blog V4 在硬件上对其以下的频率做上变频；其他加密狗只能通过直接对 ADC 采样才能接收 HF，即经由 V3 的 HF 端口。“自动”会把 24 MHz 以下的全部交给 ADC，而把以上的交给调谐器。
+    调谐器本身从 24 MHz 开始。RTL-SDR Blog V4/V4L 在硬件上对其以下的频率做上变频；其他加密狗只能通过直接对 ADC 采样才能接收 HF，即经由 V3 的 HF 端口。“自动”会把 24 MHz 以下的全部交给 ADC，而把以上的交给调谐器。
 
     直接采样覆盖每一个 HF 频段，包括 17 米和 15 米——它们在 ADC 的第二奈奎斯特区中到达，且方向正确。然而，没有任何东西滤除 ADC 的输入，因此 28.8 MHz 减去表盘频率处的信号也会一同进入：17 米下方 10.7 MHz，15 米下方 7.726 MHz。
 

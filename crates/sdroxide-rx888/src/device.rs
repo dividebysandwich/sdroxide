@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use nusb::transfer::TransferError;
 
-use sdroxide_r82xx::{Chip, GainSetting, R82xx};
+use sdroxide_r82xx::{Board, Chip, GainSetting, R82xx};
 
 use crate::band::{self, Band, BandState};
 use crate::error::{Error, Result};
@@ -616,7 +616,7 @@ impl Device {
         self.set_vga_reg(VHF_VGA_REG)?;
         si5351::set_clk2_hz(&self.usb, si5351::TUNER_REF_HZ)?;
 
-        let mut t = R82xx::new(Chip::R828D, false, self.ppm.round() as i32);
+        let mut t = R82xx::new(Chip::R828D, Board::Plain, self.ppm.round() as i32);
         t.init(&self.usb)?;
         let int_freq = t.set_bandwidth(&self.usb, band::IF_BW_HZ)?;
         debug_assert_eq!(int_freq, band::IF_CENTER_HZ);

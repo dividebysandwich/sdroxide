@@ -560,7 +560,7 @@ starting sdroxide before the rig is fine:
   pure-Rust driver. **No SoapySDR and no libusb needed**, so it works in every
   build including the standard `.msi` and `.dmg`. Covers the R820T, R820T2 and
   R828D tuners, which is effectively every dongle still sold. HF works through
-  an RTL-SDR Blog V4's built-in upconverter, or on other sticks by direct
+  an RTL-SDR Blog V4's or V4L's built-in upconverter, or on other sticks by direct
   sampling the ADC's Q branch (the V3's HF port). Bias tee and ppm correction
   are on the Radio tab; see "RTL-SDR permissions" under Building.
   

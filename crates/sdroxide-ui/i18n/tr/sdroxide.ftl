@@ -329,7 +329,7 @@ settings-added-radio-s-s-meter =
 settings-t-0-db = 0 dB
 settings-antenna-somewhere-else-no-locator = Anten başka bir yerde ve lokatör ayarlanmamış; bu yüzden bu radyonun duyduğu hiçbir şey PSK Reporter, WSPRnet ya da FreeDV Reporter'a bildirilmez. Oradan bildirmek için alıcının lokatörünü yukarıya yazın.
 settings-ranges-are-mhz-low-high = Aralıklar MHz cinsindendir, alt-üst, virgülle ayrılmış: 144-146, 430-440 — yani 144000000-146000000 Hz ve 430000000-440000000 Hz. Skala frekanslarıdır: bir dönüştürücü kayması bunları taşımaz. Yukarıdaki dönüştürücü kayması, hertz cinsinden alandır. Aygıtın kendisi hakkında bildirdiğini kullanmak için bir aralığı boş bırakın; hiçbir şey bildirmeyen bir aygıtın sözü alınır.
-settings-careful-rtl-sdr-blog-v4 = Bir RTL-SDR'de dikkatli olun: Blog V4, 28,8 MHz'in altında kendi başına yukarı dönüştürür; donanımı oraya düşüren negatif bir kayma iki kez kayar.
+settings-careful-rtl-sdr-blog-v4 = Bir RTL-SDR'de dikkatli olun: Blog V4/V4L, 28,8 MHz'in altında kendi başına yukarı dönüştürür; donanımı oraya düşüren negatif bir kayma iki kez kayar.
 settings-transmit-audio = Yayın sesi
 settings-use = kullanımda
 settings-every-stage-off = her kademe kapalı
@@ -1404,7 +1404,7 @@ settings-radio-applies-immediately-no-reconnect-tuner = Hemen uygulanır — yen
 settings-radio-crystal-error-parts-per-million = Milyonda kısım cinsinden kristal hatası. RUST_LOG=sdroxide_rtlsdr=debug ile çalıştırın; günlük, yaklaşık 20 saniye sonra ölçülen saat hatasını yazar — girilecek sayı budur. Hemen uygulanır.
 settings-radio-hf-reception = HF alımı
 settings-radio-tuner-itself-starts-24-mhz =
-    Tuner kendisi 24 MHz'de başlar. Bir RTL-SDR Blog V4 bunun altını donanımda yukarı dönüştürür; diğer dongle'lar HF'e yalnızca ADC'yi doğrudan örnekleyerek, V3'ün HF portu üzerinden ulaşır. Otomatik, 24 MHz'in altındaki her şeyi ADC'ye, üstündekini tuner'a verir.
+    Tuner kendisi 24 MHz'de başlar. Bir RTL-SDR Blog V4/V4L bunun altını donanımda yukarı dönüştürür; diğer dongle'lar HF'e yalnızca ADC'yi doğrudan örnekleyerek, V3'ün HF portu üzerinden ulaşır. Otomatik, 24 MHz'in altındaki her şeyi ADC'ye, üstündekini tuner'a verir.
 
     Doğrudan örnekleme, 17 m ve 15 m dahil her HF bandını kapsar — ADC'nin ikinci Nyquist bölgesinde, doğru yönde gelirler. Ancak ADC'nin girişini hiçbir şey filtrelemez; bu yüzden 28,8 MHz eksi skala neyse, onlarla birlikte gelir: 17 m'nin altında 10,7 MHz, 15 m'nin altında 7,726 MHz.
 

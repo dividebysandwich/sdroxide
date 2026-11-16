@@ -42,8 +42,56 @@ pub const R820T_XTAL_HZ: f64 = 28_800_000.0;
 /// puts every frequency out by a factor of 1.8.
 pub const R828D_XTAL_HZ: f64 = 16_000_000.0;
 
-/// Frequency below which a Blog V4 upconverts, and the top of its HF input.
+/// Frequency below which a Blog V4 or V4L upconverts, and the top of its HF
+/// input.
 pub const V4_HF_CROSSOVER_HZ: f64 = 28_800_000.0;
+
+/// The board around the tuner, where it changes what the tuner must do.
+///
+/// Both Blog boards upconvert HF on board, against the demodulator's 28.8 MHz
+/// reference, and are told apart only by their EEPROM strings: the tuner chip
+/// cannot say. The V4L ("V4 Lite") carries an R828S because the V4's R828D is
+/// out of production, and the R828S answers on I2C as an R820T — so without the
+/// strings a V4L is taken for a plain R820T stick and sent to direct sampling on
+/// HF, where it has nothing wired and hears a spectrum shifted by the
+/// upconverter it never switched on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Board {
+    /// No upconverter: HF, where wired, is the demodulator's direct sampling.
+    Plain,
+    /// RTL-SDR Blog V4: R828D, three inputs (HF, VHF, UHF) and notch filters.
+    BlogV4,
+    /// RTL-SDR Blog V4L: R828S (reads as an R820T), two inputs (HF, UHF), no
+    /// notches.
+    BlogV4L,
+}
+
+impl Board {
+    /// Whether HF reaches the tuner through an on-board upconverter.
+    pub fn upconverts(self) -> bool {
+        self != Board::Plain
+    }
+
+    /// The board's name, for log lines and the device label.
+    pub fn name(self) -> Option<&'static str> {
+        match self {
+            Board::Plain => None,
+            Board::BlogV4 => Some("Blog V4"),
+            Board::BlogV4L => Some("Blog V4L"),
+        }
+    }
+
+    /// The board the USB strings name, held against the tuner actually found.
+    ///
+    /// Each Blog board has exactly one tuner, so the chip has a veto: the
+    /// upconverter offset would wreck a stick that merely claimed the name.
+    pub fn confirmed_by(self, chip: Chip) -> Board {
+        match (self, chip) {
+            (Board::BlogV4, Chip::R828D) | (Board::BlogV4L, Chip::R820T) => self,
+            _ => Board::Plain,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Chip {
@@ -76,7 +124,7 @@ impl Chip {
     }
 }
 
-/// Which input a Blog V4 is switched to. Tracked so the four register writes
+/// Which input a Blog V4 or V4L is switched to. Tracked so the four register writes
 /// that change it happen only on a band change — a dial spin must not repeat
 /// them hundreds of times a second.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,7 +206,7 @@ pub fn ladder_indices(total_db: f64) -> (u8, u8) {
 
 pub struct R82xx {
     chip: Chip,
-    is_blog_v4: bool,
+    board: Board,
     /// Shadow of R5..R34. The part is write-only above R5, so this is the only
     /// way to do a read-modify-write.
     regs: [u8; NUM_REGS],
@@ -181,14 +229,14 @@ pub struct R82xx {
 }
 
 impl R82xx {
-    pub fn new(chip: Chip, is_blog_v4: bool, ppm: i32) -> R82xx {
+    pub fn new(chip: Chip, board: Board, ppm: i32) -> R82xx {
         R82xx {
             chip,
-            is_blog_v4,
+            board,
             regs: [0; NUM_REGS],
             int_freq: DEFAULT_IF_HZ,
             has_lock: false,
-            xtal: apply_ppm(Self::reference_xtal_hz(chip, is_blog_v4), ppm),
+            xtal: apply_ppm(Self::reference_xtal_hz(chip, board), ppm),
             fil_cal_code: 0,
             band: None,
             input: 0,
@@ -202,8 +250,14 @@ impl R82xx {
         self.chip.name()
     }
 
+    pub fn board(&self) -> Board {
+        self.board
+    }
+
+    /// Whether this is a Blog V4 or V4L: HF through the on-board upconverter,
+    /// never through direct sampling.
     pub fn is_blog_v4(&self) -> bool {
-        self.is_blog_v4
+        self.board.upconverts()
     }
 
     /// The tuner's PLL reference, before ppm correction.
@@ -213,15 +267,16 @@ impl R82xx {
     /// clock its upconverter mixes against, which is why the crossover and the
     /// reference are the same number. Handing a V4 the 16 MHz figure is the
     /// mirror of the hazard on [`R828D_XTAL_HZ`] and puts every frequency out
-    /// by the same factor of 1.8.
-    fn reference_xtal_hz(chip: Chip, is_blog_v4: bool) -> f64 {
-        if is_blog_v4 { BLOG_V4_REF_HZ } else { chip.nominal_xtal_hz() }
+    /// by the same factor of 1.8. A V4L is an R820T as far as the crystal goes,
+    /// and the R820T's is the same 28.8 MHz.
+    fn reference_xtal_hz(chip: Chip, board: Board) -> f64 {
+        if board.upconverts() { BLOG_V4_REF_HZ } else { chip.nominal_xtal_hz() }
     }
 
     /// Re-derive the PLL reference from a new ppm figure. The caller must
     /// retune afterwards for it to take effect.
     pub fn set_ppm(&mut self, ppm: i32) {
-        self.xtal = apply_ppm(Self::reference_xtal_hz(self.chip, self.is_blog_v4), ppm);
+        self.xtal = apply_ppm(Self::reference_xtal_hz(self.chip, self.board), ppm);
         self.last_lo_hz = None;
     }
 
@@ -480,7 +535,10 @@ impl R82xx {
         }
 
         let data = self.read(bus, 5)?;
-        let vco_power_ref: u32 = if self.chip == Chip::R828D { 1 } else { 2 };
+        // The V4L's R828S takes the R828D's figure, though it reads as an R820T
+        // (librtlsdr 0204c9c).
+        let vco_power_ref: u32 =
+            if self.chip == Chip::R828D || self.board == Board::BlogV4L { 1 } else { 2 };
         let vco_fine_tune = ((data[4] & 0x30) >> 4) as u32;
         if vco_fine_tune > vco_power_ref {
             div_num -= 1;
@@ -538,19 +596,20 @@ impl R82xx {
 
     /// The frequency the tuner itself must reach for a given dial setting.
     ///
-    /// A Blog V4 sums HF with a 28.8 MHz reference on board, so below the
+    /// A Blog V4 or V4L sums HF with a 28.8 MHz reference on board, so below the
     /// crossover the tuner sees the dial shifted up by it. The result is *not*
     /// spectrum-inverted and no offset is applied anywhere else, so the
     /// operator sees one continuous 0–1766 MHz radio.
     fn tuned_freq_hz(&self, dial_hz: f64) -> f64 {
-        if self.is_blog_v4 && dial_hz < V4_HF_CROSSOVER_HZ {
+        if self.board.upconverts() && dial_hz < V4_HF_CROSSOVER_HZ {
             dial_hz + V4_HF_CROSSOVER_HZ
         } else {
             dial_hz
         }
     }
 
-    /// Tune to `hz`, handling the Blog V4's upconverter and input switching.
+    /// Tune to `hz`, handling the Blog V4's and V4L's upconverter and input
+    /// switching.
     pub fn set_freq(&mut self, bus: &dyn TunerBus, hz: f64) -> Result<()> {
         let lo_hz = self.tuned_freq_hz(hz) + self.int_freq;
 
@@ -566,8 +625,10 @@ impl R82xx {
         }
         self.last_lo_hz = Some(lo_hz);
 
-        if self.is_blog_v4 {
+        if self.board == Board::BlogV4 {
             self.v4_switch_inputs(bus, hz)?;
+        } else if self.board == Board::BlogV4L {
+            self.v4l_switch_inputs(bus, hz)?;
         } else if self.chip == Chip::R828D {
             // Switch between Cable1 and Air-In at 345 MHz, where the noise
             // floor is about equal with identical LNA settings. Only on a
@@ -632,6 +693,38 @@ impl R82xx {
         // Cable 1 is VHF, air-in is UHF.
         let cable_1_in = if band == Band::Vhf { 0x40 } else { 0x00 };
         self.write_reg_mask(bus, 0x05, cable_1_in, 0x40)?;
+        let air_in = if band == Band::Uhf { 0x00 } else { 0x20 };
+        self.write_reg_mask(bus, 0x05, air_in, 0x20)?;
+        Ok(())
+    }
+
+    /// Blog V4L two-way input switching: HF on cable 1, everything above on
+    /// air-in. The R828S has no third input, so no VHF/UHF split, and the board
+    /// has no notches to set.
+    ///
+    /// librtlsdr 0204c9c, in its order: the upconverter gate before the input
+    /// registers.
+    fn v4l_switch_inputs(&mut self, bus: &dyn TunerBus, hz: f64) -> Result<()> {
+        let band = if hz <= V4_HF_CROSSOVER_HZ { Band::Hf } else { Band::Uhf };
+
+        // The tracking filter out of circuit on HF, on every tune, for the
+        // reasons given in `v4_switch_inputs`.
+        if band == Band::Hf {
+            self.write_reg_mask(bus, 0x1a, 0x40, 0xc3)?;
+            self.write_reg(bus, 0x1b, 0x00)?;
+        }
+
+        if self.band == Some(band) {
+            return Ok(());
+        }
+        self.band = Some(band);
+
+        // Cable 1 is the HF input.
+        let cable_1_in = if band == Band::Hf { 0x40 } else { 0x00 };
+        // As on the V4, newer batches gate the upconverter with GPIO 5.
+        bus.set_upconverter_gate(cable_1_in == 0)?;
+        self.write_reg_mask(bus, 0x05, cable_1_in, 0x40)?;
+        // Air-in is everything above HF.
         let air_in = if band == Band::Uhf { 0x00 } else { 0x20 };
         self.write_reg_mask(bus, 0x05, air_in, 0x20)?;
         Ok(())
@@ -839,7 +932,7 @@ mod tests {
     #[test]
     fn the_r828d_bring_up_writes_exactly_what_it_always_has() {
         let bus = MockBus::healthy();
-        let mut t = R82xx::new(Chip::R828D, false, 0);
+        let mut t = R82xx::new(Chip::R828D, Board::Plain, 0);
         t.init(&bus).expect("init");
         let int_freq = t.set_bandwidth(&bus, 8_000_000.0).expect("bandwidth");
         t.set_freq(&bus, 145_000_000.0).expect("freq");
@@ -856,9 +949,10 @@ mod tests {
     /// frequency is out by 28.8/16.
     #[test]
     fn a_blog_v4_keeps_the_28_8_mhz_reference() {
-        assert_eq!(R82xx::reference_xtal_hz(Chip::R828D, true), 28_800_000.0);
-        assert_eq!(R82xx::reference_xtal_hz(Chip::R828D, false), R828D_XTAL_HZ);
-        assert_eq!(R82xx::reference_xtal_hz(Chip::R820T, false), R820T_XTAL_HZ);
+        assert_eq!(R82xx::reference_xtal_hz(Chip::R828D, Board::BlogV4), 28_800_000.0);
+        assert_eq!(R82xx::reference_xtal_hz(Chip::R828D, Board::Plain), R828D_XTAL_HZ);
+        assert_eq!(R82xx::reference_xtal_hz(Chip::R820T, Board::Plain), R820T_XTAL_HZ);
+        assert_eq!(R82xx::reference_xtal_hz(Chip::R820T, Board::BlogV4L), 28_800_000.0);
     }
 
     /// Only a V4 upconverts, and only below the crossover. The 7.056 MHz here
@@ -866,7 +960,7 @@ mod tests {
     /// must put its tuner at 35.856 MHz, not refuse to reach it.
     #[test]
     fn a_blog_v4_upconverts_below_the_crossover() {
-        let v4 = R82xx::new(Chip::R828D, true, 0);
+        let v4 = R82xx::new(Chip::R828D, Board::BlogV4, 0);
         assert_eq!(v4.tuned_freq_hz(7_056_158.0), 7_056_158.0 + 28_800_000.0);
         assert_eq!(v4.tuned_freq_hz(14.1e6), 14.1e6 + 28_800_000.0);
         // At and above the crossover the tuner reaches directly.
@@ -875,7 +969,7 @@ mod tests {
 
         // A stock R828D has no upconverter to offset for; HF there is the
         // demodulator's problem, via direct sampling.
-        let plain = R82xx::new(Chip::R828D, false, 0);
+        let plain = R82xx::new(Chip::R828D, Board::Plain, 0);
         assert_eq!(plain.tuned_freq_hz(7_056_158.0), 7_056_158.0);
     }
 
@@ -896,7 +990,7 @@ mod tests {
     #[test]
     fn a_blog_v4_bypasses_the_tracking_filter_on_every_hf_tune() {
         let bus = MockBus::healthy();
-        let mut t = R82xx::new(Chip::R828D, true, 0);
+        let mut t = R82xx::new(Chip::R828D, Board::BlogV4, 0);
         t.init(&bus).expect("init");
         t.set_bandwidth(&bus, 8_000_000.0).expect("bandwidth");
 
@@ -912,5 +1006,124 @@ mod tests {
         // through its own preselector, and the tracking filter belongs in.
         t.set_freq(&bus, 145_000_000.0).expect("freq");
         assert_ne!(tracking_filter(&t), (0x40, 0x00), "tracking filter back in circuit on VHF");
+    }
+
+    // ---- RTL-SDR Blog V4L (librtlsdr 0204c9c) -------------------------------
+
+    /// A V4L reads as an R820T, so its strings decide; and the chip still has
+    /// a veto, each way round, over a stick that only claims a Blog name.
+    #[test]
+    fn a_board_is_confirmed_only_by_its_own_tuner() {
+        assert_eq!(Board::BlogV4L.confirmed_by(Chip::R820T), Board::BlogV4L);
+        assert_eq!(Board::BlogV4.confirmed_by(Chip::R828D), Board::BlogV4);
+        assert_eq!(Board::BlogV4L.confirmed_by(Chip::R828D), Board::Plain);
+        assert_eq!(Board::BlogV4.confirmed_by(Chip::R820T), Board::Plain);
+        assert_eq!(Board::Plain.confirmed_by(Chip::R820T), Board::Plain);
+    }
+
+    /// The reported bug (sdroxide #602): a V4L on 20 m must put its tuner at
+    /// 43 MHz through the upconverter. A plain R820T leaves HF to direct
+    /// sampling and so does not offset at all.
+    #[test]
+    fn a_blog_v4l_upconverts_below_the_crossover() {
+        let v4l = R82xx::new(Chip::R820T, Board::BlogV4L, 0);
+        assert_eq!(v4l.tuned_freq_hz(14.2e6), 14.2e6 + 28_800_000.0);
+        assert_eq!(v4l.tuned_freq_hz(V4_HF_CROSSOVER_HZ), V4_HF_CROSSOVER_HZ);
+        assert_eq!(v4l.tuned_freq_hz(145e6), 145e6);
+        assert!(v4l.is_blog_v4(), "no direct sampling for a V4L either");
+
+        let plain = R82xx::new(Chip::R820T, Board::Plain, 0);
+        assert_eq!(plain.tuned_freq_hz(14.2e6), 14.2e6);
+        assert!(!plain.is_blog_v4());
+    }
+
+    /// The input register as the shadow holds it: `(cable 1, air-in)` bits.
+    fn v4l_inputs(t: &R82xx) -> u8 {
+        t.regs[R82xx::shadow_index(0x05).expect("0x05 is shadowed")] & 0x60
+    }
+
+    /// Two inputs, switched only on a band change, with the upconverter gated
+    /// off on HF and on above it — and nothing written to the V4's third input
+    /// (R6), which the V4L does not have.
+    #[test]
+    fn a_blog_v4l_switches_between_its_two_inputs() {
+        let bus = MockBus::healthy();
+        let mut t = R82xx::new(Chip::R820T, Board::BlogV4L, 0);
+        t.init(&bus).expect("init");
+        t.set_bandwidth(&bus, 2_000_000.0).expect("bandwidth");
+        let after_init = bus.writes.borrow().len();
+
+        t.set_freq(&bus, 7_056_158.0).expect("freq");
+        assert_eq!(v4l_inputs(&t), 0x60, "HF: cable 1 in, air-in off");
+        assert_eq!(*bus.gates.borrow(), vec![false], "upconverter path on HF");
+
+        t.set_freq(&bus, 14_236_000.0).expect("freq");
+        assert_eq!(bus.gates.borrow().len(), 1, "no switching inside a band");
+
+        t.set_freq(&bus, 145_000_000.0).expect("freq");
+        assert_eq!(v4l_inputs(&t), 0x00, "above HF: air-in, cable 1 off");
+        assert_eq!(*bus.gates.borrow(), vec![false, true]);
+
+        t.set_freq(&bus, 435_000_000.0).expect("freq");
+        assert_eq!(bus.gates.borrow().len(), 2, "VHF and UHF are one input on a V4L");
+
+        let writes = bus.writes.borrow();
+        assert!(
+            writes[after_init..].iter().all(|(_, reg, _)| *reg != 0x06),
+            "a V4L has no third input to write"
+        );
+    }
+
+    /// The V4's notches (R23 bit 3, set by band) are not the V4L's: there the
+    /// open-drain bit is whatever the frequency table gives any R820T.
+    #[test]
+    fn a_blog_v4l_leaves_r23_to_the_frequency_table() {
+        let r23 = |board, hz| {
+            let bus = MockBus::healthy();
+            let mut t = R82xx::new(Chip::R820T, board, 0);
+            t.init(&bus).expect("init");
+            t.set_freq(&bus, hz).expect("freq");
+            t.regs[R82xx::shadow_index(0x17).expect("0x17 is shadowed")] & 0x08
+        };
+        // Inside broadcast FM, where a V4 opens its notch (0x00).
+        assert_eq!(r23(Board::BlogV4L, 98e6), r23(Board::Plain, 98e6));
+        assert_eq!(r23(Board::BlogV4L, 435e6), r23(Board::Plain, 435e6));
+    }
+
+    /// As on the V4, the tracking filter is bypassed on every HF tune, not only
+    /// on the band change, and comes back above HF.
+    #[test]
+    fn a_blog_v4l_bypasses_the_tracking_filter_on_every_hf_tune() {
+        let bus = MockBus::healthy();
+        let mut t = R82xx::new(Chip::R820T, Board::BlogV4L, 0);
+        t.init(&bus).expect("init");
+        t.set_bandwidth(&bus, 2_000_000.0).expect("bandwidth");
+
+        t.set_freq(&bus, 7_056_158.0).expect("freq");
+        assert_eq!(tracking_filter(&t), (0x40, 0x00), "bypassed on entering HF");
+        t.set_freq(&bus, 14_236_000.0).expect("freq");
+        assert_eq!(tracking_filter(&t), (0x40, 0x00), "still bypassed after retuning");
+        t.set_freq(&bus, 145_000_000.0).expect("freq");
+        assert_ne!(tracking_filter(&t), (0x40, 0x00), "tracking filter back in on VHF");
+    }
+
+    /// The divider an LO lands on: R16's top three bits.
+    fn mixer_div_num(t: &R82xx) -> u8 {
+        t.regs[R82xx::shadow_index(0x10).expect("0x10 is shadowed")] >> 5
+    }
+
+    /// The V4L's R828S takes the R828D's VCO power reference although it reads
+    /// as an R820T. With the mock's VCO fine-tune of 1, the R820T figure of 2
+    /// steps the divider up one and the R828D figure of 1 leaves it.
+    #[test]
+    fn a_blog_v4l_takes_the_r828d_vco_power_reference() {
+        let tuned = |board| {
+            let bus = MockBus::healthy();
+            let mut t = R82xx::new(Chip::R820T, board, 0);
+            t.init(&bus).expect("init");
+            t.set_freq(&bus, 145_000_000.0).expect("freq");
+            mixer_div_num(&t)
+        };
+        assert_eq!(tuned(Board::BlogV4L) + 1, tuned(Board::Plain));
     }
 }
