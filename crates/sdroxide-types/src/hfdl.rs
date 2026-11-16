@@ -602,6 +602,155 @@ impl HfdlStation {
     }
 }
 
+/// The version of [`HFDL_BUILTIN_STATIONS`]: the system table it was taken from.
+pub const HFDL_BUILTIN_TABLE_VERSION: u16 = 52;
+
+/// The HFDL ground stations — id, name, position and channels — as the
+/// network's system table version 52 has them, taken from the copy dumphfdl
+/// distributes (`etc/systable.conf`, szpajder/dumphfdl; facts only: ids,
+/// coordinates, frequencies). The channels are in table order, which is the
+/// order a squitter's "in use" bitmap indexes, so bit *n* is the *n*-th here.
+///
+/// The seed for a first run: without it nothing could be placed on the map,
+/// and no squitter read as frequencies, until the stations next broadcast the
+/// table over the air — which they do only now and then. A table received
+/// over the air (and the one saved from it) replaces this one outright.
+pub const HFDL_BUILTIN_STATIONS: &[(u8, &str, f64, f64, &[u32])] = &[
+    (
+        1,
+        "San Francisco, California",
+        38.384587,
+        -121.759647,
+        &[21_934, 17_919, 13_276, 11_327, 10_081, 8_927, 6_559, 5_508],
+    ),
+    (
+        2,
+        "Molokai, Hawaii",
+        21.184428,
+        -157.186846,
+        &[
+            21_937, 17_919, 13_324, 13_312, 13_276, 11_348, 11_312, 10_027, 8_936, 8_912, 6_565,
+            5_514,
+        ],
+    ),
+    (
+        3,
+        "Reykjavik, Iceland",
+        63.847168,
+        -22.455754,
+        &[17_985, 15_025, 11_184, 8_977, 6_712, 5_720, 3_900],
+    ),
+    (
+        4,
+        "Riverhead, New York",
+        40.881922,
+        -72.63762,
+        &[21_931, 17_919, 13_276, 11_387, 8_912, 6_661, 5_652],
+    ),
+    (
+        5,
+        "Auckland, New Zealand",
+        -37.015757,
+        174.809637,
+        &[17_916, 13_351, 10_084, 8_921, 6_535, 5_583],
+    ),
+    (
+        6,
+        "Hat Yai, Thailand",
+        6.937536,
+        100.388451,
+        &[21_949, 17_928, 13_270, 10_066, 8_825, 6_535, 5_655],
+    ),
+    (
+        7,
+        "Shannon, Ireland",
+        52.744089,
+        -8.926752,
+        &[11_384, 10_081, 8_942, 8_843, 6_532, 5_547, 3_455, 2_998],
+    ),
+    (
+        8,
+        "Johannesburg, South Africa",
+        -26.129658,
+        28.206078,
+        &[21_949, 17_922, 13_321, 11_321, 8_834, 5_529, 4_681, 3_016],
+    ),
+    (
+        9,
+        "Barrow, Alaska",
+        71.25849,
+        -156.577447,
+        &[
+            21_937, 21_928, 17_934, 17_919, 11_354, 10_093, 10_027, 8_936, 8_927, 6_646, 5_544,
+            5_538, 5_529, 4_687, 4_654, 3_497, 3_007, 2_992, 2_944,
+        ],
+    ),
+    (
+        10,
+        "Muan, South Korea",
+        35.032377,
+        126.238644,
+        &[21_931, 17_958, 13_342, 10_060, 8_939, 6_619, 5_502, 2_941],
+    ),
+    (11, "Albrook, Panama", 9.084681, -79.373969, &[17_901, 13_264, 10_063, 8_894, 6_589, 5_589]),
+    (
+        13,
+        "Santa Cruz, Bolivia",
+        -17.671199,
+        -63.157088,
+        &[21_997, 17_916, 13_315, 11_318, 8_957, 6_628, 4_660],
+    ),
+    (
+        14,
+        "Krasnoyarsk, Russia",
+        56.152603,
+        92.583337,
+        &[21_990, 17_912, 13_321, 10_087, 8_886, 6_596, 5_622],
+    ),
+    (
+        15,
+        "Al Muharraq, Bahrain",
+        26.308529,
+        50.472318,
+        &[21_982, 17_967, 13_312, 10_030, 8_885, 6_646, 5_544, 2_986],
+    ),
+    (
+        16,
+        "Agana, Guam",
+        13.488833,
+        144.828233,
+        &[21_928, 17_919, 13_312, 11_306, 8_927, 6_652, 5_451],
+    ),
+    (17, "Canarias, Spain", 27.960945, -15.405608, &[21_955, 17_928, 13_303, 11_348, 8_948, 6_529]),
+];
+
+/// [`HFDL_BUILTIN_STATIONS`] as station entries: positions and channels, nothing
+/// heard.
+pub fn hfdl_builtin_stations() -> Vec<HfdlStation> {
+    HFDL_BUILTIN_STATIONS
+        .iter()
+        .map(|&(id, name, lat, lon, khz)| {
+            let mut s = HfdlStation::new(id, Some(name));
+            s.lat = Some(lat);
+            s.lon = Some(lon);
+            s.freqs = khz
+                .iter()
+                .map(|&k| HfdlStationFreq { freq_hz: k * 1000, slot: 0, active: false })
+                .collect();
+            s
+        })
+        .collect()
+}
+
+/// Every channel of [`HFDL_BUILTIN_STATIONS`], ascending and unique — the plan
+/// the channel chips offer until a live table is known.
+pub fn hfdl_builtin_plan_khz() -> Vec<u32> {
+    let mut v: Vec<u32> = HFDL_BUILTIN_STATIONS.iter().flat_map(|s| s.4.iter().copied()).collect();
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
 /// Every channel any station is known to be working at `now`, sorted and
 /// unique — what lights the channel chips.
 pub fn hfdl_working_khz(stations: &[HfdlStation], now: i64) -> Vec<u32> {
@@ -829,5 +978,34 @@ mod tests {
         older.fix_at = 110;
         a.absorb(older);
         assert_eq!((a.lat, a.fix_at, a.last_heard), (Some(9.0), 290, 300));
+    }
+
+    #[test]
+    fn the_builtin_table_is_well_formed() {
+        let st = hfdl_builtin_stations();
+        assert_eq!(st.len(), 16, "ids 1..=17 less the unassigned 12");
+        let mut ids: Vec<u8> = st.iter().map(|s| s.gs_id).collect();
+        ids.dedup();
+        assert_eq!(ids.len(), st.len(), "ids are unique and in order");
+        for s in &st {
+            assert!(s.lat.unwrap().abs() <= 90.0 && s.lon.unwrap().abs() <= 180.0, "{}", s.name);
+            assert!(!s.freqs.is_empty() && s.freqs.len() <= 20, "{}: the bitmap holds 20", s.name);
+            for f in &s.freqs {
+                assert!((2_800..=22_000).contains(&f.khz()), "{} {}", s.name, f.khz());
+            }
+        }
+        // Spot checks against the source: Riverhead's first channel is the
+        // default, and Barrow is the station with the most channels.
+        let riverhead = st.iter().find(|s| s.gs_id == 4).unwrap();
+        assert_eq!(riverhead.freqs[0].khz(), (HFDL_DEFAULT_HZ / 1000.0) as u32);
+        assert_eq!(st.iter().map(|s| s.freqs.len()).max(), Some(19));
+    }
+
+    #[test]
+    fn the_builtin_plan_is_every_table_channel_once() {
+        let plan = hfdl_builtin_plan_khz();
+        assert!(plan.windows(2).all(|w| w[0] < w[1]), "ascending, unique");
+        assert!(plan.contains(&21_931) && plan.contains(&2_941) && plan.contains(&8_912));
+        assert_eq!(hfdl_plan_khz(&hfdl_builtin_stations(), &[]), plan);
     }
 }

@@ -24,16 +24,6 @@ use sdroxide_types::{
 
 use crate::app::SdroxideApp;
 
-/// The HFDL assigned-frequency plan, in kHz — the channels the ground-network
-/// stations transmit on, ARINC/AviaSat's published allocation. Riverhead's
-/// 21 931 kHz primary is first: it is the default channel and the reference
-/// off-air capture that validated the decoder was recorded on it.
-const HFDL_PLAN_KHZ: &[u32] = &[
-    21_931, 2_941, 2_992, 3_455, 3_917, 5_451, 6_562, 6_640, 8_843, 10_060, 10_084, 11_184, 11_387,
-    13_306, 13_309, 13_312, 13_315, 13_318, 17_904, 17_910, 17_913, 17_916, 17_919, 17_922, 17_925,
-    21_934, 21_940,
-];
-
 /// The HFDL panel: run switch, channel, and the split decode log / aircraft
 /// map — docked under the waterfall like the other lane panels (ADS-B, AIS).
 impl SdroxideApp {
@@ -110,7 +100,9 @@ impl SdroxideApp {
         // busy assigned frequencies that are not in the plan.
         let stations: &[HfdlStation] =
             self.hfdl_status.as_ref().map(|s| s.stations.as_slice()).unwrap_or(&[]);
-        let plan = hfdl_plan_khz(stations, HFDL_PLAN_KHZ);
+        // The live table's channels once the decoder has run (the built-in
+        // table seeds it), the built-in table's before.
+        let plan = hfdl_plan_khz(stations, &sdroxide_types::hfdl_builtin_plan_khz());
         let working = hfdl_working_khz(stations, now);
         let mut remove_khz: Option<u32> = None;
         let mut add_now = false;
@@ -1592,7 +1584,7 @@ mod tests {
 
     #[test]
     fn default_channel_is_in_the_plan() {
-        assert!(HFDL_PLAN_KHZ.contains(&(HFDL_DEFAULT_HZ as u32 / 1000)));
+        assert!(sdroxide_types::hfdl_builtin_plan_khz().contains(&(HFDL_DEFAULT_HZ as u32 / 1000)));
     }
 
     #[test]

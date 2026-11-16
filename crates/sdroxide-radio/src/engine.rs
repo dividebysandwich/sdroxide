@@ -12034,15 +12034,20 @@ impl Engine {
     }
 
     /// A fresh HFDL worker, seeded with the system table saved from the last
-    /// time the network broadcast one — so a squitter's channel bitmap can be
+    /// time the network broadcast one (or the built-in copy before that) — so a squitter's channel bitmap can be
     /// read as frequencies from the first burst rather than after the stations
     /// next send the table, which they do only now and then.
     fn new_hfdl_controller(rate_hz: f64, cfg: sdroxide_types::HfdlSettings) -> HfdlController {
         let c = HfdlController::new(rate_hz, cfg);
+        // The table saved from the air when there is one, the built-in copy
+        // (version 52) on a first run — so stations can be placed on the map and
+        // squitters read as frequencies from the start.
         let saved = sdroxide_config::load_hfdl_stations();
-        if !saved.is_empty() {
-            c.seed_stations(saved);
-        }
+        c.seed_stations(if saved.is_empty() {
+            sdroxide_types::hfdl_builtin_stations()
+        } else {
+            saved
+        });
         c
     }
 
