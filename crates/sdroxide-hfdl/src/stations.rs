@@ -69,6 +69,11 @@ impl StationBook {
         }
     }
 
+    /// One station, by id.
+    pub fn get(&self, gs_id: u8) -> Option<&HfdlStation> {
+        self.stations.get(&gs_id)
+    }
+
     /// The stations by id, and the over-the-air table version.
     pub fn snapshot(&self) -> (Vec<HfdlStation>, Option<u16>) {
         (self.stations.values().cloned().collect(), self.table_version)

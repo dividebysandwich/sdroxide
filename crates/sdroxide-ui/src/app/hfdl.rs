@@ -69,6 +69,21 @@ impl SdroxideApp {
             if khz != old_khz {
                 cfg.frequency_hz = khz * 1e3;
             }
+            // Where decoded frames go besides this panel.
+            let feeding = self.state.hfdl_outputs.airframes_ready();
+            let btn = crate::chrome::chip(ui, feeding, tr!("hfdl-feeds").to_string())
+                .on_hover_text(tr!("hfdl-feeds-hint"));
+            let open = crate::chrome::menu_popup(ui, &btn, |ui| self.hfdl_feeds_popup(ui, cmds));
+            // Closed: whatever was typed and not yet sent (a click outside can
+            // close the popup before the field reports losing focus) goes now.
+            if open.is_none()
+                && let Some(mut e) = self.hfdl_outputs_edit.take()
+            {
+                e.station_id = e.station_id.trim().to_string();
+                if e != self.state.hfdl_outputs {
+                    cmds.push(Command::SetHfdlOutputs(e));
+                }
+            }
             crate::chrome::row_tail(ui, |ui| {
                 // What SAVE writes follows the tab: the messages tab saves the
                 // ACARS messages as a CSV (the same columns' worth of detail
@@ -367,6 +382,60 @@ impl SdroxideApp {
         }
         if cfg != self.state.hfdl {
             cmds.push(Command::SetHfdlConfig(cfg));
+        }
+    }
+
+    /// The feeds popup: the station id, and each feed with what it has sent.
+    fn hfdl_feeds_popup(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        let live = self.state.hfdl_outputs.clone();
+        let edit = self.hfdl_outputs_edit.get_or_insert_with(|| live.clone());
+        let mut send = false;
+        ui.set_max_width(360.0);
+        ui.label(RichText::new(tr!("hfdl-feeds")).strong().color(crate::theme::CYAN_DIM()));
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(tr!("hfdl-station-id"));
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut edit.station_id)
+                    .hint_text("XX-YYYY-HFDL")
+                    .desired_width(150.0),
+            );
+            if r.lost_focus() && edit.station_id != live.station_id {
+                send = true;
+            }
+            r.on_hover_text(tr!("hfdl-station-id-hint"));
+        });
+        if !edit.station_id.is_empty() && !edit.station_id_ok() {
+            ui.label(
+                RichText::new(tr!("hfdl-station-id-bad")).size(10.5).color(crate::theme::HAZARD()),
+            );
+        }
+        ui.add_space(4.0);
+        if ui
+            .checkbox(&mut edit.airframes, tr!("hfdl-feed-airframes"))
+            .on_hover_text(tr!("hfdl-feed-airframes-hint"))
+            .changed()
+        {
+            send = true;
+        }
+        let st = self.hfdl_status.as_ref().map(|s| s.outputs.clone()).unwrap_or_default();
+        if edit.airframes {
+            let (text, ink) = if !edit.station_id_ok() {
+                (tr!("hfdl-feed-needs-id").to_string(), crate::theme::HAZARD())
+            } else if let Some(err) = &st.airframes_error {
+                (err.clone(), crate::theme::HAZARD())
+            } else {
+                (
+                    tr!("hfdl-feed-sent", n = count(st.airframes_sent)).to_string(),
+                    crate::theme::GREEN(),
+                )
+            };
+            ui.label(RichText::new(text).size(10.5).color(ink));
+        }
+        if send {
+            let mut o = edit.clone();
+            o.station_id = o.station_id.trim().to_string();
+            cmds.push(Command::SetHfdlOutputs(o));
         }
     }
 

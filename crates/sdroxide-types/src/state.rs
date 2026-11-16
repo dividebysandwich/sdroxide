@@ -675,6 +675,10 @@ pub struct RadioState {
     /// postcard numbers fields by position.
     #[serde(default)]
     pub sonde: crate::SondeSettings,
+    /// Where decoded HFDL is fed besides the panel (Airframes, …). Kept in
+    /// `hfdl_outputs.json`. Appended last: postcard numbers fields by position.
+    #[serde(default)]
+    pub hfdl_outputs: crate::HfdlOutputs,
 }
 
 /// Where a radio's built-in antenna tuner stands, as the radio reports it.
@@ -761,6 +765,7 @@ impl Default for RadioState {
             playback: None,
             wxsat: crate::WxsatSettings::default(),
             sonde: crate::SondeSettings::default(),
+            hfdl_outputs: crate::HfdlOutputs::default(),
         }
     }
 }

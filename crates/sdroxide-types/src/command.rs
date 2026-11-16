@@ -1322,4 +1322,8 @@ pub enum Command {
     /// [`Command::ScanNext`], and turns it back upwards). Appended: postcard
     /// numbers variants by position.
     ScanBack,
+    /// Where decoded HFDL is fed besides the panel. Kept in
+    /// `hfdl_outputs.json`, echoed back in [`crate::RadioState::hfdl_outputs`].
+    /// Appended last, for the usual reason.
+    SetHfdlOutputs(crate::HfdlOutputs),
 }

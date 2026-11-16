@@ -66,6 +66,50 @@ impl Default for HfdlSettings {
     }
 }
 
+/// Airframes' public HFDL ingest: dumphfdl `decoded:json`, one datagram per
+/// frame (as xng's feeder lists it).
+pub const HFDL_AIRFRAMES_HOST: &str = "feed.airframes.io";
+pub const HFDL_AIRFRAMES_PORT: u16 = 5556;
+
+/// Where decoded HFDL is sent besides the panel. All off by default: feeding a
+/// network sends the operator's station id and everything decoded to someone
+/// else, which only the operator can decide to do. Kept in `hfdl_outputs.json`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct HfdlOutputs {
+    /// The station identifier stamped on every JSON frame — Airframes credits
+    /// the feed to it and asks for one shaped `XX-YYYY-HFDL` (initials, an
+    /// airport or locator, the mode).
+    #[serde(default)]
+    pub station_id: String,
+    /// Feed Airframes' HFDL ingest ([`HFDL_AIRFRAMES_HOST`]:[`HFDL_AIRFRAMES_PORT`]).
+    #[serde(default)]
+    pub airframes: bool,
+}
+
+impl HfdlOutputs {
+    /// Whether the station id is one a feed can carry: 1 to 32 characters of
+    /// letters, digits, `-` and `_`.
+    pub fn station_id_ok(&self) -> bool {
+        let s = self.station_id.trim();
+        (1..=32).contains(&s.len())
+            && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    }
+
+    /// Airframes feeding is on and has a usable station id.
+    pub fn airframes_ready(&self) -> bool {
+        self.airframes && self.station_id_ok()
+    }
+}
+
+/// What the outputs have done since the decoder started.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct HfdlOutputStatus {
+    /// Frames sent to Airframes.
+    pub airframes_sent: u64,
+    /// Why the last one could not be sent, while that is still the case.
+    pub airframes_error: Option<String>,
+}
+
 /// What auto-follow is doing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HfdlFollowState {
@@ -487,6 +531,9 @@ pub struct HfdlStatus {
     /// Auto-follow's state, while it is on. Appended last: the wire is
     /// positional.
     pub follow: Option<HfdlFollow>,
+    /// What the outputs (feeds) have done. Appended last: the wire is
+    /// positional.
+    pub outputs: HfdlOutputStatus,
     /// Each channel being decoded, primary first. [`Self::level_dbfs`],
     /// [`Self::bursts`] and [`Self::decodes`] are the primary's and the totals.
     /// Appended last: the wire is positional.
@@ -506,6 +553,7 @@ impl Default for HfdlStatus {
             aircraft: Vec::new(),
             table_version: None,
             follow: None,
+            outputs: HfdlOutputStatus::default(),
             channels: Vec::new(),
         }
     }
@@ -1411,5 +1459,20 @@ mod tests {
         assert_eq!(hfdl_utc_dt(100, 700), 600);
         assert_eq!(hfdl_utc_dt(86_100, 300), 600, "23:55 to 00:05");
         assert_eq!(hfdl_utc_dt(300, 86_100), -600);
+    }
+
+    #[test]
+    fn a_feed_needs_a_station_id_it_can_carry() {
+        let mut o = HfdlOutputs { airframes: true, ..Default::default() };
+        assert!(!o.airframes_ready(), "no id");
+        o.station_id = "XX-KSEA-HFDL".into();
+        assert!(o.airframes_ready());
+        o.station_id = "has space".into();
+        assert!(!o.station_id_ok());
+        o.station_id = "x".repeat(33);
+        assert!(!o.station_id_ok());
+        o.station_id = "XX-KSEA-HFDL".into();
+        o.airframes = false;
+        assert!(!o.airframes_ready(), "a good id is not consent to feed");
     }
 }

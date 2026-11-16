@@ -6471,3 +6471,15 @@ hfdl-band-hint = Show the { $mhz } MHz channels. Green: a station is working one
 hfdl-col-calc-trk = CALC TRK
 hfdl-col-calc-kt = CALC KT
 hfdl-col-calc-hint = Calculated from the aircraft's last two position reports — course over the ground and average ground speed between them. Not reported by the aircraft: HFDL's position reports carry neither.
+
+## hfdl: feeds (src/app/hfdl.rs)
+
+hfdl-feeds = FEEDS
+hfdl-feeds-hint = Send what is decoded somewhere besides this panel — to Airframes, or to programs of your own. Everything is off until you switch it on.
+hfdl-station-id = Station ID
+hfdl-station-id-hint = Stamped on every frame sent. Airframes credits your feed to it and asks for one shaped XX-YYYY-HFDL: your initials, an airport code or locator, and the mode. Letters, digits, - and _, up to 32.
+hfdl-station-id-bad = Letters, digits, - and _ only, up to 32 characters.
+hfdl-feed-airframes = Feed Airframes (feed.airframes.io)
+hfdl-feed-airframes-hint = Send every decoded frame — squitters, positions, ACARS messages — with your station ID to Airframes' HFDL ingest (UDP, port 5556), in dumphfdl's JSON, the format it reads. Your feed then appears on airframes.io under that ID. Nothing is sent while this is off.
+hfdl-feed-needs-id = Not sending: give a station ID first.
+hfdl-feed-sent = { $n } frames sent

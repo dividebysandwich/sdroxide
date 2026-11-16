@@ -4359,6 +4359,8 @@ fn engine_thread(
     } else {
         adsb_cfg
     };
+    // Where decoded HFDL is fed: off unless the operator switched a feed on.
+    state.hfdl_outputs = sdroxide_config::load_hfdl_outputs();
     let ais_cfg = sdroxide_config::load_ais_config();
     state.ais = if audio_mode {
         sdroxide_types::AisSettings::OFF // wideband-only, like the rest of the lanes
@@ -10357,6 +10359,16 @@ impl Engine {
                 }
             }
 
+            SetHfdlOutputs(o) => {
+                if let Err(e) = sdroxide_config::save_hfdl_outputs(&o) {
+                    warn!("saving HFDL outputs: {e}");
+                }
+                if let Some(c) = self.hfdl.as_ref() {
+                    c.set_outputs(o.clone());
+                }
+                self.state.hfdl_outputs = o;
+            }
+
             SetSondeConfig(cfg) => {
                 let cfg = cfg.sane();
                 self.state.sonde = cfg;
@@ -12004,7 +12016,12 @@ impl Engine {
                 ddc.set_offset_hz(plan.center_hz - self.state.center_hz);
                 let out_rate = ddc.out_rate();
                 let lane = Self::hfdl_lane_channels(&plan);
-                self.hfdl = Some(Self::new_hfdl_controller(out_rate, lane, self.state.hfdl));
+                self.hfdl = Some(Self::new_hfdl_controller(
+                    out_rate,
+                    lane,
+                    self.state.hfdl,
+                    self.state.hfdl_outputs.clone(),
+                ));
                 self.hfdl_ddc = Some(ddc);
                 self.hfdl_in_rate = self.state.sample_rate;
                 self.hfdl_lane = (plan.center_hz, plan.channels.clone());
@@ -12089,8 +12106,10 @@ impl Engine {
         rate_hz: f64,
         lane: Vec<LaneChannel>,
         cfg: sdroxide_types::HfdlSettings,
+        outputs: sdroxide_types::HfdlOutputs,
     ) -> HfdlController {
         let c = HfdlController::with_lane(rate_hz, lane, cfg);
+        c.set_outputs(outputs);
         // The table saved from the air when there is one, the built-in copy
         // (version 52) on a first run — so stations can be placed on the map and
         // squitters read as frequencies from the start.

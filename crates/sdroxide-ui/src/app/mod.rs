@@ -523,6 +523,9 @@ pub struct SdroxideApp {
     /// retune to another band brings the row with it.
     hfdl_band_shown: Option<u32>,
     hfdl_band_seen: u32,
+    /// HFDL: the feeds being edited while their popup is open (the station id
+    /// is typed into this, and sent when the field is left).
+    hfdl_outputs_edit: Option<sdroxide_types::HfdlOutputs>,
     /// The operator's own filter presets (`filter_presets.json`), each in
     /// place of one of a mode's built-in chips in the BW popup.
     filter_presets: Vec<sdroxide_types::CustomFilterPreset>,
@@ -1729,6 +1732,7 @@ impl SdroxideApp {
             hfdl_channels: load_hfdl_channels(storage),
             hfdl_band_shown: None,
             hfdl_band_seen: 0,
+            hfdl_outputs_edit: None,
             filter_presets: load_filter_presets(storage),
             preset_edit: None,
             show_settings: false,

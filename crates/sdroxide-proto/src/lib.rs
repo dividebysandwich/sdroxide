@@ -2397,6 +2397,28 @@ mod tests {
         };
         let cmd = Command::SetSondeConfig(sonde);
         assert_eq!(decode::<Command>(&encode(&cmd).unwrap()).unwrap(), cmd);
+
+        // The HFDL settings (several channels, auto-follow) and feeds, both
+        // ways, away from their defaults.
+        let mut hfdl = sdroxide_types::HfdlSettings {
+            enabled: true,
+            frequency_hz: 13_276_000.0,
+            auto_follow: true,
+            ..Default::default()
+        };
+        hfdl.set_also(&[13_312, 13_324]);
+        let cmd = Command::SetHfdlConfig(hfdl);
+        assert_eq!(decode::<Command>(&encode(&cmd).unwrap()).unwrap(), cmd);
+        let feeds = sdroxide_types::HfdlOutputs {
+            station_id: "XX-TEST-HFDL".into(),
+            airframes: true,
+            ..Default::default()
+        };
+        let cmd = Command::SetHfdlOutputs(feeds.clone());
+        assert_eq!(decode::<Command>(&encode(&cmd).unwrap()).unwrap(), cmd);
+        let frame =
+            ServerMsg::State(RadioState { hfdl, hfdl_outputs: feeds, ..Default::default() });
+        assert_eq!(decode::<ServerMsg>(&encode(&frame).unwrap()).unwrap(), frame);
         let state = RadioState { sonde, ..Default::default() };
         let frame = ServerMsg::State(state);
         assert_eq!(decode::<ServerMsg>(&encode(&frame).unwrap()).unwrap(), frame);

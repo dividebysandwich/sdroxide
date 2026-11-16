@@ -7124,6 +7124,15 @@ An aircraft is dropped from the map after half an hour with nothing new, which i
 
 Where an aircraft is labelled by a number rather than a flight, the ground station had given it a short local alias and the logon that would resolve it to an ICAO address had not been heard. Catch that logon later in the session and the plot keeps its identity rather than splitting in two.
 
+#### Feeds
+
+**FEEDS**, in the top row, sends what is decoded somewhere besides this panel. Everything in it is off until you switch it on, because feeding a network sends your station ID and everything you decode to someone else.
+
+- **Station ID** — stamped on every frame sent. Airframes credits a feed to it and asks for one shaped `XX-YYYY-HFDL`: your initials, an airport code or locator, and the mode. Letters, digits, `-` and `_`, up to 32 characters.
+- **Feed Airframes** — sends every decoded frame to Airframes' HFDL ingest, `feed.airframes.io`, UDP port 5556, where it appears on airframes.io under your station ID. It is sent in dumphfdl's `decoded:json` format, one line per frame — the format that ingest reads — built field for field after dumphfdl's own, with these differences: the application is named `sdroxide`; the bit rate is included only where the decoder reports it (on ACARS frames) and the slot never, rather than made up; the signal and noise levels are this decoder's measurements; a frame carried in an *acknowledged* data LPDU is reported as unnumbered data; and frames dumphfdl would label an unknown protocol are not sent. Under the switch, a line says how many frames have gone, or why they are not going (no station ID, the name not resolved yet, a network error).
+
+The sending happens on the decoder's own thread without ever waiting on the network: a frame that cannot go at once is dropped, never queued, and the name is looked up again every ten minutes on a thread of its own. The settings are kept in `hfdl_outputs.json`.
+
 **Receive only.** HFDL is an airline and air-traffic service. There is no transmit half of this panel, and there never will be.
 
 #### How far this has been proven
@@ -16714,6 +16723,7 @@ and not the station's.
 | `broadcast/` | CSV | The broadcasting season's schedule as downloaded from eibispace.de, one file per season. Managed by sdroxide: refetched when the season changes, and safe to delete. |
 | `sstv_messages.json` | JSON | The overlay message stored for each of the ten SSTV transmit slots. |
 | `hfdl_channels.json` | JSON | Your own HFDL frequency chips, in kHz ([§3.19](#319-hfdl-aircraft-on-shortwave)). |
+| `hfdl_outputs.json` | JSON | Where decoded HFDL is fed besides the panel: the station ID and which feeds are on ([§3.19](#319-hfdl-aircraft-on-shortwave)). All off until switched on. |
 | `hfdl_stations.json` | JSON | The HFDL system table — each ground station's position and channels — as the network last broadcast it. Managed by sdroxide: rewritten when a new version is received, and safe to delete. |
 | `filter_presets.json` | JSON | Your own receive filter presets: for each one, the mode, which built-in chip it replaces, its label and its two edges in Hz. |
 | `voice_names.json` | JSON | The label given to each of the ten voice-keyer slots. |

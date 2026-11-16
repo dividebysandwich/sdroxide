@@ -22,12 +22,14 @@ use crossbeam_channel::{Receiver, Sender, bounded, select, unbounded};
 use sdroxide_dsp::Complex32;
 use sdroxide_types::{
     HFDL_ACARS_DEPTH, HFDL_LOG_DEPTH, HfdlAcars, HfdlChannelStatus, HfdlDecode, HfdlFix,
-    HfdlSettings, HfdlStation, HfdlStatus,
+    HfdlOutputs, HfdlSettings, HfdlStation, HfdlStatus,
 };
 use xng_mode_hfdl::HfdlChannelDecoder;
 use xng_mode_hfdl::pdu::{HfdlEvent, gs_name};
 
 use crate::aircraft::AircraftBook;
+use crate::dumphfdl::FrameMeta;
+use crate::outputs::Outputs;
 use crate::stations::StationBook;
 
 /// Realtime data, dropped on backpressure.
@@ -76,6 +78,8 @@ enum Ctl {
     Lane(f64, Vec<LaneChannel>),
     /// A saved system table to fill the station book's channels from.
     Seed(Vec<HfdlStation>),
+    /// Where to send decoded frames besides the panel.
+    Outputs(HfdlOutputs),
     Stop,
 }
 
@@ -131,6 +135,7 @@ impl HfdlController {
                     let mut tick = 0u64;
                     let mut book = StationBook::new();
                     let mut fleet = AircraftBook::new();
+                    let mut outputs = Outputs::new();
                     // Set by anything that changes the status without a decode
                     // (a seeded table), so the next block carries it out rather
                     // than the panel waiting for the idle tick.
@@ -148,6 +153,10 @@ impl HfdlController {
                                 }
                                 Ok(Ctl::Seed(saved)) => {
                                     book.seed(&saved);
+                                    force = true;
+                                }
+                                Ok(Ctl::Outputs(o)) => {
+                                    outputs.configure(o);
                                     force = true;
                                 }
                                 Ok(Ctl::Stop) | Err(_) => break,
@@ -170,6 +179,17 @@ impl HfdlController {
                                             ch.decodes += 1;
                                             book.observe(&e, ch.khz, now);
                                             fleet.observe(&e, ch.khz, now);
+                                            if outputs.active() {
+                                                let (sec, usec) = now_unix_us();
+                                                let meta = FrameMeta {
+                                                    sec,
+                                                    usec,
+                                                    freq_hz: u64::from(ch.khz) * 1000,
+                                                    sig_level: ch.decoder.level_dbfs(),
+                                                    station: None,
+                                                };
+                                                outputs.emit(&e, &meta, &|id| book.get(id));
+                                            }
                                             record(&mut log, &mut acars, mk_decode(ch.khz, &e, now));
                                             emitted = true;
                                         }
@@ -206,6 +226,7 @@ impl HfdlController {
                                             stations,
                                             table_version,
                                             follow: None,
+                                            outputs: outputs.status(),
                                             channels,
                                         });
                                     }
@@ -236,6 +257,11 @@ impl HfdlController {
         let _ = self.ctl_tx.send(Ctl::Lane(rate_hz, lane));
     }
 
+    /// Where to send decoded frames besides the panel.
+    pub fn set_outputs(&self, o: HfdlOutputs) {
+        let _ = self.ctl_tx.send(Ctl::Outputs(o));
+    }
+
     /// Hand the worker a saved system table (the stations' positions and
     /// channels), so a station's squitter bitmap can be read as frequencies
     /// before the network has broadcast the table again.
@@ -251,6 +277,14 @@ impl HfdlController {
         }
         out
     }
+}
+
+/// Now, as Unix seconds and the microseconds past them.
+fn now_unix_us() -> (i64, i64) {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| (d.as_secs() as i64, i64::from(d.subsec_micros())))
+        .unwrap_or((0, 0))
 }
 
 fn now_unix() -> i64 {
