@@ -5006,6 +5006,13 @@ morse-playback-available-desktop-build = Playback is available in the desktop bu
 
 adsb-row-altitude = altitude
 adsb-row-track = track
+adsb-row-heading = heading
+adsb-row-airspeed = airspeed
+adsb-row-selected-alt = selected altitude
+adsb-row-selected-heading = selected heading
+adsb-row-autopilot = autopilot
+adsb-on = on
+adsb-off = off
 adsb-row-route = route
 adsb-row-turning = turning
 adsb-row-squawk = squawk

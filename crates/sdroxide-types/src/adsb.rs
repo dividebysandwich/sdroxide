@@ -167,6 +167,45 @@ pub struct AdsbAircraft {
     /// The last accepted frame as hex, for identifying something the decoder
     /// only half understands.
     pub raw_hex: String,
+    /// What the aircraft reports from its own systems beyond position and
+    /// velocity: airspeed, heading, what the crew has selected, the ADS-B
+    /// version. Each field stays `None` until a message carrying it arrives.
+    pub avionics: AdsbAvionics,
+}
+
+/// What an aircraft reports from its own systems (TC 19 subtypes 3/4, TC 29,
+/// TC 31). Most aircraft send only some of it: the airspeed message only when
+/// there is no velocity over the ground to send, the target state only from
+/// ADS-B version 2 transponders.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AdsbAvionics {
+    /// Heading, degrees — where the nose points, which differs from the
+    /// track by the wind.
+    pub heading_deg: Option<f32>,
+    /// Indicated airspeed, knots.
+    pub ias_kt: Option<f32>,
+    /// True airspeed, knots.
+    pub tas_kt: Option<f32>,
+    /// Selected altitude, feet.
+    pub selected_alt_ft: Option<i32>,
+    /// The selected altitude comes from the FMS rather than the MCP/FCU.
+    pub selected_alt_fms: bool,
+    /// Barometer setting, hPa.
+    pub qnh_hpa: Option<f32>,
+    /// Selected heading, degrees.
+    pub selected_heading_deg: Option<f32>,
+    /// Autopilot engaged.
+    pub autopilot: Option<bool>,
+    /// The autopilot modes on, in the order `VNAV ALT APP LNAV`.
+    pub modes: Vec<String>,
+    /// TCAS operational.
+    pub tcas: Option<bool>,
+    /// ADS-B version of the transponder (0, 1 or 2).
+    pub version: Option<u8>,
+    /// Navigation accuracy category for position, 0–11.
+    pub nac_p: Option<u8>,
+    /// Source integrity level, 0–3.
+    pub sil: Option<u8>,
 }
 
 impl AdsbAircraft {
@@ -195,6 +234,7 @@ impl AdsbAircraft {
             last_at: now,
             last_pos_at: 0,
             raw_hex: String::new(),
+            avionics: AdsbAvionics::default(),
         }
     }
 

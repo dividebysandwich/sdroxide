@@ -4930,6 +4930,13 @@ morse-playback-available-desktop-build = Die Wiedergabe ist im Desktop-Build ver
 
 adsb-row-altitude = Höhe
 adsb-row-track = Kurs
+adsb-row-heading = Steuerkurs
+adsb-row-airspeed = Fahrt
+adsb-row-selected-alt = gewählte Höhe
+adsb-row-selected-heading = gewählter Kurs
+adsb-row-autopilot = Autopilot
+adsb-on = an
+adsb-off = aus
 adsb-row-route = Strecke
 adsb-row-turning = Kurvenflug
 adsb-row-squawk = Squawk
