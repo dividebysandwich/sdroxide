@@ -8,6 +8,7 @@
 //! targets.
 
 mod adsb_map;
+mod adsb_route;
 mod ais_map;
 mod app;
 mod aprs_icons;

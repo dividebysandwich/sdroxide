@@ -4263,6 +4263,7 @@ adsb-aircraft-ground-are-placed-against = Aircraft on the ground are placed agai
 adsb-call = CALL
 adsb-icao = ICAO
 adsb-v-s = V/S
+adsb-route-col = ROUTE
 
 ## drm (src/app/drm.rs)
 
@@ -5005,6 +5006,7 @@ morse-playback-available-desktop-build = Playback is available in the desktop bu
 
 adsb-row-altitude = altitude
 adsb-row-track = track
+adsb-row-route = route
 adsb-row-turning = turning
 adsb-row-squawk = squawk
 adsb-row-range = range

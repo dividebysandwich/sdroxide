@@ -75,6 +75,7 @@ impl SdroxideApp {
 
         self.adsb_header(ui, cmds, &st);
         ui.add_space(3.0);
+        self.adsb_routes.poll(ui.ctx());
 
         let avail_h = (content_bottom - ui.cursor().top()).max(80.0);
         let pane = self.phone_pane(ui, self.state.rx[0].mode);
@@ -227,6 +228,10 @@ impl SdroxideApp {
             })
             .collect();
         sort_rows(&mut rows, self.adsb_sort, self.adsb_sort_desc, home);
+        // Asked for here, row by row, so only the airlines actually heard are
+        // fetched; a row shows its route once the airline's file is in.
+        let routes: Vec<Option<Vec<String>>> =
+            rows.iter().map(|a| self.adsb_routes.route(&a.callsign)).collect();
 
         let selected = self.adsb_map.selected;
         let card = selected.and_then(|i| st.aircraft.iter().find(|a| a.icao == i));
@@ -258,7 +263,8 @@ impl SdroxideApp {
                     ui.label(RichText::new(tr!("adsb-nothing-heard-yet")).weak());
                 }
                 for (i, a) in rows.iter().enumerate() {
-                    if adsb_row(ui, a, now, selected, home, drop_map_s, i) {
+                    let route = routes[i].as_deref();
+                    if adsb_row(ui, a, route, now, selected, home, drop_map_s, i) {
                         pick = Some(a.icao);
                     }
                 }
@@ -321,6 +327,18 @@ impl SdroxideApp {
                 }
 
                 let mut rows: Vec<(String, String)> = Vec::new();
+                // The usual route of the callsign, airports named where their
+                // file is in. Typical, not filed: see `adsb_route`.
+                if let Some(route) = self.adsb_routes.route(&a.callsign) {
+                    let names: Vec<String> = route
+                        .iter()
+                        .map(|c| match self.adsb_routes.airport(c) {
+                            Some(ap) if !ap.name.is_empty() => format!("{c} {}", ap.name),
+                            _ => c.clone(),
+                        })
+                        .collect();
+                    rows.push((tr!("adsb-row-route"), names.join(" → ")));
+                }
                 if let Some(ft) = a.altitude_ft {
                     rows.push((tr!("adsb-row-altitude"), tr!("adsb-ft-barometric", ft = ft)));
                 }
@@ -405,8 +423,16 @@ impl SdroxideApp {
     fn adsb_map_pane(&mut self, ui: &mut egui::Ui, st: &AdsbStatus, now: i64, h: f32) {
         let home = self.adsb_home();
         let cfg = self.state.adsb;
+        // The selected aircraft's route, with every airport whose place is in.
+        let route: Vec<crate::adsb_route::Airport> = self
+            .adsb_map
+            .selected
+            .and_then(|i| st.aircraft.iter().find(|a| a.icao == i))
+            .and_then(|a| self.adsb_routes.route(&a.callsign))
+            .map(|r| r.iter().filter_map(|c| self.adsb_routes.airport(c)).collect())
+            .unwrap_or_default();
         let state = &mut self.adsb_map;
-        crate::adsb_map::show(ui, state, &st.aircraft, home, now, cfg, h);
+        crate::adsb_map::show(ui, state, &st.aircraft, &route, home, now, cfg, h);
     }
 
     /// The operator's own position, from the grid in the digital-mode setup.
@@ -551,6 +577,7 @@ fn adsb_head_row(ui: &mut egui::Ui, have_home: bool, sort: &mut AdsbSort, desc: 
             (cols.icao, L, &tr!("adsb-icao"), None),
             (cols.alt, R, "ALT", Some(AdsbSort::Altitude)),
             (cols.spd, R, "GS", Some(AdsbSort::Speed)),
+            (cols.route, L, &tr!("adsb-route-col"), None),
             (cols.sig, R, "SIG", Some(AdsbSort::Signal)),
             (cols.trk, R, "TRK", None),
             (cols.vs, R, &tr!("adsb-v-s"), None),
@@ -563,12 +590,17 @@ fn adsb_head_row(ui: &mut egui::Ui, have_home: bool, sort: &mut AdsbSort, desc: 
     );
 }
 
+/// Where the route column starts, and the room it needs.
+const ROUTE_X: f32 = 206.0;
+const ROUTE_W: f32 = 66.0;
+
 /// Column x offsets, in points from the left of a row.
 struct Cols {
     call: f32,
     icao: f32,
     alt: f32,
     spd: f32,
+    route: f32,
     sig: f32,
     trk: f32,
     vs: f32,
@@ -594,13 +626,19 @@ fn columns(w: f32, have_home: bool) -> Cols {
     // heading has to clear the fixed left-hand group, and at [`WIDE_W`] it
     // just does — with or without a range column between it and the edge.
     let sig = if w < WIDE_W { f32::NAN } else { trk - 34.0 };
-    Cols { call: 5.0, icao: 62.0, alt: 158.0, spd: 196.0, sig, trk, vs, sqk, range, age }
+    // The route sits after the speed, left-aligned, only where the first of the
+    // right-hand columns leaves it room for `EDDK›…›GCLP`.
+    let first_right = if sig.is_nan() { trk } else { sig };
+    let route = if first_right - 28.0 - ROUTE_X >= ROUTE_W { ROUTE_X } else { f32::NAN };
+    Cols { call: 5.0, icao: 62.0, alt: 158.0, spd: 196.0, route, sig, trk, vs, sqk, range, age }
 }
 
 /// One row of the aircraft table. Returns true if it was clicked.
+#[allow(clippy::too_many_arguments)]
 fn adsb_row(
     ui: &mut egui::Ui,
     a: &AdsbAircraft,
+    route: Option<&[String]>,
     now: i64,
     selected: Option<u32>,
     home: Option<(f64, f64)>,
@@ -665,6 +703,13 @@ fn adsb_row(
     }
     put(cols.alt, egui::Align2::RIGHT_CENTER, a.fmt_altitude(), mono.clone(), ink);
     put(cols.spd, egui::Align2::RIGHT_CENTER, a.fmt_speed(), mono.clone(), ink);
+    put(
+        cols.route,
+        egui::Align2::LEFT_CENTER,
+        route.map(crate::adsb_route::short).unwrap_or_default(),
+        small.clone(),
+        dim,
+    );
     put(cols.sig, egui::Align2::RIGHT_CENTER, format!("{:.0}", a.rssi_dbfs), small.clone(), dim);
     put(
         cols.trk,

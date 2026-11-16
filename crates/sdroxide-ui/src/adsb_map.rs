@@ -160,10 +160,12 @@ fn block_rank(a: &AdsbAircraft) -> u8 {
 }
 
 /// Draw the map. Returns the aircraft clicked this frame, if any.
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut Ui,
     state: &mut AdsbMapState,
     aircraft: &[AdsbAircraft],
+    route: &[crate::adsb_route::Airport],
     home: Option<(f64, f64)>,
     now: i64,
     cfg: AdsbSettings,
@@ -265,6 +267,50 @@ pub fn show(
 
     let font = FontId::monospace(9.0);
     let selected_icao = state.selected;
+
+    // ── the selected aircraft's route, under the targets ──
+    // Dashed great circles: departure → aircraft → destination when the route
+    // has no stops and the aircraft has a place, else airport to airport. The
+    // whole route, not just the leg ahead (HDZ 2026-11-16: „Strecke gesamt
+    // für gewählt ja“).
+    // Pitfall: the route is the callsign's usual one, not today's plan; an
+    //          aircraft far off its line is a reused callsign or a diversion.
+    if route.len() >= 2 {
+        let here = selected_icao
+            .and_then(|i| live.iter().find(|a| a.icao == i))
+            .and_then(|a| a.lat.zip(a.lon));
+        let mut stops: Vec<(f64, f64)> = route.iter().map(|ap| (ap.lat, ap.lon)).collect();
+        if let (2, Some(h)) = (stops.len(), here) {
+            stops.insert(1, h);
+        }
+        let ink = alpha(map.dx, 170.0);
+        for leg in stops.windows(2) {
+            let pts: Vec<_> = crate::adsb_route::great_circle(leg[0], leg[1], 64)
+                .into_iter()
+                .map(|(la, lo)| project(la, lo))
+                .collect();
+            // A leg that crosses the map's back edge would be drawn as a line
+            // across the whole picture; it is cut where it jumps.
+            let mut seg = vec![pts[0]];
+            for w in pts.windows(2) {
+                if (w[1].x - w[0].x).abs() > rect.width() * 0.5 {
+                    p.extend(eframe::egui::Shape::dashed_line(&seg, (1.3, ink), 6.0, 4.0));
+                    seg.clear();
+                }
+                seg.push(w[1]);
+            }
+            p.extend(eframe::egui::Shape::dashed_line(&seg, (1.3, ink), 6.0, 4.0));
+        }
+        for ap in route {
+            let c = project(ap.lat, ap.lon);
+            if !rect.contains(c) {
+                continue;
+            }
+            p.circle_filled(c, 3.0, alpha(map.sea, 200.0));
+            p.circle_stroke(c, 3.0, (1.2, ink));
+            p.text(c + vec2(5.0, -1.0), Align2::LEFT_BOTTOM, &ap.icao, font.clone(), ink);
+        }
+    }
     let tint_for = |a: &AdsbAircraft, top: bool| -> Color32 {
         if a.emergency.is_some() || selected_icao == Some(a.icao) {
             map.dx

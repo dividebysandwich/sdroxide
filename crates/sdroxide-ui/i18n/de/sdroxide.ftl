@@ -4194,6 +4194,7 @@ adsb-aircraft-ground-are-placed-against = Flugzeuge am Boden werden gegen die ei
 adsb-call = RUFZEICHEN
 adsb-icao = ICAO
 adsb-v-s = V/S
+adsb-route-col = STRECKE
 
 ## drm (src/app/drm.rs)
 
@@ -4929,6 +4930,7 @@ morse-playback-available-desktop-build = Die Wiedergabe ist im Desktop-Build ver
 
 adsb-row-altitude = Höhe
 adsb-row-track = Kurs
+adsb-row-route = Strecke
 adsb-row-turning = Kurvenflug
 adsb-row-squawk = Squawk
 adsb-row-range = Entfernung

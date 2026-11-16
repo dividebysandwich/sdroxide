@@ -6334,6 +6334,7 @@ when it was registered, unique worldwide and unchanging.
 | ICAO | The address, in hex, once there is a callsign to distinguish it from. |
 | ALT | Altitude. Flight level above 18 000 feet (`F350`), hundreds of feet below it (`045`), and `GND` on the ground. |
 | GS | Ground speed in knots. |
+| ROUTE | The callsign's usual route, departure and destination airport by ICAO code (`EDDK›GCLP`, `EDDL›…›GCLP` with stops). Shown where the panel is wide enough; see *Routes* below. |
 | TRK | Track over ground, degrees true. |
 | V/S | Rate of climb or descent, feet per minute. |
 | SQK | The squawk — the four-digit code the crew set for air traffic control. Only some frames carry it; see below. |
@@ -6376,6 +6377,29 @@ something:
 
 Drag to pan, scroll to zoom, double-click to reframe. Your own position is
 marked once **My grid** is set.
+
+**The selected aircraft's route** is drawn as dashed great circles from the
+departure airport through the aircraft to the destination — the whole route,
+with the airports marked by their ICAO codes. A route with stops is drawn
+airport to airport.
+
+#### Routes
+
+ADS-B carries no flight plan: who, where, how high and how fast, nothing about
+where the flight is going. The ROUTE column, the route line in the card and the
+line on the map come from the callsign instead, looked up in the *standing data*
+of Virtual Radar Server (`github.com/vradarserver/standing-data`, public domain,
+CC0). It is the route the callsign usually flies, not the plan filed today; a
+charter, a diversion or a callsign reused for another flight will show the
+wrong airports or none. An aircraft far off its dashed line is the sign.
+
+The data is fetched as aircraft are heard: one small file per airline and one
+per group of airports, from `raw.githubusercontent.com`, and kept for a week in
+the `adsb-routes` folder of the configuration directory. Only the file name is
+asked for — nothing about your station or the aircraft is sent. A callsign that
+is a registration (private flights) has no route. Without a network connection
+the column stays empty and the rest of the panel works as before. The browser
+version shows no routes.
 
 **A target with a stale position is not drawn at all.** Past the timeout it
 comes off the map — square, dots and block together — while staying on the list,

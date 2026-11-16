@@ -840,6 +840,9 @@ pub struct SdroxideApp {
     adsb_status: Option<Box<sdroxide_types::AdsbStatus>>,
     /// ADS-B: the radar picture's pan/zoom and which target is selected.
     adsb_map: crate::adsb_map::AdsbMapState,
+    /// Routes by callsign and airport places, fetched as aircraft are heard
+    /// (see [`crate::adsb_route`]).
+    adsb_routes: crate::adsb_route::RouteBook,
     /// ADS-B: filter for the aircraft list; matches a callsign or an address.
     adsb_filter: String,
     /// ADS-B: the decoder's own settings window is open.
@@ -1814,6 +1817,7 @@ impl SdroxideApp {
             aprs_map: crate::aprs_map::AprsMapState::default(),
             adsb_status: None,
             adsb_map: crate::adsb_map::AdsbMapState::default(),
+            adsb_routes: crate::adsb_route::RouteBook::default(),
             adsb_filter: String::new(),
             show_adsb_setup: false,
             adsb_sort: panels::adsb::AdsbSort::default(),
