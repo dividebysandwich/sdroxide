@@ -66,8 +66,8 @@ impl Default for HfdlSettings {
     }
 }
 
-/// Airframes' public HFDL ingest: dumphfdl `decoded:json`, one datagram per
-/// frame (as xng's feeder lists it).
+/// Airframes' public HFDL ingest: dumphfdl `decoded:json`, one line per frame
+/// over a TCP connection (a datagram sent there is never seen).
 pub const HFDL_AIRFRAMES_HOST: &str = "feed.airframes.io";
 pub const HFDL_AIRFRAMES_PORT: u16 = 5556;
 
@@ -141,9 +141,10 @@ pub fn hfdl_target_ok(t: &str) -> bool {
 /// What the outputs have done since the decoder started.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct HfdlOutputStatus {
-    /// Frames sent to Airframes.
+    /// Frames written to Airframes' connection.
     pub airframes_sent: u64,
-    /// Why the last one could not be sent, while that is still the case.
+    /// Why there is no connection to Airframes, or why a write failed, while
+    /// that is still the case ("connecting…" until the first connection).
     pub airframes_error: Option<String>,
     /// Frames sent to the local JSON targets (one count per datagram).
     pub json_sent: u64,

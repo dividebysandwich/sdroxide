@@ -1,7 +1,7 @@
 //! dumphfdl's `decoded:json` format, from xng's decoded events.
 //!
 //! dumphfdl is the reference HFDL decoder, and its JSON is what the tools
-//! around HFDL read: Airframes' HFDL ingest (UDP `feed.airframes.io:5556`),
+//! around HFDL read: Airframes' HFDL ingest (TCP `feed.airframes.io:5556`),
 //! acarshub, and anything built on them. So that is the format sdroxide sends.
 //! The layout here follows dumphfdl's own formatters (`fmtr-json.c`,
 //! `spdu.c`, `lpdu.c`, `hfnpdu.c`, `util.c`) and libacars' `acars.c` for the
