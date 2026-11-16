@@ -1013,6 +1013,7 @@ impl RxChain {
             d.set_filter(rx.filter_lo, rx.filter_hi);
             d.set_stereo_enabled(stereo_allowed(rx));
             d.set_fm_decrackle(rx.fm_decrackle, rx.fm_deemph, rx.fm_decrackle_dip);
+            d.set_sam_sideband(rx.sam_sideband, rx.sam_mrc_tau_s);
         }
         let audio_rate =
             self.demod.as_ref().map(|d| d.audio_rate()).unwrap_or_else(|| self.ddc.out_rate());
@@ -1059,6 +1060,7 @@ impl RxChain {
         demod.process(&self.channel_buf, &mut self.audio_buf);
         demod.set_stereo_enabled(stereo_allowed(rx));
         demod.set_fm_decrackle(rx.fm_decrackle, rx.fm_deemph, rx.fm_decrackle_dip);
+        demod.set_sam_sideband(rx.sam_sideband, rx.sam_mrc_tau_s);
         let stereo = demod.take_side(&mut self.side_buf);
         // The decoder's tap, taken *before* the AGC.
         //
@@ -9182,6 +9184,16 @@ impl Engine {
                     p.fm_decrackle = Some(on);
                     p.fm_deemph = Some(deemph);
                     p.fm_decrackle_dip = Some(dip);
+                });
+            }
+            SetSamSideband { rx, sideband, tau_s } => {
+                let tau_s = sdroxide_types::sam_mrc_tau_snap(tau_s);
+                let r = &mut self.state.rx[rx.index()];
+                r.sam_sideband = sideband;
+                r.sam_mrc_tau_s = tau_s;
+                self.remember_mode_setting(rx, |p| {
+                    p.sam_sideband = Some(sideband);
+                    p.sam_mrc_tau_s = Some(tau_s);
                 });
             }
             SetHumFilter { rx, on } => {

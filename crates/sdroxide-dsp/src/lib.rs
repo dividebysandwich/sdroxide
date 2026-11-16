@@ -49,6 +49,7 @@ mod rds;
 mod resample;
 pub mod rifp;
 mod rtty;
+mod sam_mrc;
 mod sbnr;
 mod sk;
 #[macro_use]

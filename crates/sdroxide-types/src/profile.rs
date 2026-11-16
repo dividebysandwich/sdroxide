@@ -54,6 +54,10 @@ pub struct ModeProfile {
     pub noise_reduction: Option<NrLevel>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_notch: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sam_sideband: Option<crate::SamSideband>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sam_mrc_tau_s: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wfm_stereo: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -103,6 +107,8 @@ impl ModeProfile {
             && self.squelch_db.is_none()
             && self.noise_reduction.is_none()
             && self.auto_notch.is_none()
+            && self.sam_sideband.is_none()
+            && self.sam_mrc_tau_s.is_none()
             && self.wfm_stereo.is_none()
             && self.fm_decrackle.is_none()
             && self.fm_deemph.is_none()
@@ -127,6 +133,8 @@ impl ModeProfile {
             squelch_db: self.squelch_db.or(base.squelch_db),
             noise_reduction: self.noise_reduction.or(base.noise_reduction),
             auto_notch: self.auto_notch.or(base.auto_notch),
+            sam_sideband: self.sam_sideband.or(base.sam_sideband),
+            sam_mrc_tau_s: self.sam_mrc_tau_s.or(base.sam_mrc_tau_s),
             wfm_stereo: self.wfm_stereo.or(base.wfm_stereo),
             fm_decrackle: self.fm_decrackle.or(base.fm_decrackle),
             fm_deemph: self.fm_deemph.or(base.fm_deemph),
@@ -166,6 +174,12 @@ impl ModeProfile {
         }
         if self.auto_notch == default.auto_notch {
             self.auto_notch = None;
+        }
+        if self.sam_sideband == default.sam_sideband {
+            self.sam_sideband = None;
+        }
+        if self.sam_mrc_tau_s == default.sam_mrc_tau_s {
+            self.sam_mrc_tau_s = None;
         }
         if self.wfm_stereo == default.wfm_stereo {
             self.wfm_stereo = None;
@@ -220,6 +234,8 @@ impl ModeProfile {
             && self.squelch_db.is_none_or(|v| same(v, rx.squelch_db))
             && self.noise_reduction.is_none_or(|v| v == rx.noise_reduction)
             && self.auto_notch.is_none_or(|v| v == rx.auto_notch)
+            && self.sam_sideband.is_none_or(|v| v == rx.sam_sideband)
+            && self.sam_mrc_tau_s.is_none_or(|v| v == rx.sam_mrc_tau_s)
             && self.wfm_stereo.is_none_or(|v| v == rx.wfm_stereo)
             && self.fm_decrackle.is_none_or(|v| v == rx.fm_decrackle)
             && self.fm_deemph.is_none_or(|v| v == rx.fm_deemph)
@@ -258,6 +274,12 @@ impl ModeProfile {
         }
         if let Some(v) = self.auto_notch {
             rx.auto_notch = v;
+        }
+        if let Some(v) = self.sam_sideband {
+            rx.sam_sideband = v;
+        }
+        if let Some(v) = self.sam_mrc_tau_s {
+            rx.sam_mrc_tau_s = crate::sam_mrc_tau_snap(v);
         }
         if let Some(v) = self.wfm_stereo {
             rx.wfm_stereo = v;

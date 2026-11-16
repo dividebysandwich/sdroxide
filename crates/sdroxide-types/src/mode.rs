@@ -1146,6 +1146,8 @@ impl Mode {
             squelch_db: Some(crate::SQUELCH_OPEN_DB),
             noise_reduction: Some(NrLevel::Off),
             auto_notch: Some(false),
+            sam_sideband: Some(crate::SamSideband::Mrc),
+            sam_mrc_tau_s: Some(crate::SAM_MRC_DEFAULT_TAU_S),
             wfm_stereo: Some(true),
             fm_decrackle: Some(true),
             fm_deemph: Some(true),

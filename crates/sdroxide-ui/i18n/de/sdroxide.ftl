@@ -2165,6 +2165,22 @@ topbar-fm-decrackle-hint = NFM: Phasenschlüpfe (Knistern bei schwachem Signal) 
 topbar-fm-deemph = DE-EMPH
 topbar-fm-deemph-hint = De-Emphasis 6 dB/Oktave ab 300 Hz; aus bei Sendern ohne Pre-Emphasis
 topbar-fm-decrackle-sens-hint = Empfindlichkeit: Betragseinbruch unter diesen Anteil des Mittels; 0,2 Grundwert, höher greift öfter
+topbar-sam-sideband = SAM
+topbar-sam-dsb = DSB
+topbar-sam-dsb-hint = Beide Seitenbänder gleich gewichtet; klassisches SAM ohne Verzögerung
+topbar-sam-mrc-chip = MRC
+topbar-sam-mrc-hint = USB und LSB je Frequenz nach Güte kombiniert (Maximal-Ratio), PLL folgt Trägerpegel
+    Meist beste Wahl gegen selektives Fading; ~27 ms Verzögerung
+topbar-sam-usb = USB
+topbar-sam-usb-hint = Nur oberes Seitenband, synchron demoduliert; gegen Störer unterhalb des Trägers
+    PLL folgt Trägerpegel; ~27 ms Verzögerung
+topbar-sam-lsb = LSB
+topbar-sam-lsb-hint = Nur unteres Seitenband, synchron demoduliert; gegen Störer oberhalb des Trägers
+    PLL folgt Trägerpegel; ~27 ms Verzögerung
+topbar-sam-tau-short = 0,2 s
+topbar-sam-tau-mid = 0,5 s
+topbar-sam-tau-long = 1 s
+topbar-sam-tau-hint = MRC-Mittelungszeit der Seitenbandgüte; kürzer folgt schnellem Fading, länger ruhiger
 topbar-nr-filters = FILTER
 topbar-sk-filter-hint = SK-Nachfilter verfeinert neuronale oder andere Rauschentfernung: bestraft Restrauschen
     (Filter resoniert, dadurch Echo) · Filter von HDZ

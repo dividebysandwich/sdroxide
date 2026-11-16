@@ -2187,6 +2187,22 @@ topbar-fm-decrackle-hint = NFM: phase slips (crackle on weak signals) found and 
 topbar-fm-deemph = DE-EMPH
 topbar-fm-deemph-hint = De-emphasis 6 dB/octave above 300 Hz; off for transmitters without pre-emphasis
 topbar-fm-decrackle-sens-hint = Sensitivity: magnitude dip below this share of its mean; 0.2 default, higher repairs more
+topbar-sam-sideband = SAM
+topbar-sam-dsb = DSB
+topbar-sam-dsb-hint = Both sidebands weighted equally; classic SAM, no delay
+topbar-sam-mrc-chip = MRC
+topbar-sam-mrc-hint = USB and LSB combined per frequency by quality (maximal ratio), PLL gain follows carrier level
+    Usually the best choice against selective fading; ~27 ms delay
+topbar-sam-usb = USB
+topbar-sam-usb-hint = Upper sideband only, synchronously detected; against interference below the carrier
+    PLL gain follows carrier level; ~27 ms delay
+topbar-sam-lsb = LSB
+topbar-sam-lsb-hint = Lower sideband only, synchronously detected; against interference above the carrier
+    PLL gain follows carrier level; ~27 ms delay
+topbar-sam-tau-short = 0.2 s
+topbar-sam-tau-mid = 0.5 s
+topbar-sam-tau-long = 1 s
+topbar-sam-tau-hint = MRC averaging time of sideband quality; shorter follows fast fading, longer is steadier
 topbar-nr-filters = FILTERS
 topbar-sk-filter-hint = SK post-filter refines neural or other noise removal: penalises unwanted noise
     (the filter resonates, leading to echo) · filter by HDZ
