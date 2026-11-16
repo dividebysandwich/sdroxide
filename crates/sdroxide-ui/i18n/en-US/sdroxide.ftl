@@ -6465,3 +6465,9 @@ hfdlmap-gs-not-heard = not heard lately — known from the system table
 
 hfdl-band-label = MHz
 hfdl-band-hint = Show the { $mhz } MHz channels. Green: a station is working one of them now; underlined: one of them is being decoded.
+
+## hfdl: calculated course and speed (src/app/hfdl.rs)
+
+hfdl-col-calc-trk = CALC TRK
+hfdl-col-calc-kt = CALC KT
+hfdl-col-calc-hint = Calculated from the aircraft's last two position reports — course over the ground and average ground speed between them. Not reported by the aircraft: HFDL's position reports carry neither.

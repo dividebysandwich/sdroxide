@@ -334,7 +334,11 @@ mod tests {
         assert_eq!(order[0], 8, "where it was heard");
         assert!(order[..2].contains(&11), "where it says it is working: {order:?}");
         assert_eq!(order.len(), band_order(0.0).len());
-        assert_eq!(band_order(solar_hour(now, Some(0.0)))[0], 5, "without the evidence, 5 MHz would lead");
+        assert_eq!(
+            band_order(solar_hour(now, Some(0.0)))[0],
+            5,
+            "without the evidence, 5 MHz would lead"
+        );
     }
 
     #[test]

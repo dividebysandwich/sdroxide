@@ -7099,6 +7099,7 @@ The decode log's rows for the same messages now show the aircraft, the label and
 | **dB** | The signal-to-noise figure of its latest burst that measured one. |
 | **MSGS** | How many events are attributed to it. |
 | **KM** | Distance from your grid square to its last reported position; empty with no position or no grid. Hover for the position, how long ago it was reported, and the bearing. |
+| **CALC TRK**, **CALC KT** | Course over the ground (degrees true) and ground speed (knots), *calculated* by sdroxide from the aircraft's last two position reports — marked **≈**, because HFDL's position reports carry neither, so this is the average between two fixes usually minutes apart, not what the aircraft reported. Timed by the aircraft's own clock in the reports where both carry it. Left empty when the two fixes are under 30 s or 2 km apart, implausibly fast (over 750 kt: a bad fix), or more than an hour apart. |
 | **LAST MESSAGE** | What its latest ACARS message said, as `[label] text` on one line, cut to the width the pane has (hover for the whole of it, up to 200 characters). A position report after it does not replace it. An aircraft that has sent no ACARS shows the kind of event last heard from it, dimmer — `performance-data`, `logon-confirm`. |
 
 Click a column heading to sort by it, and again to reverse; the arrow shows which. It starts on **HEARD**, newest first. An aircraft with nothing in the sorted column — no registration, no position — goes last whichever way it runs. The sort is remembered with the rest of the layout.

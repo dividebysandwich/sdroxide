@@ -473,7 +473,7 @@ impl SdroxideApp {
             .show(ui, |ui| {
                 let geom = TableGeom { origin_x: ui.cursor().min.x, width: pane_w };
                 egui::Grid::new("hfdl-aircraft-grid")
-                    .num_columns(10)
+                    .num_columns(12)
                     .spacing([10.0, 3.0])
                     .striped(true)
                     .show(ui, |ui| {
@@ -1058,6 +1058,8 @@ const AIRCRAFT_COL_MHZ: u8 = 4;
 const AIRCRAFT_COL_SNR: u8 = 5;
 const AIRCRAFT_COL_MSGS: u8 = 6;
 const AIRCRAFT_COL_DIST: u8 = 7;
+const AIRCRAFT_COL_TRK: u8 = 8;
+const AIRCRAFT_COL_SPD: u8 = 9;
 
 /// The aircraft table's type sizes, in points. The table is the pane people
 /// read at a glance across a desk, not a log to skim, so it is set larger than
@@ -1157,6 +1159,10 @@ fn hfdl_aircraft_sorted(
             AIRCRAFT_COL_DIST => hfdl_aircraft_km(a, home)
                 .zip(hfdl_aircraft_km(b, home))
                 .map(|(x, y)| x.total_cmp(&y)),
+            AIRCRAFT_COL_TRK => {
+                a.calc_track_deg.zip(b.calc_track_deg).map(|(x, y)| x.total_cmp(&y))
+            }
+            AIRCRAFT_COL_SPD => a.calc_speed_kt.zip(b.calc_speed_kt).map(|(x, y)| x.total_cmp(&y)),
             _ => Some(a.last_heard.cmp(&b.last_heard)),
         }
     };
@@ -1166,6 +1172,8 @@ fn hfdl_aircraft_sorted(
         AIRCRAFT_COL_GS => a.gs.is_some(),
         AIRCRAFT_COL_SNR => a.snr_db.is_some(),
         AIRCRAFT_COL_DIST => hfdl_aircraft_km(a, home).is_some(),
+        AIRCRAFT_COL_TRK => a.calc_track_deg.is_some(),
+        AIRCRAFT_COL_SPD => a.calc_speed_kt.is_some(),
         _ => true,
     };
     let mut v: Vec<&HfdlAircraft> = fleet.iter().collect();
@@ -1196,6 +1204,8 @@ fn hfdl_aircraft_header(ui: &mut egui::Ui, sorted: u8, asc: bool, geom: TableGeo
         (AIRCRAFT_COL_SNR, tr!("hfdl-col-snr")),
         (AIRCRAFT_COL_MSGS, tr!("hfdl-col-msgs")),
         (AIRCRAFT_COL_DIST, tr!("hfdl-col-dist")),
+        (AIRCRAFT_COL_TRK, tr!("hfdl-col-calc-trk")),
+        (AIRCRAFT_COL_SPD, tr!("hfdl-col-calc-kt")),
     ] {
         let arrow = if col != sorted {
             ""
@@ -1211,10 +1221,14 @@ fn hfdl_aircraft_header(ui: &mut egui::Ui, sorted: u8, asc: bool, geom: TableGeo
             )
             .sense(egui::Sense::click()),
         );
-        if r.on_hover_cursor(egui::CursorIcon::PointingHand)
-            .on_hover_text(tr!("hfdl-aircraft-sort-hint"))
-            .clicked()
-        {
+        // The calculated columns say so on hover too: they are not data the
+        // aircraft sent.
+        let hint = if matches!(col, AIRCRAFT_COL_TRK | AIRCRAFT_COL_SPD) {
+            format!("{}\n{}", tr!("hfdl-col-calc-hint"), tr!("hfdl-aircraft-sort-hint"))
+        } else {
+            tr!("hfdl-aircraft-sort-hint").to_string()
+        };
+        if r.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(hint).clicked() {
             clicked = Some(col);
         }
     }
@@ -1227,6 +1241,16 @@ fn hfdl_aircraft_header(ui: &mut egui::Ui, sorted: u8, asc: bool, geom: TableGeo
         crate::theme::CYAN_DIM(),
     );
     clicked
+}
+
+/// The calculated course and speed cells' text: `≈072°` and `≈465`, or empty
+/// where there is no estimate.
+fn hfdl_calc_cells(a: &HfdlAircraft) -> (String, String) {
+    (
+        a.calc_track_deg
+            .map_or(String::new(), |t| format!("≈{:03}°", (t.round() as i32).rem_euclid(360))),
+        a.calc_speed_kt.map_or(String::new(), |k| format!("≈{k:.0}")),
+    )
 }
 
 /// What a position cell's tooltip says: where it last said it was, how long
@@ -1372,6 +1396,14 @@ fn hfdl_aircraft_row(
     );
     if let Some(w) = hfdl_aircraft_where(a, now, home) {
         dist.on_hover_text(w);
+    }
+
+    // Calculated, not reported: marked "≈" in the cell, and the tooltip says
+    // how.
+    let (trk, kt) = hfdl_calc_cells(a);
+    for t in [trk, kt] {
+        ui.label(RichText::new(t).size(AIRCRAFT_BODY_PT).color(crate::theme::gray(170)))
+            .on_hover_text(tr!("hfdl-col-calc-hint"));
     }
 
     // The last message: what it said, or — for an aircraft that has sent no
@@ -1721,7 +1753,7 @@ mod tests {
             ui.allocate_ui(egui::vec2(pane_w, 400.0), |ui| {
                 let geom = TableGeom { origin_x: ui.cursor().min.x, width: pane_w };
                 let mut act = AircraftAction::None;
-                let grid = egui::Grid::new("t").num_columns(10).show(ui, |ui| {
+                let grid = egui::Grid::new("t").num_columns(12).show(ui, |ui| {
                     assert_eq!(hfdl_aircraft_header(ui, AIRCRAFT_COL_HEARD, false, geom), None);
                     ui.end_row();
                     act =
@@ -1799,6 +1831,17 @@ mod tests {
         assert!(t.contains("13 MHz") && t.contains("45"), "{t}");
         let (t, _) = hfdl_follow_line(None, 1_000);
         assert!(!t.is_empty());
+    }
+
+    #[test]
+    fn calculated_cells_say_they_are_estimates() {
+        let mut a = plane();
+        assert_eq!(hfdl_calc_cells(&a), (String::new(), String::new()));
+        a.calc_track_deg = Some(72.4);
+        a.calc_speed_kt = Some(464.6);
+        assert_eq!(hfdl_calc_cells(&a), ("≈072°".to_string(), "≈465".to_string()));
+        a.calc_track_deg = Some(359.7);
+        assert_eq!(hfdl_calc_cells(&a).0, "≈000°", "a course wraps at north");
     }
 
     #[test]

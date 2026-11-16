@@ -20,7 +20,10 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use sdroxide_types::{HFDL_AIRCRAFT_KEEP_S, HFDL_AIRCRAFT_MAX, HFDL_LAST_TEXT_MAX, HfdlAircraft};
+use sdroxide_types::{
+    HFDL_AIRCRAFT_KEEP_S, HFDL_AIRCRAFT_MAX, HFDL_LAST_TEXT_MAX, HfdlAircraft, HfdlMotion,
+    hfdl_motion, hfdl_utc_dt,
+};
 use xng_mode_hfdl::pdu::{HfdlEvent, gs_name};
 
 #[derive(Default)]
@@ -117,9 +120,34 @@ impl AircraftBook {
             if let (Some(lat), Some(lon)) =
                 (p.get("lat").and_then(|v| v.as_f64()), p.get("lon").and_then(|v| v.as_f64()))
             {
+                // Course and speed from the fix before this one: timed by the
+                // aircraft's own report clock when both reports carry it (the
+                // decode time lags it by however long the frame waited), by
+                // the decode times otherwise.
+                let utc_s = p.get("utc_s").and_then(|v| v.as_u64()).map(|v| v as u32);
+                if let (Some(plat), Some(plon)) = (row.lat, row.lon)
+                    && row.fix_at > 0
+                {
+                    let dt = match (row.fix_utc_s, utc_s) {
+                        (Some(a), Some(b)) => hfdl_utc_dt(a, b),
+                        _ => unix - row.fix_at,
+                    };
+                    match hfdl_motion((plat, plon), (lat, lon), dt) {
+                        HfdlMotion::Moving(trk, kt) => {
+                            row.calc_track_deg = Some(trk);
+                            row.calc_speed_kt = Some(kt);
+                        }
+                        HfdlMotion::Keep => {}
+                        HfdlMotion::Clear => {
+                            row.calc_track_deg = None;
+                            row.calc_speed_kt = None;
+                        }
+                    }
+                }
                 row.lat = Some(lat);
                 row.lon = Some(lon);
                 row.fix_at = unix;
+                row.fix_utc_s = utc_s;
                 row.map_key = Some(map_key(p));
             }
             if let Some(f) = p.get("flight").and_then(|v| v.as_str()) {
@@ -504,5 +532,42 @@ mod tests {
         let t = b.snapshot(1_040)[0].last_text.clone().unwrap();
         assert_eq!(t.chars().count(), HFDL_LAST_TEXT_MAX);
         assert!(t.ends_with('…'));
+    }
+
+    fn perf_at(lat: f64, lon: f64, utc_s: u32) -> HfdlEvent {
+        let mut e = perf(4, 12, Some("A1B2C3"), "UAL012", lat, lon);
+        e.details["position"]["utc_s"] = json!(utc_s);
+        e
+    }
+
+    #[test]
+    fn course_and_speed_come_from_the_last_two_fixes_by_the_aircrafts_clock() {
+        let mut b = AircraftBook::new();
+        b.observe(&perf_at(40.0, -30.0, 36_000), 8_912, 1_000);
+        assert_eq!(b.snapshot(1_000)[0].calc_speed_kt, None, "one fix says nothing about motion");
+        // Ten minutes later by the aircraft's clock, one degree north — though
+        // the frame was decoded only five minutes after the first.
+        b.observe(&perf_at(41.0, -30.0, 36_600), 8_912, 1_300);
+        let a = &b.snapshot(1_300)[0];
+        let kt = a.calc_speed_kt.expect("a speed");
+        assert!((kt - 360.0).abs() < 3.0, "timed by the reports, not the decodes: {kt}");
+        let trk = a.calc_track_deg.unwrap();
+        assert!(trk < 1.0 || trk > 359.0, "{trk}");
+        // A repeat of the same fix (a second record from the same minute)
+        // leaves the estimate alone.
+        b.observe(&perf_at(41.0, -30.0, 36_620), 8_912, 1_320);
+        assert_eq!(b.snapshot(1_320)[0].calc_speed_kt, Some(kt));
+    }
+
+    #[test]
+    fn without_report_times_the_decode_times_are_used() {
+        let mut b = AircraftBook::new();
+        b.observe(&perf(4, 12, None, "UAL012", 40.0, -30.0), 8_912, 1_000);
+        b.observe(&perf(4, 12, None, "UAL012", 40.0, -31.0), 8_912, 1_600);
+        let a = &b.snapshot(1_600)[0];
+        assert!((a.calc_track_deg.unwrap() - 270.0).abs() < 1.0);
+        // A degree of longitude at 40° N is about 46 NM: 276 kt over ten minutes.
+        let kt = a.calc_speed_kt.unwrap();
+        assert!((kt - 276.0).abs() < 4.0, "{kt}");
     }
 }

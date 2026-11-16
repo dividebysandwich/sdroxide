@@ -574,6 +574,16 @@ pub struct HfdlAircraft {
     /// position report after it does not replace it — and `None` until the
     /// aircraft has sent one.
     pub last_text: Option<String>,
+    /// The aircraft's own clock time of its latest position report, seconds of
+    /// the UTC day, when the report carried one — what the course and speed
+    /// below are timed by. Appended last: the wire is positional.
+    pub fix_utc_s: Option<u32>,
+    /// Course over the ground, degrees true, and ground speed, knots,
+    /// *calculated* from its last two position reports — HFDL's position
+    /// records carry neither, so these are an estimate of the average between
+    /// two fixes minutes apart, not what the aircraft reported.
+    pub calc_track_deg: Option<f32>,
+    pub calc_speed_kt: Option<f32>,
 }
 
 /// The longest [`HfdlAircraft::last_text`], in characters.
@@ -601,6 +611,9 @@ impl HfdlAircraft {
             logged_off: false,
             last_kind: String::new(),
             last_text: None,
+            fix_utc_s: None,
+            calc_track_deg: None,
+            calc_speed_kt: None,
         }
     }
 
@@ -661,11 +674,72 @@ impl HfdlAircraft {
             self.lon = later.lon;
             self.fix_at = later.fix_at;
             self.map_key = later.map_key;
+            self.fix_utc_s = later.fix_utc_s;
+            if later.calc_speed_kt.is_some() {
+                self.calc_track_deg = later.calc_track_deg;
+                self.calc_speed_kt = later.calc_speed_kt;
+            }
         }
     }
 }
 
-/// How long what a ground station told us stays a claim worth showing: a
+/// What two successive position reports say about how an aircraft is moving.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HfdlMotion {
+    /// A course (degrees true) and a ground speed (knots), averaged between
+    /// the two fixes.
+    Moving(f32, f32),
+    /// Nothing new to say: the fixes are too close in time or in space to
+    /// measure by, or the speed between them is not an aircraft's. Keep what
+    /// was known.
+    Keep,
+    /// The fixes are too far apart in time for the average between them to
+    /// say anything about now: forget it.
+    Clear,
+}
+
+/// The fewest seconds between two fixes worth measuring a speed over.
+pub const HFDL_MOTION_MIN_S: i64 = 30;
+/// The most: beyond an hour the average says little about the present.
+pub const HFDL_MOTION_MAX_S: i64 = 3600;
+/// The least distance moved worth taking a course from.
+pub const HFDL_MOTION_MIN_KM: f64 = 2.0;
+/// Anything faster between two fixes is a bad fix, not an aircraft.
+pub const HFDL_MOTION_MAX_KT: f64 = 750.0;
+
+/// Course and speed between fix `a` and fix `b`, `dt_s` seconds later.
+pub fn hfdl_motion(a: (f64, f64), b: (f64, f64), dt_s: i64) -> HfdlMotion {
+    if dt_s > HFDL_MOTION_MAX_S {
+        return HfdlMotion::Clear;
+    }
+    if dt_s < HFDL_MOTION_MIN_S {
+        return HfdlMotion::Keep;
+    }
+    let km = crate::distance_km(a, b);
+    if km < HFDL_MOTION_MIN_KM {
+        return HfdlMotion::Keep;
+    }
+    let kt = km / 1.852 / (dt_s as f64 / 3600.0);
+    if kt > HFDL_MOTION_MAX_KT {
+        return HfdlMotion::Keep;
+    }
+    HfdlMotion::Moving(crate::bearing_deg(a, b) as f32, kt as f32)
+}
+
+/// Seconds from report time `a` to report time `b`, both seconds of the UTC
+/// day: across midnight when `b` reads earlier by more than half a day.
+pub fn hfdl_utc_dt(a: u32, b: u32) -> i64 {
+    let d = i64::from(b) - i64::from(a);
+    if d < -43_200 {
+        d + 86_400
+    } else if d > 43_200 {
+        d - 86_400
+    } else {
+        d
+    }
+}
+
+/// How long what a ground station told us a claim worth showing: a
 /// squitter repeats every ~32 s, but the decoder hears one channel at a time,
 /// so a station's picture goes stale the moment the operator tunes away.
 /// Quarter of an hour is several squitter cycles on the channel it was heard on
@@ -1293,5 +1367,49 @@ mod tests {
         let c: HfdlSettings = serde_json::from_str(old).unwrap();
         assert!(c.also().is_empty());
         assert_eq!(c.primary_khz(), 8_912);
+    }
+
+    #[test]
+    fn motion_between_two_fixes_is_course_and_speed() {
+        // One degree of latitude due north in ten minutes: 60 NM in 1/6 h.
+        match hfdl_motion((40.0, -30.0), (41.0, -30.0), 600) {
+            HfdlMotion::Moving(trk, kt) => {
+                assert!(trk.abs() < 0.5 || (trk - 360.0).abs() < 0.5, "{trk}");
+                assert!((kt - 360.0).abs() < 3.0, "{kt}");
+            }
+            m => panic!("{m:?}"),
+        }
+        // Due west.
+        match hfdl_motion((50.0, -20.0), (50.0, -21.0), 600) {
+            HfdlMotion::Moving(trk, _) => assert!((trk - 270.0).abs() < 1.0, "{trk}"),
+            m => panic!("{m:?}"),
+        }
+    }
+
+    #[test]
+    fn motion_refuses_what_it_cannot_measure() {
+        assert_eq!(hfdl_motion((40.0, -30.0), (41.0, -30.0), 10), HfdlMotion::Keep, "too soon");
+        assert_eq!(
+            hfdl_motion((40.0, -30.0), (40.001, -30.0), 600),
+            HfdlMotion::Keep,
+            "barely moved"
+        );
+        assert_eq!(
+            hfdl_motion((40.0, -30.0), (45.0, -30.0), 600),
+            HfdlMotion::Keep,
+            "1 800 kt is a bad fix"
+        );
+        assert_eq!(
+            hfdl_motion((40.0, -30.0), (41.0, -30.0), 7_200),
+            HfdlMotion::Clear,
+            "too long ago"
+        );
+    }
+
+    #[test]
+    fn report_times_cross_midnight() {
+        assert_eq!(hfdl_utc_dt(100, 700), 600);
+        assert_eq!(hfdl_utc_dt(86_100, 300), 600, "23:55 to 00:05");
+        assert_eq!(hfdl_utc_dt(300, 86_100), -600);
     }
 }

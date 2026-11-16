@@ -827,6 +827,10 @@ fn hfdl_fleet() -> Vec<sdroxide_types::HfdlAircraft> {
         a.fix_at = a.last_heard;
         a.map_key = Some(format!("icao:A{i}B2C3"));
         a.last_kind = "performance-data".into();
+        if i % 2 == 0 {
+            a.calc_track_deg = Some(45.0 * i as f32);
+            a.calc_speed_kt = Some(420.0 + i as f32);
+        }
         a.last_text = match i % 3 {
             0 => Some(
                 "[H1] REQUEST CLEARANCE TO CLIMB FL380 DUE TO WEATHER AHEAD, ADVISE WHEN READY"
