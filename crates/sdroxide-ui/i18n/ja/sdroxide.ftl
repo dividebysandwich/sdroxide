@@ -4061,7 +4061,6 @@ scanner-move-don-t-stop-channel = 次へ進み、このチャンネルでは再�
 adsb-starting-ads-b-decoder = ADS-B デコーダーを開始中…
 adsb-ads-b = ADS-B
 adsb-t-1090-mhz-mode-s = 1090 MHz Mode S
-adsb-tune-receiver-1090-000-mhz = 受信機を、世界共通の ADS-B のダウンリンクである 1090.000 MHz に同調します。チャンネルは 1 つしかありません。
 adsb-setup = 設定
 adsb-timeouts-trail-length-how-far = タイムアウト、航跡の長さ、速度ベクトルがどれだけ先まで届くか
 adsb-aircraft = 航空機

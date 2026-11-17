@@ -4081,7 +4081,6 @@ scanner-move-don-t-stop-channel = Passer à la suite, et ne plus s'arrêter sur 
 adsb-starting-ads-b-decoder = démarrage du décodeur ADS-B…
 adsb-ads-b = ADS-B
 adsb-t-1090-mhz-mode-s = Mode S 1090 MHz
-adsb-tune-receiver-1090-000-mhz = Accordez le récepteur sur 1090,000 MHz, la liaison descendante ADS-B mondiale. Il n'y a qu'un seul canal.
 adsb-setup = CONFIGURATION
 adsb-timeouts-trail-length-how-far = Délais, longueur de traînée et portée des vecteurs de vitesse
 adsb-aircraft = AVIONS

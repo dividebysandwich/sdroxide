@@ -4080,7 +4080,6 @@ scanner-move-don-t-stop-channel = Devam edin ve bu kanalda bir daha durmayın
 adsb-starting-ads-b-decoder = ADS-B çözücüsü başlatılıyor…
 adsb-ads-b = ADS-B
 adsb-t-1090-mhz-mode-s = 1090 MHz Mode S
-adsb-tune-receiver-1090-000-mhz = Alıcıyı dünya çapındaki ADS-B aşağı bağlantısı olan 1090,000 MHz'e ayarlayın. Yalnızca bir kanal vardır.
 adsb-setup = KURULUM
 adsb-timeouts-trail-length-how-far = Zaman aşımları, iz uzunluğu ve hız vektörlerinin ne kadar ileriye uzandığı
 adsb-aircraft = UÇAKLAR

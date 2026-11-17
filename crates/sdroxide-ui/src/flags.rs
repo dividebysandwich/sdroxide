@@ -318,6 +318,28 @@ impl Flags {
             .as_ref()
     }
 
+    /// Paint a flag with its left edge at `left` and centred on `left.y`, no
+    /// taller than `h` and no wider than `1.6 * h`, for a row painted by hand
+    /// rather than laid out. Returns the width it took, or `None` when there is
+    /// no flag for the code.
+    pub fn paint(
+        &mut self,
+        ctx: &egui::Context,
+        p: &egui::Painter,
+        code: &str,
+        left: egui::Pos2,
+        h: f32,
+    ) -> Option<f32> {
+        let tex = self.texture(ctx, code)?;
+        let [tw, th] = tex.size();
+        let scale = (h / th as f32).min((h * 1.6) / tw as f32);
+        let size = egui::vec2(tw as f32 * scale, th as f32 * scale);
+        let rect = egui::Rect::from_min_size(egui::pos2(left.x, left.y - size.y * 0.5), size);
+        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        p.image(tex.id(), rect, uv, egui::Color32::WHITE);
+        Some(size.x)
+    }
+
     /// Draw a flag no taller than `h` points and no wider than `1.6 * h`,
     /// keeping its own proportions, and report the box it filled.
     ///

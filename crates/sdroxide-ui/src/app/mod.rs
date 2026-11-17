@@ -843,6 +843,15 @@ pub struct SdroxideApp {
     /// Routes by callsign and airport places, fetched as aircraft are heard
     /// (see [`crate::adsb_route`]).
     adsb_routes: crate::adsb_route::RouteBook,
+    /// Where this station hears aircraft, by bearing and distance, by the
+    /// hour (see [`crate::adsb_coverage`]). Fed as each table arrives.
+    adsb_coverage: crate::adsb_coverage::CoverageBook,
+    /// Every aircraft heard, a line a day, and the types learnt from them
+    /// (see [`crate::adsb_log`]). Fed as each table arrives.
+    adsb_log: crate::adsb_log::SightingBook,
+    /// The note beside the 1090.000 chip after a gain save or recall, and
+    /// when it was set.
+    adsb_gain_note: Option<(String, i64)>,
     /// ADS-B: filter for the aircraft list; matches a callsign or an address.
     adsb_filter: String,
     /// ADS-B: the decoder's own settings window is open.
@@ -1818,6 +1827,9 @@ impl SdroxideApp {
             adsb_status: None,
             adsb_map: crate::adsb_map::AdsbMapState::default(),
             adsb_routes: crate::adsb_route::RouteBook::default(),
+            adsb_coverage: Default::default(),
+            adsb_log: Default::default(),
+            adsb_gain_note: None,
             adsb_filter: String::new(),
             show_adsb_setup: false,
             adsb_sort: panels::adsb::AdsbSort::default(),

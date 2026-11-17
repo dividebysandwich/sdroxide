@@ -7,6 +7,8 @@
 //! its own, so the shared egui pass never sees them and the module runs on both
 //! targets.
 
+mod adsb_coverage;
+mod adsb_log;
 mod adsb_map;
 mod adsb_route;
 mod ais_map;

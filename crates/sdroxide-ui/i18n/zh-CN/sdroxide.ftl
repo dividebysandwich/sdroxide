@@ -4052,7 +4052,6 @@ scanner-move-don-t-stop-channel = 继续前进，并且不再在此信道上停�
 adsb-starting-ads-b-decoder = 正在启动 ADS-B 解码器……
 adsb-ads-b = ADS-B
 adsb-t-1090-mhz-mode-s = 1090 MHz Mode S
-adsb-tune-receiver-1090-000-mhz = 将接收机调谐到 1090.000 MHz，即全球通用的 ADS-B 下行频率。只有一个信道。
 adsb-setup = 设置
 adsb-timeouts-trail-length-how-far = 超时、轨迹长度，以及速度矢量延伸的距离
 adsb-aircraft = 飞机

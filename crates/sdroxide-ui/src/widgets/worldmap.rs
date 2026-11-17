@@ -400,6 +400,36 @@ pub(crate) fn draw_base_cities(
     dot_r
 }
 
+/// [`draw_base`] in layers, for a map with switches of its own: the ground,
+/// then the grey line when `night` carries its texture, then whatever `between`
+/// paints (a coverage field, say), then the cities when `cities` — so the names
+/// stay readable over everything the map shades.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_base_layers(
+    p: &eframe::egui::Painter,
+    rect: eframe::egui::Rect,
+    clat: f64,
+    clon: f64,
+    lon_span: f64,
+    lat_span: f64,
+    map: &theme::MapPalette,
+    night: Option<eframe::egui::TextureId>,
+    cities: bool,
+    between: impl FnOnce(),
+) -> f32 {
+    let dot_r = draw_ground(p, rect, clat, clon, lon_span, lat_span, map);
+    if let Some(tex) = night {
+        let strength = (map.night_max / sdroxide_solar::NIGHT_MAX_ALPHA).clamp(0.0, 1.0);
+        let tint = Color32::WHITE.gamma_multiply(strength);
+        paint_world_texture(p, rect, clat, clon, lon_span, lat_span, tex, tint);
+    }
+    between();
+    if cities {
+        draw_cities(p, rect, clat, clon, lon_span, lat_span, dot_r, map);
+    }
+    dot_r
+}
+
 /// [`draw_base`] without the cities: land, rivers and borders. Apart for the
 /// map that shades the night side, where the ground goes under the grey line
 /// and the cities — marks and names to be read — go over it.
