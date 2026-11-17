@@ -480,6 +480,20 @@ pub fn show(
             p.circle_filled(c, 1.2 + 0.8 * f, alpha(tint, 70.0 + 140.0 * f));
         }
     }
+    // The selected aircraft's reported positions joined, oldest to newest, by a
+    // dotted red line — so a click in the table shows the path it has flown.
+    if let Some((_, a)) = live.iter().find(|(k, _)| selected.as_deref() == Some(k.as_str())) {
+        let path: Vec<Pos2> = a
+            .trail
+            .iter()
+            .map(|t| project(t.lat, t.lon))
+            .chain(std::iter::once(project(a.lat, a.lon)))
+            .collect();
+        let red = eframe::egui::Color32::from_rgb(235, 40, 40);
+        for seg in split_on_wrap(&path, rect.width()) {
+            p.extend(eframe::egui::Shape::dashed_line(&seg, (1.6, red), 2.0, 4.0));
+        }
+    }
     let tint_for = |key: &str, top: bool| -> eframe::egui::Color32 {
         if selected.as_deref() == Some(key) {
             map.dx
