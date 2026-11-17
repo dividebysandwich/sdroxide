@@ -2276,7 +2276,6 @@ topbar-recent = RECIENTES
 topbar-recent-empty =
     Se llena tras 3 s en un lugar
 topbar-mode = MODO
-topbar-digital = DIGITAL
 
 ## Top bar: the System box's window chips.
 

@@ -2289,7 +2289,6 @@ topbar-recent = НЕДАВНИЕ
 topbar-recent-empty =
     Заполняется после 3 с на месте
 topbar-mode = РЕЖИМ
-topbar-digital = ЦИФРОВОЙ
 
 ## Верхняя панель: чипы окон блока «Система».
 

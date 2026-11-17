@@ -2348,7 +2348,15 @@ topbar-recent = ZULETZT
 topbar-recent-empty =
     Füllt sich nach 3 s auf einem Platz
 topbar-mode = BETRIEBSART
-topbar-digital = DIGITAL
+topbar-ham = HAM
+topbar-monitor = MONITOR
+topbar-digi-talk = Gespräch
+topbar-digi-modes = Digimodes
+topbar-digi-image = Bild
+topbar-digi-data = Daten
+topbar-digi-aviation = Luftfahrt
+topbar-digi-sea = See
+topbar-digi-probes = Sonden
 
 ## Top bar: the System box's window chips.
 

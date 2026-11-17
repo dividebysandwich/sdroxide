@@ -2261,7 +2261,6 @@ topbar-recent = 最近
 topbar-recent-empty =
     在一处停留 3 秒后记录
 topbar-mode = 模式
-topbar-digital = 数字
 
 ## 顶部栏：系统框中的窗口标签。
 

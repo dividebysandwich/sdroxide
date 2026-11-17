@@ -2370,7 +2370,18 @@ topbar-recent = RECENT
 topbar-recent-empty =
     Fills after 3 s on a place
 topbar-mode = MODE
-topbar-digital = DIGITAL
+# The two halves of DIGITAL in the band/mode menu: modes for working other
+# stations, and services one listens to.
+topbar-ham = HAM
+topbar-monitor = MONITOR
+# Small headings over the groups inside HAM and MONITOR.
+topbar-digi-talk = Talk
+topbar-digi-modes = Digi modes
+topbar-digi-image = Image
+topbar-digi-data = Data
+topbar-digi-aviation = Aviation
+topbar-digi-sea = Sea
+topbar-digi-probes = Probes
 
 ## Top bar: the System box's window chips.
 

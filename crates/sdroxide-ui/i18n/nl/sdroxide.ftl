@@ -2277,7 +2277,6 @@ topbar-recent = RECENT
 topbar-recent-empty =
     Vult na 3 s op een plek
 topbar-mode = MODUS
-topbar-digital = DIGITAAL
 
 ## Top bar: the System box's window chips.
 
