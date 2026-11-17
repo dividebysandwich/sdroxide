@@ -4207,10 +4207,10 @@ adsb-map-window = ADS-B-Karte
 adsb-chip-cities = STÄDTE
 adsb-chip-cities-tip = Städtenamen auf dieser Karte
 adsb-source-open = Quelle und Lizenz öffnen
-adsb-tune-gains-tip = Links: 1090 MHz + Preset { $gains }
-  jetzt { $now } · Rechts: speichern
-adsb-tune-gains-none-tip = Links: 1090 MHz, kein Preset gespeichert
-  jetzt { $now } · Rechts: speichern
+adsb-tune-gains-tip = Klick: auf 1090 MHz abstimmen und Verstärker setzen: { $gains }
+  jetzt: { $now } · Rechtsklick: speichern oder vergessen
+adsb-tune-gains-none-tip = Klick: auf 1090 MHz abstimmen (noch kein Verstärker-Preset)
+  Rechtsklick → speichern: { $now }
 adsb-gains-save = Aktuelle Verstärker als ADS-B-Preset speichern
 adsb-gains-now = jetzt:       { $gains }
 adsb-gains-stored = gespeichert: { $gains }

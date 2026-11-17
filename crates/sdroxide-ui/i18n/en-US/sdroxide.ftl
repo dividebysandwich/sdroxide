@@ -4276,10 +4276,10 @@ adsb-map-window = ADS-B map
 adsb-chip-cities = CITIES
 adsb-chip-cities-tip = City names on this map
 adsb-source-open = Open source and licence
-adsb-tune-gains-tip = Left: 1090 MHz + preset { $gains }
-  now { $now } · right: save
-adsb-tune-gains-none-tip = Left: 1090 MHz, no preset saved
-  now { $now } · right: save
+adsb-tune-gains-tip = Click: tune to 1090 MHz and set the gains: { $gains }
+  now: { $now } · right-click: save or forget
+adsb-tune-gains-none-tip = Click: tune to 1090 MHz (no gain preset yet)
+  right-click → save: { $now }
 adsb-gains-save = Save current gains as the ADS-B preset
 adsb-gains-now = now:   { $gains }
 adsb-gains-stored = saved: { $gains }
