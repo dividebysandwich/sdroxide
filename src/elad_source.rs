@@ -691,6 +691,13 @@ impl IqSource for EladSource {
         self.label.clone()
     }
 
+    /// The samples arrive multiplied by the radio's calibration scale, so a
+    /// full-scale converter sample is that scale, not 1.0 — without this the
+    /// overload meter lit OVL at a raw −12 to −23 dBFS on an FDM-DUO.
+    fn sample_full_scale(&self) -> f32 {
+        self.handle.sample_full_scale()
+    }
+
     /// The attenuator, plus a pseudo-element carrying the pre-selection filter
     /// switch.
     ///

@@ -5243,6 +5243,7 @@ fn engine_thread(
                     lane_samples += n as u64;
                     engine.samples_read += n as u64;
                     engine.last_block = n as u64;
+                    engine.adc.set_full_scale(engine.source.sample_full_scale());
                     engine.adc.observe(&buf[..n]);
                     if engine.state.noise_blanker {
                         engine.nb.process(&mut buf[..n]);
@@ -5262,6 +5263,7 @@ fn engine_thread(
                     lane_samples += n as u64;
                     engine.samples_read += n as u64;
                     engine.last_block = n as u64;
+                    engine.adc.set_full_scale(engine.source.sample_full_scale());
                     engine.adc.observe(&buf[..n]);
                     engine.run_audio_mode(&buf[..n]);
                 }
@@ -5273,6 +5275,7 @@ fn engine_thread(
                     engine.last_block = n as u64;
                     // Ahead of the blanker and of `decimate`, both of which
                     // destroy what this is looking for. See `AdcMeter`.
+                    engine.adc.set_full_scale(engine.source.sample_full_scale());
                     engine.adc.observe(&buf[..n]);
                     // Blanking comes first, at the device rate: an impulse is
                     // only an impulse before the anti-alias filter smears it

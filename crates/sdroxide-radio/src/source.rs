@@ -484,6 +484,16 @@ pub trait IqSource: Send {
     fn pa_temp_c(&mut self) -> Option<f32> {
         None
     }
+    /// What a full-scale converter sample arrives as in the samples this source
+    /// delivers, for the engine's overload meter (`Meters::adc_clip`).
+    ///
+    /// 1.0 for nearly every backend, whose samples are the converter's own
+    /// scaled to ±1. A backend that multiplies its samples by a calibration
+    /// factor says so here, or the meter judges its headroom against the wrong
+    /// rail. Default: 1.0.
+    fn sample_full_scale(&self) -> f32 {
+        1.0
+    }
     /// The front end's own converter-overflow flag, where the radio reports one.
     ///
     /// Not the same claim as `Meters::adc_clip`, which is measured on this side
@@ -1684,6 +1694,9 @@ impl IqSource for ConvertedSource {
     }
     fn adc_overload(&mut self) -> Option<bool> {
         self.inner.adc_overload()
+    }
+    fn sample_full_scale(&self) -> f32 {
+        self.inner.sample_full_scale()
     }
     fn puresignal(&mut self) -> Option<sdroxide_types::PsMeter> {
         self.inner.puresignal()

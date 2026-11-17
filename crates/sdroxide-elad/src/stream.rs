@@ -202,6 +202,7 @@ fn pump(
 
     let mut deconstruct = Deconstructor::new(rate);
     deconstruct.set_scale(dev.scale());
+    shared.scale_bits.store(dev.scale().to_bits(), Ordering::Relaxed);
 
     let mut stats = RxStats::new(rate as f64, dev.model());
     let started = Instant::now();
@@ -248,6 +249,7 @@ fn pump(
             // The front-end switches move the calibrated scale, so it is
             // re-read rather than tracked field by field.
             deconstruct.set_scale(dev.scale());
+            shared.scale_bits.store(dev.scale().to_bits(), Ordering::Relaxed);
         }
 
         // 1b. Ask the radio where it is, on a timer — when the owner wants it

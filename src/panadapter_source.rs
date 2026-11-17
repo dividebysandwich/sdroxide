@@ -737,6 +737,11 @@ impl IqSource for PanadapterSource {
         self.rx.adc_overload()
     }
 
+    /// The receiver's, for the same reason: its samples are the ones measured.
+    fn sample_full_scale(&self) -> f32 {
+        self.rx.sample_full_scale()
+    }
+
     /// The *transceiver's*: predistortion corrects a transmitter, and the
     /// receiver lending its spectrum here has none.
     fn puresignal(&mut self) -> Option<sdroxide_types::PsMeter> {

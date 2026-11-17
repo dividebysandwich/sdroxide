@@ -54,6 +54,9 @@ const FULL_SCALE: f32 = 0.98;
 /// headroom to spare. By the time either has run, the evidence is gone.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AdcMeter {
+    /// What a converter sample at full scale arrives as, after whatever scale
+    /// the backend puts on its samples. 1.0 unless told otherwise.
+    full_scale: f32,
     peak: f32,
     at_scale: u64,
     seen: u64,
@@ -63,7 +66,26 @@ pub struct AdcMeter {
 
 impl AdcMeter {
     pub fn new() -> Self {
-        AdcMeter { peak: 0.0, at_scale: 0, seen: 0, last: (f32::NEG_INFINITY, 0.0) }
+        AdcMeter {
+            full_scale: 1.0,
+            peak: 0.0,
+            at_scale: 0,
+            seen: 0,
+            last: (f32::NEG_INFINITY, 0.0),
+        }
+    }
+
+    /// Tell the meter what a full-scale converter sample arrives as.
+    ///
+    /// A backend that calibrates its samples to dBm (an ELAD multiplies every
+    /// sample by its EEPROM scale, +12 to +23 dB on an FDM-DUO) delivers a
+    /// full-scale sample well above 1.0, and one well below the rails already
+    /// at 1.0. Measured against 1.0 that lit OVL with headroom to spare.
+    /// Non-finite or non-positive values are ignored.
+    pub fn set_full_scale(&mut self, full_scale: f32) {
+        if full_scale.is_finite() && full_scale > 0.0 {
+            self.full_scale = full_scale;
+        }
     }
 
     /// Take in one block of converter samples.
@@ -76,7 +98,7 @@ impl AdcMeter {
             if m > self.peak {
                 self.peak = m;
             }
-            if m >= FULL_SCALE {
+            if m >= FULL_SCALE * self.full_scale {
                 self.at_scale += 1;
             }
         }
@@ -99,7 +121,11 @@ impl AdcMeter {
     /// what the operator watches while turning the gain down.
     pub fn read(&mut self) -> (f32, f32) {
         if self.seen > 0 {
-            let dbfs = if self.peak > 0.0 { 20.0 * self.peak.log10() } else { f32::NEG_INFINITY };
+            let dbfs = if self.peak > 0.0 {
+                20.0 * (self.peak / self.full_scale).log10()
+            } else {
+                f32::NEG_INFINITY
+            };
             self.last = (dbfs, self.at_scale as f32 / self.seen as f32);
         }
         self.peak = 0.0;
@@ -114,6 +140,25 @@ mod tests {
     use sdroxide_types::OVERLOAD_FRACTION;
 
     use super::*;
+
+    #[test]
+    fn a_scaled_backend_is_measured_against_its_own_full_scale() {
+        let mut m = AdcMeter::new();
+        // Samples scaled by 4: a raw half-scale signal arrives at 2.0.
+        m.set_full_scale(4.0);
+        m.observe(&block(4_096, 2.0));
+        let (dbfs, clip) = m.read();
+        assert!((dbfs - (-6.02)).abs() < 0.1, "read {dbfs}");
+        assert_eq!(clip, 0.0);
+        // Driven past its real rails, it is counted.
+        m.observe(&block(4_096, 4.0 * 1.6));
+        assert!(m.read().1 > OVERLOAD_FRACTION);
+        // Nonsense is ignored rather than dividing by it.
+        m.set_full_scale(f32::NAN);
+        m.set_full_scale(0.0);
+        m.observe(&block(4_096, 2.0));
+        assert!((m.read().0 - (-6.02)).abs() < 0.1);
+    }
 
     fn block(n: usize, amp: f32) -> Vec<Complex32> {
         (0..n)

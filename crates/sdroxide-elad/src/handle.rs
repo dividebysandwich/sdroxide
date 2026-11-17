@@ -437,6 +437,10 @@ pub(crate) struct Shared {
     /// Set when the handle is dropped rather than released: the radio is being
     /// closed for good, not reopened. See `Device::shutdown`.
     pub leaving: AtomicBool,
+    /// The calibrated scale the stream thread is putting on every sample, as
+    /// `f32` bits: a full-scale sample arrives as this. See
+    /// [`EladHandle::sample_full_scale`].
+    pub scale_bits: std::sync::atomic::AtomicU32,
 }
 
 impl Shared {
@@ -449,6 +453,7 @@ impl Shared {
             read_dial: AtomicBool::new(false),
             reopen_wanted: AtomicBool::new(false),
             leaving: AtomicBool::new(false),
+            scale_bits: std::sync::atomic::AtomicU32::new(1.0f32.to_bits()),
         }
     }
 }
@@ -559,6 +564,12 @@ impl EladHandle {
         // A closed channel means the thread has exited; `needs_reopen` will
         // pick that up from `is_alive`, so there is nothing useful to do here.
         let _ = self.ctrl.send(c);
+    }
+
+    /// What a full-scale converter sample arrives as: the calibrated scale
+    /// the stream is multiplying every sample by. 1.0 before the first block.
+    pub fn sample_full_scale(&self) -> f32 {
+        f32::from_bits(self.shared.scale_bits.load(Ordering::Relaxed))
     }
 
     /// Where the radio itself says the window is, if it has said.
