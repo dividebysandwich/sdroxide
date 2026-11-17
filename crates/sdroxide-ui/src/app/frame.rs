@@ -2011,6 +2011,8 @@ impl SdroxideApp {
                     // the diagram keeps filling while another pane is up.
                     let home = self.adsb_home();
                     self.adsb_coverage.note(home, &st.aircraft, crate::time::now_unix());
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.adsb_tracks.note(&st.aircraft, crate::time::now_unix());
                     let routes = &mut self.adsb_routes;
                     self.adsb_log.note(
                         home,

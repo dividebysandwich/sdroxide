@@ -6487,6 +6487,15 @@ in the file twice: as epoch seconds (`first`, `last`) for programs, and as local
 date and time (`first_local`, `last_local`, `2026-11-17 13:24:05`) for a
 spreadsheet.
 
+Beside the log, the **flight tracks** are kept: where each aircraft went, one
+line per point in `adsb-tracks/<date>.csv` — address, callsign, time (epoch and
+local), latitude, longitude, altitude, ground speed and track. Not every
+position is written: a point is kept when fifteen seconds have passed since the
+last one, or the track has turned more than 5°, or the altitude has changed by
+more than 500 ft. A straight cruise costs four lines a minute and a turn keeps
+its shape; a busy day is one to three megabytes. Kept for 30 days, like the log.
+The browser version keeps no tracks.
+
 ![The sighting log: today's aircraft with times, flags, types, routes, distance and level, and the summary at the top](images/adsb-log.jpg)
 
 The log also learns types. Whenever the standing data knows the airframe behind
@@ -16793,6 +16802,7 @@ and not the station's.
 | `adsb-routes/` | directory | ADS-B standing data ([§3.13](#313-ads-b-aircraft-on-1090-mhz)): the route, airline, aircraft and address-block files fetched from Virtual Radar Server, and `map-airports.csv` cut from OurAirports. Refetched after a week; safe to delete. |
 | `adsb-coverage/` | directory | The ADS-B coverage diagram, one file an hour, seven days. **Reset…** in the ADS-B setup empties it. |
 | `adsb-log/` | directory | The ADS-B sighting log, one CSV file a day (`<date>.csv`), thirty days. |
+| `adsb-tracks/` | directory | ADS-B flight tracks, thinned to a point every 15 s or on a turn or climb, one CSV file a day, thirty days. |
 | `vdl2.json` | JSON | VDL2 decoder ([§3.15](#315-vdl2-what-the-aircraft-are-saying)): which of the fourteen channels to listen on, the burst threshold in dB, how much log and how many stations to keep, and how long a silent station stays on the list. Restored at startup, and — like `adsb.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
 | `ais.json` | JSON | AIS decoder ([§3.16](#316-ais-ships-on-162-mhz)): which of the two channels to listen on, the slot threshold in dB, the two timeouts, how many minutes of trail to keep, how far ahead the vectors reach, and the ceiling on the vessel table. Restored at startup, and — like `adsb.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
 | `wxsat.json` | JSON | Weather-satellite decoder ([§2.16.2](#2162-weather-satellites-noaa-apt-and-meteor-lrpt)): whether it runs, which signal (APT or LRPT) and which channel. Restored at startup; a receiver that only hands over audio forces it off without disturbing what you picked. |

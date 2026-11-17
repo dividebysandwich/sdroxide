@@ -849,6 +849,10 @@ pub struct SdroxideApp {
     /// Every aircraft heard, a line a day, and the types learnt from them
     /// (see [`crate::adsb_log`]). Fed as each table arrives.
     adsb_log: crate::adsb_log::SightingBook,
+    /// Where each aircraft went, thinned, a file a day
+    /// (see [`crate::adsb_tracks`]). Fed as each table arrives.
+    #[cfg(not(target_arch = "wasm32"))]
+    adsb_tracks: crate::adsb_tracks::TrackBook,
     /// The note beside the 1090.000 chip after a gain save or recall, and
     /// when it was set.
     adsb_gain_note: Option<(String, i64)>,
@@ -1831,6 +1835,8 @@ impl SdroxideApp {
             adsb_routes: crate::adsb_route::RouteBook::default(),
             adsb_coverage: Default::default(),
             adsb_log: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            adsb_tracks: Default::default(),
             adsb_gain_note: None,
             adsb_filter: String::new(),
             show_adsb_setup: false,

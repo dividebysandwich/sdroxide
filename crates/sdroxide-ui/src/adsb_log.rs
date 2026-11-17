@@ -96,13 +96,13 @@ fn local(t: i64) -> i64 {
     t + crate::time::local_offset_at(t)
 }
 
-fn local_day(t: i64) -> String {
+pub(crate) fn local_day(t: i64) -> String {
     let (y, m, d) = civil(local(t).div_euclid(86_400));
     format!("{y:04}-{m:02}-{d:02}")
 }
 
 /// `2026-11-17 13:24:05` local: date and time a spreadsheet reads as such.
-fn local_stamp(t: i64) -> String {
+pub(crate) fn local_stamp(t: i64) -> String {
     let s = local(t).rem_euclid(86_400);
     format!("{} {:02}:{:02}:{:02}", local_day(t), s / 3600, s % 3600 / 60, s % 60)
 }
