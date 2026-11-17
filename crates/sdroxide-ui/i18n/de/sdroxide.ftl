@@ -4232,6 +4232,7 @@ adsb-log-farthest = weiteste { $km } km ({ $call })
 adsb-log-dests = Ziele
 adsb-log-types = Typen
 adsb-log-empty = Heute noch nichts gehört.
+adsb-log-time = ZEIT
 adsb-chip-airports = FLUGHÄFEN
 adsb-chip-airports-tip = Flughäfen mit Code, mehr beim Hineinzoomen
   OurAirports, gemeinfrei · Rechtsklick: Quelle

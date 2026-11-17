@@ -858,6 +858,8 @@ pub struct SdroxideApp {
     show_adsb_setup: bool,
     adsb_sort: panels::adsb::AdsbSort,
     adsb_sort_desc: bool,
+    adsb_log_sort: panels::adsb::LogSort,
+    adsb_log_desc: bool,
     /// AIS: the vessel table and everything the decoder is seeing, as the
     /// engine last sent it. Boxed for the reason the ADS-B one is — a busy
     /// estuary's table, each row carrying a trail, is far larger than anything
@@ -1834,6 +1836,8 @@ impl SdroxideApp {
             show_adsb_setup: false,
             adsb_sort: panels::adsb::AdsbSort::default(),
             adsb_sort_desc: true,
+            adsb_log_sort: panels::adsb::LogSort::default(),
+            adsb_log_desc: true,
             ais_status: None,
             ais_map: crate::ais_map::AisMapState::default(),
             ais_filter: String::new(),

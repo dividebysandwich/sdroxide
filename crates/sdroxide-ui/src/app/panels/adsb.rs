@@ -43,6 +43,75 @@ pub(in crate::app) enum AdsbSort {
     Signal,
 }
 
+/// How the sighting log is ordered.
+/// Why: HDZ 2026-11-17: „das Buch muss sortierbare Header bekommen“.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(in crate::app) enum LogSort {
+    /// Last heard first, as the log opens.
+    #[default]
+    Seen,
+    Callsign,
+    Address,
+    Type,
+    Route,
+    /// Farthest first.
+    Range,
+    /// Highest first.
+    Altitude,
+}
+
+/// Column offsets of the sighting log, heading and rows alike.
+const LOG_X: [f32; 8] = [4.0, 84.0, 152.0, 168.0, 220.0, 262.0, 360.0, 420.0];
+
+/// Order the sighting log. Text sorts A–Z ascending; an empty field or a
+/// missing number goes last both ways round, as in the aircraft table.
+fn sort_log(rows: &mut [&crate::adsb_log::Sighting], by: LogSort, desc: bool) {
+    use crate::adsb_log::Sighting;
+    use std::cmp::Ordering;
+    let text = |x: &Sighting| -> String {
+        match by {
+            LogSort::Callsign => x.call.clone(),
+            LogSort::Address => format!("{:06X}", x.icao),
+            LogSort::Type => x.kind.clone(),
+            LogSort::Route => x.route.clone(),
+            _ => String::new(),
+        }
+    };
+    let num = |x: &Sighting| -> Option<f64> {
+        match by {
+            LogSort::Seen => Some(x.last as f64),
+            LogSort::Range => (!x.max_km.is_nan()).then_some(f64::from(x.max_km)),
+            LogSort::Altitude => x.max_alt_ft.map(f64::from),
+            _ => None,
+        }
+    };
+    let textual =
+        matches!(by, LogSort::Callsign | LogSort::Address | LogSort::Type | LogSort::Route);
+    rows.sort_by(|a, b| {
+        if textual {
+            let (ta, tb) = (text(a), text(b));
+            return match (ta.is_empty(), tb.is_empty()) {
+                (false, true) => Ordering::Less,
+                (true, false) => Ordering::Greater,
+                (true, true) => Ordering::Equal,
+                (false, false) => {
+                    let o = ta.cmp(&tb);
+                    if desc { o.reverse() } else { o }
+                }
+            };
+        }
+        match (num(a), num(b)) {
+            (Some(x), Some(y)) => {
+                let o = x.partial_cmp(&y).unwrap_or(Ordering::Equal);
+                if desc { o.reverse() } else { o }
+            }
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => Ordering::Equal,
+        }
+    });
+}
+
 /// Below this the two signal columns come off the table. A row that has run out
 /// of room prints its columns on top of each other, which is worse than not
 /// printing them.
@@ -536,7 +605,8 @@ impl SdroxideApp {
     /// Today's sightings: a summary line, then one row an aircraft, latest
     /// first. A click on one still in the air selects it on the map.
     fn adsb_log_list(&mut self, ui: &mut egui::Ui, st: &AdsbStatus, h: f32) {
-        let rows = self.adsb_log.today();
+        let mut rows = self.adsb_log.today();
+        sort_log(&mut rows, self.adsb_log_sort, self.adsb_log_desc);
         // The summary: how many, the farthest, and the commonest
         // destinations and types.
         let top = |keys: Vec<&str>| -> String {
@@ -577,12 +647,29 @@ impl SdroxideApp {
                     .weak(),
             );
         }
+        {
+            const L: egui::Align2 = egui::Align2::LEFT_CENTER;
+            crate::app::panels::widgets::sort_head_row(
+                ui,
+                &[
+                    (LOG_X[0], L, &tr!("adsb-log-time"), Some(LogSort::Seen)),
+                    (LOG_X[1], L, &tr!("adsb-call"), Some(LogSort::Callsign)),
+                    (LOG_X[3], L, &tr!("adsb-icao"), Some(LogSort::Address)),
+                    (LOG_X[4], L, &tr!("adsb-type-col"), Some(LogSort::Type)),
+                    (LOG_X[5], L, &tr!("adsb-route-col"), Some(LogSort::Route)),
+                    (LOG_X[6], L, "KM", Some(LogSort::Range)),
+                    (LOG_X[7], L, "ALT", Some(LogSort::Altitude)),
+                ],
+                &mut self.adsb_log_sort,
+                &mut self.adsb_log_desc,
+            );
+        }
         let live: std::collections::HashSet<u32> = st.aircraft.iter().map(|a| a.icao).collect();
         let selected = self.adsb_map.selected;
         let mut pick = None;
         egui::ScrollArea::vertical()
             .id_salt("adsb-log")
-            .max_height((h - 50.0).max(60.0))
+            .max_height((h - 64.0).max(60.0))
             .auto_shrink([false, false])
             .show_themed(ui, |ui| {
                 if rows.is_empty() {
@@ -616,7 +703,7 @@ impl SdroxideApp {
                         );
                     };
                     put(
-                        4.0,
+                        LOG_X[0],
                         format!(
                             "{}–{}",
                             crate::adsb_log::local_hm(s.first),
@@ -624,28 +711,28 @@ impl SdroxideApp {
                         ),
                         dim,
                     );
-                    put(84.0, s.call.clone(), ink);
+                    put(LOG_X[1], s.call.clone(), ink);
                     if !s.country.is_empty() {
                         self.flags.paint(
                             ui.ctx(),
                             &p,
                             &s.country,
-                            egui::pos2(rect.left() + 152.0, y),
+                            egui::pos2(rect.left() + LOG_X[2], y),
                             8.0,
                         );
                     }
-                    put(168.0, format!("{:06X}", s.icao), dim);
-                    put(220.0, s.kind.clone(), ink);
-                    put(262.0, s.route.clone(), dim);
+                    put(LOG_X[3], format!("{:06X}", s.icao), dim);
+                    put(LOG_X[4], s.kind.clone(), ink);
+                    put(LOG_X[5], s.route.clone(), dim);
                     let km = if s.max_km.is_nan() {
                         String::new()
                     } else {
                         format!("{:>4.0} km", s.max_km)
                     };
-                    put(360.0, km, dim);
+                    put(LOG_X[6], km, dim);
                     let fl =
                         s.max_alt_ft.map(|a| format!("F{:03}", (a + 50) / 100)).unwrap_or_default();
-                    put(420.0, fl, dim);
+                    put(LOG_X[7], fl, dim);
                     if resp.clicked() && on {
                         pick = Some(s.icao);
                     }
@@ -1642,6 +1729,37 @@ mod tests {
 
     /// The columns must not overlap at any width the panel can be dragged to,
     /// and the trailing ones drop out rather than printing on top of each other.
+    #[test]
+    fn the_log_sorts_by_any_column_and_puts_the_unknown_last() {
+        use crate::adsb_log::Sighting;
+        let mk = |icao: u32, call: &str, km: f32, last: i64| Sighting {
+            icao,
+            call: call.into(),
+            kind: String::new(),
+            route: String::new(),
+            country: String::new(),
+            first: last - 60,
+            last,
+            min_km: km,
+            max_km: km,
+            max_alt_ft: None,
+        };
+        let (a, b, c) =
+            (mk(1, "KLM1", 48.0, 300), mk(2, "", f32::NAN, 200), mk(3, "BAW8", 22.0, 100));
+        let calls = |v: &[&Sighting]| v.iter().map(|s| s.icao).collect::<Vec<_>>();
+        let mut v = vec![&a, &b, &c];
+        sort_log(&mut v, LogSort::Range, true);
+        assert_eq!(calls(&v), [1, 3, 2]);
+        sort_log(&mut v, LogSort::Range, false);
+        assert_eq!(calls(&v), [3, 1, 2]);
+        sort_log(&mut v, LogSort::Callsign, false);
+        assert_eq!(calls(&v), [3, 1, 2]);
+        sort_log(&mut v, LogSort::Callsign, true);
+        assert_eq!(calls(&v), [1, 3, 2]);
+        sort_log(&mut v, LogSort::Seen, true);
+        assert_eq!(calls(&v), [1, 2, 3]);
+    }
+
     #[test]
     fn places_airline_and_type_end_before_the_right_hand_columns() {
         let mut w = 200.0f32;

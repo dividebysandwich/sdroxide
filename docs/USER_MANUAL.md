@@ -6478,9 +6478,14 @@ The list forgets an aircraft a minute after its last frame. The **LOG** chip
 beside the filter opens the sighting log, which does not: every aircraft heard
 today, one line each — when it came and went, callsign, type, route, and how far
 from you it was heard — with a summary at the top (how many, the farthest, the
-commonest destinations and types). It is written once a minute to one CSV file
-per day, `adsb-log/<date>.csv` in the configuration directory, so a day can be
-opened in a spreadsheet as it stands, and kept for 30 days.
+commonest destinations and types). Click a column heading to sort by it, again
+to reverse; it opens on the last heard first. It is written once a minute to
+one CSV file per day, `adsb-log/<date>.csv` in the configuration directory, and
+kept for 30 days. An aircraft heard several times in a day keeps one line, with
+its first and last contact and its nearest and farthest distance. The times are
+in the file twice: as epoch seconds (`first`, `last`) for programs, and as local
+date and time (`first_local`, `last_local`, `2026-11-17 13:24:05`) for a
+spreadsheet.
 
 ![The sighting log: today's aircraft with times, flags, types, routes, distance and level, and the summary at the top](images/adsb-log.jpg)
 

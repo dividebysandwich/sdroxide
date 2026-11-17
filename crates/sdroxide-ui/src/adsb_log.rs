@@ -101,6 +101,12 @@ fn local_day(t: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
+/// `2026-11-17 13:24:05` local: date and time a spreadsheet reads as such.
+fn local_stamp(t: i64) -> String {
+    let s = local(t).rem_euclid(86_400);
+    format!("{} {:02}:{:02}:{:02}", local_day(t), s / 3600, s % 3600 / 60, s % 60)
+}
+
 /// `HH:MM` local.
 pub fn local_hm(t: i64) -> String {
     let s = local(t).rem_euclid(86_400);
@@ -272,7 +278,12 @@ fn learn(
 }
 
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-const HEAD: &str = "first,last,icao,callsign,type,route,country,min_km,max_km,max_alt_ft";
+/// The last two columns repeat `first` and `last` as local date and time, for
+/// a reader with a spreadsheet; the program reads the epoch seconds.
+/// Why: HDZ 2026-11-17 (Buch „mit Datum“) — epoch seconds do not read as a
+///      date in Excel or Numbers.
+const HEAD: &str =
+    "first,last,icao,callsign,type,route,country,min_km,max_km,max_alt_ft,first_local,last_local";
 
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn encode(rows: &BTreeMap<u32, Sighting>) -> String {
@@ -280,7 +291,7 @@ fn encode(rows: &BTreeMap<u32, Sighting>) -> String {
     let km = |v: f32| if v.is_nan() { String::new() } else { format!("{v:.0}") };
     for s in rows.values() {
         out.push_str(&format!(
-            "{},{},{:06X},{},{},{},{},{},{},{}\n",
+            "{},{},{:06X},{},{},{},{},{},{},{},{},{}\n",
             s.first,
             s.last,
             s.icao,
@@ -291,6 +302,8 @@ fn encode(rows: &BTreeMap<u32, Sighting>) -> String {
             km(s.min_km),
             km(s.max_km),
             s.max_alt_ft.map(|a| a.to_string()).unwrap_or_default(),
+            local_stamp(s.first),
+            local_stamp(s.last),
         ));
     }
     out
@@ -301,7 +314,9 @@ fn decode(body: &str) -> BTreeMap<u32, Sighting> {
     let mut out = BTreeMap::new();
     for line in body.lines().skip(1) {
         let f: Vec<&str> = line.split(',').collect();
-        let [first, last, icao, call, kind, route, country, min_km, max_km, alt] = f[..] else {
+        // Ten columns before 2026-11-17, twelve since; the local times are
+        // for people and not read back.
+        let [first, last, icao, call, kind, route, country, min_km, max_km, alt, ..] = f[..] else {
             continue;
         };
         let (Ok(first), Ok(last), Ok(icao)) =
@@ -332,6 +347,34 @@ fn decode(body: &str) -> BTreeMap<u32, Sighting> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_day_file_carries_local_times_and_old_files_still_read() {
+        let mut rows = BTreeMap::new();
+        let s = Sighting {
+            icao: 0x3E28E4,
+            call: "DIGRK".into(),
+            kind: "C25A".into(),
+            route: String::new(),
+            country: "DE".into(),
+            first: 1_794_917_355,
+            last: 1_794_917_649,
+            min_km: 7.0,
+            max_km: 21.0,
+            max_alt_ft: Some(10_000),
+        };
+        rows.insert(s.icao, s.clone());
+        let body = encode(&rows);
+        let line = body.lines().nth(1).unwrap();
+        let f: Vec<&str> = line.split(',').collect();
+        assert_eq!(f.len(), 12);
+        assert_eq!(f[10], local_stamp(s.first));
+        assert!(f[10].starts_with(&local_day(s.first)) && f[10].len() == 19);
+        assert_eq!(decode(&body)[&s.icao].last, s.last);
+        // A file written before the local columns.
+        let old = "h\n1794917355,1794917649,3E28E4,DIGRK,C25A,,DE,7,21,10000\n";
+        assert_eq!(decode(old)[&0x3E28E4].call, "DIGRK");
+    }
 
     fn ac(icao: u32, call: &str, seen: i64) -> AdsbAircraft {
         let mut a = AdsbAircraft::new(icao, seen);
