@@ -3292,6 +3292,9 @@ struct Engine {
     /// Most recent S-meter reading, so rigctld's `STRENGTH` level has a value
     /// to report between meter updates.
     last_s_dbm: f32,
+    /// The S-meter as this engine measures it, after its ballistics, and
+    /// when: see [`meter_ballistics`].
+    meter_held: Option<(f32, Instant)>,
     /// Dial the RDS decoder was last reading, so a retune can be told from the
     /// endless small offset changes this engine makes for its own reasons
     /// (centre moves, satellite Doppler). See [`RDS_RETUNE_HZ`].
@@ -4775,6 +4778,7 @@ fn engine_thread(
         rigctld_err: None,
         rigctld_seen: None,
         last_s_dbm: -127.0,
+        meter_held: None,
         rds_dial_hz: 0.0,
         drm_dial_hz: 0.0,
         hd_dial_hz: 0.0,
@@ -15220,8 +15224,21 @@ impl Engine {
     ///   what a demod-audio source used to show, having no `RxChain` to ask.
     fn rx_signal_dbm(&mut self) -> Option<f32> {
         if let Some(dbm) = self.source.rx_signal_dbm() {
+            self.meter_held = None;
             return Some(dbm);
         }
+        let now = Instant::now();
+        let measured = self.measured_signal_dbm()?;
+        let shown = match self.meter_held {
+            Some((held, at)) => meter_ballistics(held, measured, now.duration_since(at)),
+            None => measured,
+        };
+        self.meter_held = Some((shown, now));
+        Some(shown)
+    }
+
+    /// The level this engine measures itself, raw: see [`Self::rx_signal_dbm`].
+    fn measured_signal_dbm(&mut self) -> Option<f32> {
         // Listening to the transceiver behind an attached panadapter receiver:
         // the main chain is still running, but on the *other* radio's antenna,
         // and a meter reading a signal nobody is listening to is worse than no
@@ -22669,5 +22686,61 @@ mod tx_voice_tester_tests {
         assert!(!t.is_recording());
         t.stop();
         assert_eq!(t.status().0, TxVoiceTest::Idle);
+    }
+}
+
+/// An S-meter's ballistics on this engine's own measurement: up quickly, so
+/// a signal coming in shows at once, and back down slowly, as a rig's meter
+/// does, rather than following every block. The demodulator's power average
+/// steps once a block, and on a wide I/Q (an FDM-DUO at 1.536 MHz) the blocks
+/// come so often that the meter pumped faster than the eye could follow (AJ3G,
+/// 17 Nov 2026), where the DUO's own meter at 192 kHz moved calmly.
+fn meter_ballistics(held: f32, measured: f32, dt: Duration) -> f32 {
+    /// Time constants, rising and falling.
+    const ATTACK_S: f32 = 0.05;
+    const RELEASE_S: f32 = 0.5;
+    if !held.is_finite() {
+        return measured;
+    }
+    let tau = if measured > held { ATTACK_S } else { RELEASE_S };
+    let k = 1.0 - (-dt.as_secs_f32() / tau).exp();
+    held + k * (measured - held)
+}
+
+#[cfg(test)]
+mod meter_ballistics_tests {
+    use super::meter_ballistics;
+    use std::time::Duration;
+
+    const TICK: Duration = Duration::from_millis(33);
+
+    #[test]
+    fn a_signal_shows_at_once_and_falls_back_slowly() {
+        // Up 40 dB: most of the way within a couple of ticks.
+        let mut v = -113.0;
+        for _ in 0..3 {
+            v = meter_ballistics(v, -73.0, TICK);
+        }
+        assert!(v > -80.0, "rose to {v}");
+        // Gone again: a third of a second later it has fallen less than half.
+        for _ in 0..10 {
+            v = meter_ballistics(v, -113.0, TICK);
+        }
+        assert!(v > -95.0, "fell to {v}");
+        // And after two seconds it is down.
+        for _ in 0..60 {
+            v = meter_ballistics(v, -113.0, TICK);
+        }
+        assert!(v < -111.0, "settled at {v}");
+    }
+
+    #[test]
+    fn a_steady_signal_reads_steady() {
+        let mut v = -73.0;
+        for _ in 0..100 {
+            v = meter_ballistics(v, -73.0, TICK);
+        }
+        assert!((v - -73.0).abs() < 1e-3);
+        assert_eq!(meter_ballistics(f32::NEG_INFINITY, -90.0, TICK), -90.0);
     }
 }
