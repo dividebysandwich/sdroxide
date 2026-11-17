@@ -736,6 +736,7 @@ impl SdroxideApp {
                     if resp.clicked() && on {
                         pick = Some(s.icao);
                     }
+                    resp.context_menu(|ui| log_row_menu(ui, s));
                 }
             });
         if let Some(icao) = pick {
@@ -1400,6 +1401,50 @@ fn aircraft_links(a: &AdsbAircraft) -> Vec<(String, String)> {
     v
 }
 
+/// Pages that still have a flight after it has landed: its track on the day
+/// it was logged, and the flight's history by callsign. Unlike the live map
+/// links of [`aircraft_links`], each of these answers for a past sighting.
+/// Links only: nothing of theirs is fetched or kept.
+fn sighting_links(s: &crate::adsb_log::Sighting) -> Vec<(String, String)> {
+    let hex = format!("{:06X}", s.icao);
+    let low = hex.to_ascii_lowercase();
+    let day = crate::adsb_log::utc_day(s.first);
+    let mut v = vec![(
+        tr!("adsb-link-adsbx-trace", day = day.clone()),
+        format!("https://globe.adsbexchange.com/?icao={low}&showTrace={day}"),
+    )];
+    let call = s.call.trim();
+    if !call.is_empty() {
+        v.push((
+            tr!("adsb-link-flightaware", call = call),
+            format!("https://www.flightaware.com/live/flight/{call}"),
+        ));
+    }
+    v.push((tr!("adsb-link-planespotters"), format!("https://www.planespotters.net/hex/{hex}")));
+    v
+}
+
+/// The right-click menu of a sighting-log row.
+fn log_row_menu(ui: &mut egui::Ui, s: &crate::adsb_log::Sighting) {
+    let call = s.call.trim();
+    if !call.is_empty() && ui.button(tr!("adsb-copy-callsign", call = call)).clicked() {
+        ui.ctx().copy_text(call.to_string());
+        ui.close();
+    }
+    let hex = format!("{:06X}", s.icao);
+    if ui.button(tr!("adsb-copy-icao", icao = hex.clone())).clicked() {
+        ui.ctx().copy_text(hex);
+        ui.close();
+    }
+    ui.separator();
+    for (label, url) in sighting_links(s) {
+        if ui.button(label).clicked() {
+            ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+            ui.close();
+        }
+    }
+}
+
 /// The right-click menu of a row.
 fn row_menu(ui: &mut egui::Ui, a: &AdsbAircraft) -> Option<RowAction> {
     let mut out = None;
@@ -1758,6 +1803,32 @@ mod tests {
         assert_eq!(calls(&v), [1, 3, 2]);
         sort_log(&mut v, LogSort::Seen, true);
         assert_eq!(calls(&v), [1, 2, 3]);
+    }
+
+    /// A logged flight's links answer for the day it was logged — the trace
+    /// on that UTC day — and the callsign's history only where there is a
+    /// callsign.
+    #[test]
+    fn a_sighting_links_to_its_own_day_and_its_flight() {
+        let s = crate::adsb_log::Sighting {
+            icao: 0x3C_6444,
+            call: "DLH400".into(),
+            kind: String::new(),
+            route: String::new(),
+            country: String::new(),
+            // 2026-11-16 23:30 UTC: the local day may already be the 17th.
+            first: 1_794_871_800,
+            last: 1_794_872_400,
+            min_km: f32::NAN,
+            max_km: f32::NAN,
+            max_alt_ft: None,
+        };
+        let urls: Vec<String> = sighting_links(&s).into_iter().map(|(_, u)| u).collect();
+        assert_eq!(urls[0], "https://globe.adsbexchange.com/?icao=3c6444&showTrace=2026-11-16");
+        assert_eq!(urls[1], "https://www.flightaware.com/live/flight/DLH400");
+        assert!(urls[2].ends_with("/hex/3C6444"));
+        let anon = crate::adsb_log::Sighting { call: String::new(), ..s };
+        assert!(sighting_links(&anon).iter().all(|(_, u)| !u.contains("flightaware")));
     }
 
     #[test]

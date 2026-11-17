@@ -6487,6 +6487,11 @@ in the file twice: as epoch seconds (`first`, `last`) for programs, and as local
 date and time (`first_local`, `last_local`, `2026-11-17 13:24:05`) for a
 spreadsheet.
 
+**Right-click a line** for what still answers once the flight is over: copy
+the callsign or the address; the aircraft's **track of that day** on ADS-B
+Exchange (the UTC day it was logged); the **flight's history** by callsign on
+FlightAware; and the airframe on planespotters.net. These are links only.
+
 Beside the log, the **flight tracks** are kept: where each aircraft went, one
 line per point in `adsb-tracks/<date>.csv` — address, callsign, time (epoch and
 local), latitude, longitude, altitude, ground speed and track. Not every

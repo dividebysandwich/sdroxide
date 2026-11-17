@@ -101,6 +101,12 @@ pub(crate) fn local_day(t: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
+/// The UTC day of `t`, `2026-11-17`: the day history sites file a trace under.
+pub(crate) fn utc_day(t: i64) -> String {
+    let (y, m, d) = civil(t.div_euclid(86_400));
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
 /// `2026-11-17 13:24:05` local: date and time a spreadsheet reads as such.
 pub(crate) fn local_stamp(t: i64) -> String {
     let s = local(t).rem_euclid(86_400);
