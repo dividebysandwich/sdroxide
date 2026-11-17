@@ -261,6 +261,69 @@ fn draw_plane(
     }
 }
 
+/// An image covering `bbox` (west, south, east, north) in plain lat/lon.
+/// Placed by its west edge and its width in degrees, not by projecting both
+/// corners: the map wraps at the date line, and a world-wide image would
+/// collapse to no width. Drawn once more a world to each side, so it fills
+/// the map across the wrap; the painter clips what falls outside.
+fn draw_world_image(
+    p: &eframe::egui::Painter,
+    rect: Rect,
+    lon_span: f64,
+    project: &dyn Fn(f64, f64) -> Pos2,
+    tex: eframe::egui::TextureId,
+    (w, s, e, n): (f64, f64, f64, f64),
+) {
+    let px_per_deg = rect.width() / lon_span as f32;
+    let nw = project(n, w);
+    let size = vec2((e - w) as f32 * px_per_deg, project(s, w).y - nw.y);
+    let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+    for k in [-1.0f32, 0.0, 1.0] {
+        let at = nw + vec2(k * 360.0 * px_per_deg, 0.0);
+        p.image(tex, Rect::from_min_size(at, size), uv, Color32::WHITE);
+    }
+}
+
+/// Thunderstorm cells: a ring of the storm's area in the hazard colour and a
+/// lightning stroke in it, thicker for a harder-working storm.
+fn draw_storms(
+    p: &eframe::egui::Painter,
+    rect: Rect,
+    lon_span: f64,
+    cells: &[sdroxide_solar::clouds::ConvCell],
+    project: &dyn Fn(f64, f64) -> Pos2,
+) {
+    let px_per_deg = rect.width() / lon_span as f32;
+    let ink = theme::HAZARD();
+    for c in cells {
+        let at = project(f64::from(c.lat), f64::from(c.lon));
+        if !rect.expand(40.0).contains(at) {
+            continue;
+        }
+        let r = (c.radius_deg * px_per_deg).max(6.0);
+        p.circle_filled(at, r, alpha(ink, 22.0));
+        p.circle_stroke(at, r, (1.0, alpha(ink, 150.0)));
+        let s = 5.0;
+        let bolt =
+            [at + vec2(1.5, -s), at + vec2(-2.0, 0.5), at + vec2(1.5, 0.0), at + vec2(-1.5, s)];
+        let w = 1.2 + c.flash_rate.clamp(0.0, 2.0);
+        p.add(eframe::egui::Shape::line(bolt.to_vec(), (w, alpha(ink, 230.0))));
+    }
+}
+
+/// The storm under the pointer, for the readout.
+fn storm_near(
+    cells: &[sdroxide_solar::clouds::ConvCell],
+    at: (f64, f64),
+) -> Option<&sdroxide_solar::clouds::ConvCell> {
+    cells.iter().find(|c| {
+        let d = ((f64::from(c.lat) - at.0).powi(2)
+            + (wrap180(f64::from(c.lon) - at.1) * at.0.to_radians().cos()).powi(2))
+        .sqrt();
+        d <= f64::from(c.radius_deg).max(0.3)
+    })
+}
+
 /// How far in (degrees of longitude across the map) each airport rank shows:
 /// the large ones from a continent's width, medium ones with scheduled service
 /// at a few countries, the rest at a region.
@@ -456,6 +519,16 @@ fn block_rank(a: &AdsbAircraft) -> u8 {
     }
 }
 
+/// The weather radar as the map draws it.
+pub struct WxLayer {
+    /// `None` while the first image is still on its way.
+    pub tex: Option<eframe::egui::TextureId>,
+    /// West, south, east, north, degrees.
+    pub bbox: (f64, f64, f64, f64),
+    /// The source line for the corner, or the loading note.
+    pub credit: String,
+}
+
 /// What the map lays over the ground, each switched by a chip above it.
 pub struct Layers<'a> {
     /// The grey line's texture, when NIGHT is on.
@@ -466,6 +539,15 @@ pub struct Layers<'a> {
     /// The pointer readout (chip CURSOR): bearing, distance, coverage cell
     /// and the airport under it. Off means no readout at all.
     pub pointer: bool,
+    /// The precipitation radar texture and when it was fetched (chip
+    /// WEATHER).
+    pub wx: Option<WxLayer>,
+    /// The cloud picture (CLOUDS), a world image like WORLD's.
+    pub clouds: Option<eframe::egui::TextureId>,
+    /// Thunderstorm cells (STORMS).
+    pub storms: Option<&'a [sdroxide_solar::clouds::ConvCell]>,
+    /// The clouds' source line with the hour of the picture.
+    pub clouds_credit: Option<String>,
     /// The AIRPORTS layer, when on and its file is in.
     pub airports: Option<&'a [crate::adsb_route::MapAirport]>,
 }
@@ -555,8 +637,19 @@ pub fn show(
         layers.night,
         layers.cities,
         || {
+            if let Some(tex) = layers.clouds {
+                draw_world_image(&p, rect, lon_span, &project, tex, (-180.0, -90.0, 180.0, 90.0));
+            }
+        },
+        || {
+            if let Some(WxLayer { tex: Some(tex), bbox, .. }) = &layers.wx {
+                draw_world_image(&p, rect, lon_span, &project, *tex, *bbox);
+            }
             if let Some(cov) = layers.coverage {
                 draw_coverage(&p, cov, selected_pos, &project);
+            }
+            if let Some(cells) = layers.storms {
+                draw_storms(&p, rect, lon_span, cells, &project);
             }
         },
     );
@@ -808,6 +901,13 @@ pub fn show(
             };
             lines.push(format!("{code}  {}", ap.name));
         }
+        if let Some(c) = layers.storms.and_then(|cells| storm_near(cells, at)) {
+            lines.push(tr!(
+                "adsbmap-storm",
+                top = format!("{:.0}", c.top_km),
+                rate = format!("{:.0}", c.flash_rate * 60.0)
+            ));
+        }
         if let Some(h) = bearing {
             let km = sdroxide_types::distance_km(h, at);
             let bear = sdroxide_types::bearing_deg(h, at);
@@ -879,6 +979,24 @@ pub fn show(
         }
     } else if resp.clicked() {
         state.selected = None;
+    }
+
+    // The radar's source, as its licence asks, and its age.
+    let mut credits: Vec<&str> = Vec::new();
+    if let Some(wx) = &layers.wx {
+        credits.push(&wx.credit);
+    }
+    if let Some(c) = &layers.clouds_credit {
+        credits.push(c);
+    }
+    for (k, line) in credits.into_iter().enumerate() {
+        p.text(
+            rect.left_bottom() + vec2(6.0, -4.0 - 12.0 * k as f32),
+            Align2::LEFT_BOTTOM,
+            line,
+            FontId::proportional(9.0),
+            alpha(Color32::WHITE, 140.0),
+        );
     }
 
     if manual && resp.hovered() {

@@ -444,6 +444,20 @@ pub struct ViewState {
     /// left click on the 1090.000 chip, saved from its right-click menu.
     #[serde(default)]
     pub adsb_gain_presets: std::collections::BTreeMap<String, Vec<(String, f64)>>,
+    /// The DWD precipitation radar on the ADS-B map. Off by default: it is
+    /// fetched from the network every five minutes while on.
+    #[serde(default)]
+    pub adsb_map_wx: bool,
+    /// Cloud (NOAA geostationary mosaic) and thunderstorm cells on the ADS-B
+    /// map. Off by default: fetched from the network while on.
+    #[serde(default)]
+    pub adsb_map_clouds: bool,
+    #[serde(default)]
+    pub adsb_map_storms: bool,
+    /// Which radar WEATHER shows: 0 by home, 1 DWD, 2 US NEXRAD
+    /// (see `adsb_wx::Source::pick`).
+    #[serde(default)]
+    pub adsb_wx_source: u8,
     /// The ADS-B list shows today's sightings instead of the live table.
     #[serde(default)]
     pub adsb_show_log: bool,
@@ -892,6 +906,10 @@ impl Default for ViewState {
             adsb_map_range: adsb_map_cities_default(),
             adsb_map_airports: adsb_map_cities_default(),
             adsb_show_log: false,
+            adsb_map_wx: false,
+            adsb_map_clouds: false,
+            adsb_map_storms: false,
+            adsb_wx_source: 0,
             adsb_gain_presets: Default::default(),
             adsb_map_pointer: adsb_map_cities_default(),
             adsb_range_window: adsb_range_window_default(),

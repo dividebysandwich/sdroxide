@@ -4276,6 +4276,42 @@ adsb-map-window = ADS-B map
 adsb-chip-cities = CITIES
 adsb-chip-cities-tip = City names on this map
 adsb-source-open = Open source and licence
+adsb-lic-ccby = CC BY 4.0
+adsb-lic-pd = public domain
+adsb-lic-ogl = Open Government Licence – Canada
+adsb-lic-nasa = NASA, free
+adsb-chip-clouds = CLOUDS
+adsb-chip-clouds-tip = Cloud cover from satellites, hourly, worldwide
+  NOAA/NESDIS via nowCOAST, public domain · right-click: source
+adsb-chip-storms = STORMS
+adsb-chip-storms-tip = Thunderstorm cells, estimated from cold cloud tops, hourly
+  NOAA/NESDIS via nowCOAST, public domain · right-click: source
+adsbmap-clouds-credit = Clouds: NOAA/NESDIS satellite mosaic, { $time }
+adsbmap-clouds-loading = Clouds: NOAA/NESDIS, loading …
+adsbmap-storm = Thunderstorm: tops { $top } km, ~{ $rate } flashes/min
+adsb-chip-wx = WEATHER
+adsb-chip-wx-tip = Precipitation: { $src }
+  { $lic } · right-click: source
+adsbmap-wx-credit = Radar: Deutscher Wetterdienst, { $time }
+adsbmap-wx-loading = Radar: Deutscher Wetterdienst, loading …
+adsbmap-wx-credit-us = Radar: NOAA NWS NEXRAD via Iowa Environmental Mesonet, { $time }
+adsbmap-wx-credit-ca = Radar: Environment and Climate Change Canada, { $time }
+adsbmap-wx-credit-world = Satellite precipitation: NASA GPM IMERG via GIBS, { $time }
+adsb-wx-ca = CANADA
+adsb-wx-ca-tip = ECCC radar, Canada
+  Open Government Licence – Canada · right-click: source
+adsb-wx-world = WORLD
+adsb-wx-world-tip = Satellite precipitation, 60° N to 60° S, hours late
+  NASA GPM IMERG, free · right-click: source
+adsb-wx-source = Weather radar
+adsb-wx-auto = AUTO
+adsb-wx-auto-tip = By location: DWD, US, Canada; else satellite (WORLD)
+adsb-wx-dwd = DWD
+adsb-wx-dwd-tip = Deutscher Wetterdienst, Germany and neighbours
+  CC BY 4.0 · right-click: source
+adsb-wx-us = USA
+adsb-wx-us-tip = NOAA NEXRAD via Iowa Environmental Mesonet, US
+  public domain · right-click: source
 adsb-tune-gains-tip = Click: tune to 1090 MHz and set the gains: { $gains }
   now: { $now } · right-click: save or forget
 adsb-tune-gains-none-tip = Click: tune to 1090 MHz (no gain preset yet)
