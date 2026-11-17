@@ -2205,7 +2205,11 @@ pub fn show_ext(
                 } else if let Some(sb) = spot_boxes.iter().find(|b| b.rect.contains(pos)) {
                     let spot = &skimmer[sb.idx];
                     let spot_hz = spot.freq_hz;
-                    if click_sets_offset {
+                    if state.rx[0].mode == Mode::Adsb {
+                        // An aircraft's label on its carrier trace: a label and
+                        // nothing else. Tuning onto it would move the decoder's
+                        // window off 1090 MHz and lose every other aircraft.
+                    } else if click_sets_offset {
                         // FT8 station box. Moving our transmit onto the station
                         // is what Auto TX FRQ exists to avoid — they transmit in
                         // the period opposite ours, so their frequency says

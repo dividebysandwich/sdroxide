@@ -1725,7 +1725,10 @@ use sdroxide_types::{
 /// v212: ADS-B avionics. `AdsbAircraft` gains `avionics` (`AdsbAvionics`:
 /// heading, airspeeds, selected altitude and heading, QNH, autopilot modes,
 /// ADS-B version) at its tail, which changes every `AdsbStatus`.
-pub const PROTO_VERSION: u16 = 212;
+///
+/// v213: ADS-B carrier. `AdsbAircraft` gains `carrier_hz` (where the
+/// transponder's carrier sits) at its tail, which changes every `AdsbStatus`.
+pub const PROTO_VERSION: u16 = 213;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

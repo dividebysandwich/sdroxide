@@ -5051,6 +5051,7 @@ adsb-row-squawk = Squawk
 adsb-row-range = Entfernung
 adsb-row-position = Position
 adsb-row-signal = Signal
+adsb-row-carrier = Träger
 adsb-row-frames = Rahmen
 rade-transmitting = sendet
 decodes-odd = UNGERADE

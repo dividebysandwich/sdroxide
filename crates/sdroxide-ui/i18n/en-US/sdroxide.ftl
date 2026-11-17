@@ -5127,6 +5127,7 @@ adsb-row-squawk = squawk
 adsb-row-range = range
 adsb-row-position = position
 adsb-row-signal = signal
+adsb-row-carrier = carrier
 adsb-row-frames = frames
 rade-transmitting = transmitting
 decodes-odd = ODD

@@ -6346,6 +6346,7 @@ when it was registered, unique worldwide and unchanging.
 | FROM › TO | The same route by the places the airports serve (`London › Budapest`, `Köln › … › Las Palmas`), which is what a reader recognises. An airport whose file has not arrived yet stands as its code. |
 | AIRLINE | The airline's name, from the first three letters of the callsign (`RYR95MB` → Ryanair). Empty for private flights, whose callsign is a registration. |
 | TYPE | The aircraft type as an ICAO type designator (`B38M`, `A20N`), where the airframe is known. Otherwise a guess from the sighting log with a question mark (`A320?`), see *The sighting log* below; otherwise, faint, the class the aircraft sends about itself (`large`, `rotorcraft`). |
+| Δf | Where the aircraft's transponder carrier sits, in kHz from 1090.000 MHz (`+175`). Each transponder has its own; see *One trace per aircraft* below. Shown where the panel is wide. |
 | TRK | Track over ground, degrees true. |
 | V/S | Rate of climb or descent, feet per minute. |
 | SQK | The squawk — the four-digit code the crew set for air traffic control. Only some frames carry it; see below. |
@@ -6377,8 +6378,8 @@ from* below.
 
 When the panel is narrow, columns drop out rather than overprint each other.
 Among the ones after the speed, FROM › TO goes first, then AIRLINE; TYPE is
-short and stays longest. On the right, the signal column goes first, then
-V/S, SQK and KM together.
+short and stays longest. On the right, Δf goes first, then the signal column,
+then V/S, SQK and KM together.
 
 **Right-click a row** for what you would otherwise type somewhere else: copy
 the callsign or the ICAO address; open the aircraft on planespotters.net,
@@ -6388,6 +6389,25 @@ opens the public form where anyone can add an aircraft the panel does not know.
 These are links only — nothing from those sites is fetched or kept.
 
 ![A row's card: what the aircraft is, what it reports, and the table above it with flags, routes and types](images/adsb-card.jpg)
+
+#### One trace per aircraft
+
+Zoom the waterfall in on 1090 MHz and each aircraft draws its own thin,
+dashed vertical trace. A Mode S reply is a carrier switched on and off, so
+about half its power is a single line at the transmitter's own frequency, and
+the standard lets a transponder sit anywhere within ±1 MHz of 1090 MHz: each
+one sits at its own oscillator's offset, steady over a flight. Doppler moves it
+by less than a kilohertz.
+
+SDRoxide measures that line in every frame it decodes and keeps the median of
+the last nine per aircraft (a weak frame measured far off does not move it).
+In ADS-B mode the waterfall labels each trace with the aircraft's callsign —
+or its address until a callsign has arrived — solid while it is being heard,
+fading over half a minute after. The **LABELS** switch hides them with every
+other label; clicking one does nothing, because tuning onto it would move the
+decoder off 1090 MHz. The card gives the carrier as a frequency (**carrier**,
+`1090.175 MHz (+175 kHz)`), the list as Δf. Two traces under one address would
+be two transmitters claiming the same identity.
 
 A **greyed row** is an aircraft that is still being heard but has not reported a
 position for ten seconds. It stays on the list and comes off the map; see below.

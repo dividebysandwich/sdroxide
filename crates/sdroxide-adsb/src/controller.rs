@@ -224,7 +224,8 @@ impl Worker {
             match frame::accept(&c.bytes, |icao| self.tracker.knows(icao, now)) {
                 Ok(acc) => {
                     self.frames += 1;
-                    self.tracker.absorb(&acc, &c.bytes, c.rssi_dbfs, now, mono);
+                    let carrier = c.carrier_hz.map(|off| self.center_hz + f64::from(off));
+                    self.tracker.absorb(&acc, &c.bytes, c.rssi_dbfs, carrier, now, mono);
                 }
                 Err(Rejected::BadCrc | Rejected::Malformed) => self.bad_crc += 1,
                 Err(Rejected::Unmatched) => self.unmatched += 1,

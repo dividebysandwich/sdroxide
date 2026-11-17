@@ -5314,6 +5314,7 @@ version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "num-complex",
+ "rustfft",
  "sdroxide-dsp",
  "sdroxide-types",
  "tracing",
