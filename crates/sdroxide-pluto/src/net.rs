@@ -96,14 +96,25 @@ const MAX_BLIND_CTRL_REDIALS: u32 = 5;
 /// with it — the tell that the buffer length, not the link, was the bottleneck.
 ///
 /// 25 ms puts an order of magnitude between the two while still keying up
-/// faster than an operator can hear.
+/// faster than an operator can hear. Above about 1.3 Msps the ceiling in
+/// [`TX_BUFFER_BOUNDS`] cuts it shorter.
 const TX_BUFFER_MS: f64 = 25.0;
 
 /// Floor and ceiling on [`tx_buffer_samples`], in complex samples. The floor
 /// keeps a slow rate from producing a buffer so short that the per-buffer round
-/// trip dominates again; the ceiling bounds the device-side allocation and the
-/// key-up latency at rates a Pluto cannot stream over USB anyway.
-const TX_BUFFER_BOUNDS: (usize, usize) = (4096, 1 << 17);
+/// trip dominates again.
+///
+/// The ceiling is 32768 samples (128 KB), because a larger buffer costs the
+/// board incoming packets while it is also streaming receive. On a PlutoSky R2
+/// in 2R2T over Gigabit Ethernet at 2.5 Msps, with both receive chains
+/// streaming, libiio's own `iio_writedev` sending 61440-sample buffers (about
+/// what 25 ms comes to) made eth0 drop 1023 incoming packets a minute and lost
+/// about a second to retransmission stalls; at 32768 it dropped 135 and lost
+/// none worth measuring. Each lost packet stops the transmit stream for the
+/// sender's minimum retransmission timeout, 300 ms on Windows. Pacing the
+/// writes did not help, so it is the size of the buffer the board takes in at
+/// once that matters, not how fast it arrives.
+const TX_BUFFER_BOUNDS: (usize, usize) = (4096, 32768);
 
 /// Transmit buffer length in complex samples at `rate_hz` — see
 /// [`TX_BUFFER_MS`]. Rounded to a multiple of 1024 so the byte count stays
@@ -1877,21 +1888,23 @@ mod tests {
     /// samples did at 2.5 Msps: 1.64 ms of buffer against a ~2.2 ms round trip.
     #[test]
     fn a_transmit_buffer_outlasts_the_round_trip_that_refills_it() {
-        // Generous next to the ~2.2 ms measured over a Pluto's USB gadget.
-        let round_trip_ms = 5.0;
-        // Up to about 5 Msps, which is already 20 MB/s of transmit payload —
-        // past what that gadget carries, so the rates above it are theoretical.
-        for rate in [2_083_333.0, 2_500_000.0, 3_072_000.0, 4_000_000.0, 5_000_000.0] {
+        // The ~2.2 ms measured over a Pluto's USB gadget, the slowest link a
+        // Pluto is reached over; Ethernet is quicker.
+        let round_trip_ms = 2.2;
+        // Up to 4 Msps, which is already 16 MB/s of transmit payload — past
+        // what that gadget carries, so the rates above it are theoretical.
+        for rate in [2_083_333.0, 2_500_000.0, 3_072_000.0, 4_000_000.0] {
             let ms = tx_buffer_samples(rate) as f64 / rate * 1e3;
             assert!(
                 ms > round_trip_ms * 3.0,
                 "{rate} sps gives a {ms:.2} ms transmit buffer, too short to stay ahead"
             );
         }
-        // Bounded the other way by the sample cap, which is there for the
-        // device-side allocation: 25 ms at the AD9361's top rate would ask a
-        // Pluto for megabytes of DMA memory it has no way to fill over USB.
+        // Bounded the other way by the sample cap: a buffer the board takes
+        // in at once may not pass 32768 samples, or it drops incoming packets
+        // while streaming receive too, at the default rate as well.
         assert_eq!(tx_buffer_samples(30_720_000.0), TX_BUFFER_BOUNDS.1);
+        assert_eq!(tx_buffer_samples(2_500_000.0), 32768);
         // Key-up latency is capped by the *time*, not the count, so it does not
         // grow with the rate.
         assert!(tx_buffer_samples(2_500_000.0) as f64 / 2.5e6 < 0.030);
