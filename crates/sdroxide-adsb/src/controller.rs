@@ -33,7 +33,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crossbeam_channel::{Receiver, Sender, bounded, select, unbounded};
 use sdroxide_dsp::Complex32 as C32;
 use sdroxide_types::{AdsbSettings, AdsbStatus};
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::demod::Demod;
 use crate::frame::{self, Rejected};
@@ -171,6 +171,8 @@ struct Worker {
     frames: u64,
     bad_crc: u64,
     unmatched: u64,
+    /// Frames accepted after a one-bit repair (counted in `frames` too).
+    repaired: u64,
     /// Scratch, kept so a block does not allocate.
     cand: Vec<crate::demod::Candidate>,
 }
@@ -187,6 +189,7 @@ impl Worker {
             frames: 0,
             bad_crc: 0,
             unmatched: 0,
+            repaired: 0,
             cand: Vec::new(),
         }
     }
@@ -220,11 +223,30 @@ impl Worker {
         // `cand` is taken so the tracker can be borrowed mutably alongside it;
         // it goes straight back, so the buffer is still reused.
         let cand = std::mem::take(&mut self.cand);
+        // What this block has already been believed to say. A strong burst is
+        // resolved from more than one alignment, and the demodulator drops
+        // only the copies that came out bit-identical — a repaired copy of a
+        // burst another alignment read cleanly differs in that one bit, and
+        // is the same message.
+        let mut believed: Vec<Vec<u8>> = Vec::new();
         for c in &cand {
             match frame::accept(&c.bytes, |icao| self.tracker.knows(icao, now)) {
                 Ok(acc) => {
+                    // The table keeps the frame as it was believed, so a
+                    // repaired one is shown with its bit put right.
+                    let mut bytes = c.bytes.clone();
+                    if let frame::Accepted::Repaired { bit, .. } = &acc {
+                        bytes[*bit / 8] ^= 0x80 >> (*bit % 8);
+                    }
+                    if believed.contains(&bytes) {
+                        continue;
+                    }
                     self.frames += 1;
-                    self.tracker.absorb(&acc, &c.bytes, c.rssi_dbfs, now, mono);
+                    if matches!(acc, frame::Accepted::Repaired { .. }) {
+                        self.repaired += 1;
+                    }
+                    self.tracker.absorb(&acc, &bytes, c.rssi_dbfs, now, mono);
+                    believed.push(bytes);
                 }
                 Err(Rejected::BadCrc | Rejected::Malformed) => self.bad_crc += 1,
                 Err(Rejected::Unmatched) => self.unmatched += 1,
@@ -236,6 +258,7 @@ impl Worker {
 
     fn status(&mut self) -> AdsbStatus {
         let now = unix_now();
+        debug!(frames = self.frames, repaired = self.repaired, "ADS-B frames");
         self.tracker.expire(now);
         AdsbStatus {
             aircraft: self.tracker.snapshot(),
@@ -254,4 +277,43 @@ impl Worker {
 
 fn unix_now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hex(s: &str) -> Vec<u8> {
+        (0..s.len() / 2).map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).unwrap()).collect()
+    }
+
+    /// A repaired frame counts once, and only for an aircraft already heard:
+    /// before the first clean squitter the damaged one is a bad frame; after
+    /// it, the damaged one is repaired; and a damaged copy beside a clean copy
+    /// of the same message in one block is the same message, not a second one.
+    #[test]
+    fn a_repaired_frame_counts_once_and_only_for_a_known_aircraft() {
+        let rate = 2_400_000.0;
+        let even = hex("8D40621D58C382D690C8AC2863A7");
+        let odd = hex("8D40621D58C386435CC412692AD6");
+        let mut odd_bad = odd.clone();
+        odd_bad[9] ^= 0x04;
+        let burst = |m: &[u8], seed| crate::demod::modulate(m, rate, 0.5, 0.0, seed);
+        let mut w = Worker::new(1_090_000_000.0, rate, AdsbSettings::default());
+        w.process(&vec![C32::new(0.0, 0.0); 4096]);
+
+        w.process(&burst(&odd_bad, 1));
+        assert_eq!((w.frames, w.repaired, w.bad_crc > 0), (0, 0, true), "nobody known yet");
+
+        w.process(&burst(&even, 2));
+        assert_eq!((w.frames, w.repaired), (1, 0));
+
+        w.process(&burst(&odd_bad, 3));
+        assert_eq!((w.frames, w.repaired), (2, 1), "repaired for a known aircraft");
+
+        let mut both = burst(&odd, 4);
+        both.extend(burst(&odd_bad, 5));
+        w.process(&both);
+        assert_eq!((w.frames, w.repaired), (3, 1), "a damaged copy of a clean frame is no frame");
+    }
 }

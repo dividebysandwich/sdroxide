@@ -26,13 +26,29 @@
 //! it is what buys the squawk codes and the faster altitude updates that the
 //! extended squitter alone does not give.
 //!
-//! # Deliberately absent: error correction
+//! # Error correction, for aircraft already proven
 //!
 //! dump1090 and its descendants will flip one bit, or two, looking for a
 //! syndrome of zero. It recovers a useful fraction of weak frames and it also
 //! invents aircraft — a 112-bit message has 112 single-bit neighbours, and on a
 //! noisy band some of them check out. An invented aircraft on a map looks
-//! exactly like a real one, so this decoder does not guess.
+//! exactly like a real one, so this decoder does not guess about *who*.
+//!
+//! It does repair *what*, under three conditions that keep the guess from ever
+//! creating a row:
+//!
+//! * one bit only, in an extended squitter (DF17/18), where the syndrome of a
+//!   single-bit error is one of 112 known values;
+//! * never in the first 32 bits — the format, the capability and the address
+//!   are taken as received, so the address cannot be "corrected" into a
+//!   tracked one;
+//! * and the address must already be tracked from a verified frame, the same
+//!   test a surveillance reply has to pass.
+//!
+//! So a repaired frame can only add a position or a velocity to an aircraft
+//! that was already on the map. For a wrong repair to land, noise would have
+//! to produce the exact 24 address bits of an aircraft in the air *and* a
+//! syndrome among the 80 allowed — about one in 2^24 × 2^24 / 80.
 
 use crate::crc;
 use crate::message::{self, Message};
@@ -44,12 +60,16 @@ pub enum Accepted {
     Verified(Message),
     /// A surveillance reply whose overlaid address matched a tracked aircraft.
     Matched(Message),
+    /// An extended squitter with one bit repaired, for a tracked aircraft
+    /// (see the module notes). `bit` is the one flipped, counted from the
+    /// most significant bit of byte 0.
+    Repaired { msg: Message, bit: usize },
 }
 
 impl Accepted {
     pub fn message(&self) -> &Message {
         match self {
-            Accepted::Verified(m) | Accepted::Matched(m) => m,
+            Accepted::Verified(m) | Accepted::Matched(m) | Accepted::Repaired { msg: m, .. } => m,
         }
     }
     pub fn icao(&self) -> u32 {
@@ -57,6 +77,11 @@ impl Accepted {
     }
     pub fn is_verified(&self) -> bool {
         matches!(self, Accepted::Verified(_))
+    }
+    /// The frame is an extended squitter or an all-call, whether it checked
+    /// out as received or after a repair — as against an interrogation reply.
+    pub fn is_squitter(&self) -> bool {
+        !matches!(self, Accepted::Matched(_))
     }
 }
 
@@ -86,6 +111,18 @@ pub fn accept(bytes: &[u8], known: impl Fn(u32) -> bool) -> Result<Accepted, Rej
     }
     let syn = crc::syndrome(bytes);
     match df {
+        17 | 18 if syn != 0 => {
+            let Some(bit) = single_bit_error(syn) else {
+                return Err(Rejected::BadCrc);
+            };
+            let mut fixed = bytes.to_vec();
+            fixed[bit / 8] ^= 0x80 >> (bit % 8);
+            let icao = u32::from(fixed[1]) << 16 | u32::from(fixed[2]) << 8 | u32::from(fixed[3]);
+            if !known(icao) {
+                return Err(Rejected::BadCrc);
+            }
+            Ok(Accepted::Repaired { msg: message::decode(&fixed, icao), bit })
+        }
         11 | 17 | 18 => {
             if syn != 0 {
                 return Err(Rejected::BadCrc);
@@ -102,6 +139,31 @@ pub fn accept(bytes: &[u8], known: impl Fn(u32) -> bool) -> Result<Accepted, Rej
         }
         _ => Err(Rejected::Unsupported),
     }
+}
+
+/// The first bit a repair may touch: the format (5 bits), the capability (3)
+/// and the address (24) are taken as received.
+const FIRST_REPAIRABLE_BIT: usize = 32;
+
+/// The bit whose flip leaves syndrome `syn` in a 112-bit message, if it is one
+/// a repair may touch.
+///
+/// The check is linear, so the syndrome of a message with one bit wrong is the
+/// syndrome of the good message (zero) XOR the syndrome of that bit alone —
+/// 112 values, worked out once.
+fn single_bit_error(syn: u32) -> Option<usize> {
+    static TABLE: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        (0..112)
+            .map(|bit| {
+                let mut m = [0u8; 14];
+                m[bit / 8] = 0x80 >> (bit % 8);
+                crc::syndrome(&m)
+            })
+            .collect()
+    });
+    let bit = table.iter().position(|&s| s == syn)?;
+    (bit >= FIRST_REPAIRABLE_BIT).then_some(bit)
 }
 
 #[cfg(test)]
@@ -125,6 +187,58 @@ mod tests {
         let mut bad = good.clone();
         bad[6] ^= 0x08;
         assert_eq!(accept(&bad, |_| false).unwrap_err(), Rejected::BadCrc);
+    }
+
+    /// One bit wrong in the body of a squitter from an aircraft already on the
+    /// table is put right; the same frame from an address nobody has verified
+    /// stays rejected, and so does a wrong bit in the address itself.
+    #[test]
+    fn one_bad_bit_is_repaired_only_for_a_tracked_aircraft_and_never_in_the_address() {
+        let good = hex("8D40621D58C382D690C8AC2863A7");
+        let tracked = |icao| icao == 0x40_621D;
+        for bit in 32..112 {
+            let mut bad = good.clone();
+            bad[bit / 8] ^= 0x80 >> (bit % 8);
+            assert_eq!(accept(&bad, |_| false).unwrap_err(), Rejected::BadCrc, "bit {bit}");
+            match accept(&bad, tracked) {
+                Ok(Accepted::Repaired { msg, bit: b }) => {
+                    assert_eq!(b, bit);
+                    assert_eq!(msg, accept(&good, |_| false).unwrap().message().clone());
+                }
+                other => panic!("bit {bit}: {other:?}"),
+            }
+        }
+        for bit in 0..32 {
+            let mut bad = good.clone();
+            bad[bit / 8] ^= 0x80 >> (bit % 8);
+            assert!(
+                !matches!(accept(&bad, |_| true), Ok(Accepted::Repaired { .. })),
+                "bit {bit} is in the format or the address and must not be repaired"
+            );
+        }
+    }
+
+    /// Two bits wrong is not repaired, even for a tracked aircraft: no single
+    /// flip clears it, or if one did, that would be the one-in-a-million wrong
+    /// repair the module notes count on being rare — never the routine case.
+    #[test]
+    fn two_bad_bits_are_not_repaired() {
+        let good = hex("8D40621D58C382D690C8AC2863A7");
+        let mut wrong = 0;
+        for a in 32..112 {
+            for b in a + 1..112 {
+                let mut bad = good.clone();
+                bad[a / 8] ^= 0x80 >> (a % 8);
+                bad[b / 8] ^= 0x80 >> (b % 8);
+                if let Ok(acc) = accept(&bad, |i| i == 0x40_621D) {
+                    // A "repair" of a double error is a third bit flipped:
+                    // never the original message.
+                    assert_ne!(acc.message(), accept(&good, |_| false).unwrap().message());
+                    wrong += 1;
+                }
+            }
+        }
+        assert_eq!(wrong, 0, "a double error was taken for a single one");
     }
 
     /// The whole point of the second half of this module: the same reply is

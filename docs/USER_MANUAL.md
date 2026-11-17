@@ -6418,9 +6418,16 @@ squawk column and the faster altitude updates without inventing aeroplanes. It
 is also why a squawk appears for some aircraft and not others: it depends on
 whether a radar is interrogating them where you can hear the answer.
 
-**No error correction.** Other decoders will flip a bit, or two, looking for a
-frame that checks out; it recovers some weak transmissions and it also invents
-aircraft, and an invented aircraft on a map looks exactly like a real one.
+**One-bit repair, for aircraft already on the table.** Other decoders will flip a
+bit, or two, looking for a frame that checks out; it recovers some weak
+transmissions and it also invents aircraft, and an invented aircraft on a map
+looks exactly like a real one. SDRoxide repairs a single wrong bit in an
+extended squitter only when the address — taken as received, never repaired —
+already belongs to an aircraft heard from a verified squitter. A repair can
+therefore add a position or a speed to an aircraft on the map, and can never
+put a new one there. Near the edge of reception that is about a quarter to a
+third more frames from the weak aircraft (measured on synthetic bursts in
+Gaussian noise, 2.4 Msps at 10–12 dB). Two wrong bits are not repaired.
 
 Two encodings are deliberately not decoded, and an aircraft using either shows no
 altitude rather than a wrong one: the 100-foot Gillham encoding, used above
