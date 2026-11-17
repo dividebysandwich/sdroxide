@@ -6387,12 +6387,14 @@ ADS-B Exchange, adsb.lol or the OpenSky map, or the flight on Flightradar24;
 opens the public form where anyone can add an aircraft the panel does not know.
 These are links only — nothing from those sites is fetched or kept.
 
+![A row's card: what the aircraft is, what it reports, and the table above it with flags, routes and types](images/adsb-card.jpg)
+
 A **greyed row** is an aircraft that is still being heard but has not reported a
 position for ten seconds. It stays on the list and comes off the map; see below.
 
 #### The radar picture
 
-![The ADS-B panel: the aircraft list and the radar picture](images/adsb-panel.jpg)
+![The ADS-B panel: the aircraft list with flags, routes and types, and the radar picture with airports, the coverage diagram and aircraft symbols by weight class](images/adsb-panel.jpg)
 
 Standard surveillance-display symbology, and each part of it is telling you
 something:
@@ -6461,6 +6463,8 @@ direction, and on some days the troposphere carries it far. With an aircraft
 selected, the slice from you to it is marked, so its bearing and distance read
 against the diagram.
 
+![The coverage diagram after seven hours: steady range per direction, with the selected aircraft's route and its slice from the station](images/adsb-coverage.jpg)
+
 The diagram is kept by the hour, a file an hour in the `adsb-coverage` folder
 of the configuration directory, for seven days — so the last hour (today's
 conditions) can be set against the last week (what the antenna usually does).
@@ -6477,6 +6481,8 @@ from you it was heard — with a summary at the top (how many, the farthest, the
 commonest destinations and types). It is written once a minute to one CSV file
 per day, `adsb-log/<date>.csv` in the configuration directory, so a day can be
 opened in a spreadsheet as it stands, and kept for 30 days.
+
+![The sighting log: today's aircraft with times, flags, types, routes, distance and level, and the summary at the top](images/adsb-log.jpg)
 
 The log also learns types. Whenever the standing data knows the airframe behind
 a callsign, the callsign remembers the type, and the airline counts it. An
