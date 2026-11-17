@@ -6455,6 +6455,8 @@ a detour out. Three chips lay it over the map; each one names its source and
 the time of its picture in the corner of the map while it is on, and a
 right-click on the chip opens the source and its licence.
 
+![CLOUDS, STORMS and WEATHER (WORLD) together: cloud cover under the night shading, satellite precipitation and thunderstorm cells, with the sources in the corner](images/adsb-weather.jpg)
+
 **WEATHER** is precipitation. Which source draws it is set under **Weather
 radar** in **SETUP**:
 
