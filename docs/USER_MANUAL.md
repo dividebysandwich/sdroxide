@@ -6346,6 +6346,17 @@ room for, including geometric altitude, turn rate, signal level and the last
 frame as hex — and selects the aircraft on the map. **CENTER** in the card puts
 it in the middle of the picture.
 
+The card also shows what the aircraft reports from its own systems, each line
+once a message carrying it has arrived: **heading** (where the nose points;
+the track differs from it by the wind), **airspeed** (IAS or TAS), and from
+ADS-B version 2 transponders what the crew has set — **selected altitude**
+(from the MCP/FCU or the FMS), **selected heading**, **QNH**, and the
+**autopilot** with its modes (VNAV, ALT, APP, LNAV) and TCAS. The **ADS-B** line
+gives the transponder's version and the accuracy (NACp, 0–11) and integrity
+(SIL, 0–3) of its position. Many aircraft send only part of this: the
+airspeed message only when they have no velocity over the ground to send, the
+target state only from version 2 on.
+
 A **greyed row** is an aircraft that is still being heard but has not reported a
 position for ten seconds. It stays on the list and comes off the map; see below.
 

@@ -1721,7 +1721,11 @@ use sdroxide_types::{
 ///
 /// v211: ELAD monitoring. `CatConfig` gains `elad_mute_on_radio_ptt` and
 /// `EladConfig` gains `hear_own_tx`, which changes every `RadioConfig`.
-pub const PROTO_VERSION: u16 = 211;
+///
+/// v212: ADS-B avionics. `AdsbAircraft` gains `avionics` (`AdsbAvionics`:
+/// heading, airspeeds, selected altitude and heading, QNH, autopilot modes,
+/// ADS-B version) at its tail, which changes every `AdsbStatus`.
+pub const PROTO_VERSION: u16 = 212;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

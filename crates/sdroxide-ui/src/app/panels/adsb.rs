@@ -339,6 +339,54 @@ impl SdroxideApp {
                 if let Some(v) = a.vertical_rate_fpm {
                     rows.push((tr!("adsb-vertical-rate"), format!("{value:+} ft/min", value = v)));
                 }
+                // What the aircraft reports from its own systems; each row only
+                // once a message carrying it has arrived.
+                let av = &a.avionics;
+                if let Some(h) = av.heading_deg {
+                    rows.push((tr!("adsb-row-heading"), format!("{h:03.0}°")));
+                }
+                let speeds: Vec<String> = [("IAS", av.ias_kt), ("TAS", av.tas_kt)]
+                    .iter()
+                    .filter_map(|(k, v)| v.map(|v| format!("{k} {v:.0} kt")))
+                    .collect();
+                if !speeds.is_empty() {
+                    rows.push((tr!("adsb-row-airspeed"), speeds.join(" · ")));
+                }
+                if let Some(ft) = av.selected_alt_ft {
+                    // The field counts in 32 ft steps, so FL350 arrives as
+                    // 35 008; what the crew set is the nearest hundred.
+                    let ft = (ft as f32 / 100.0).round() as i32 * 100;
+                    let src = if av.selected_alt_fms { "FMS" } else { "MCP" };
+                    rows.push((tr!("adsb-row-selected-alt"), format!("{ft} ft ({src})")));
+                }
+                if let Some(h) = av.selected_heading_deg {
+                    rows.push((tr!("adsb-row-selected-heading"), format!("{h:03.0}°")));
+                }
+                if let Some(q) = av.qnh_hpa {
+                    // 0.8 hPa steps: 1012.8 is the code nearest the standard
+                    // 1013.25, so it reads as STD, the setting above the
+                    // transition altitude.
+                    let std = if (q - 1013.25).abs() < 0.41 { " (STD)" } else { "" };
+                    rows.push(("QNH".to_string(), format!("{q:.1} hPa{std}")));
+                }
+                if let Some(ap) = av.autopilot {
+                    let mut parts = vec![if ap { tr!("adsb-on") } else { tr!("adsb-off") }];
+                    parts.extend(av.modes.iter().cloned());
+                    if av.tcas == Some(true) {
+                        parts.push("TCAS".to_string());
+                    }
+                    rows.push((tr!("adsb-row-autopilot"), parts.join(" · ")));
+                }
+                if let Some(v) = av.version {
+                    let mut parts = vec![format!("v{v}")];
+                    if let Some(n) = av.nac_p {
+                        parts.push(format!("NACp {n}"));
+                    }
+                    if let Some(n) = av.sil {
+                        parts.push(format!("SIL {n}"));
+                    }
+                    rows.push(("ADS-B".to_string(), parts.join(" · ")));
+                }
                 if a.squawk.is_some() {
                     rows.push((tr!("adsb-row-squawk"), a.fmt_squawk()));
                 }
