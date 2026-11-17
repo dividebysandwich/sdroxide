@@ -81,6 +81,21 @@ const AUX_LOG_INTERVAL: Duration = Duration::from_secs(10);
 /// nothing while unlocked.
 const PS_HISTORY_S: f64 = 1.0;
 
+/// The most transmit audio that may wait in the host's transmit ring while
+/// PureSignal is on, in seconds.
+///
+/// When the link stalls, the engine keeps producing and the ring fills; the
+/// transmit thread then only drains it at the sample rate, so the backlog
+/// never shrinks again and each stall lengthens the loop for the rest of the
+/// over. The ring holds up to 0.8 s at 2.5 Msps, and with the board's buffers
+/// and the network on top that passes the [`PS_HISTORY_S`] PureSignal looks
+/// back. On a PlutoSky R2 an over without this bound went from 1.8 dB of
+/// correction to 15 dB, matched at 0.72, after a few stalls; with it, overs of
+/// a minute and more held a steady table through the same stalls. Blocks past
+/// the bound are dropped before predistortion, so nothing dropped enters the
+/// reference. A steady over queues 130-160 ms.
+const PS_TX_QUEUE_MAX_S: f64 = 0.2;
+
 /// The second receive chain, borrowed by the RX1 radio (issue #525).
 struct Aux {
     rx: PlutoRx,
@@ -690,6 +705,14 @@ impl IqSource for PlutoSource {
 
     fn tx_write(&mut self, samples: &[Complex32]) -> Result<()> {
         let Some(rx) = self.rx.as_mut() else { return Ok(()) };
+        // After a stall, drop rather than queue, so PureSignal's loop delay
+        // stays bounded — see PS_TX_QUEUE_MAX_S.
+        if self.aux.as_ref().is_some_and(|a| a.puresignal.is_some()) {
+            let queued_s = rx.tx_pending() as f64 / 2.0 / self.rate.max(1.0);
+            if queued_s > PS_TX_QUEUE_MAX_S {
+                return Ok(());
+            }
+        }
         // Bent by the inverse of the amplifier's curve when PureSignal is
         // running. The loop keeps its own copy of what was *wanted*, which is
         // what the feedback is compared with.
