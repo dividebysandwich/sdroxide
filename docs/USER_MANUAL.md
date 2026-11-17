@@ -4145,6 +4145,11 @@ while its window is open or its decoder is running; clicking a lit one closes
 its window. The **SAT** and **ISM** buttons in the System box still open the
 same windows.
 
+Rest the pointer on any mode chip, in MODE as well as under HAM and MONITOR, for
+three seconds and a one-line tooltip says what the mode is and where it is
+used. The wait is longer than for other tooltips so that the chips can be
+clicked in passing without one opening over the next.
+
 The panadapter locks to the digital sub-band
 (the audio range just above the dial), and the mode's operating panel rises over
 it like a curtain, covering the spectrum and the waterfall. The `— — —` handle

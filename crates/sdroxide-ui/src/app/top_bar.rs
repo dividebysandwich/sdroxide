@@ -8803,7 +8803,7 @@ fn band_mode_menu(
             let resp = crate::chrome::chip_enabled(ui, why.is_none(), mode == m, m.label());
             let resp = match why {
                 Some(why) => resp.on_disabled_hover_text(why),
-                None => resp,
+                None => late_mode_tip(resp, m),
             };
             if resp.clicked() {
                 cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
@@ -8822,7 +8822,7 @@ fn band_mode_menu(
             digi_group_caption(ui, &group.caption());
             ui.horizontal_wrapped(|ui| {
                 for &m in modes {
-                    if crate::chrome::chip(ui, mode == m, m.label()).clicked() {
+                    if late_mode_tip(crate::chrome::chip(ui, mode == m, m.label()), m).clicked() {
                         if mode == m {
                             // Clicked again: leave it. The curtain falls and the
                             // mode before it comes back (see
@@ -8854,6 +8854,92 @@ fn band_mode_menu(
             });
         }
         ui.add_space(4.0);
+    }
+}
+
+/// How long the pointer rests on a mode chip before its tooltip shows.
+/// Longer than the general tooltip delay on purpose: these chips are pressed
+/// many times a session, and a tooltip on every pass would cover the next
+/// chip (HDZ 17.11.: tooltips on the modes, „wenigstens nach 3 sek“).
+const MODE_TIP_DELAY_S: f32 = 3.0;
+
+/// A mode chip's tooltip, once the pointer has rested on it for
+/// [`MODE_TIP_DELAY_S`]. Asks for the one repaint that shows it, since a
+/// resting pointer sends no events.
+fn late_mode_tip(resp: egui::Response, m: Mode) -> egui::Response {
+    if !resp.hovered() {
+        return resp;
+    }
+    let still = resp.ctx.input(|i| i.pointer.time_since_last_movement());
+    if still >= MODE_TIP_DELAY_S {
+        resp.on_hover_text(mode_tip(m))
+    } else {
+        resp.ctx
+            .request_repaint_after(std::time::Duration::from_secs_f32(MODE_TIP_DELAY_S - still));
+        resp
+    }
+}
+
+/// One line on what a mode is and where it is used. Exhaustive on purpose: a
+/// mode added to [`Mode`] does not compile until it has its line.
+fn mode_tip(m: Mode) -> String {
+    match m {
+        Mode::Lsb => tr!("mode-tip-lsb"),
+        Mode::Usb => tr!("mode-tip-usb"),
+        Mode::Cw => tr!("mode-tip-cw"),
+        Mode::Am => tr!("mode-tip-am"),
+        Mode::Sam => tr!("mode-tip-sam"),
+        Mode::Nfm => tr!("mode-tip-nfm"),
+        Mode::Wfm => tr!("mode-tip-wfm"),
+        Mode::Drm => tr!("mode-tip-drm"),
+        Mode::HdRadio => tr!("mode-tip-hdradio"),
+        Mode::Digu => tr!("mode-tip-digu"),
+        Mode::Digl => tr!("mode-tip-digl"),
+        Mode::Dsb => tr!("mode-tip-dsb"),
+        Mode::Isb => tr!("mode-tip-isb"),
+        Mode::Spec => tr!("mode-tip-spec"),
+        Mode::Psk => tr!("mode-tip-psk"),
+        Mode::Rtty => tr!("mode-tip-rtty"),
+        Mode::RttyFm => tr!("mode-tip-rttyfm"),
+        Mode::Olivia => tr!("mode-tip-olivia"),
+        Mode::Contestia => tr!("mode-tip-contestia"),
+        Mode::Thor => tr!("mode-tip-thor"),
+        Mode::DominoEx => tr!("mode-tip-dominoex"),
+        Mode::Mfsk => tr!("mode-tip-mfsk"),
+        Mode::Mt63 => tr!("mode-tip-mt63"),
+        Mode::Fsq => tr!("mode-tip-fsq"),
+        Mode::Jtty => tr!("mode-tip-jtty"),
+        Mode::Hell => tr!("mode-tip-hell"),
+        Mode::AtChat => tr!("mode-tip-atchat"),
+        Mode::Rade => tr!("mode-tip-rade"),
+        Mode::Ft8 => tr!("mode-tip-ft8"),
+        Mode::Ft4 => tr!("mode-tip-ft4"),
+        Mode::Ft2 => tr!("mode-tip-ft2"),
+        Mode::Js8 => tr!("mode-tip-js8"),
+        Mode::Wspr => tr!("mode-tip-wspr"),
+        Mode::Pi4 => tr!("mode-tip-pi4"),
+        Mode::Fst4 => tr!("mode-tip-fst4"),
+        Mode::Q65 => tr!("mode-tip-q65"),
+        Mode::Jt65 => tr!("mode-tip-jt65"),
+        Mode::Jt9 => tr!("mode-tip-jt9"),
+        Mode::Msk144 => tr!("mode-tip-msk144"),
+        Mode::Fsk441 => tr!("mode-tip-fsk441"),
+        Mode::Sstv => tr!("mode-tip-sstv"),
+        Mode::SstvFm => tr!("mode-tip-sstvfm"),
+        Mode::Rifp => tr!("mode-tip-rifp"),
+        Mode::RfPaint => tr!("mode-tip-rfpaint"),
+        Mode::Packet => tr!("mode-tip-packet"),
+        Mode::PacketHf => tr!("mode-tip-packethf"),
+        Mode::Aprs => tr!("mode-tip-aprs"),
+        Mode::Mercury => tr!("mode-tip-mercury"),
+        Mode::Data2g => tr!("mode-tip-data2g"),
+        Mode::Adsb => tr!("mode-tip-adsb"),
+        Mode::Vdl2 => tr!("mode-tip-vdl2"),
+        Mode::Acars => tr!("mode-tip-acars"),
+        Mode::Hfdl => tr!("mode-tip-hfdl"),
+        Mode::Ais => tr!("mode-tip-ais"),
+        Mode::Navtex => tr!("mode-tip-navtex"),
+        Mode::Wefax => tr!("mode-tip-wefax"),
     }
 }
 
@@ -11152,6 +11238,37 @@ mod tests {
             assert_eq!(n, 1, "{} is in {n} groups", m.label());
         }
         assert_eq!(grouped.len(), wanted.len(), "a group holds a mode DIGITAL does not");
+    }
+
+    /// Every chip in the menu has its line, and the line stays a line: one
+    /// row of a tooltip, not a paragraph (the manual has the paragraphs).
+    #[test]
+    fn every_mode_chip_has_a_one_line_tip() {
+        let menu = Mode::DIGITAL.into_iter().chain([
+            Mode::Adsb,
+            Mode::Vdl2,
+            Mode::Ais,
+            Mode::Hfdl,
+            Mode::Lsb,
+            Mode::Usb,
+            Mode::Cw,
+            Mode::Am,
+            Mode::Sam,
+            Mode::Nfm,
+            Mode::Wfm,
+            Mode::Drm,
+            Mode::HdRadio,
+            Mode::Digu,
+            Mode::Digl,
+            Mode::Dsb,
+            Mode::Isb,
+            Mode::Spec,
+        ]);
+        for m in menu {
+            let tip = mode_tip(m);
+            assert!(!tip.is_empty() && !tip.starts_with("mode-tip-"), "{}: no tip", m.label());
+            assert!(tip.chars().count() <= 72 && !tip.contains('\n'), "{}: {tip}", m.label());
+        }
     }
 
     /// A mode chip inside a group still sets the mode, and a PROBES chip asks
