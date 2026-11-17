@@ -143,7 +143,16 @@ const REFRESH_S: i64 = 300;
 /// sit empty for long after that.
 const RETRY_S: i64 = 20;
 
-type Fetched = (Source, Result<egui::ColorImage, String>);
+/// A picture on disk is shown at start for this long after it was fetched:
+/// the radar sits on screen at once instead of after the server's half minute,
+/// and older weather is not passed off as today's.
+/// Why: HDZ 2026-11-17: „2h Cache, sonst wartet man beim Programmstart jedes
+///      Mal dumm rum“.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+const CACHE_MAX_S: i64 = 2 * 3600;
+
+/// A decoded picture and when it was fetched, or why none came.
+type Fetched = (Source, Result<(egui::ColorImage, i64), String>);
 
 /// The latest radar image and the fetch under way.
 pub struct WxRadar {
@@ -185,14 +194,15 @@ impl WxRadar {
         if self.source != Some(source) {
             self.source = Some(source);
             self.tex = None;
+            self.fetched_at = 0;
             self.asked_at = i64::MIN / 2;
         }
         while let Ok((from, res)) = self.rx.try_recv() {
             self.pending = false;
             match res {
-                Ok(img) if from == source => {
+                Ok((img, at)) if from == source && at >= self.fetched_at => {
                     self.tex = Some(ctx.load_texture("adsb-wx-radar", img, Default::default()));
-                    self.fetched_at = now;
+                    self.fetched_at = at;
                 }
                 Ok(_) => {}
                 Err(e) => tracing::debug!("weather radar {from:?}: {e}"),
@@ -213,7 +223,23 @@ impl WxRadar {
         self.pending = std::thread::Builder::new()
             .name("sdroxide-wx-radar".into())
             .spawn(move || {
-                let _ = tx.send((source, fetch(source)));
+                // The kept picture first, if there is a recent one, then the
+                // server's; the receiver keeps whichever is newer.
+                let dir = cache_dir();
+                if let Some(bytes) = dir.as_deref().and_then(|d| read_cache(d, source, unix_now()))
+                    && let Ok(img) = decode(source, &bytes.0)
+                {
+                    let _ = tx.send((source, Ok((img, bytes.1))));
+                    ctx.request_repaint();
+                }
+                let res = fetch_png(source).and_then(|bytes| {
+                    let img = decode(source, &bytes)?;
+                    if let Some(d) = dir.as_deref() {
+                        write_cache(d, source, &bytes);
+                    }
+                    Ok((img, unix_now()))
+                });
+                let _ = tx.send((source, res));
                 ctx.request_repaint();
             })
             .is_ok();
@@ -224,7 +250,63 @@ impl WxRadar {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn fetch(source: Source) -> Result<egui::ColorImage, String> {
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+/// Where the last picture of each source is kept.
+#[cfg(not(target_arch = "wasm32"))]
+fn cache_dir() -> Option<std::path::PathBuf> {
+    Some(sdroxide_config::config_dir().ok()?.join("adsb-wx"))
+}
+
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn cache_file(dir: &std::path::Path, source: Source) -> std::path::PathBuf {
+    let name = match source {
+        Source::Dwd => "dwd",
+        Source::Nexrad => "usa",
+        Source::Canada => "canada",
+        Source::World => "world",
+    };
+    dir.join(format!("{name}.png"))
+}
+
+/// Keep the PNG as the server sent it; written aside and renamed, so a reader
+/// never sees half a file.
+#[cfg(not(target_arch = "wasm32"))]
+fn write_cache(dir: &std::path::Path, source: Source, png: &[u8]) {
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let path = cache_file(dir, source);
+    let tmp = path.with_extension("png.part");
+    if std::fs::write(&tmp, png).is_ok() {
+        let _ = std::fs::rename(&tmp, &path);
+    }
+}
+
+/// The kept PNG and when it was written, if that is no more than
+/// [`CACHE_MAX_S`] before `now`.
+#[cfg(not(target_arch = "wasm32"))]
+fn read_cache(dir: &std::path::Path, source: Source, now: i64) -> Option<(Vec<u8>, i64)> {
+    let path = cache_file(dir, source);
+    let at = std::fs::metadata(&path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs() as i64;
+    if now - at > CACHE_MAX_S {
+        return None;
+    }
+    Some((std::fs::read(&path).ok()?, at))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn fetch_png(source: Source) -> Result<Vec<u8>, String> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_connect(Some(std::time::Duration::from_secs(10)))
         .timeout_global(Some(std::time::Duration::from_secs(90)))
@@ -232,13 +314,13 @@ fn fetch(source: Source) -> Result<egui::ColorImage, String> {
         .build()
         .into();
     let mut r = agent.get(&source.url()).call().map_err(|e| e.to_string())?;
-    let bytes = r
-        .body_mut()
-        .with_config()
-        .limit(8 * 1024 * 1024)
-        .read_to_vec()
-        .map_err(|e| e.to_string())?;
-    let img = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
+    r.body_mut().with_config().limit(8 * 1024 * 1024).read_to_vec().map_err(|e| e.to_string())
+}
+
+/// The PNG as the map draws it: see [`alpha_of`].
+#[cfg(not(target_arch = "wasm32"))]
+fn decode(source: Source, bytes: &[u8]) -> Result<egui::ColorImage, String> {
+    let img = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
         .map_err(|e| e.to_string())?
         .to_rgba8();
     let (w, h) = (img.width() as usize, img.height() as usize);
@@ -274,6 +356,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_kept_picture_is_shown_for_two_hours_and_not_after() {
+        let dir = std::env::temp_dir().join(format!("sdx-wx-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(read_cache(&dir, Source::Dwd, unix_now()).is_none());
+        write_cache(&dir, Source::Dwd, b"png");
+        let now = unix_now();
+        let (bytes, at) = read_cache(&dir, Source::Dwd, now).expect("fresh");
+        assert_eq!(bytes, b"png");
+        assert!((now - at).abs() < 5);
+        assert!(read_cache(&dir, Source::Dwd, at + CACHE_MAX_S).is_some());
+        assert!(read_cache(&dir, Source::Dwd, at + CACHE_MAX_S + 1).is_none());
+        assert!(read_cache(&dir, Source::World, now).is_none(), "one file per source");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn the_clear_and_the_veil_vanish_and_rain_stays() {
         // Colours as the DWD WMS sends them (sampled 17.11.).
         assert_eq!(alpha_of(0, 0, 0, 0), 0, "no rain");
@@ -306,7 +404,7 @@ mod tests {
     #[ignore]
     fn both_services_answer_with_an_image() {
         for src in [Source::Dwd, Source::Nexrad, Source::Canada, Source::World] {
-            let img = fetch(src).expect("fetch");
+            let img = decode(src, &fetch_png(src).expect("fetch")).expect("decode");
             let rain = img.pixels.iter().filter(|p| p.a() > 0).count();
             eprintln!("{src:?}: {:?} px, {rain} with something drawn", img.size);
             assert!(img.size[0] >= 1400);

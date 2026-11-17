@@ -6469,7 +6469,11 @@ radar** in **SETUP**:
 | **WORLD** | NASA GPM IMERG precipitation estimated from satellites, through NASA GIBS | 60° N to 60° S, oceans included | NASA, free of restriction |
 
 Choosing a source by hand is how you look at another region's weather. The
-radar sources are fetched again every five minutes. **WORLD** covers Africa,
+radar sources are fetched again every five minutes. The last picture of each
+source is kept in the `adsb-wx` folder of the configuration directory; on the
+next start one less than two hours old is shown at once while a fresh one is
+fetched behind it — the DWD server can take half a minute to answer. Older
+pictures are not shown. **WORLD** covers Africa,
 Australia and the oceans, where no free radar is, but it is coarser than radar
 and some hours late — read it as where it has been raining, not where it is.
 
@@ -16847,6 +16851,7 @@ and not the station's.
 | `adsb-routes/` | directory | ADS-B standing data ([§3.13](#313-ads-b-aircraft-on-1090-mhz)): the route, airline, aircraft and address-block files fetched from Virtual Radar Server, and `map-airports.csv` cut from OurAirports. Refetched after a week; safe to delete. |
 | `adsb-coverage/` | directory | The ADS-B coverage diagram, one file an hour, seven days. **Reset…** in the ADS-B setup empties it. |
 | `adsb-log/` | directory | The ADS-B sighting log, one CSV file a day (`<date>.csv`), thirty days. |
+| `adsb-wx/` | directory | The last ADS-B weather radar picture per source (`dwd.png`, `usa.png`, `canada.png`, `world.png`), shown at start if less than two hours old. Safe to delete. |
 | `adsb-tracks/` | directory | ADS-B flight tracks, thinned to a point every 15 s or on a turn or climb, one CSV file a day, thirty days. |
 | `vdl2.json` | JSON | VDL2 decoder ([§3.15](#315-vdl2-what-the-aircraft-are-saying)): which of the fourteen channels to listen on, the burst threshold in dB, how much log and how many stations to keep, and how long a silent station stays on the list. Restored at startup, and — like `adsb.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
 | `ais.json` | JSON | AIS decoder ([§3.16](#316-ais-ships-on-162-mhz)): which of the two channels to listen on, the slot threshold in dB, the two timeouts, how many minutes of trail to keep, how far ahead the vectors reach, and the ceiling on the vessel table. Restored at startup, and — like `adsb.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
