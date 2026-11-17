@@ -5259,6 +5259,7 @@ adsb-row-range = Entfernung
 adsb-row-position = Position
 adsb-row-signal = Signal
 adsb-row-carrier = Träger
+adsb-row-rx = Empfang
 adsb-row-frames = Rahmen
 rade-transmitting = sendet
 decodes-odd = UNGERADE
@@ -5843,6 +5844,7 @@ winlink-cc-list = Kopie an { $cc }
 spots-n-of-total = { $n } von { $total }
 wefax-n-of-total = { $n } von { $total }
 adsb-range-bearing = { $km } km bei { $bearing }°
+adsb-rx-share = { $pct } % der Positionen, letzte { $secs } s
 ais-range-bearing = { $km } km bei { $bearing }°
 
 ## More values from sdroxide-types, as pickers name them (src/i18n/labels.rs).
