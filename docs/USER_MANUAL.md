@@ -6445,6 +6445,11 @@ The chips above the map switch what lies under the traffic. Each is remembered.
 | **STORMS** | Thunderstorm cells: a ring in the hazard colour with a lightning stroke, thicker for a harder-working storm. With CURSOR on, the readout over a cell gives its cloud-top height and an estimated flash rate. |
 | **WEATHER** | Precipitation, from the weather radar of your region; see *Weather* below. |
 
+**↻** fetches the weather radar, the clouds and the storm cells again at
+once, past the picture kept from the last run: what is on the map goes
+straight away and the new pictures appear as they arrive, so old weather
+visibly leaves. The aircraft need no such button; they arrive live.
+
 The last button puts the map into a window of its own, which can be as large
 as the screen. Closing that window brings the map back into the panel.
 

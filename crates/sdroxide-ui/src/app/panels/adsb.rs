@@ -301,6 +301,16 @@ impl SdroxideApp {
                     }
                 }
             }
+            // Everything fetched for the map, fetched again now: the pictures
+            // on screen go at once, so stale weather visibly leaves. The
+            // aircraft need none, they arrive live twice a second.
+            if crate::chrome::chip(ui, false, small("↻".into()))
+                .on_hover_text(tr!("adsb-map-reload-tip"))
+                .clicked()
+            {
+                self.adsb_wx.reload();
+                self.adsb_clouds.reload();
+            }
             #[cfg(not(target_arch = "wasm32"))]
             if !in_window
                 && crate::chrome::chip_window_icon(ui, crate::chrome::WindowIcon::Out)

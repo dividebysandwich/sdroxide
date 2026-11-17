@@ -151,8 +151,9 @@ const RETRY_S: i64 = 20;
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 const CACHE_MAX_S: i64 = 2 * 3600;
 
-/// A decoded picture and when it was fetched, or why none came.
-type Fetched = (Source, Result<(egui::ColorImage, i64), String>);
+/// A decoded picture and when it was fetched, or why none came, with the
+/// generation it was asked in (see [`WxRadar::reload`]).
+type Fetched = (u32, Source, Result<(egui::ColorImage, i64), String>);
 
 /// The latest radar image and the fetch under way.
 pub struct WxRadar {
@@ -162,6 +163,11 @@ pub struct WxRadar {
     pub fetched_at: i64,
     asked_at: i64,
     pending: bool,
+    /// Bumped by [`WxRadar::reload`]; a fetch asked before it is dropped.
+    generation: u32,
+    /// The next fetch skips the kept picture: the operator asked for a new one.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    skip_cache: bool,
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     tx: std::sync::mpsc::Sender<Fetched>,
     rx: std::sync::mpsc::Receiver<Fetched>,
@@ -176,6 +182,8 @@ impl Default for WxRadar {
             fetched_at: 0,
             asked_at: i64::MIN / 2,
             pending: false,
+            generation: 0,
+            skip_cache: false,
             tx,
             rx,
         }
@@ -183,6 +191,19 @@ impl Default for WxRadar {
 }
 
 impl WxRadar {
+    /// Drop the picture on the map and fetch a new one from the server now,
+    /// past the kept one; a fetch still under way is ignored when it lands.
+    /// Why: HDZ 2026-11-17: ein Knopf, „damit alte Wetterkarten einfach aktiv
+    ///      verschwinden“.
+    pub fn reload(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        self.tex = None;
+        self.fetched_at = 0;
+        self.asked_at = i64::MIN / 2;
+        self.pending = false;
+        self.skip_cache = true;
+    }
+
     /// The texture of `source` to draw, fetching a fresh one when due. Once a
     /// frame while the layer is on. A change of source drops the old image.
     pub fn texture(
@@ -197,7 +218,10 @@ impl WxRadar {
             self.fetched_at = 0;
             self.asked_at = i64::MIN / 2;
         }
-        while let Ok((from, res)) = self.rx.try_recv() {
+        while let Ok((generation, from, res)) = self.rx.try_recv() {
+            if generation != self.generation {
+                continue;
+            }
             self.pending = false;
             match res {
                 Ok((img, at)) if from == source && at >= self.fetched_at => {
@@ -220,16 +244,20 @@ impl WxRadar {
     fn spawn(&mut self, ctx: &egui::Context, source: Source) {
         let tx = self.tx.clone();
         let ctx = ctx.clone();
+        let generation = self.generation;
+        let use_cache = !std::mem::take(&mut self.skip_cache);
         self.pending = std::thread::Builder::new()
             .name("sdroxide-wx-radar".into())
             .spawn(move || {
                 // The kept picture first, if there is a recent one, then the
                 // server's; the receiver keeps whichever is newer.
                 let dir = cache_dir();
-                if let Some(bytes) = dir.as_deref().and_then(|d| read_cache(d, source, unix_now()))
+                if use_cache
+                    && let Some(bytes) =
+                        dir.as_deref().and_then(|d| read_cache(d, source, unix_now()))
                     && let Ok(img) = decode(source, &bytes.0)
                 {
-                    let _ = tx.send((source, Ok((img, bytes.1))));
+                    let _ = tx.send((generation, source, Ok((img, bytes.1))));
                     ctx.request_repaint();
                 }
                 let res = fetch_png(source).and_then(|bytes| {
@@ -239,7 +267,7 @@ impl WxRadar {
                     }
                     Ok((img, unix_now()))
                 });
-                let _ = tx.send((source, res));
+                let _ = tx.send((generation, source, res));
                 ctx.request_repaint();
             })
             .is_ok();

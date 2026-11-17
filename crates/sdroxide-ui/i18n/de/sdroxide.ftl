@@ -4283,6 +4283,8 @@ adsb-range-1h = 1 H
 adsb-range-24h = 24 H
 adsb-range-7d = 7 T
 adsb-map-out-tip = Karte in eigenes Fenster
+adsb-map-reload-tip = Wetter, Wolken und Gewitter jetzt neu holen
+  Bilder auf der Karte verschwinden bis zur Ankunft der neuen
 adsb-copy-callsign = Rufzeichen { $call } kopieren
 adsb-copy-icao = ICAO { $icao } kopieren
 adsb-link-planespotters = Auf planespotters.net ansehen …

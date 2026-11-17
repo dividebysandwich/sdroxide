@@ -4352,6 +4352,8 @@ adsb-range-1h = 1 H
 adsb-range-24h = 24 H
 adsb-range-7d = 7 D
 adsb-map-out-tip = Map into its own window
+adsb-map-reload-tip = Fetch weather, clouds and storms again now
+  the pictures on the map go until the new ones arrive
 adsb-copy-callsign = Copy callsign { $call }
 adsb-copy-icao = Copy ICAO { $icao }
 adsb-link-planespotters = View aircraft on planespotters.net …

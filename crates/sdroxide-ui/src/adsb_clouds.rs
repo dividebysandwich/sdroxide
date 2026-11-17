@@ -18,7 +18,10 @@ use sdroxide_solar::clouds::{self, CloudField, ConvCell};
 const REFRESH_S: i64 = 1800;
 const RETRY_S: i64 = 60;
 
-type Fetched = Result<(egui::ColorImage, Vec<ConvCell>, i64), String>;
+/// The picture, the storm cells and the hour, or why none came.
+type Mosaic = Result<(egui::ColorImage, Vec<ConvCell>, i64), String>;
+/// A [`Mosaic`] with the generation it was asked in.
+type Fetched = (u32, Mosaic);
 
 /// The latest cloud picture and storm cells.
 pub struct CloudLayer {
@@ -28,6 +31,8 @@ pub struct CloudLayer {
     pub frame_unix: i64,
     asked_at: i64,
     pending: bool,
+    /// Bumped by [`CloudLayer::reload`]; a fetch asked before it is dropped.
+    generation: u32,
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     tx: std::sync::mpsc::Sender<Fetched>,
     rx: std::sync::mpsc::Receiver<Fetched>,
@@ -42,6 +47,7 @@ impl Default for CloudLayer {
             frame_unix: 0,
             asked_at: i64::MIN / 2,
             pending: false,
+            generation: 0,
             tx,
             rx,
         }
@@ -49,10 +55,23 @@ impl Default for CloudLayer {
 }
 
 impl CloudLayer {
+    /// Drop the clouds and storm cells on the map and fetch them again now.
+    pub fn reload(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        self.tex = None;
+        self.cells.clear();
+        self.frame_unix = 0;
+        self.asked_at = i64::MIN / 2;
+        self.pending = false;
+    }
+
     /// Take in what has arrived and fetch when due. Once a frame while
     /// CLOUDS or STORMS is on.
     pub fn poll(&mut self, ctx: &egui::Context, now: i64) {
-        while let Ok(res) = self.rx.try_recv() {
+        while let Ok((generation, res)) = self.rx.try_recv() {
+            if generation != self.generation {
+                continue;
+            }
             self.pending = false;
             match res {
                 Ok((img, cells, frame)) => {
@@ -78,10 +97,11 @@ impl CloudLayer {
     fn spawn(&mut self, ctx: &egui::Context, now: i64) {
         let tx = self.tx.clone();
         let ctx = ctx.clone();
+        let generation = self.generation;
         self.pending = std::thread::Builder::new()
             .name("sdroxide-adsb-clouds".into())
             .spawn(move || {
-                let _ = tx.send(fetch(now));
+                let _ = tx.send((generation, fetch(now)));
                 ctx.request_repaint();
             })
             .is_ok();
@@ -110,7 +130,7 @@ fn fetch_band(agent: &ureq::Agent, band: Band, now: i64) -> Result<clouds::Plane
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn fetch(now: i64) -> Fetched {
+fn fetch(now: i64) -> Mosaic {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_connect(Some(std::time::Duration::from_secs(10)))
         .timeout_global(Some(std::time::Duration::from_secs(90)))
