@@ -5004,7 +5004,6 @@ acars-mode = mod { $mode }
 
 ## adsb: değerli iletiler (src/app/panels/adsb.rs)
 
-adsb-aircraft-3 = { $aircraft } uçak
 adsb-frames = { $frames } çerçeve
 adsb-preambles = { $preambles } ön ek
 adsb-bad-crc = { $bad_crc } hatalı CRC

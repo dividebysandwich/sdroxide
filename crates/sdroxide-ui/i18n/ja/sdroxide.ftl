@@ -4971,7 +4971,6 @@ acars-mode = モード { $mode }
 
 ## adsb：値を含むメッセージ（src/app/panels/adsb.rs）
 
-adsb-aircraft-3 = 航空機 { $aircraft } 機
 adsb-frames = フレーム { $frames }
 adsb-preambles = プリアンブル { $preambles }
 adsb-bad-crc = 不良な CRC { $bad_crc }

@@ -138,7 +138,22 @@ impl SdroxideApp {
             }
 
             ui.separator();
-            slot(ui, 76.0, &tr!("adsb-aircraft-3", aircraft = st.aircraft.len()), theme::CYAN());
+            // Two counts: heard in the last ACTIVE_S, and on the roster. The
+            // roster keeps an aircraft a minute after its last frame, so it
+            // answers a gain change only after that; the first count answers
+            // within seconds.
+            // Why: HDZ 2026-11-18: „mach bitte zwei Zahlen für Flugzeugzahlen
+            //      20(44) … 20 aktiv (meinetwegen längstens 10 sek zurück),
+            //      dann kann ich den Verstärker besser tunen, weil die erste
+            //      Zahl sofort nach 10 sek reagiert“.
+            let active = active_count(&st.aircraft, crate::time::now_unix());
+            slot(
+                ui,
+                106.0,
+                &tr!("adsb-aircraft-active", active = active, aircraft = st.aircraft.len()),
+                theme::CYAN(),
+            )
+            .on_hover_text(tr!("adsb-aircraft-active-tip", s = ACTIVE_S));
             slot(ui, 74.0, &tr!("adsb-frames", frames = count(st.frames)), theme::gray(150));
             // A high preamble count with no frames is the honest picture of a
             // band that is busy with something the decoder cannot read, or of a
@@ -763,10 +778,19 @@ fn count(n: u64) -> String {
 
 /// A readout in a slot of fixed width, so a number that grows a digit cannot
 /// re-flow the header.
-fn slot(ui: &mut egui::Ui, w: f32, text: &str, color: egui::Color32) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 16.0), egui::Sense::hover());
+/// An aircraft counts as active this long after its last accepted frame,
+/// seconds.
+pub const ACTIVE_S: i64 = 10;
+
+/// Aircraft with a frame in the last [`ACTIVE_S`] at `now`.
+fn active_count(aircraft: &[AdsbAircraft], now: i64) -> usize {
+    aircraft.iter().filter(|a| now - a.last_at <= ACTIVE_S).count()
+}
+
+fn slot(ui: &mut egui::Ui, w: f32, text: &str, color: egui::Color32) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 16.0), egui::Sense::hover());
     if !ui.is_rect_visible(rect) {
-        return;
+        return resp;
     }
     ui.painter_at(rect).text(
         egui::pos2(rect.left(), rect.center().y),
@@ -775,11 +799,27 @@ fn slot(ui: &mut egui::Ui, w: f32, text: &str, color: egui::Color32) {
         egui::FontId::monospace(10.0),
         color,
     );
+    resp
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Heard 10 s ago is still active; 11 s ago is on the list but not
+    /// active.
+    #[test]
+    fn active_means_a_frame_in_the_last_ten_seconds() {
+        let now = 1_795_003_200;
+        let mut list = Vec::new();
+        for (icao, ago) in [(1, 0), (2, 10), (3, 11), (4, 55)] {
+            let mut a = AdsbAircraft::new(icao, now - ago);
+            a.last_at = now - ago;
+            list.push(a);
+        }
+        assert_eq!(active_count(&list, now), 2);
+        assert_eq!(active_count(&[], now), 0);
+    }
 
     fn ac(icao: u32, call: &str, alt: Option<i32>, last: i64) -> AdsbAircraft {
         let mut a = AdsbAircraft::new(icao, last);
