@@ -849,6 +849,13 @@ impl PlutoRig {
     /// that already has a live stream: two engines draining one ring would
     /// each get half the samples.
     pub fn rx(&self, chain: u8) -> Result<PlutoRx> {
+        self.attach(chain, false)
+    }
+
+    /// [`Self::rx`], and for chain 1 with `lockstep`, the receive thread keeps
+    /// it in step with chain 0 from the first buffer it ever pushes to it —
+    /// see [`Self::aux_rx`].
+    fn attach(&self, chain: u8, lockstep: bool) -> Result<PlutoRx> {
         let inner = &self.inner;
         if !self.is_alive() {
             return Err(Error::Msg("this connection is closed".into()));
@@ -906,7 +913,19 @@ impl PlutoRig {
             // to a long-running connection must age from its attach, not from
             // the connection's epoch.
             inner.shared.stamp_rx1();
-            *inner.shared.ring1.lock().unwrap_or_else(|e| e.into_inner()) = Some(prod);
+            // Lockstep is switched on under the same lock that hands the ring
+            // over, and only now that this chain is ours. The receive thread
+            // decides between lockstep and independent pushes under this lock,
+            // so it can neither push this ring a single unpaired buffer, nor
+            // run a different radio's chain 1 in lockstep because an attach
+            // that was going to fail had switched it on early.
+            let mut slot = inner.shared.ring1.lock().unwrap_or_else(|e| e.into_inner());
+            if lockstep {
+                inner.shared.pair_origin.store(NO_PAIR, Ordering::SeqCst);
+                inner.shared.lockstep.store(true, Ordering::SeqCst);
+            }
+            *slot = Some(prod);
+            drop(slot);
             // The receive thread reopens its buffer for both pairs.
             inner.shared.rx_pairs.store(2, Ordering::Relaxed);
             (cons, None)
@@ -927,6 +946,23 @@ impl PlutoRig {
     }
 }
 
+/// How many floats [`PlutoRx::rx_read_paired`] may take from chain `chain`'s
+/// ring as unpaired, given what the ring held (`waiting`, measured before
+/// `origin` was read), the pairing origin and chain 0's running count of
+/// floats taken. Never past the origin once there is one; with none yet,
+/// never more than was already waiting when it was found unset. Even, so I
+/// and Q stay together.
+fn unpaired_room(chain: u8, waiting: usize, origin: u64, popped: u64, out_len: usize) -> usize {
+    let room = if chain != 0 {
+        out_len
+    } else if origin == NO_PAIR {
+        waiting.min(out_len)
+    } else {
+        usize::try_from(origin.saturating_sub(popped)).unwrap_or(usize::MAX).min(out_len)
+    };
+    room & !1
+}
+
 impl PlutoRig {
     /// Attach receive chain 1 as chain 0's own auxiliary receiver — a second
     /// aerial or a transmit coupler — rather than as a radio of its own
@@ -938,14 +974,7 @@ impl PlutoRig {
     /// [`PlutoRx::rx_read_paired`] can hand over the two chains' samples of
     /// the same instants. Dropping it lets the rings run independently again.
     pub fn aux_rx(&self) -> Result<PlutoRx> {
-        let shared = &self.inner.shared;
-        shared.pair_origin.store(NO_PAIR, Ordering::SeqCst);
-        shared.lockstep.store(true, Ordering::SeqCst);
-        let rx = self.rx(1);
-        if rx.is_err() {
-            shared.lockstep.store(false, Ordering::SeqCst);
-        }
-        rx
+        self.attach(1, true)
     }
 }
 
@@ -1223,17 +1252,20 @@ impl PlutoRx {
         aux_out: &mut [f32],
     ) -> (usize, usize) {
         let shared = &self.rig.shared;
+        // What chain 0's ring holds, measured *before* the origin is read. The
+        // receive thread records the origin before it commits the first paired
+        // buffer, so if the origin still reads as unset below, none of these
+        // samples is paired. Measured after, a pair committed in between would
+        // be taken here as unpaired history, and every paired read after it
+        // would hand RX2 up to a buffer behind RX1, for good.
+        let waiting = self.ring.as_ref().map_or(0, |r| r.slots());
         let origin = shared.pair_origin.load(Ordering::SeqCst);
         let popped = shared.popped0.load(Ordering::SeqCst);
         if self.chain != 0 || origin == NO_PAIR || popped < origin {
             // Nothing paired yet, or unpaired history still to hand over —
             // but never read past the origin, or the twins would be skipped.
-            let room = if origin == NO_PAIR || self.chain != 0 {
-                out.len()
-            } else {
-                usize::try_from(origin - popped).unwrap_or(usize::MAX).min(out.len())
-            };
-            let n = self.rx_read(&mut out[..room & !1]);
+            let room = unpaired_room(self.chain, waiting, origin, popped, out.len());
+            let n = self.rx_read(&mut out[..room]);
             return (n, 0);
         }
         let (Some(main), Some(side)) = (self.ring.as_ref(), aux.ring.as_ref()) else {
@@ -1909,6 +1941,27 @@ mod tests {
         // grow with the rate.
         assert!(tx_buffer_samples(2_500_000.0) as f64 / 2.5e6 < 0.030);
         assert_eq!(tx_buffer_samples(0.0), TX_BUFFER_BOUNDS.0);
+    }
+
+    /// Review of #743: with pairing not yet begun, an unpaired read takes no
+    /// more than chain 0's ring held *before* the origin was found unset. The
+    /// receive thread records the origin first and commits the first pair
+    /// after, so those samples are all from before it; anything that arrived
+    /// since may be the first pair's chain-0 half, and taking it as unpaired
+    /// would leave RX2 behind RX1 for every read after. Once there is an
+    /// origin, never past it.
+    #[test]
+    fn an_unpaired_read_takes_nothing_that_may_be_a_pair() {
+        // Origin unset: bounded by what was waiting, not by the buffer.
+        assert_eq!(unpaired_room(0, 1000, NO_PAIR, 0, 4096), 1000);
+        assert_eq!(unpaired_room(0, 0, NO_PAIR, 0, 4096), 0);
+        assert_eq!(unpaired_room(0, 9000, NO_PAIR, 0, 4096), 4096);
+        // Origin set, history still to hand over: up to the origin exactly.
+        assert_eq!(unpaired_room(0, 9000, 5000, 4000, 4096), 1000);
+        // Kept even, so a sample's I and Q are never split.
+        assert_eq!(unpaired_room(0, 1001, NO_PAIR, 0, 4096), 1000);
+        // Chain 1 read on its own has no pairing to respect.
+        assert_eq!(unpaired_room(1, 0, NO_PAIR, 0, 4096), 4096);
     }
 
     #[test]
