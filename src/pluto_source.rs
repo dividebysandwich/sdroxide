@@ -581,6 +581,16 @@ impl IqSource for PlutoSource {
         self.take(buf, false)
     }
 
+    /// Up to four blocks a tick when that many are waiting: one block of 16384
+    /// every 10 ms is 1.64 Msps, so a 2.083 Msps Pluto fell further behind with
+    /// every tick of an over and dropped a fifth of its receive at its own
+    /// ring — which is also PureSignal's feedback, and has to arrive unbroken
+    /// (issue #525). Four is 6.5 Msps, past anything a Pluto streams over the
+    /// network through an over.
+    fn full_duplex_reads_per_tick(&self) -> usize {
+        4
+    }
+
     /// A centre of its own — the AD9363's RX LO — so the engine may centre the I/Q
     /// on a resting dial (`Engine::recentre_after_dwell`).
     fn recentre_on_dwell(&self) -> bool {
