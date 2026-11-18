@@ -864,6 +864,12 @@ pub struct SdroxideApp {
     adsb_sort_desc: bool,
     adsb_log_sort: panels::adsb::LogSort,
     adsb_log_desc: bool,
+    /// The day the sighting log shows; `None` is today, following midnight.
+    adsb_log_day: Option<String>,
+    /// The log's distance filter, km; `0` is off.
+    adsb_log_min_km: f32,
+    /// The log shows only the aircraft in the live table now (today only).
+    adsb_log_live: bool,
     /// AIS: the vessel table and everything the decoder is seeing, as the
     /// engine last sent it. Boxed for the reason the ADS-B one is — a busy
     /// estuary's table, each row carrying a trail, is far larger than anything
@@ -1844,6 +1850,9 @@ impl SdroxideApp {
             adsb_sort_desc: true,
             adsb_log_sort: panels::adsb::LogSort::default(),
             adsb_log_desc: true,
+            adsb_log_day: None,
+            adsb_log_min_km: 0.0,
+            adsb_log_live: false,
             ais_status: None,
             ais_map: crate::ais_map::AisMapState::default(),
             ais_filter: String::new(),

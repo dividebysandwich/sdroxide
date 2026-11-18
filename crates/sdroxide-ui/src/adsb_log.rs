@@ -67,6 +67,46 @@ pub struct SightingBook {
     loaded: bool,
     dirty: bool,
     saved_at: i64,
+    /// The past days with a file, oldest first, as found at start.
+    past_days: Vec<String>,
+    /// One past day read back for the date slider: the day and its lines.
+    past: Option<(String, BTreeMap<u32, Sighting>)>,
+}
+
+/// Whether a line passes the log's filters.
+///
+/// `text` is matched, upper case, against callsign, address, type, route and
+/// country; empty passes all. `min_km` keeps lines heard at least that far
+/// out; `0` passes all, and a line with no position fails any distance above
+/// it. Why: HDZ 2026-11-18: „das aircraft log braucht noch ein paar mehr
+/// filter“ — with ~20 aircraft on the roster at once, a day runs to hundreds.
+pub fn passes(s: &Sighting, text: &str, min_km: f32) -> bool {
+    if min_km > 0.0 && (s.max_km.is_nan() || s.max_km < min_km) {
+        return false;
+    }
+    if text.is_empty() {
+        return true;
+    }
+    format!("{:06X}", s.icao).contains(text)
+        || [&s.call, &s.kind, &s.route, &s.country]
+            .iter()
+            .any(|f| f.to_ascii_uppercase().contains(text))
+}
+
+/// Weekday (0 = Monday), day and month of a `2026-11-17`, for the date
+/// slider's label; `None` when it does not parse.
+pub fn day_parts(day: &str) -> Option<(usize, i64, i64)> {
+    let p: Vec<i64> = day.split('-').filter_map(|x| x.parse().ok()).collect();
+    let [y, m, d] = p[..] else { return None };
+    // Days since 1970-01-01 (H. Hinnant's `days_from_civil`), 1970-01-01 a Thursday.
+    let y2 = if m <= 2 { y - 1 } else { y };
+    let era = y2.div_euclid(400);
+    let yoe = y2 - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(((days + 3).rem_euclid(7) as usize, d, m))
 }
 
 /// The airline part of a callsign, `PGT` of `PGT49BX`.
@@ -138,6 +178,12 @@ impl SightingBook {
             if self.dirty {
                 self.save(now);
             }
+            // The day just ended goes to the slider's past days.
+            if !self.day.is_empty() && !self.past_days.contains(&self.day) {
+                self.past_days.push(std::mem::take(&mut self.day));
+            }
+            let oldest = local_day(now - KEEP_DAYS * 86_400);
+            self.past_days.retain(|d| *d >= oldest);
             self.day = day;
             self.today.clear();
         }
@@ -210,6 +256,45 @@ impl SightingBook {
         v
     }
 
+    /// The days the date slider offers, oldest first, today last: every
+    /// kept day file, and today once anything has been heard.
+    pub fn days(&self) -> Vec<String> {
+        let mut v = self.past_days.clone();
+        if !self.day.is_empty() && !v.contains(&self.day) {
+            v.push(self.day.clone());
+        }
+        v
+    }
+
+    /// Read a past day's file for [`Self::rows_of`], once per day chosen.
+    pub fn open_day(&mut self, day: &str) {
+        if day == self.day || self.past.as_ref().is_some_and(|(d, _)| d == day) {
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let rows = Self::dir()
+            .and_then(|dir| std::fs::read_to_string(dir.join(format!("{day}.csv"))).ok())
+            .map(|body| decode(&body))
+            .unwrap_or_default();
+        #[cfg(target_arch = "wasm32")]
+        let rows = BTreeMap::new();
+        self.past = Some((day.to_string(), rows));
+    }
+
+    /// The sightings of `day`, latest first: today's as they grow, a past
+    /// day's as [`Self::open_day`] read it; none for a day not opened.
+    pub fn rows_of(&self, day: &str) -> Vec<&Sighting> {
+        if day == self.day {
+            return self.today();
+        }
+        let mut v: Vec<&Sighting> = match &self.past {
+            Some((d, rows)) if d == day => rows.values().collect(),
+            _ => Vec::new(),
+        };
+        v.sort_by_key(|s| std::cmp::Reverse(s.last));
+        v
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn dir() -> Option<std::path::PathBuf> {
         Some(sdroxide_config::config_dir().ok()?.join("adsb-log"))
@@ -249,6 +334,9 @@ impl SightingBook {
                 if day < oldest {
                     let _ = std::fs::remove_file(path);
                     continue;
+                }
+                if day < today {
+                    self.past_days.push(day.clone());
                 }
                 let Ok(body) = std::fs::read_to_string(&path) else { continue };
                 let rows = decode(&body);
@@ -380,6 +468,64 @@ mod tests {
         // A file written before the local columns.
         let old = "h\n1794917355,1794917649,3E28E4,DIGRK,C25A,,DE,7,21,10000\n";
         assert_eq!(decode(old)[&0x3E28E4].call, "DIGRK");
+    }
+
+    /// The log's filters (HDZ 2026-11-18): any field matches the text, the
+    /// least distance keeps those heard that far out, and a line with no
+    /// position passes only while the distance filter is off.
+    #[test]
+    fn the_filters_match_any_field_and_a_least_distance() {
+        let s = Sighting {
+            icao: 0x3E28E4,
+            call: "DIGRK".into(),
+            kind: "C25A".into(),
+            route: "EDDL›EDDM".into(),
+            country: "DE".into(),
+            first: 0,
+            last: 0,
+            min_km: 7.0,
+            max_km: 21.0,
+            max_alt_ft: None,
+        };
+        assert!(passes(&s, "", 0.0));
+        for q in ["DIGRK", "3E28", "C25", "EDDM", "DE"] {
+            assert!(passes(&s, q, 0.0), "{q}");
+        }
+        assert!(!passes(&s, "DLH", 0.0));
+        assert!(passes(&s, "", 20.0) && !passes(&s, "", 30.0));
+        assert!(!passes(&s, "DIGRK", 30.0), "text and distance both apply");
+        let blind = Sighting { max_km: f32::NAN, ..s };
+        assert!(passes(&blind, "", 0.0) && !passes(&blind, "", 10.0));
+    }
+
+    #[test]
+    fn a_date_names_its_weekday() {
+        assert_eq!(day_parts("2026-11-18"), Some((2, 18, 11)), "a Wednesday");
+        assert_eq!(day_parts("2024-02-29"), Some((3, 29, 2)), "a leap day, Thursday");
+        assert_eq!(day_parts("1970-01-01"), Some((3, 1, 1)));
+        assert_eq!(day_parts("today"), None);
+    }
+
+    /// The date slider: the kept days, oldest first, today last; at midnight
+    /// the day just ended joins them, and its lines are read back only when
+    /// it is opened.
+    #[test]
+    fn the_day_slider_offers_the_kept_days_and_today_last() {
+        let mut b = book();
+        let t = 1_794_917_355;
+        b.past_days = vec![local_day(t - 2 * 86_400), local_day(t - 86_400)];
+        b.note(None, &[ac(1, "DLH1", t)], |_| Known::default(), t);
+        assert_eq!(b.days().last(), Some(&local_day(t)));
+        // Not dirty, so midnight writes no file from a test.
+        b.dirty = false;
+        let t2 = t + 86_400;
+        b.note(None, &[ac(2, "DLH2", t2)], |_| Known::default(), t2);
+        let days = b.days();
+        assert_eq!(days.len(), 4);
+        assert_eq!(days[2], local_day(t), "yesterday joined the past days");
+        assert_eq!(days[3], local_day(t2));
+        assert_eq!(b.rows_of(&local_day(t2)).len(), 1);
+        assert!(b.rows_of(&local_day(t)).is_empty(), "not opened, so not read");
     }
 
     fn ac(icao: u32, call: &str, seen: i64) -> AdsbAircraft {

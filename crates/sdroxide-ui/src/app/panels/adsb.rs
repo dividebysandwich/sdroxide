@@ -602,10 +602,92 @@ impl SdroxideApp {
         }
     }
 
-    /// Today's sightings: a summary line, then one row an aircraft, latest
-    /// first. A click on one still in the air selects it on the map.
+    /// A day's sightings: the filter row, a summary line, then one row an
+    /// aircraft, latest first. A click on one still in the air selects it on
+    /// the map.
+    ///
+    /// Filters: the day (slider over the kept files, right end today), the
+    /// panel's text filter (callsign, address, type, route, country), a least
+    /// distance, and LIVE — only those in the table now.
+    /// Why: HDZ 2026-11-18: „das aircraft log braucht noch ein paar mehr
+    ///      filter. Z.B. einen datumsregler“, with ~20 aircraft on the roster.
     fn adsb_log_list(&mut self, ui: &mut egui::Ui, st: &AdsbStatus, h: f32) {
-        let mut rows = self.adsb_log.today();
+        let live: std::collections::HashSet<u32> = st.aircraft.iter().map(|a| a.icao).collect();
+        let today = crate::adsb_log::local_day(crate::time::now_unix());
+        let mut days = self.adsb_log.days();
+        if days.last() != Some(&today) {
+            days.push(today.clone());
+        }
+        // A day that has aged out, or today chosen by hand, is today: `None`
+        // follows midnight, a fixed date would not.
+        if self.adsb_log_day.as_ref().is_some_and(|d| *d == today || !days.contains(d)) {
+            self.adsb_log_day = None;
+        }
+        let day = self.adsb_log_day.clone().unwrap_or_else(|| today.clone());
+        let is_today = day == today;
+        self.adsb_log.open_day(&day);
+        let far_out = self
+            .adsb_log
+            .rows_of(&day)
+            .iter()
+            .filter(|s| !s.max_km.is_nan())
+            .fold(0.0f32, |m, s| m.max(s.max_km));
+        ui.horizontal(|ui| {
+            if days.len() > 1 {
+                let last = days.len() - 1;
+                let mut i = days.iter().position(|d| *d == day).unwrap_or(last);
+                if ui
+                    .add(egui::Slider::new(&mut i, 0..=last).show_value(false))
+                    .on_hover_text(tr!("adsb-log-day-tip", n = days.len().to_string()))
+                    .changed()
+                {
+                    self.adsb_log_day = (i < last).then(|| days[i].clone());
+                }
+            }
+            let label = if is_today { tr!("adsb-log-today-word") } else { day_label(&day) };
+            ui.label(RichText::new(label).monospace().size(10.0).color(theme::CYAN()));
+            if far_out > 0.0 {
+                // Up to the day's farthest, in 10 km steps; past it nothing
+                // would pass.
+                let top = (far_out / 10.0).ceil() * 10.0;
+                self.adsb_log_min_km = self.adsb_log_min_km.min(top);
+                ui.add_space(8.0);
+                ui.add(
+                    egui::Slider::new(&mut self.adsb_log_min_km, 0.0..=top)
+                        .step_by(10.0)
+                        .show_value(false),
+                )
+                .on_hover_text(tr!("adsb-log-km-tip"));
+                let km = if self.adsb_log_min_km > 0.0 {
+                    format!("≥{:.0} km", self.adsb_log_min_km)
+                } else {
+                    tr!("adsb-log-km-any")
+                };
+                ui.label(RichText::new(km).monospace().size(10.0));
+            }
+            if is_today
+                && crate::chrome::chip(
+                    ui,
+                    self.adsb_log_live,
+                    RichText::new(tr!("adsb-chip-live")).size(9.5),
+                )
+                .on_hover_text(tr!("adsb-chip-live-tip"))
+                .clicked()
+            {
+                self.adsb_log_live = !self.adsb_log_live;
+            }
+        });
+        let text = self.adsb_filter.trim().to_ascii_uppercase();
+        let all = self.adsb_log.rows_of(&day);
+        let total = all.len();
+        let live_only = is_today && self.adsb_log_live;
+        let mut rows: Vec<&crate::adsb_log::Sighting> = all
+            .into_iter()
+            .filter(|s| {
+                crate::adsb_log::passes(s, &text, self.adsb_log_min_km)
+                    && (!live_only || live.contains(&s.icao))
+            })
+            .collect();
         sort_log(&mut rows, self.adsb_log_sort, self.adsb_log_desc);
         // The summary: how many, the farthest, and the commonest
         // destinations and types.
@@ -622,7 +704,14 @@ impl SdroxideApp {
         let kinds = top(rows.iter().map(|s| s.kind.as_str()).collect());
         let far =
             rows.iter().filter(|s| !s.max_km.is_nan()).max_by(|a, b| a.max_km.total_cmp(&b.max_km));
-        let mut head = tr!("adsb-log-today", n = rows.len().to_string());
+        let mut head = if is_today {
+            tr!("adsb-log-today", n = total.to_string())
+        } else {
+            tr!("adsb-log-on-day", day = day_label(&day), n = total.to_string())
+        };
+        if rows.len() != total {
+            head.push_str(&format!(" · {}", tr!("adsb-log-shown", n = rows.len().to_string())));
+        }
         if let Some(f) = far {
             let who = if f.call.is_empty() { format!("{:06X}", f.icao) } else { f.call.clone() };
             head.push_str(&format!(
@@ -664,7 +753,6 @@ impl SdroxideApp {
                 &mut self.adsb_log_desc,
             );
         }
-        let live: std::collections::HashSet<u32> = st.aircraft.iter().map(|a| a.icao).collect();
         let selected = self.adsb_map.selected;
         let mut pick = None;
         egui::ScrollArea::vertical()
@@ -672,8 +760,12 @@ impl SdroxideApp {
             .max_height((h - 64.0).max(60.0))
             .auto_shrink([false, false])
             .show_themed(ui, |ui| {
-                if rows.is_empty() {
+                if total == 0 && is_today {
                     ui.label(RichText::new(tr!("adsb-log-empty")).weak());
+                } else if total == 0 {
+                    ui.label(RichText::new(tr!("adsb-log-empty-day")).weak());
+                } else if rows.is_empty() {
+                    ui.label(RichText::new(tr!("adsb-log-none")).weak());
                 }
                 for s in &rows {
                     let w = ui.available_width();
@@ -1422,6 +1514,22 @@ fn sighting_links(s: &crate::adsb_log::Sighting) -> Vec<(String, String)> {
     }
     v.push((tr!("adsb-link-planespotters"), format!("https://www.planespotters.net/hex/{hex}")));
     v
+}
+
+/// `Mo 17.11.` for `2026-11-17`: the day the sighting log shows, as its
+/// slider and summary name it. The date itself when it does not parse.
+fn day_label(day: &str) -> String {
+    let Some((wd, d, m)) = crate::adsb_log::day_parts(day) else { return day.to_string() };
+    let wd = match wd {
+        0 => tr!("adsb-wd-mo"),
+        1 => tr!("adsb-wd-tu"),
+        2 => tr!("adsb-wd-we"),
+        3 => tr!("adsb-wd-th"),
+        4 => tr!("adsb-wd-fr"),
+        5 => tr!("adsb-wd-sa"),
+        _ => tr!("adsb-wd-su"),
+    };
+    tr!("adsb-log-day-label", wd = wd, d = format!("{d:02}"), m = format!("{m:02}"))
 }
 
 /// The right-click menu of a sighting-log row.

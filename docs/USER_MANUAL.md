@@ -6476,7 +6476,7 @@ only.
 
 The list forgets an aircraft a minute after its last frame. The **LOG** chip
 beside the filter opens the sighting log, which does not: every aircraft heard
-today, one line each — when it came and went, callsign, type, route, and how far
+in a day, one line each — when it came and went, callsign, type, route, and how far
 from you it was heard — with a summary at the top (how many, the farthest, the
 commonest destinations and types). Click a column heading to sort by it, again
 to reverse; it opens on the last heard first. It is written once a minute to
@@ -6486,6 +6486,16 @@ its first and last contact and its nearest and farthest distance. The times are
 in the file twice: as epoch seconds (`first`, `last`) for programs, and as local
 date and time (`first_local`, `last_local`, `2026-11-17 13:24:05`) for a
 spreadsheet.
+
+A row of filters sits above the summary, and the summary counts what they let
+through (`today 212 aircraft · 18 shown`):
+
+| Filter | What it keeps |
+|---|---|
+| Day slider | One day of the 30 kept: drag left for earlier days, the right end is today and follows midnight. Shown only once there is more than one day file. |
+| Text | The filter field beside **LOG** also filters the log: a part of the callsign, the address, the type, the route (`EDDL`) or the country (`DE`). |
+| Distance | Only aircraft heard at least this far from you, in 10 km steps up to the day's farthest; at the left end, all. A line without a position fails any distance. |
+| **LIVE** | Today only: just the aircraft in the table now. |
 
 **Right-click a line** for what still answers once the flight is over: copy
 the callsign or the address; the aircraft's **track of that day** on ADS-B
