@@ -447,6 +447,13 @@ pub struct ViewState {
     /// The ADS-B list shows today's sightings instead of the live table.
     #[serde(default)]
     pub adsb_show_log: bool,
+    /// With the log shown, the right side shows its bar chart instead of the
+    /// map (chips MAP / PLOTS).
+    #[serde(default)]
+    pub adsb_log_plots: bool,
+    /// The chart's x axis, [`crate::adsb_plots::Axis`] as a number.
+    #[serde(default)]
+    pub adsb_plot_axis: u8,
     /// The ADS-B map in a window of its own; the list then has the panel.
     #[serde(default)]
     pub adsb_map_out: bool,
@@ -892,6 +899,8 @@ impl Default for ViewState {
             adsb_map_range: adsb_map_cities_default(),
             adsb_map_airports: adsb_map_cities_default(),
             adsb_show_log: false,
+            adsb_log_plots: false,
+            adsb_plot_axis: 0,
             adsb_gain_presets: Default::default(),
             adsb_map_pointer: adsb_map_cities_default(),
             adsb_range_window: adsb_range_window_default(),

@@ -6493,9 +6493,25 @@ through (`today 212 aircraft · 18 shown`):
 | Filter | What it keeps |
 |---|---|
 | Day slider | One day of the 30 kept: drag left for earlier days, the right end is today and follows midnight. Shown only once there is more than one day file. |
+| **1 D** / **7 D** | The span: the chosen day, or the seven days ending with it. Over a week an aircraft heard on several days has a line for each. |
 | Text | The filter field beside **LOG** also filters the log: a part of the callsign, the address, the type, the route (`EDDL`) or the country (`DE`). |
-| Distance | Only aircraft heard at least this far from you, in 10 km steps up to the day's farthest; at the left end, all. A line without a position fails any distance. |
 | **LIVE** | Today only: just the aircraft in the table now. |
+
+With the log open, **MAP** and **PLOTS** over the right side swap the map for a
+bar chart of the lines the log shows, after its filters. **X axis** picks what
+the bars count by — each line is one aircraft on one day:
+
+| X axis | Bars |
+|---|---|
+| Daytime (h) | Aircraft heard in each hour of the day, local time. An aircraft counts in every hour it was heard in, so this is how busy the sky was. |
+| Height (FL) | Aircraft by their highest altitude, in 2,000 ft steps, the last open above FL440. |
+| Distance (km) | Aircraft by their farthest position, in the coverage diagram's 10 km rings. The diagnostic one: where the bars stop, reception stops, and a change of antenna shows as bars moving out. |
+| Airline | Aircraft by the airline code in the callsign, commonest first; the rest as one bar `…`. |
+| Plane type | Aircraft by type, commonest first, guessed types counted as their type; the rest as one bar. |
+
+Lines with nothing to count by — no altitude, no position, a callsign without an
+airline code, no type — are left out and their number shown over the chart.
+Hover a bar for its count.
 
 **Right-click a line** for what still answers once the flight is over: copy
 the callsign or the address; the aircraft's **track of that day** on ADS-B

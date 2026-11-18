@@ -866,8 +866,10 @@ pub struct SdroxideApp {
     adsb_log_desc: bool,
     /// The day the sighting log shows; `None` is today, following midnight.
     adsb_log_day: Option<String>,
-    /// The log's distance filter, km; `0` is off.
-    adsb_log_min_km: f32,
+    /// The log shows the week ending with its day instead of the day.
+    adsb_log_week: bool,
+    /// The lines the log showed last, for its chart on the right.
+    adsb_log_shown: Vec<crate::adsb_log::Sighting>,
     /// The log shows only the aircraft in the live table now (today only).
     adsb_log_live: bool,
     /// AIS: the vessel table and everything the decoder is seeing, as the
@@ -1851,7 +1853,8 @@ impl SdroxideApp {
             adsb_log_sort: panels::adsb::LogSort::default(),
             adsb_log_desc: true,
             adsb_log_day: None,
-            adsb_log_min_km: 0.0,
+            adsb_log_week: false,
+            adsb_log_shown: Vec::new(),
             adsb_log_live: false,
             ais_status: None,
             ais_map: crate::ais_map::AisMapState::default(),

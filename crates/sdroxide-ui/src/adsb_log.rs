@@ -69,21 +69,20 @@ pub struct SightingBook {
     saved_at: i64,
     /// The past days with a file, oldest first, as found at start.
     past_days: Vec<String>,
-    /// One past day read back for the date slider: the day and its lines.
-    past: Option<(String, BTreeMap<u32, Sighting>)>,
+    /// Past days read back for the date slider and its week: day → lines.
+    /// At most the kept files, a few hundred lines each.
+    past: BTreeMap<String, BTreeMap<u32, Sighting>>,
 }
 
-/// Whether a line passes the log's filters.
+/// Whether a line passes the log's text filter.
 ///
 /// `text` is matched, upper case, against callsign, address, type, route and
-/// country; empty passes all. `min_km` keeps lines heard at least that far
-/// out; `0` passes all, and a line with no position fails any distance above
-/// it. Why: HDZ 2026-11-18: „das aircraft log braucht noch ein paar mehr
-/// filter“ — with ~20 aircraft on the roster at once, a day runs to hundreds.
-pub fn passes(s: &Sighting, text: &str, min_km: f32) -> bool {
-    if min_km > 0.0 && (s.max_km.is_nan() || s.max_km < min_km) {
-        return false;
-    }
+/// country; empty passes all. Why: HDZ 2026-11-18: „das aircraft log braucht
+/// noch ein paar mehr filter“ — with ~20 aircraft on the roster at once, a day
+/// runs to hundreds. The distance filter that stood here went to the plots:
+/// „der schieberegler für die Strecke kann weg, mach lieber im Diagramm eine
+/// X-Achse Kilometer gegen counts als diagnostischer Plot“.
+pub fn passes(s: &Sighting, text: &str) -> bool {
     if text.is_empty() {
         return true;
     }
@@ -91,6 +90,20 @@ pub fn passes(s: &Sighting, text: &str, min_km: f32) -> bool {
         || [&s.call, &s.kind, &s.route, &s.country]
             .iter()
             .any(|f| f.to_ascii_uppercase().contains(text))
+}
+
+/// The day `n` days before `day`, `2026-11-11` for (`2026-11-18`, 7); `None`
+/// when it does not parse. For the log's week.
+pub fn day_minus(day: &str, n: i64) -> Option<String> {
+    let p: Vec<i64> = day.split('-').filter_map(|x| x.parse().ok()).collect();
+    let [y, m, d] = p[..] else { return None };
+    let y2 = if m <= 2 { y - 1 } else { y };
+    let era = y2.div_euclid(400);
+    let yoe = y2 - era * 400;
+    let doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1;
+    let days = era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468;
+    let (y, m, d) = civil(days - n);
+    Some(format!("{y:04}-{m:02}-{d:02}"))
 }
 
 /// Weekday (0 = Monday), day and month of a `2026-11-17`, for the date
@@ -110,7 +123,7 @@ pub fn day_parts(day: &str) -> Option<(usize, i64, i64)> {
 }
 
 /// The airline part of a callsign, `PGT` of `PGT49BX`.
-fn airline_of(call: &str) -> Option<&str> {
+pub(crate) fn airline_of(call: &str) -> Option<&str> {
     let b = call.as_bytes();
     (b.len() >= 4 && b[..3].iter().all(u8::is_ascii_alphabetic) && b[3].is_ascii_digit())
         .then(|| &call[..3])
@@ -268,7 +281,7 @@ impl SightingBook {
 
     /// Read a past day's file for [`Self::rows_of`], once per day chosen.
     pub fn open_day(&mut self, day: &str) {
-        if day == self.day || self.past.as_ref().is_some_and(|(d, _)| d == day) {
+        if day == self.day || self.past.contains_key(day) {
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -278,7 +291,7 @@ impl SightingBook {
             .unwrap_or_default();
         #[cfg(target_arch = "wasm32")]
         let rows = BTreeMap::new();
-        self.past = Some((day.to_string(), rows));
+        self.past.insert(day.to_string(), rows);
     }
 
     /// The sightings of `day`, latest first: today's as they grow, a past
@@ -287,10 +300,8 @@ impl SightingBook {
         if day == self.day {
             return self.today();
         }
-        let mut v: Vec<&Sighting> = match &self.past {
-            Some((d, rows)) if d == day => rows.values().collect(),
-            _ => Vec::new(),
-        };
+        let mut v: Vec<&Sighting> =
+            self.past.get(day).map(|rows| rows.values().collect()).unwrap_or_default();
         v.sort_by_key(|s| std::cmp::Reverse(s.last));
         v
     }
@@ -487,15 +498,19 @@ mod tests {
             max_km: 21.0,
             max_alt_ft: None,
         };
-        assert!(passes(&s, "", 0.0));
+        assert!(passes(&s, ""));
         for q in ["DIGRK", "3E28", "C25", "EDDM", "DE"] {
-            assert!(passes(&s, q, 0.0), "{q}");
+            assert!(passes(&s, q), "{q}");
         }
-        assert!(!passes(&s, "DLH", 0.0));
-        assert!(passes(&s, "", 20.0) && !passes(&s, "", 30.0));
-        assert!(!passes(&s, "DIGRK", 30.0), "text and distance both apply");
-        let blind = Sighting { max_km: f32::NAN, ..s };
-        assert!(passes(&blind, "", 0.0) && !passes(&blind, "", 10.0));
+        assert!(!passes(&s, "DLH"));
+    }
+
+    #[test]
+    fn a_week_back_crosses_months_and_years() {
+        assert_eq!(day_minus("2026-11-18", 7).as_deref(), Some("2026-11-11"));
+        assert_eq!(day_minus("2026-03-02", 2).as_deref(), Some("2026-02-28"));
+        assert_eq!(day_minus("2027-01-03", 6).as_deref(), Some("2026-12-28"));
+        assert_eq!(day_minus("odd", 1), None);
     }
 
     #[test]

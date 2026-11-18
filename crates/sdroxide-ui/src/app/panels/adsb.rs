@@ -223,6 +223,39 @@ impl SdroxideApp {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
             let small = |t: String| RichText::new(t).size(9.5);
+            // With the log on the left, the right side is the map or the
+            // log's chart.
+            // Why: HDZ 2026-11-18: „du kannst das ganze rechte Feld nehmen,
+            //      das kann mit einem Chip Map gegen Plots getauscht werden“.
+            if self.view.adsb_show_log {
+                for (plots, text, tip) in [
+                    (false, tr!("adsb-chip-map"), tr!("adsb-chip-map-tip")),
+                    (true, tr!("adsb-chip-plots"), tr!("adsb-chip-plots-tip")),
+                ] {
+                    if crate::chrome::chip(ui, self.view.adsb_log_plots == plots, small(text))
+                        .on_hover_text(tip)
+                        .clicked()
+                    {
+                        self.view.adsb_log_plots = plots;
+                    }
+                }
+                if self.view.adsb_log_plots {
+                    use crate::adsb_plots::Axis;
+                    ui.add_space(6.0);
+                    ui.label(small(tr!("adsb-plot-x")));
+                    let mut axis = Axis::from_u8(self.view.adsb_plot_axis);
+                    egui::ComboBox::from_id_salt("adsb-plot-axis")
+                        .selected_text(axis_name(axis))
+                        .show_ui(ui, |ui| {
+                            for a in Axis::ALL {
+                                ui.selectable_value(&mut axis, a, axis_name(a));
+                            }
+                        });
+                    self.view.adsb_plot_axis = axis.to_u8();
+                    return;
+                }
+                ui.add_space(6.0);
+            }
             if crate::chrome::chip(ui, self.view.adsb_map_cities, small(tr!("adsb-chip-cities")))
                 .on_hover_text(tr!("adsb-chip-cities-tip"))
                 .clicked()
@@ -624,14 +657,29 @@ impl SdroxideApp {
             self.adsb_log_day = None;
         }
         let day = self.adsb_log_day.clone().unwrap_or_else(|| today.clone());
+        // The span: the day, or the seven calendar days ending with it.
+        // Why: HDZ 2026-11-18: „der Schieberegler ist ja auf Datum, evt noch
+        //      Länge 1 Woche, 1 Tag“.
+        let week = self.adsb_log_week;
+        let span: Vec<String> = if week {
+            let from = crate::adsb_log::day_minus(&day, 7).unwrap_or_default();
+            days.iter().filter(|d| **d > from && **d <= day).cloned().collect()
+        } else {
+            vec![day.clone()]
+        };
         let is_today = day == today;
-        self.adsb_log.open_day(&day);
-        let far_out = self
-            .adsb_log
-            .rows_of(&day)
-            .iter()
-            .filter(|s| !s.max_km.is_nan())
-            .fold(0.0f32, |m, s| m.max(s.max_km));
+        for d in &span {
+            self.adsb_log.open_day(d);
+        }
+        let label = match (week, span.first()) {
+            (true, Some(first)) if *first != day => tr!(
+                "adsb-log-week-label",
+                from = day_label(first),
+                to = if is_today { tr!("adsb-log-today-word") } else { day_label(&day) }
+            ),
+            _ if is_today => tr!("adsb-log-today-word"),
+            _ => day_label(&day),
+        };
         ui.horizontal(|ui| {
             if days.len() > 1 {
                 let last = days.len() - 1;
@@ -644,26 +692,18 @@ impl SdroxideApp {
                     self.adsb_log_day = (i < last).then(|| days[i].clone());
                 }
             }
-            let label = if is_today { tr!("adsb-log-today-word") } else { day_label(&day) };
-            ui.label(RichText::new(label).monospace().size(10.0).color(theme::CYAN()));
-            if far_out > 0.0 {
-                // Up to the day's farthest, in 10 km steps; past it nothing
-                // would pass.
-                let top = (far_out / 10.0).ceil() * 10.0;
-                self.adsb_log_min_km = self.adsb_log_min_km.min(top);
-                ui.add_space(8.0);
-                ui.add(
-                    egui::Slider::new(&mut self.adsb_log_min_km, 0.0..=top)
-                        .step_by(10.0)
-                        .show_value(false),
-                )
-                .on_hover_text(tr!("adsb-log-km-tip"));
-                let km = if self.adsb_log_min_km > 0.0 {
-                    format!("≥{:.0} km", self.adsb_log_min_km)
-                } else {
-                    tr!("adsb-log-km-any")
-                };
-                ui.label(RichText::new(km).monospace().size(10.0));
+            ui.label(RichText::new(&label).monospace().size(10.0).color(theme::CYAN()));
+            ui.add_space(6.0);
+            for (w, text, tip) in [
+                (false, tr!("adsb-log-span-day"), tr!("adsb-log-span-day-tip")),
+                (true, tr!("adsb-log-span-week"), tr!("adsb-log-span-week-tip")),
+            ] {
+                if crate::chrome::chip(ui, week == w, RichText::new(text).size(9.5))
+                    .on_hover_text(tip)
+                    .clicked()
+                {
+                    self.adsb_log_week = w;
+                }
             }
             if is_today
                 && crate::chrome::chip(
@@ -678,17 +718,19 @@ impl SdroxideApp {
             }
         });
         let text = self.adsb_filter.trim().to_ascii_uppercase();
-        let all = self.adsb_log.rows_of(&day);
+        let all: Vec<&crate::adsb_log::Sighting> =
+            span.iter().flat_map(|d| self.adsb_log.rows_of(d)).collect();
         let total = all.len();
         let live_only = is_today && self.adsb_log_live;
         let mut rows: Vec<&crate::adsb_log::Sighting> = all
             .into_iter()
-            .filter(|s| {
-                crate::adsb_log::passes(s, &text, self.adsb_log_min_km)
-                    && (!live_only || live.contains(&s.icao))
-            })
+            .filter(|s| crate::adsb_log::passes(s, &text) && (!live_only || live.contains(&s.icao)))
             .collect();
         sort_log(&mut rows, self.adsb_log_sort, self.adsb_log_desc);
+        // The chart on the right counts exactly what the table shows.
+        if self.view.adsb_log_plots {
+            self.adsb_log_shown = rows.iter().map(|s| (*s).clone()).collect();
+        }
         // The summary: how many, the farthest, and the commonest
         // destinations and types.
         let top = |keys: Vec<&str>| -> String {
@@ -704,10 +746,10 @@ impl SdroxideApp {
         let kinds = top(rows.iter().map(|s| s.kind.as_str()).collect());
         let far =
             rows.iter().filter(|s| !s.max_km.is_nan()).max_by(|a, b| a.max_km.total_cmp(&b.max_km));
-        let mut head = if is_today {
+        let mut head = if is_today && !week {
             tr!("adsb-log-today", n = total.to_string())
         } else {
-            tr!("adsb-log-on-day", day = day_label(&day), n = total.to_string())
+            tr!("adsb-log-on-day", day = label.clone(), n = total.to_string())
         };
         if rows.len() != total {
             head.push_str(&format!(" · {}", tr!("adsb-log-shown", n = rows.len().to_string())));
@@ -1046,6 +1088,10 @@ impl SdroxideApp {
         let top = ui.cursor().top();
         self.adsb_map_chips(ui, in_window);
         let h = (h - (ui.cursor().top() - top)).max(60.0);
+        if self.view.adsb_show_log && self.view.adsb_log_plots {
+            self.adsb_log_plot(ui, h);
+            return;
+        }
         let home = self.adsb_home();
         let cfg = self.state.adsb;
         // The selected aircraft's route, with every airport whose place is in.
@@ -1075,6 +1121,31 @@ impl SdroxideApp {
         };
         let state = &mut self.adsb_map;
         crate::adsb_map::show(ui, state, &st.aircraft, &route, home, now, cfg, h, layers);
+    }
+
+    /// The log's lines as a bar chart, counted by the axis picked over it.
+    fn adsb_log_plot(&mut self, ui: &mut egui::Ui, h: f32) {
+        use crate::adsb_plots::{Axis, bars, draw};
+        let axis = Axis::from_u8(self.view.adsb_plot_axis);
+        let rows: Vec<&crate::adsb_log::Sighting> = self.adsb_log_shown.iter().collect();
+        // As many airlines or types as fit beside each other.
+        let top = ((ui.available_width() - 40.0) / 34.0).clamp(5.0, 30.0) as usize;
+        let b = bars(&rows, axis, crate::time::local_offset_at, top);
+        let note = match axis {
+            Axis::Daytime => tr!("adsb-plot-daytime-note"),
+            Axis::Height => tr!("adsb-plot-height-note"),
+            Axis::Distance => tr!("adsb-plot-distance-note"),
+            Axis::Airline => tr!("adsb-plot-airline-note"),
+            Axis::Type => tr!("adsb-plot-type-note"),
+        };
+        ui.label(RichText::new(note).size(9.5).weak());
+        let mut count = tr!("adsb-plot-count", n = rows.len().to_string());
+        if b.without > 0 {
+            count.push_str(&format!(" · {}", tr!("adsb-plot-without", n = b.without.to_string())));
+        }
+        ui.label(RichText::new(count).monospace().size(10.0).color(theme::CYAN()));
+        let size = egui::vec2(ui.available_width(), (h - 40.0).max(80.0));
+        draw(ui, &b, size, theme::CYAN(), theme::gray(200));
     }
 
     /// Which device a gain preset belongs to: driver and label, so an RSP1a
@@ -1518,6 +1589,18 @@ fn sighting_links(s: &crate::adsb_log::Sighting) -> Vec<(String, String)> {
 
 /// `Mo 17.11.` for `2026-11-17`: the day the sighting log shows, as its
 /// slider and summary name it. The date itself when it does not parse.
+/// The chart axis as the list over it names it.
+fn axis_name(a: crate::adsb_plots::Axis) -> String {
+    use crate::adsb_plots::Axis;
+    match a {
+        Axis::Daytime => tr!("adsb-plot-daytime"),
+        Axis::Height => tr!("adsb-plot-height"),
+        Axis::Distance => tr!("adsb-plot-distance"),
+        Axis::Airline => tr!("adsb-plot-airline"),
+        Axis::Type => tr!("adsb-plot-type"),
+    }
+}
+
 fn day_label(day: &str) -> String {
     let Some((wd, d, m)) = crate::adsb_log::day_parts(day) else { return day.to_string() };
     let wd = match wd {
