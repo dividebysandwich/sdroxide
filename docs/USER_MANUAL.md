@@ -10556,12 +10556,17 @@ itself rather than leaving it to a second tab (issue #525). **Used for** offers:
   transmit, and stays at unity until the feedback lines up.
 
 **RX2 gain** is a fixed gain (RX2's AGC is turned off): for diversity, set it
-so both aerials show about the same noise floor; for PureSignal, start at the
-bottom and keep the coupled signal well out of compression. While RX2 is used
+so both aerials show about the same noise floor; for PureSignal, keep the
+coupled signal well out of compression. Choosing PureSignal starts RX2 at
+0 dB, which suited a PlutoSky R2 with a 46 dB tap; 10–20 dB already overloaded
+it there. With the PTT pins on, PureSignal is refused when the radio opens and
+the reason is shown, since the pins key the chip one direction at a time. While RX2 is used
 here it cannot be a second radio tab. Changing what it is used for takes effect
 on Apply; the other controls apply immediately. Diversity has been tried on a
-PlutoSky R2; **PureSignal is not yet verified against hardware** — reports with
-the diagnostic report attached are welcome.
+PlutoSky R2, and PureSignal verified on one over Gigabit Ethernet at 2.5 Msps
+(two-tone, 46 dB tap, about 1.8 dB of compression corrected and held through
+overs of a minute) — reports from other boards, with the diagnostic report
+attached, are welcome.
 
 **AD9363 or AD9364.** A stock Pluto is an AD9363 and covers **325 MHz–3.8 GHz**;
 a great many have had the well-known firmware change applied, which turns them
