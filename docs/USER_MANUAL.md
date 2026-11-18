@@ -16139,6 +16139,11 @@ minute. Entries with no window — the longwave transmitters, the standard-time
 stations, the round-the-clock private shortwave stations — are always shown. Turn
 the whole category off with the **BC** button in the SPOTS window.
 
+The schedule lists a broadcast once per language and target area, so one
+frequency often carries several rows of the same station. The waterfall labels
+each name once per frequency; the SPOTS list keeps every row, with its language
+and target.
+
 A band is still busy at prime time (the 31 m band carries 50–95 transmissions at
 midday UTC), so zoom in or use **IN VIEW** when the labels crowd each other —
 only five rows of labels are drawn, and the rest are dropped.
