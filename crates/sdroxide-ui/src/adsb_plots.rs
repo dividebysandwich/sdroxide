@@ -55,11 +55,25 @@ pub struct Bars {
     /// Lines that had nothing to count by: no altitude, no position, no
     /// airline code, no type.
     pub without: usize,
+    /// Airline and type only: categories past the ones shown, and their
+    /// lines. Not drawn: a bar of everything else is no category.
+    pub more: usize,
+    pub more_lines: u32,
+}
+
+impl Bars {
+    /// Share of `total` lines with nothing to count by, whole per cent.
+    pub fn missing_pct(&self, total: usize) -> u32 {
+        if total == 0 { 0 } else { (self.without as f64 * 100.0 / total as f64).round() as u32 }
+    }
 }
 
 /// Count `rows` by `axis`. `offset` gives the local clock's offset from UTC
-/// at a time, seconds; `top` is how many categories airline and type keep
-/// before the rest becomes one bar.
+/// at a time, seconds; `top` is how many categories airline and type show;
+/// the rest are counted in [`Bars::more`], not drawn.
+// Why: HDZ 2026-11-18: „in der Airline-Barplot ganz viele missing values,
+//      nimm den Balken raus und schreib dazu 20 % missing data, das reicht;
+//      für alle Plots einfach die NAs nicht darstellen“.
 pub fn bars(rows: &[&Sighting], axis: Axis, offset: impl Fn(i64) -> i64, top: usize) -> Bars {
     let mut b = Bars::default();
     match axis {
@@ -131,9 +145,9 @@ pub fn bars(rows: &[&Sighting], axis: Axis, offset: impl Fn(i64) -> i64, top: us
             v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
             let top = top.max(2);
             if v.len() > top {
-                let rest: u32 = v[top - 1..].iter().map(|x| x.1).sum();
-                v.truncate(top - 1);
-                v.push(("…".to_string(), rest));
+                b.more = v.len() - top;
+                b.more_lines = v[top..].iter().map(|x| x.1).sum();
+                v.truncate(top);
             }
             (b.labels, b.counts) = v.into_iter().unzip();
         }
@@ -313,7 +327,7 @@ mod tests {
         assert_eq!(b.without, 1);
     }
 
-    /// The commonest airlines and types, the rest as one bar; guessed types
+    /// The commonest airlines and types, the rest counted but not drawn; guessed types
     /// count as their type, private callsigns as without.
     #[test]
     fn categories_keep_the_commonest_and_sum_the_rest() {
@@ -327,10 +341,12 @@ mod tests {
             line("DIGRK", "", 0, 0, 1.0, None),
         ];
         let r: Vec<&Sighting> = rows.iter().collect();
-        let a = bars(&r, Axis::Airline, |_| 0, 3);
-        assert_eq!(a.labels, vec!["KLM", "DLH", "…"]);
-        assert_eq!(a.counts, vec![3, 1, 2]);
+        let a = bars(&r, Axis::Airline, |_| 0, 2);
+        assert_eq!(a.labels, vec!["KLM", "DLH"], "no bar for the rest");
+        assert_eq!(a.counts, vec![3, 1]);
+        assert_eq!((a.more, a.more_lines), (2, 2), "EWG and RYR, one line each");
         assert_eq!(a.without, 1);
+        assert_eq!(a.missing_pct(r.len()), 14, "1 of 7");
         let t = bars(&r, Axis::Type, |_| 0, 10);
         assert_eq!(t.labels, vec!["A320", "B738", "E295"]);
         assert_eq!(t.counts, vec![2, 2, 2]);

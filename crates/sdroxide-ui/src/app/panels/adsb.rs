@@ -1150,7 +1150,16 @@ impl SdroxideApp {
         ui.label(RichText::new(note).size(9.5).weak());
         let mut count = tr!("adsb-plot-count", n = rows.len().to_string());
         if b.without > 0 {
-            count.push_str(&format!(" · {}", tr!("adsb-plot-without", n = b.without.to_string())));
+            count.push_str(&format!(
+                " · {}",
+                tr!("adsb-plot-missing", pct = b.missing_pct(rows.len()).to_string())
+            ));
+        }
+        if b.more > 0 {
+            count.push_str(&format!(
+                " · {}",
+                tr!("adsb-plot-more", n = b.more.to_string(), lines = b.more_lines.to_string())
+            ));
         }
         ui.label(RichText::new(count).monospace().size(10.0).color(theme::CYAN()));
         let size = egui::vec2(ui.available_width(), (h - 40.0).max(80.0));

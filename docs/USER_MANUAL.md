@@ -6506,12 +6506,12 @@ the bars count by — each line is one aircraft on one day:
 | Daytime (h) | Aircraft heard in each hour of the day, local time. An aircraft counts in every hour it was heard in, so this is how busy the sky was. |
 | Height (FL) | Aircraft by their highest altitude, in 2,000 ft steps, the last open above FL440. |
 | Distance (km) | Aircraft by their farthest position, in the coverage diagram's 10 km rings. The diagnostic one: where the bars stop, reception stops, and a change of antenna shows as bars moving out. |
-| Airline | Aircraft by the airline code in the callsign, commonest first; the rest as one bar `…`. |
-| Plane type | Aircraft by type, commonest first, guessed types counted as their type; the rest as one bar. |
+| Airline | Aircraft by the airline code in the callsign, commonest first, as many as fit; how many more there are is written over the chart. |
+| Plane type | Aircraft by type, commonest first, guessed types counted as their type; the rest as for airlines. |
 
 Lines with nothing to count by — no altitude, no position, a callsign without an
-airline code, no type — are left out and their number shown over the chart.
-Hover a bar for its count.
+airline code, no type — get no bar; their share is written over the chart
+(`20 % missing data`). Hover a bar for its count.
 
 **Right-click a line** for what still answers once the flight is over: copy
 the callsign or the address; the aircraft's **track of that day** on ADS-B
