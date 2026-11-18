@@ -28,6 +28,11 @@ const NO_ANSWER_YET: &str = "Waiting for the machine the radio is attached to: t
 
 /// Draw a control that has to ask the radio's own machine, greyed out and
 /// explained while that machine has not answered.
+
+/// Where RX2's gain starts when it is switched to PureSignal feedback on a
+/// PlutoSDR, in dB — see where it is used (#525).
+const PLUTO_PS_RX2_START_DB: f64 = 0.0;
+
 fn probe_only<R>(ui: &mut egui::Ui, can_probe: bool, add: impl FnOnce(&mut egui::Ui) -> R) {
     let group = ui.add_enabled_ui(can_probe, add);
     if !can_probe {
@@ -2747,6 +2752,7 @@ pub(in crate::app) fn settings_pluto_tab(
         ui.label(RichText::new(tr!("settings-radio-pluto-rx2-intro")).weak());
         egui::Grid::new("pluto-aux-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
             ui.label(tr!("settings-radio-used"));
+            let was = cfg.pluto.aux.role;
             egui::ComboBox::from_id_salt("pluto-aux-role")
                 .selected_text(cfg.pluto.aux.role.tr())
                 .show_styled(ui, |ui| {
@@ -2754,6 +2760,18 @@ pub(in crate::app) fn settings_pluto_tab(
                         ui.selectable_value(&mut cfg.pluto.aux.role, r, r.tr());
                     }
                 });
+            // Switching to PureSignal starts RX2 at the bottom of its gain. The
+            // shared default (40 dB) suits a second aerial; on a coupler it
+            // overloads RX2 with a typical tap, and the operator raises it from
+            // a safe start rather than having to know to lower it first. On a
+            // PlutoSky R2 with a 46 dB tap, 0 dB was right and 10-20 dB already
+            // drove RX2 into compression.
+            if was != LimeAuxRole::PureSignal
+                && cfg.pluto.aux.role == LimeAuxRole::PureSignal
+                && cfg.pluto.aux.gain_db > PLUTO_PS_RX2_START_DB
+            {
+                cfg.pluto.aux.gain_db = PLUTO_PS_RX2_START_DB;
+            }
             ui.end_row();
 
             if cfg.pluto.aux.role != LimeAuxRole::Off {

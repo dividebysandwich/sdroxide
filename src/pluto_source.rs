@@ -39,7 +39,7 @@ use std::time::{Duration, Instant};
 use sdroxide_dsp::{ComplexDcBlock, Diversity, PureSignal};
 use sdroxide_pluto::{PlutoRig, PlutoRx};
 use sdroxide_radio::{Complex32, ControlUpdate, DC_BLOCK_HZ, IqSource, Result, lo_offset_for};
-use sdroxide_types::{DiversityMode, LimeAuxRole, PlutoAgc, PlutoAuxConfig, PlutoConfig};
+use sdroxide_types::{DiversityMode, LimeAuxRole, PlutoAgc, PlutoAuxConfig, PlutoConfig, PlutoPtt};
 
 use crate::device_registry::{DeviceKey, SharedDevice, registry};
 
@@ -229,11 +229,18 @@ impl PlutoSource {
             );
         }
         if role == LimeAuxRole::PureSignal && !rig.full_duplex() {
-            return refuse(
+            // Said at open, not left to an over that never locks: the coupler
+            // is only heard while receive runs through the over.
+            return refuse(if cfg.ptt_gpo != PlutoPtt::Off {
+                "PureSignal is off: the PTT pins are on, and they key the AD9361 one \
+                 direction at a time (TDD), so RX2 cannot hear the coupler while you \
+                 transmit. Set the PTT pins to Off, the duplex to FDD and Full duplex on"
+                    .into()
+            } else {
                 "PureSignal is off: it listens to the coupler while you transmit, so it \
                  needs Full duplex on (and FDD, with the PTT pins off)"
-                    .into(),
-            );
+                    .into()
+            });
         }
         let rx = match rig.aux_rx() {
             Ok(rx) => rx,
