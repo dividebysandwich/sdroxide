@@ -550,6 +550,8 @@ pub struct Layers<'a> {
     pub clouds_credit: Option<String>,
     /// The AIRPORTS layer, when on and its file is in.
     pub airports: Option<&'a [crate::adsb_route::MapAirport]>,
+    /// The bottom right box: source, aircraft on the map, UTC time.
+    pub stamp: bool,
 }
 
 /// Draw the map. Returns the aircraft clicked this frame, if any.
@@ -999,9 +1001,30 @@ pub fn show(
         );
     }
 
+    // Bottom right: the source, how many aircraft the map shows and the time
+    // in UTC, so a screenshot says what it is, what it holds and when it was
+    // taken. Counted as drawn: a fresh position inside the frame.
+    // Why: HDZ 2026-11-18: „mach mir auf der map, rechts unten eine kleine
+    //      Anzeige mit UTC und wieviele plains on the map sind. für
+    //      screenshots“; text „Sdr Oxide . xy planes 5345324 UTC“; switchable.
+    let mut hint_bottom = rect.bottom() - 4.0;
+    if layers.stamp {
+        let on_map = live
+            .iter()
+            .filter(|a| a.lat.zip(a.lon).is_some_and(|(la, lo)| rect.contains(project(la, lo))))
+            .count();
+        let stamp = tr!("adsbmap-stamp", time = utc_stamp(now), n = on_map.to_string());
+        let galley = p.layout_no_wrap(stamp, FontId::monospace(10.0), alpha(Color32::WHITE, 210.0));
+        let size = galley.size() + vec2(8.0, 6.0);
+        let stamp_box = Rect::from_min_size(rect.right_bottom() - size - vec2(6.0, 4.0), size);
+        p.rect_filled(stamp_box, 3.0, alpha(map.sea, 210.0));
+        p.galley(stamp_box.min + vec2(4.0, 3.0), galley, Color32::WHITE);
+        hint_bottom = stamp_box.top() - 3.0;
+    }
+
     if manual && resp.hovered() {
         p.text(
-            rect.right_bottom() + vec2(-6.0, -4.0),
+            pos2(rect.right() - 6.0, hint_bottom),
             Align2::RIGHT_BOTTOM,
             tr!("adsbmap-double-click-reframe"),
             FontId::proportional(9.0),
@@ -1011,9 +1034,26 @@ pub fn show(
     clicked
 }
 
+/// `2026-11-18 09:41:07`, UTC, for the map's corner.
+fn utc_stamp(now: i64) -> String {
+    let s = now.rem_euclid(86_400);
+    format!("{} {:02}:{:02}:{:02}", crate::adsb_log::utc_day(now), s / 3600, s % 3600 / 60, s % 60)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_corner_shows_utc_with_the_date() {
+        assert_eq!(utc_stamp(1_794_993_667), "2026-11-18 09:21:07");
+        assert_eq!(utc_stamp(0), "1970-01-01 00:00:00");
+        assert_eq!(
+            utc_stamp(1_794_959_999),
+            "2026-11-17 23:59:59",
+            "the day turns at UTC midnight"
+        );
+    }
 
     fn flying(kt: f32, track: f32, turn: f32) -> AdsbAircraft {
         let mut a = AdsbAircraft::new(0x3C_6444, 0);

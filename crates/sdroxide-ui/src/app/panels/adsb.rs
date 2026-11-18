@@ -1045,6 +1045,7 @@ impl SdroxideApp {
             storms: self.view.adsb_map_storms.then_some(self.adsb_clouds.cells.as_slice()),
             clouds_credit,
             airports,
+            stamp: self.view.adsb_map_stamp,
         };
         let state = &mut self.adsb_map;
         crate::adsb_map::show(ui, state, &st.aircraft, &route, home, now, cfg, h, layers);
@@ -1150,6 +1151,7 @@ impl SdroxideApp {
         let mut cfg = self.state.adsb;
         let coverage = &mut self.adsb_coverage;
         let wx_source = &mut self.view.adsb_wx_source;
+        let map_stamp = &mut self.view.adsb_map_stamp;
         let resp = egui::Window::new(tr!("adsb-ads-b-setup"))
             .id(crate::layout::salted_id(ctx, "AdsbSetup"))
             .open(&mut open)
@@ -1263,6 +1265,10 @@ impl SdroxideApp {
                         }
                     }
                 });
+                // The corner box for screenshots, switchable (HDZ 2026-11-18:
+                // „in preferences ein ausschaltbar machen“).
+                ui.checkbox(map_stamp, tr!("adsb-map-stamp"))
+                    .on_hover_text(tr!("adsb-map-stamp-tip"));
                 ui.separator();
                 // Reset in two clicks, as it throws away up to a week.
                 let arm = ui.id().with("adsb-coverage-reset");

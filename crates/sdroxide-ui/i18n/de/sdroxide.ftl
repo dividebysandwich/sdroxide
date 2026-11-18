@@ -4235,6 +4235,9 @@ adsb-wx-world = WELT
 adsb-wx-world-tip = Niederschlag aus Satelliten, 60° N bis 60° S, Stunden verzögert
   NASA GPM IMERG, frei · Rechtsklick: Quelle
 adsb-wx-source = Wetterradar
+adsb-map-stamp = Kartenstempel rechts unten
+adsb-map-stamp-tip = Quelle, Flugzeuge auf der Karte, UTC-Zeit
+  für Screenshots
 adsb-wx-auto = AUTO
 adsb-wx-auto-tip = Nach Standort: DWD, USA, Kanada; sonst Satellit (WELT)
 adsb-wx-dwd = DWD
@@ -4953,6 +4956,7 @@ solarstate-dwarf-planets = ZWERGPLANETEN
 ## adsbmap (src/adsb_map.rs)
 
 adsbmap-double-click-reframe = Doppelklick zum Neurahmen
+adsbmap-stamp = SDR Oxide · { $n } planes · { $time } UTC
 adsbmap-cell = Zelle: { $n } Positionen, Ø { $rssi } dBFS
 adsbmap-cell-empty = Zelle: kein Empfang
 adsbmap-cell-outside = jenseits { $km } km Diagramm

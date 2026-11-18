@@ -6425,6 +6425,11 @@ something:
 Drag to pan, scroll to zoom, double-click to reframe. Your own position is
 marked once **My grid** is set.
 
+The bottom right corner shows the source, how many aircraft the map is drawing
+in its frame and the time in UTC with the date (`SDR Oxide · 27 planes ·
+2026-11-18 09:41:07 UTC`), so a screenshot says what it is, what it holds and
+when it was taken. Switch it off under **SETUP** → *Map stamp, bottom right*.
+
 **The selected aircraft's route** is drawn as dashed great circles from the
 departure airport through the aircraft to the destination — the whole route,
 with the airports marked by their ICAO codes. A route with stops is drawn
