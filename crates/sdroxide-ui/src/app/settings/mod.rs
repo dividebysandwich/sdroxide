@@ -1347,12 +1347,10 @@ impl SdroxideApp {
             // The engine persists rigctld.json when it binds (or fails to).
             cmds.push(Command::SetRigctldConfig(self.rigctld_edit.clone()));
         }
-        // Only the output's fields are the dialog's; the feed and the address
-        // belong to the ADS-B panel, which may have changed them meanwhile.
+        // Kept every frame, like the other servers' edits, or a tick in the
+        // box would be gone again before APPLY could send it.
+        take_beast_out_edit(&mut self.beast_edit, beast_edit);
         if beast_apply {
-            self.beast_edit.out_enabled = beast_edit.out_enabled;
-            self.beast_edit.out_bind = beast_edit.out_bind;
-            self.beast_edit.out_port = beast_edit.out_port;
             cmds.push(Command::SetBeastConfig(self.beast_edit.clone()));
         }
         self.wsjtx_edit = wsjtx_edit;
@@ -4297,5 +4295,45 @@ mod tests {
     fn soapy_only_appears_when_supported() {
         assert!(iface_opts(true).contains(&sdroxide_types::Backend::Soapy));
         assert!(!iface_opts(false).contains(&sdroxide_types::Backend::Soapy));
+    }
+}
+
+/// Take the Beast output's fields from the dialog's working copy into the
+/// app's. Only those: the feed and the input address belong to the ADS-B
+/// panel, which may have changed them while the dialog was open.
+fn take_beast_out_edit(
+    stored: &mut sdroxide_types::BeastConfig,
+    edited: sdroxide_types::BeastConfig,
+) {
+    stored.out_enabled = edited.out_enabled;
+    stored.out_bind = edited.out_bind;
+    stored.out_port = edited.out_port;
+}
+
+#[cfg(test)]
+mod beast_out_edit_tests {
+    use super::take_beast_out_edit;
+    use sdroxide_types::{AdsbFeed, BeastConfig};
+
+    /// A tick in "Enable" survives to the next frame — the bug HDZ met on
+    /// 2026-11-18 („kann nicht enable anklicken“), when the copy was only
+    /// taken on APPLY — and the panel's feed and address are left alone.
+    #[test]
+    fn the_output_fields_are_kept_and_the_panels_are_not_touched() {
+        let mut stored = BeastConfig {
+            feed: AdsbFeed::Beast,
+            in_addr: "192.168.178.127".into(),
+            ..BeastConfig::default()
+        };
+        let mut edited = stored.clone();
+        edited.out_enabled = true;
+        edited.out_port = 30105;
+        edited.feed = AdsbFeed::Radio;
+        edited.in_addr.clear();
+        take_beast_out_edit(&mut stored, edited);
+        assert!(stored.out_enabled);
+        assert_eq!(stored.out_port, 30105);
+        assert_eq!(stored.feed, AdsbFeed::Beast);
+        assert_eq!(stored.in_addr, "192.168.178.127");
     }
 }
