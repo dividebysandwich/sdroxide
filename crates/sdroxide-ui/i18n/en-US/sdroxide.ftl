@@ -4307,6 +4307,9 @@ adsb-wx-source = Weather radar
 adsb-map-stamp = Map stamp, bottom right
 adsb-map-stamp-tip = Source, aircraft on the map, UTC time
   for screenshots
+adsb-alt-planes = With ALT: aircraft in altitude colour (off: white)
+adsb-alt-planes-tip = Symbol colour with ALT: colour of the altitude now, or white
+  selected, pointer and emergency stay highlighted
 adsb-wx-auto = AUTO
 adsb-wx-auto-tip = By location: DWD, US, Canada; else satellite (WORLD)
 adsb-wx-dwd = DWD
@@ -4346,6 +4349,9 @@ adsb-chip-airports-tip = Airports with code, more as you zoom in
   OurAirports, public domain · right-click: source
 adsb-chip-range = RANGE
 adsb-chip-range-tip = Reception per 5° and 10 km, continuous tracks only (gap ≤ 20 s).
+adsb-chip-alt = ALT
+adsb-chip-alt-tip = Trail coloured by altitude, legend at the bottom
+  points of the flight tracks, last 10 min
     Brightness = signal, line = outermost steady reception
 adsb-chip-range-no-home = Needs a position: locator in the digimode setup
 adsb-chip-pointer = CURSOR

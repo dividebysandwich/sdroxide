@@ -279,6 +279,16 @@ impl SdroxideApp {
             {
                 self.view.adsb_map_wx = !self.view.adsb_map_wx;
             }
+            // Trails coloured by altitude (HDZ 2026-11-18: „einen Chip mit
+            // höhe an der spur eingefärbt“). Native only: the points come from
+            // the flight tracks, which the browser does not keep.
+            #[cfg(not(target_arch = "wasm32"))]
+            if crate::chrome::chip(ui, self.view.adsb_map_alt, small(tr!("adsb-chip-alt")))
+                .on_hover_text(tr!("adsb-chip-alt-tip"))
+                .clicked()
+            {
+                self.view.adsb_map_alt = !self.view.adsb_map_alt;
+            }
             let range = self.view.adsb_map_range;
             let tip =
                 if have_home { tr!("adsb-chip-range-tip") } else { tr!("adsb-chip-range-no-home") };
@@ -1035,6 +1045,10 @@ impl SdroxideApp {
             if self.view.adsb_map_range { self.adsb_coverage.view(hours, now) } else { None };
         let airports =
             if self.view.adsb_map_airports { self.adsb_routes.map_airports() } else { None };
+        #[cfg(not(target_arch = "wasm32"))]
+        let alt_trails = self.view.adsb_map_alt.then(|| self.adsb_tracks.recent());
+        #[cfg(target_arch = "wasm32")]
+        let alt_trails = None;
         let layers = crate::adsb_map::Layers {
             night,
             cities: self.view.adsb_map_cities,
@@ -1046,6 +1060,8 @@ impl SdroxideApp {
             clouds_credit,
             airports,
             stamp: self.view.adsb_map_stamp,
+            alt_planes: self.view.adsb_alt_planes,
+            alt_trails,
         };
         let state = &mut self.adsb_map;
         crate::adsb_map::show(ui, state, &st.aircraft, &route, home, now, cfg, h, layers);
@@ -1152,6 +1168,7 @@ impl SdroxideApp {
         let coverage = &mut self.adsb_coverage;
         let wx_source = &mut self.view.adsb_wx_source;
         let map_stamp = &mut self.view.adsb_map_stamp;
+        let alt_planes = &mut self.view.adsb_alt_planes;
         let resp = egui::Window::new(tr!("adsb-ads-b-setup"))
             .id(crate::layout::salted_id(ctx, "AdsbSetup"))
             .open(&mut open)
@@ -1269,6 +1286,10 @@ impl SdroxideApp {
                 // „in preferences ein ausschaltbar machen“).
                 ui.checkbox(map_stamp, tr!("adsb-map-stamp"))
                     .on_hover_text(tr!("adsb-map-stamp-tip"));
+                // HDZ 2026-11-18: „mach das in den prefs wählbar. use height
+                // color for plane or white“.
+                ui.checkbox(alt_planes, tr!("adsb-alt-planes"))
+                    .on_hover_text(tr!("adsb-alt-planes-tip"));
                 ui.separator();
                 // Reset in two clicks, as it throws away up to a week.
                 let arm = ui.id().with("adsb-coverage-reset");

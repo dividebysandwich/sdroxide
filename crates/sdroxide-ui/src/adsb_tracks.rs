@@ -29,6 +29,12 @@ pub const CLIMB_FT: i32 = 500;
 
 const HEAD: &str = "icao,callsign,t,t_local,lat,lon,alt_ft,gs_kt,trk_deg";
 
+/// How long the kept points stay in memory for the map's altitude trail (chip
+/// ALT), seconds.
+pub const RECENT_S: i64 = 600;
+
+use crate::adsb_map::{Recent, TrailPoint};
+
 /// The last point written for an aircraft: what the next one is measured from.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Kept {
@@ -83,6 +89,8 @@ pub struct TrackBook {
     pending: String,
     started: bool,
     saved_at: i64,
+    /// The points written in the last [`RECENT_S`], for the map.
+    recent: Recent,
 }
 
 impl TrackBook {
@@ -116,7 +124,19 @@ impl TrackBook {
             }
             self.kept.insert(a.icao, Kept { t, alt_ft: a.altitude_ft, trk_deg: a.track_deg });
             self.pending.push_str(&line(a, t, lat, lon));
+            self.recent.entry(a.icao).or_default().push_back(TrailPoint {
+                t,
+                lat: lat as f32,
+                lon: lon as f32,
+                alt_ft: a.altitude_ft,
+            });
         }
+        for pts in self.recent.values_mut() {
+            while pts.front().is_some_and(|q| now - q.t > RECENT_S) {
+                pts.pop_front();
+            }
+        }
+        self.recent.retain(|_, pts| !pts.is_empty());
         // Forget aircraft gone for ten minutes, so the maps stay small.
         self.seen.retain(|_, &mut t| now - t < 600);
         self.kept.retain(|_, k| now - k.t < 600);
@@ -124,6 +144,12 @@ impl TrackBook {
             self.saved_at = now;
             self.flush();
         }
+    }
+
+    /// The kept points of the last [`RECENT_S`] per aircraft, the same thinned
+    /// points the day file gets: for the map's altitude-coloured trail.
+    pub fn recent(&self) -> &Recent {
+        &self.recent
     }
 
     fn dir() -> Option<std::path::PathBuf> {
@@ -198,6 +224,30 @@ mod tests {
         assert!(!keep(p, 1002, Some(3_000), Some(359.0)));
         assert!(keep(p, 1004, Some(3_600), Some(355.0)));
         assert!(!keep(p, 1004, Some(3_400), Some(355.0)));
+    }
+
+    #[test]
+    fn the_map_gets_the_kept_points_of_the_last_ten_minutes_with_altitude() {
+        let mut b = TrackBook { started: true, saved_at: i64::MAX, ..Default::default() };
+        let t = 1_794_917_355;
+        b.day = local_day(t);
+        let mut a = AdsbAircraft::new(0x3E28E4, t);
+        a.lat = Some(51.4448);
+        a.lon = Some(7.0889);
+        a.altitude_ft = Some(4675);
+        a.last_pos_at = t;
+        b.note(std::slice::from_ref(&a), t);
+        a.altitude_ft = Some(5900);
+        a.last_pos_at = t + 16;
+        b.note(std::slice::from_ref(&a), t + 16);
+        let pts = &b.recent()[&0x3E28E4];
+        let alts: Vec<_> = pts.iter().map(|q| q.alt_ft).collect();
+        assert_eq!(alts, vec![Some(4675), Some(5900)], "the same points the file gets");
+        // Ten minutes after the first point it goes; after the last, all.
+        b.note(&[], t + RECENT_S + 1);
+        assert_eq!(b.recent()[&0x3E28E4].len(), 1);
+        b.note(&[], t + 16 + RECENT_S + 1);
+        assert!(b.recent().is_empty());
     }
 
     #[test]

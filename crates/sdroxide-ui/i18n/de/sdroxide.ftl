@@ -4238,6 +4238,9 @@ adsb-wx-source = Wetterradar
 adsb-map-stamp = Kartenstempel rechts unten
 adsb-map-stamp-tip = Quelle, Flugzeuge auf der Karte, UTC-Zeit
   für Screenshots
+adsb-alt-planes = Mit HÖHE: Flugzeuge in Höhenfarbe (aus: weiß)
+adsb-alt-planes-tip = Symbolfarbe bei HÖHE: Farbe der aktuellen Flughöhe oder weiß
+  Auswahl, Zeiger, Notfall bleiben hervorgehoben
 adsb-wx-auto = AUTO
 adsb-wx-auto-tip = Nach Standort: DWD, USA, Kanada; sonst Satellit (WELT)
 adsb-wx-dwd = DWD
@@ -4277,6 +4280,9 @@ adsb-chip-airports-tip = Flughäfen mit Code, mehr beim Hineinzoomen
   OurAirports, gemeinfrei · Rechtsklick: Quelle
 adsb-chip-range = REICHWEITE
 adsb-chip-range-tip = Empfang je 5° und 10 km, nur durchgehende Spuren (Lücke ≤ 20 s).
+adsb-chip-alt = HÖHE
+adsb-chip-alt-tip = Spur nach Flughöhe gefärbt, Legende unten
+  Punkte des Spurenbuchs, letzte 10 min
     Helligkeit = Signal, Linie = äußerster sicherer Empfang
 adsb-chip-range-no-home = Braucht Standort: Locator in der Digimode-Einrichtung
 adsb-chip-pointer = CURSOR
