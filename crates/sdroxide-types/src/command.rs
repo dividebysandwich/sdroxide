@@ -85,6 +85,14 @@ pub enum Command {
         rx: RxId,
         on: bool,
     },
+    /// NFM FM-Decrackle (click eliminator), de-emphasis and the sensitivity
+    /// of the slip test (see `RxState::fm_decrackle_dip`).
+    SetFmDecrackle {
+        rx: RxId,
+        on: bool,
+        deemph: bool,
+        dip: f32,
+    },
     SetSubRx(bool),
     /// Park the sub receiver on an absolute frequency. The engine clamps it to
     /// the device passband — the sub is a DDC on the same IQ stream as the main
@@ -1273,6 +1281,8 @@ pub enum Command {
         close_s: f32,
         width: u8,
         after_nr: bool,
+        /// Gain right after the filter, dB (see `RxState::sk_filter_boost_db`).
+        boost_db: f32,
     },
     /// The panadapter shows (true) or no longer shows (false) a stretch outside
     /// the I/Q window while it draws from the I/Q — a hole in the picture. A
@@ -1308,6 +1318,10 @@ pub enum Command {
     /// echoed back in [`crate::RadioState::sonde`]. Appended last, for the
     /// usual reason.
     SetSondeConfig(crate::SondeSettings),
+    /// Turn the scan round and carry on downwards — the ◀ beside ▶ (which is
+    /// [`Command::ScanNext`], and turns it back upwards). Appended: postcard
+    /// numbers variants by position.
+    ScanBack,
 
     /// Where the station saves received SSTV pictures and weather charts
     /// (`picture_folders.json`) — a path on the machine the engine runs on.

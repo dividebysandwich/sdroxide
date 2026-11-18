@@ -955,14 +955,20 @@ pub enum TrUsdxAudio {
     /// speaker/mic jack. Control still goes over the serial port, and the rig
     /// is polled and behaves as any other CAT rig.
     SoundCard,
+    /// The same as OneCable, but mutes the radio's speaker when in use.
+    /// Appended after `SoundCard`, not beside `OneCable`: postcard encodes the
+    /// variant by index, and an insert would renumber `SoundCard` on the wire.
+    OneCableMute,
 }
 
 impl TrUsdxAudio {
-    pub const ALL: [TrUsdxAudio; 2] = [TrUsdxAudio::OneCable, TrUsdxAudio::SoundCard];
+    pub const ALL: [TrUsdxAudio; 3] =
+        [TrUsdxAudio::OneCable, TrUsdxAudio::OneCableMute, TrUsdxAudio::SoundCard];
 
     pub fn label(self) -> &'static str {
         match self {
             TrUsdxAudio::OneCable => "One cable (audio in the CAT stream)",
+            TrUsdxAudio::OneCableMute => "One cable (audio in the CAT stream), mute speaker",
             TrUsdxAudio::SoundCard => "USB sound card (3.5 mm jack)",
         }
     }
@@ -970,7 +976,12 @@ impl TrUsdxAudio {
     /// Whether this mode carries the audio in the CAT link, which the serial
     /// thread and the source both branch on.
     pub fn streams_audio(self) -> bool {
-        self == TrUsdxAudio::OneCable
+        matches!(self, TrUsdxAudio::OneCable | TrUsdxAudio::OneCableMute)
+    }
+
+    /// Whether this mode should mute the radio speaker when using the CAT link.
+    pub fn mutes_speaker(self) -> bool {
+        matches!(self, TrUsdxAudio::OneCableMute)
     }
 }
 
@@ -1035,6 +1046,13 @@ pub struct CatConfig {
     /// which is what was always sent until then.
     #[serde(default = "default_elad_tx_power")]
     pub elad_tx_power: u8,
+    /// Mute receive audio for an over keyed at an ELAD FDM-DUO itself — its
+    /// microphone PTT, a foot switch, another program — which sdroxide learns
+    /// of by asking the radio (`IF;`). Off, the receiver plays the station's
+    /// own signal through the speakers. On by default; serial CAT only. Read
+    /// live (the MIC A chip right of REC is lit when this is off).
+    #[serde(default = "default_true_elad")]
+    pub elad_mute_on_radio_ptt: bool,
     pub format: SoundFormat,
     /// Conjugate the sound card's I/Q, mirroring the panadapter about the
     /// tuned frequency. Only read for [`SoundFormat::Iq`]: demod audio is real
@@ -1284,6 +1302,10 @@ fn default_rigctld_addr() -> String {
     "127.0.0.1:4532".to_string()
 }
 
+fn default_true_elad() -> bool {
+    true
+}
+
 /// Menu 34 at MAX — see [`CatConfig::elad_tx_power`].
 pub fn default_elad_tx_power() -> u8 {
     9
@@ -1312,6 +1334,7 @@ impl Default for CatConfig {
             kenwood_send: KenwoodSend::default(),
             elad_tx_input: EladTxInput::default(),
             elad_tx_power: default_elad_tx_power(),
+            elad_mute_on_radio_ptt: true,
             format: SoundFormat::default(),
             invert_spectrum: false,
             iq_offset_hz: 0.0,
@@ -2567,6 +2590,11 @@ impl RtlSdrConfig {
     /// without depending on the native backend crate — same reason as
     /// [`HpsdrConfig::LNA_GAIN_ELEMENT`].
     pub const TUNER_GAIN_ELEMENT: &'static str = "TUNER";
+    /// The R82xx's three stages one by one — LNA, mixer, and the IF VGA —
+    /// each on its own 16-step ladder, beside the combined `TUNER` ladder
+    /// that walks LNA and mixer together.
+    pub const LNA_GAIN_ELEMENT: &'static str = "LNA";
+    pub const MIX_GAIN_ELEMENT: &'static str = "MIX";
     pub const IF_GAIN_ELEMENT: &'static str = "IF";
     /// Pseudo-elements carrying settings that are not gains at all.
     ///
@@ -3267,6 +3295,8 @@ impl Rx888Config {
     /// `sdroxide-rx888` so the wasm-safe settings UI can address them without
     /// depending on the native backend crate.
     pub const VGA_ELEMENT: &'static str = "VGA";
+    /// The AD8370's gain range: 0 either (the driver's pick), 1 low, 2 high.
+    pub const VGA_RANGE_ELEMENT: &'static str = "VGARANGE";
     pub const ATT_ELEMENT: &'static str = "ATT";
     pub const DITHER_ELEMENT: &'static str = "DITHER";
     pub const BIAS_TEE_ELEMENT: &'static str = "BIASTEE";
@@ -3551,6 +3581,11 @@ pub struct EladConfig {
     /// which is the wider view and the worse one for strong out-of-band
     /// signals.
     pub preselector: bool,
+    /// Keep receiving through an over sdroxide keyed (TUNE, PTT, the digital
+    /// modes), so the station's own signal is heard on the speakers as the
+    /// receiver picks it up. Off by default: receive is paused for an over.
+    /// Taken at each key-down (the DIG A chip under the TX power buttons).
+    pub hear_own_tx: bool,
 }
 
 impl Default for EladConfig {
@@ -3560,6 +3595,7 @@ impl Default for EladConfig {
             sample_rate_hz: ELAD_DEFAULT_RATE_HZ,
             attenuator: false,
             preselector: true,
+            hear_own_tx: false,
         }
     }
 }
@@ -5994,6 +6030,28 @@ pub struct SdrPlayConfig {
     /// was called `diversity` when combining was all it could do.
     #[serde(alias = "diversity")]
     pub duo: SdrPlayDuo,
+    /// Run a single tuner at a low IF rather than at zero IF: the ADC at
+    /// 6 MHz, the signal on a 1.620 MHz IF, which the service mixes down to
+    /// 2 Msps (decimated further for narrower rates). Nothing of the band then
+    /// sits on the tuner's own LO, so the DC spike, the LO leakage and the
+    /// I/Q image at the centre of the span are gone — at the price of 2 Msps
+    /// and a 1.536 MHz filter at the most. SDRuno runs an RSP this way at
+    /// 2 Msps and below. An RSPduo running both tuners is at a low IF anyway.
+    ///
+    /// On by default, and obeyed up to [`Self::LOW_IF_MAX_HZ`]: a wider rate
+    /// runs at zero IF, the only arrangement that reaches it, so a
+    /// configuration set to 6 or 8 Msps keeps its span (see
+    /// [`Self::runs_low_if`]).
+    // Why: HDZ 2026-11-13 (pictures, zero IF beside low IF): "der Chip reicht,
+    //      das nervt, default mach mal low IF".
+    // Why: HDZ 2026-11-13 (picture, PANO 125–140 MHz on an RSP1A, a line in
+    //      the middle of every slice): "wenn du dir den Müll anschaust, den der
+    //      Treiber derzeit produziert, siehst du die Artefakt-Nähte … im Panel
+    //      wäre noch Platz für einen Chip zeroIF"; "im normalen Betrieb auch".
+    // No field-level `#[serde(default)]`: that would read `false` for a
+    // `radio.json` written before the field, and keep existing setups at zero
+    // IF. The container default turns it on for them as well.
+    pub low_if: bool,
 }
 
 impl Default for SdrPlayConfig {
@@ -6016,6 +6074,7 @@ impl Default for SdrPlayConfig {
             hdr_bw: SdrPlayHdrBw::default(),
             extended_if_gr: false,
             duo: SdrPlayDuo::default(),
+            low_if: true,
         }
     }
 }
@@ -6157,6 +6216,16 @@ impl SdrPlayConfig {
     /// `MAX_BB_GR`).
     pub const IF_GR_MIN: i32 = 20;
     pub const IF_GR_MAX: i32 = 59;
+    /// The widest rate a single tuner runs at a low IF: what the service's
+    /// downconverter delivers from the 1.620 MHz IF.
+    pub const LOW_IF_MAX_HZ: f64 = 2_000_000.0;
+
+    /// Whether a single tuner runs at the low IF: asked for, and at a rate it
+    /// reaches. (An RSPduo running both tuners is at a low IF regardless.)
+    pub fn runs_low_if(&self) -> bool {
+        self.low_if && self.sample_rate_hz <= Self::LOW_IF_MAX_HZ
+    }
+
     /// The floor with [`Self::extended_if_gr`] on (`EXTENDED_MIN_GR`).
     pub const IF_GR_MIN_EXTENDED: i32 = 0;
 
@@ -8144,7 +8213,12 @@ mod tests {
             // asking an RSPduo for a mode the operator never chose.
             assert!(!cfg.sdrplay.duo.enabled, "after loading {json}");
             assert!(!cfg.sdrplay.wants_dual_tuner());
+            assert!(cfg.sdrplay.low_if, "low IF by default after loading {json}");
         }
+        // A block written before `low_if` existed turns it on too.
+        let older: RadioConfig =
+            serde_json::from_str(r#"{"sdrplay": {"bias_tee": false}}"#).expect("parses");
+        assert!(older.sdrplay.low_if);
         // A configuration that *does* ask for it keeps the rest of the block's
         // defaults rather than zeroing them — a filter with no taps and no
         // adaptation rate would combine nothing at all. Written under the name

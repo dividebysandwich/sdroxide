@@ -123,6 +123,18 @@ pub fn decode_latin1(bytes: &[u8]) -> String {
 /// dropped. Unparseable rows are skipped rather than failing the file — a
 /// schedule with one bad line is still worth having.
 pub fn parse_schedule(csv: &str) -> Vec<BroadcastStation> {
+    parse_rows(csv, false)
+}
+
+/// Every row of the schedule, the ones [`parse_schedule`] leaves out
+/// included: outside the broadcast bands, utility stations, jammers, number
+/// stations, fax and DRM. For "what is this?", where those are the answer
+/// more often than a broadcaster is.
+pub fn parse_schedule_all(csv: &str) -> Vec<BroadcastStation> {
+    parse_rows(csv, true)
+}
+
+fn parse_rows(csv: &str, everything: bool) -> Vec<BroadcastStation> {
     let codes = codes();
     let mut out = Vec::new();
     for line in csv.lines().skip(1) {
@@ -131,16 +143,18 @@ pub fn parse_schedule(csv: &str) -> Vec<BroadcastStation> {
             continue;
         }
         let Ok(khz) = f[0].trim().parse::<f64>() else { continue };
-        if !BANDS.iter().any(|&(lo, hi)| (lo..=hi).contains(&khz)) {
+        if !everything && !BANDS.iter().any(|&(lo, hi)| (lo..=hi).contains(&khz)) {
             continue;
         }
         let Ok(persistence) = f[8].trim().parse::<u32>() else { continue };
         // 8 is an inactive entry; 90 and up mark a utility station.
-        if persistence == 8 || persistence >= 90 {
+        if persistence == 8 || (!everything && persistence >= 90) {
             continue;
         }
         let station = f[4].trim();
-        if station.is_empty() || !is_listenable(station) || f[5].trim().starts_with('-') {
+        if station.is_empty()
+            || (!everything && (!is_listenable(station) || f[5].trim().starts_with('-')))
+        {
             continue;
         }
         let (site, lat, lon, country_code) = resolve_site(f[7].trim(), f[3].trim(), codes);
@@ -977,5 +991,14 @@ mod tests {
         let spots = on_air(builtin(), THU_1234);
         assert!(spots.iter().any(|s| s.freq_hz == 225_000.0));
         assert!(spots.iter().all(|s| s.kind == SpotKind::Broadcast));
+    }
+
+    #[test]
+    fn the_whole_schedule_keeps_what_the_broadcast_list_leaves_out() {
+        let some = parse_schedule(FALLBACK_SKED);
+        let all = parse_schedule_all(FALLBACK_SKED);
+        assert!(all.len() > some.len(), "{} vs {}", all.len(), some.len());
+        // Utility stations outside the broadcast bands are in the whole one.
+        assert!(all.iter().any(|s| !BANDS.iter().any(|&(lo, hi)| (lo..=hi).contains(&s.freq_khz))));
     }
 }

@@ -1,5 +1,5 @@
 //! The solar-system view as a whole application, for the browser tab that the
-//! ☀ 3D chip opens.
+//! SOLAR chip opens.
 //!
 //! Natively this view is a child viewport of the main window and `Solar3d`
 //! drives it from the root pass. In the browser there is no such parent: the

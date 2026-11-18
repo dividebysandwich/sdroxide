@@ -506,6 +506,14 @@ pub struct WfTuning {
     /// Whether the waterfall is interpolated between bins and rows — see
     /// [`sdroxide_types::UiSettings::waterfall_smooth`].
     pub smooth: bool,
+    /// The SMOOTH chip: rows averaged lightly over their neighbours in
+    /// time and frequency before they are drawn — see
+    /// [`crate::view::ViewState::waterfall_average`].
+    pub average: bool,
+    /// WELCH's time constant, seconds — see [`crate::view::ViewState::welch_tc`].
+    pub welch_tc: f32,
+    /// The REASSIGN chip — see [`crate::view::ViewState::waterfall_reassign`].
+    pub reassign: bool,
     /// Rows a second the 3D spectrum flows away from the viewer, from the SPEC
     /// popup's **flow** row. Zero while the stream is stalled, which is what
     /// holds the surface still — the same rule that stops the waterfall
@@ -577,10 +585,14 @@ pub struct SpectrumSmooth {
     last_seq: Option<u32>,
     generation: u32,
     alpha: f32,
+    /// WELCH's table and the buffer a new frame is read into, kept between
+    /// frames so a frame allocates nothing.
+    daniell: Daniell,
+    input: Vec<f32>,
 }
 
 impl SpectrumSmooth {
-    fn update(&mut self, f: &SpectrumFrame, alpha: f32) {
+    fn update(&mut self, f: &SpectrumFrame, alpha: f32, welch: bool) {
         if (self.alpha - alpha).abs() > 1e-6 {
             self.alpha = alpha;
             self.generation = self.generation.wrapping_add(1);
@@ -595,17 +607,83 @@ impl SpectrumSmooth {
         // A window that has only moved keeps its average; see [`slide_bins`].
         let mapping_changed = rescaled || (moved && !slide_bins(&mut self.bins, self.center, f));
         self.center = f.center_hz;
+        // WELCH: each bin averaged with its neighbours (¼ ½ ¼) in linear
+        // power before it is folded in — the trace's counterpart of the
+        // waterfall's mean columns.
+        let mut input = std::mem::take(&mut self.input);
+        if welch {
+            self.daniell.run(&f.bins, f.db_ceil - f.db_floor, &mut input);
+        } else {
+            input.clear();
+            input.extend(f.bins.iter().map(|&b| b as f32));
+        }
         if mapping_changed || alpha >= 0.999 {
             self.span = f.span_hz;
-            self.bins = f.bins.iter().map(|&b| b as f32).collect();
+            // The old average becomes next frame's input buffer.
+            self.input = std::mem::replace(&mut self.bins, input);
             if mapping_changed {
                 self.generation = self.generation.wrapping_add(1);
             }
             return;
         }
-        for (s, &b) in self.bins.iter_mut().zip(&f.bins) {
-            *s += alpha * (b as f32 - *s);
+        for (s, &b) in self.bins.iter_mut().zip(&input) {
+            *s += alpha * (b - *s);
         }
+        self.input = input;
+    }
+}
+
+/// How much of each new row goes into WELCH's running average so that it
+/// averages over `tc` seconds at `rows_per_sec`.
+fn welch_row_weight(rows_per_sec: f32, tc: f32) -> f32 {
+    let rps = rows_per_sec.max(1.0);
+    1.0 - (-1.0 / (rps * tc.max(0.01))).exp()
+}
+
+/// A spectrum's bytes with each averaged with its two neighbours (¼ ½ ¼) in
+/// linear power, as byte-scale floats again. `range_db` is the span the 255
+/// steps cover. Averaging neighbouring bins of one periodogram is Daniell's
+/// smoothing; it takes the speckle off the trace the way averaging transforms
+/// over time (Welch) does.
+// Why: HDZ 2026-11-06: "kannst du auch in der Spektrumsdarstellung eine Art
+//      gewichtetes interpoliertes Dämpfungsverhalten reinbekommen, damit das
+//      nicht so grieselig aussieht".
+#[cfg(test)]
+fn daniell(bins: &[u8], range_db: f32) -> Vec<f32> {
+    let mut out = Vec::new();
+    Daniell::default().run(bins, range_db, &mut out);
+    out
+}
+
+/// [`daniell`] with its byte → power table kept across frames: built once
+/// per dB range rather than three `powf` per bin on every frame.
+#[derive(Default)]
+struct Daniell {
+    range_db: f32,
+    lin: Vec<f32>,
+}
+
+impl Daniell {
+    /// Smooth `bins` into `out`, reusing its allocation.
+    fn run(&mut self, bins: &[u8], range_db: f32, out: &mut Vec<f32>) {
+        out.clear();
+        let k = range_db / 255.0 / 10.0;
+        let n = bins.len();
+        if n == 0 || k.is_nan() || k <= 0.0 {
+            out.extend(bins.iter().map(|&b| b as f32));
+            return;
+        }
+        if self.lin.is_empty() || self.range_db != range_db {
+            self.range_db = range_db;
+            self.lin = (0..256).map(|b| 10f32.powf(b as f32 * k)).collect();
+        }
+        let lin = |b: u8| self.lin[b as usize];
+        out.extend((0..n).map(|i| {
+            let p = 0.25 * lin(bins[i.saturating_sub(1)])
+                + 0.5 * lin(bins[i])
+                + 0.25 * lin(bins[(i + 1).min(n - 1)]);
+            (p.log10() / k).clamp(0.0, 255.0)
+        }));
     }
 }
 
@@ -1164,6 +1242,123 @@ pub struct PeakHold {
     /// Bumped whenever `bins` change outside the seq progression (mapping
     /// change, clear) — part of the trace-cache key.
     generation: u32,
+}
+
+/// The S/N guide's colour, the green of the earlier correlation display.
+pub(crate) const SNR_GUIDE_COLOUR: Color32 = Color32::from_rgb(120, 255, 140);
+
+/// The S/N guide over the spectrum: from its base line (0 dB S/N, the noise
+/// floor) — the strip's bottom edge — up to a quarter of
+/// the strip's height at [`ViewState::snr_guide_top_db`]; below the floor it rests on
+/// the line. A cell nothing has reached breaks the line.
+// Why: HDZ 2026-11-07: "an der Position, wo vorher im Korr-Spektrum die Null
+//      war … Höhe vielleicht 1/4 vom Original".
+fn draw_snr_guide(
+    p: &egui::Painter,
+    view: &ViewState,
+    rect: &Rect,
+    g: Option<&crate::mean_spectrum::Guide>,
+) {
+    let font = egui::FontId::monospace(10.0);
+    let at = rect.left_top() + egui::vec2(6.0, 4.0);
+    let base = rect.bottom() - 1.0;
+    let full = rect.height() / 4.0;
+    let top_db = view
+        .snr_guide_top_db
+        .clamp(*crate::view::SNR_GUIDE_TOP_RANGE.start(), *crate::view::SNR_GUIDE_TOP_RANGE.end());
+    p.hline(rect.x_range(), base, Stroke::new(1.0, SNR_GUIDE_COLOUR.gamma_multiply(0.25)));
+    let Some(g) = g else {
+        p.text(at, egui::Align2::LEFT_TOP, "S/N: collecting", font, Color32::from_gray(170));
+        return;
+    };
+    let mut run: Vec<Pos2> = Vec::new();
+    // The frames behind what is on screen, fewest and most: a grid laid anew
+    // when the dial carried the panadapter along starts the cells that came
+    // into view from nothing, and the caption has to say so.
+    // Why: HDZ 2026-11-07: "die Info über wie viele Frames du gemittelt hast
+    //      beim Reset updaten, wenn der Cursor zum Neuaufbau zwingt".
+    let (mut fewest, mut most) = (u32::MAX, 0u32);
+    for (i, s) in g.snr_db.iter().enumerate() {
+        let hz = g.lo_hz + (i as f64 + 0.5) * g.cell_hz;
+        if s.is_finite() && hz >= view.view_lo_hz && hz <= view.view_hi_hz {
+            let n = g.count.get(i).copied().unwrap_or(0);
+            fewest = fewest.min(n);
+            most = most.max(n);
+        }
+        if !s.is_finite() || hz < view.view_lo_hz || hz > view.view_hi_hz {
+            if run.len() >= 2 {
+                p.add(Shape::line(std::mem::take(&mut run), Stroke::new(1.2, SNR_GUIDE_COLOUR)));
+            }
+            run.clear();
+            continue;
+        }
+        let h = (s / top_db).clamp(0.0, 1.0) * full;
+        run.push(pos2(view.freq_to_x(hz, rect), base - h));
+    }
+    if run.len() >= 2 {
+        p.add(Shape::line(run, Stroke::new(1.2, SNR_GUIDE_COLOUR)));
+    }
+    // The caption names the scale and the frames, nothing else.
+    // Why: HDZ 2026-11-08: "mach mal diese Anzeige für S/N kürzer im Text,
+    //      keinen Roman".
+    p.text(
+        at,
+        egui::Align2::LEFT_TOP,
+        format!(
+            "S/N 0–{top_db:.0} dB · {} frames",
+            if fewest < most { format!("{fewest}–{most}") } else { most.to_string() }
+        ),
+        font,
+        SNR_GUIDE_COLOUR,
+    );
+}
+
+/// The kurtosis line's colour: amber, apart from the S/N green.
+pub(crate) const SK_GUIDE_COLOUR: Color32 = Color32::from_rgb(255, 176, 0);
+
+/// The kurtosis line over the spectrum, on the S/N line's base and in its
+/// quarter of the strip, with a faint rule where the noise reads (1).
+fn draw_sk_guide(
+    p: &egui::Painter,
+    view: &ViewState,
+    rect: &Rect,
+    g: &crate::mean_spectrum::Guide,
+    under_snr: bool,
+) {
+    let base = rect.bottom() - 1.0;
+    let full = rect.height() / 4.0;
+    let top = view
+        .sk_guide_top_db
+        .clamp(*crate::view::SK_GUIDE_TOP_RANGE.start(), *crate::view::SK_GUIDE_TOP_RANGE.end());
+    let bottom = crate::view::SK_GUIDE_BASE_DB;
+    // In dB like the S/N line: 0 dB is the noise, a faint rule there.
+    let frac = |db: f32| ((db - bottom) / (top - bottom)).clamp(0.0, 1.0);
+    let one = base - frac(0.0) * full;
+    p.hline(rect.x_range(), one, Stroke::new(1.0, SK_GUIDE_COLOUR.gamma_multiply(0.3)));
+    let mut run: Vec<Pos2> = Vec::new();
+    for (i, k) in g.sk.iter().enumerate() {
+        let hz = g.lo_hz + (i as f64 + 0.5) * g.cell_hz;
+        if !k.is_finite() || hz < view.view_lo_hz || hz > view.view_hi_hz {
+            if run.len() >= 2 {
+                p.add(Shape::line(std::mem::take(&mut run), Stroke::new(1.2, SK_GUIDE_COLOUR)));
+            }
+            run.clear();
+            continue;
+        }
+        let h = frac(10.0 * k.max(1e-3).log10()) * full;
+        run.push(pos2(view.freq_to_x(hz, rect), base - h));
+    }
+    if run.len() >= 2 {
+        p.add(Shape::line(run, Stroke::new(1.2, SK_GUIDE_COLOUR)));
+    }
+    p.text(
+        // Its caption under the S/N one when that shows, else in its place.
+        rect.left_top() + egui::vec2(6.0, if under_snr { 16.0 } else { 4.0 }),
+        egui::Align2::LEFT_TOP,
+        format!("SK {bottom:.0}–{top:.0} dB · {:.0} s", view.sk_tau_s),
+        egui::FontId::monospace(10.0),
+        SK_GUIDE_COLOUR,
+    );
 }
 
 /// dB-scale u8 units per new spectrum frame (~3.5 dB/s at 30 fps over a
@@ -2304,7 +2499,7 @@ pub fn show_ext(
         // before either display is drawn: the 3D surface remembers these same
         // bins, so the reaction setting steadies it exactly as it steadies the
         // flat trace.
-        smooth.update(f, wf.spectrum_alpha);
+        smooth.update(f, wf.spectrum_alpha, wf.average);
         if view.spectrum_3d {
             // Time has the depth axis instead of being thrown away. The flat
             // grid and the peak hold are both statements about a single line
@@ -2347,6 +2542,22 @@ pub fn show_ext(
                 compute_trace(view, f, Some(&smooth.bins), &spec_rect, wf.row_scale)
             });
             painter.add(Shape::line(pts, Stroke::new(1.0, Color32::from_rgb(120, 220, 255))));
+            // S/N and SK each on their own chip, from the one mean.
+            // Why: HDZ 2026-11-08: "kann ich das SK-Spektrum alleine haben
+            //      ohne S/N, weil du hast die verbunden?"
+            if view.snr_guide || view.sk_guide {
+                let g = ui.ctx().data(|d| {
+                    d.get_temp::<Arc<crate::mean_spectrum::Guide>>(crate::mean_spectrum::guide_id())
+                });
+                if view.snr_guide {
+                    draw_snr_guide(&painter, view, &spec_rect, g.as_deref());
+                }
+                if view.sk_guide
+                    && let Some(g) = g.as_deref()
+                {
+                    draw_sk_guide(&painter, view, &spec_rect, g, view.snr_guide);
+                }
+            }
         }
     }
     draw_scale(&painter, view, &scale_rect);
@@ -2389,6 +2600,21 @@ pub fn show_ext(
             rows_to_write: wf.rows_to_write,
             flip: view.waterfall_flip,
             smooth: wf.smooth,
+            average: wf.average || wf.reassign,
+            // A fifth of a second whatever the scroll rate: the time Welch
+            // averages over, not a number of rows. REASSIGN with the rail at
+            // zero takes each row as it comes.
+            avg_new: if wf.reassign && wf.welch_tc <= 0.0 {
+                1.0
+            } else {
+                welch_row_weight(wf.rows_per_sec, wf.welch_tc)
+            },
+            // WELCH's neighbours, or REASSIGN's lines as computed.
+            kernel: if wf.reassign {
+                crate::waterfall_gpu::REASSIGN_KERNEL.to_vec()
+            } else {
+                crate::waterfall_gpu::WELCH_KERNEL.to_vec()
+            },
             wf_id: wf.wf_id,
             tex_w: wf.tex_w,
         },
@@ -2933,6 +3159,40 @@ pub fn show_ext(
             painter.vline(p.x, wf_rect.y_range(), Stroke::new(1.0, line));
             let text = click_tune_label(view, state, &rect, p.x, cursor);
             label_box(&painter, pos2(p.x + 8.0, p.y - 9.0), &text, Color32::WHITE, rect);
+            // With the S/N guide on, its value under the pointer, from the
+            // guide's memory, in a second box under the frequency.
+            // Why: HDZ 2026-11-07: "am Cursor bei eingeschaltetem S/N eine
+            //      Zusatzinfo … dein S/N-Wert aus dem Speicher, unter der
+            //      Frequenz".
+            if view.snr_guide || view.sk_guide {
+                let g = ui.ctx().data(|d| {
+                    d.get_temp::<Arc<crate::mean_spectrum::Guide>>(crate::mean_spectrum::guide_id())
+                });
+                let hz = view.x_to_freq(p.x, &rect);
+                let step = 11.0 * crate::theme::panadapter_font_scale() + 6.0;
+                let mut below = p.y - 9.0 + step;
+                if view.snr_guide
+                    && let Some(snr) = g.as_deref().and_then(|g| g.snr_at(hz))
+                {
+                    let text = format!("S/N {snr:.1} dB");
+                    label_box(&painter, pos2(p.x + 8.0, below), &text, SNR_GUIDE_COLOUR, rect);
+                    below += step;
+                }
+                // The SK on a line of its own, in the SK line's amber.
+                // Why: HDZ 2026-11-08: "weil die SK-Kurve orange ist, sollte
+                //      der Wert da unter S/N in Orange stehen".
+                if view.sk_guide
+                    && let Some(k) = g.as_deref().and_then(|g| g.sk_at(hz))
+                {
+                    label_box(
+                        &painter,
+                        pos2(p.x + 8.0, below),
+                        &format!("SK {:.1} dB", 10.0 * k.max(1e-3).log10()),
+                        SK_GUIDE_COLOUR,
+                        rect,
+                    );
+                }
+            }
         }
     }
 
@@ -3545,6 +3805,20 @@ mod axis_tests {
 
 #[cfg(test)]
 mod tests {
+
+    /// WELCH's trace smoothing leaves an even spectrum as it is and takes
+    /// most of the zigzag out of a speckled one.
+    #[test]
+    fn daniell_calms_a_speckled_trace_and_keeps_an_even_one() {
+        let even = daniell(&[120u8; 32], 100.0);
+        assert!(even.iter().all(|v| (v - 120.0).abs() < 0.5), "{even:?}");
+        let zig: Vec<u8> = (0..32).map(|i| if i % 2 == 0 { 100 } else { 130 }).collect();
+        let out = daniell(&zig, 100.0);
+        let spread = |v: &[f32]| {
+            v.iter().copied().fold(f32::MIN, f32::max) - v.iter().copied().fold(f32::MAX, f32::min)
+        };
+        assert!(spread(&out[2..30]) < 15.0, "{out:?}");
+    }
     use super::*;
 
     /// A frame of `bins` bins over 800 Hz centred on `center`: one bin per
@@ -3602,7 +3876,7 @@ mod tests {
         for seq in 0..40u32 {
             let mut f = frame_at(1000.0, vec![100; 8]);
             f.seq = seq;
-            smooth.update(&f, 0.2);
+            smooth.update(&f, 0.2, false);
         }
         // Now move the window one bin per frame while bin 4 of each frame is
         // wildly off. Smoothed, its excursion has to stay small.
@@ -3612,7 +3886,7 @@ mod tests {
             bins[4] = 250;
             let mut f = frame_at(1000.0 + 100.0 * i as f64, bins);
             f.seq = seq;
-            smooth.update(&f, 0.2);
+            smooth.update(&f, 0.2, false);
             worst = worst.max(smooth.bins[4]);
         }
         assert!(worst < 160.0, "the average was restarted mid-drag: bin reached {worst}");

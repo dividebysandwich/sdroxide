@@ -121,6 +121,10 @@ fn frame_at(dial: f64, span: f64) -> SpectrumFrame {
     h.cmd_tx
         .send(Command::SetSpectrumCfg(SpectrumConfig {
             viewport: Some((dial - span / 2.0, dial + span / 2.0)),
+            smooth: false,
+            reassign: false,
+            reassign_floor_db: 6.0,
+            reassign_dim_db: 0.0,
             ..SpectrumConfig::default()
         }))
         .unwrap();

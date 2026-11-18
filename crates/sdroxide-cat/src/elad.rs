@@ -411,6 +411,24 @@ impl Protocol for Elad {
     fn poll_requests(&self) -> Vec<Vec<u8>> {
         vec![b"FA;".to_vec(), b"MD;".to_vec()]
     }
+    /// `IF;`, the TS-480 status read the DUO keeps from Kenwood's set, so an
+    /// over keyed at the radio — its microphone PTT — is known here. Whether
+    /// receive audio is muted for it is the engine's call, live, from
+    /// [`CatConfig::elad_mute_on_radio_ptt`] (the MIC A chip right of REC). The
+    /// reply is positional, and a radio laid out differently simply never
+    /// reports an over (see [`crate::kenwood::if_transmitting`]).
+    fn tx_state_requests(&self) -> Vec<Vec<u8>> {
+        vec![b"IF;".to_vec()]
+    }
+    /// Asked every 150 ms rather than with the meters (every 500 ms at the
+    /// default poll rate): the DUO's receiver plays straight through a
+    /// microphone over, so how soon the mute lands is how much of the first
+    /// syllable comes out of the speakers (AJ3G, 13 Nov 2026: "a significant
+    /// lag on the PTT"). The reply is 38 bytes, a small share of even a
+    /// 9600-baud link.
+    fn tx_state_period(&self) -> Option<std::time::Duration> {
+        Some(std::time::Duration::from_millis(150))
+    }
     fn dial_requests(&self) -> Vec<Vec<u8>> {
         vec![b"FA;".to_vec()]
     }
@@ -592,6 +610,12 @@ impl Protocol for Elad {
                     self.identified = true;
                     info!(duo_type = rest, "ELAD CAT: rig identified");
                 }
+            } else if let Some(rest) = msg.strip_prefix("IF") {
+                if let Some(on) = crate::kenwood::if_transmitting(rest) {
+                    out.push(CatUpdate::Ptt(on));
+                } else {
+                    debug!(reply = rest, "ELAD CAT: IF reply not in the TS-480 layout");
+                }
             } else if let Some(rest) = msg.strip_prefix("VS") {
                 debug!(firmware = rest, "ELAD CAT: firmware version");
             }
@@ -748,6 +772,22 @@ mod tests {
         assert!(parse_str(&mut e, "AN0;").is_empty());
         assert!(parse_str(&mut e, "AN3;").is_empty());
         assert!(parse_str(&mut e, "AN;").is_empty());
+    }
+
+    #[test]
+    fn a_radio_keyed_at_its_own_mic_is_reported_from_if() {
+        let mut e = elad();
+        assert_eq!(frames(e.tx_state_requests()), vec!["IF;"]);
+        // On a beat of its own, well inside a syllable.
+        assert!(e.tx_state_period().is_some_and(|p| p.as_millis() <= 200));
+        // TS-480 layout: 11 freq, 5 step, 5 RIT, RIT, XIT, bank, 2 channel,
+        // then the TX flag at offset 26, 35 characters in all.
+        let tx = "IF000140740000000+0000000000120000000;";
+        let rx = "IF000140740000000+0000000000020000000;";
+        assert!(matches!(parse_str(&mut e, tx).as_slice(), [CatUpdate::Ptt(true)]));
+        assert!(matches!(parse_str(&mut e, rx).as_slice(), [CatUpdate::Ptt(false)]));
+        // A reply of another shape reports nothing rather than a stuck over.
+        assert!(parse_str(&mut e, "IF0001407400010;").is_empty());
     }
 
     #[test]

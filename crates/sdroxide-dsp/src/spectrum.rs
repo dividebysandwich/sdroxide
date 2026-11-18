@@ -3,7 +3,10 @@ use std::sync::Arc;
 use rustfft::{Fft, FftPlanner};
 use sdroxide_types::SpectrumFrame;
 
-use crate::{Complex32, window::blackman_harris};
+use crate::{
+    Complex32,
+    window::{blackman_harris, blackman_harris_derivative},
+};
 
 /// Overlapped windowed-FFT power spectrum with exponential averaging.
 ///
@@ -51,6 +54,33 @@ pub struct SpectrumAnalyzer {
     /// "the strongest thing that happened in this slice of time", which is
     /// what a waterfall is *for*.
     hold: Vec<f32>,
+    /// Average instead of peak: [`Self::hold`] sums the transforms since the
+    /// last row and [`Self::hold_n`] counts them, and columns are pooled as a
+    /// mean. See [`Self::set_smooth`].
+    smooth: bool,
+    hold_n: u32,
+    /// Reassigned rows (Auger & Flandrin): [`Self::hold`] sums each
+    /// transform's power moved to the frequency it is centred on, and is read
+    /// as a mean like [`Self::smooth`]. See [`Self::set_reassign`].
+    reassign: bool,
+    /// A cell is moved only where its power stands this factor over the
+    /// transform's median; below that it stays where it is.
+    reassign_floor: f32,
+    /// The share of its power a cell keeps when it is not moved: below one,
+    /// the background is drawn darker than the lines. See
+    /// [`Self::set_reassign_dim`].
+    reassign_keep: f32,
+    /// The window's derivative, per sample, for the second transform.
+    dwindow: Vec<f32>,
+    /// That second transform; empty until reassignment is first asked for.
+    work_d: Vec<Complex32>,
+    /// Scratch for the median, the same length as the transform.
+    rank: Vec<f32>,
+    /// Points per transform bin in a reassigned row, which [`Self::hold`]
+    /// then holds in display order: a power of two up to 16, chosen at each
+    /// row from how many columns one bin is drawn across, so a line can be as
+    /// thin as a column where a bin is wider than one.
+    ra_up: usize,
     /// Whether [`Self::make_frame`] pools from [`Self::hold`] instead of
     /// [`Self::avg_power`]. Set for the length of one row build — see
     /// [`Self::set_read_hold`].
@@ -112,6 +142,7 @@ fn db10(p: f32) -> f32 {
 
 crate::simd::kernel! {
     /// [`pool_to_bins`] where the columns divide the transform exactly.
+    /// `mean` pools the column as its mean power rather than its peak.
     ///
     /// The whole-window view — no zoom — is the common case and it is a
     /// fixed-stride reduction: every column is the same number of bins, taken
@@ -125,11 +156,19 @@ crate::simd::kernel! {
         per: usize,
         db_floor: f32,
         scale: f32,
+        mean: bool,
     ) {
         for (o, w) in out.iter_mut().zip(view.chunks_exact(per)) {
             let mut m = 0.0f32;
-            for &p in w {
-                m = m.max(p);
+            if mean {
+                for &p in w {
+                    m += p;
+                }
+                m /= per as f32;
+            } else {
+                for &p in w {
+                    m = m.max(p);
+                }
             }
             *o = ((db10(m + 1e-20) - db_floor) * scale).clamp(0.0, 255.0) as u8;
         }
@@ -153,14 +192,22 @@ crate::simd::kernel! {
         step: f64,
         db_floor: f32,
         scale: f32,
+        mean: bool,
     ) {
         let n = view.len();
         for (b, o) in out.iter_mut().enumerate() {
             let lo = ((lo_bin + b as f64 * step) as usize).min(n.saturating_sub(1));
             let hi = ((lo_bin + (b + 1) as f64 * step) as usize).clamp(lo + 1, n);
             let mut m = 0.0f32;
-            for &p in &view[lo..hi] {
-                m = m.max(p);
+            if mean {
+                for &p in &view[lo..hi] {
+                    m += p;
+                }
+                m /= (hi - lo) as f32;
+            } else {
+                for &p in &view[lo..hi] {
+                    m = m.max(p);
+                }
             }
             *o = ((db10(m + 1e-20) - db_floor) * scale).clamp(0.0, 255.0) as u8;
         }
@@ -196,6 +243,24 @@ crate::simd::kernel! {
 }
 
 crate::simd::kernel! {
+    /// [`fold_power`] for a lane summing the transforms between rows, for
+    /// their mean (see [`SpectrumAnalyzer::set_smooth`]).
+    fn fold_power_sum / fold_power_sum_portable / fold_power_sum_avx2 / fold_power_sum_avx512 (
+        avg: &mut [f32],
+        sum: &mut [f32],
+        work: &[Complex32],
+        norm: f32,
+        alpha: f32,
+    ) {
+        for ((a, h), x) in avg.iter_mut().zip(sum).zip(work) {
+            let p = x.norm_sqr() * norm;
+            *a += alpha * (p - *a);
+            *h += *a;
+        }
+    }
+}
+
+crate::simd::kernel! {
     /// [`fold_power`] for a lane that is also holding the peak between rows.
     fn fold_power_hold / fold_power_hold_portable / fold_power_hold_avx2 / fold_power_hold_avx512 (
         avg: &mut [f32],
@@ -210,6 +275,66 @@ crate::simd::kernel! {
             if *a > *h {
                 *h = *a;
             }
+        }
+    }
+}
+
+/// Add one transform's power to `hold`, each cell moved to the frequency it
+/// is centred on (reassignment, Auger & Flandrin 1995):
+///   k̂ = k − (N / 2π) · Im(X_dh · X_h*) / |X_h|²
+/// with `x` = X_h under the window and `xd` = X_dh under its derivative, N the
+/// transform size.
+///
+/// `hold` is in display order (frequency ascending) on a grid `up` times finer
+/// than the transform, `up = hold.len() / N`: point `i` covers bin coordinate
+/// `[i/up − ½, (i+1)/up − ½)`. A cell that stays where it is fills its `up`
+/// points at its power; a moved one puts `up` times its power, split between
+/// the two points either side of k̂ — the same energy, concentrated, so the
+/// mean over a column reads the same level in both cases. A cell that stays
+/// is drawn at `keep` times its power. A cell at or under
+/// `floor` times the transform's median, or one that would move further than
+/// `reach` bins or past a band edge, stays.
+#[allow(clippy::too_many_arguments)]
+fn scatter_reassigned(
+    hold: &mut [f32],
+    rank: &mut Vec<f32>,
+    x: &[Complex32],
+    xd: &[Complex32],
+    norm: f32,
+    floor: f32,
+    reach: f32,
+    keep: f32,
+) {
+    let n = x.len();
+    if n < 4 || xd.len() != n || hold.len() < n || !hold.len().is_multiple_of(n) {
+        return;
+    }
+    let up = hold.len() / n;
+    let last = (hold.len() - 1) as f32;
+    rank.clear();
+    rank.extend(x.iter().map(|v| v.norm_sqr()));
+    let (_, med, _) = rank.select_nth_unstable_by(n / 2, |a, b| a.total_cmp(b));
+    let gate = *med * floor;
+    let half = n / 2;
+    let to_bins = n as f32 / std::f32::consts::TAU;
+    for k in 0..n {
+        let q = x[k].norm_sqr();
+        let p = q * norm;
+        // Display index: k counted from the bottom edge of the band.
+        let d0 = if k >= half { k - half } else { k + half };
+        let off = if q > gate && q > 0.0 { (xd[k] * x[k].conj()).im / q * to_bins } else { 0.0 };
+        let f = (d0 as f32 - off + 0.5) * up as f32 - 0.5;
+        if off == 0.0 || !off.is_finite() || off.abs() > reach || !(0.0..=last).contains(&f) {
+            let p = p * keep;
+            hold[d0 * up..(d0 + 1) * up].iter_mut().for_each(|h| *h += p);
+            continue;
+        }
+        let e = p * up as f32;
+        let j = f.floor() as usize;
+        let t = f - j as f32;
+        hold[j] += e * (1.0 - t);
+        if j + 1 < hold.len() {
+            hold[j + 1] += e * t;
         }
     }
 }
@@ -287,6 +412,15 @@ impl SpectrumAnalyzer {
             avg_power: vec![0.0; fft_size],
             view: Vec::new(),
             hold: Vec::new(),
+            smooth: false,
+            hold_n: 0,
+            reassign: false,
+            reassign_floor: 4.0,
+            reassign_keep: 1.0,
+            dwindow: blackman_harris_derivative(window_len),
+            work_d: Vec::new(),
+            rank: Vec::new(),
+            ra_up: 1,
             read_hold: false,
             hold_read: false,
             drew_empty_flag: false,
@@ -343,6 +477,9 @@ impl SpectrumAnalyzer {
             return;
         }
         self.hold = if on { self.avg_power.clone() } else { Vec::new() };
+        if on && (self.smooth || self.reassign) {
+            self.reset_hold();
+        }
     }
 
     /// Whether the peak hold is running.
@@ -459,8 +596,62 @@ impl SpectrumAnalyzer {
     /// current spectrum rather than as zero.
     pub fn reset_hold(&mut self) {
         if !self.hold.is_empty() {
-            self.hold.copy_from_slice(&self.avg_power);
+            if self.reassign {
+                // The reassigned grid, at the fineness the last row asked for.
+                self.hold.clear();
+                self.hold.resize(self.fft_size * self.ra_up, 0.0);
+            } else {
+                self.hold.resize(self.fft_size, 0.0);
+                if self.smooth {
+                    self.hold.fill(0.0);
+                } else {
+                    self.hold.copy_from_slice(&self.avg_power);
+                }
+            }
         }
+        self.hold_n = 0;
+    }
+
+    /// Rows and columns as mean power (Welch) instead of peak. Switching
+    /// starts the row in hand afresh, so a row is never half of each.
+    // Why: HDZ 2026-11-06: "die Körnigkeit nervt mich sehr ... diesen
+    //      grieseligen Kram finde ich schauerlich".
+    pub fn set_smooth(&mut self, on: bool) {
+        if on != self.smooth {
+            self.smooth = on;
+            self.reset_hold();
+        }
+    }
+
+    /// Rows as the reassigned spectrogram (Auger & Flandrin 1995): each
+    /// cell's power moved to the frequency it is centred on, so a carrier or a
+    /// tone is drawn as a line one bin wide instead of the window's main lobe.
+    /// `floor_db` is how far over the transform's median a cell has to stand
+    /// to be moved; the noise under it stays in place and reads as the
+    /// ordinary mean spectrum, so the floor keeps the calm of WELCH instead of
+    /// turning into points. Switching starts the row in hand afresh.
+    ///
+    /// Only the frequency is reassigned: a waterfall row is the time grid, and
+    /// moving power between rows that are already drawn is not possible.
+    /// Costs a second transform per transform, on the lane holding rows only.
+    // Why: HDZ 2026-11-07: "baue in den normalen Wasserfall das HTS-Spektrum
+    //      als Alternative ein neben Welch".
+    pub fn set_reassign(&mut self, on: bool, floor_db: f32) {
+        self.reassign_floor = 10f32.powf(floor_db.clamp(0.0, 60.0) / 10.0);
+        if on != self.reassign {
+            self.reassign = on;
+            self.reset_hold();
+        }
+    }
+
+    /// How much darker the cells REASSIGN leaves in place are drawn, dB: the
+    /// noise and whatever stands under the gate. Zero keeps them at their
+    /// level, as WELCH draws them; raised, only what was moved onto a line
+    /// stays bright, which is how a reassigned spectrogram is usually shown.
+    // Why: HDZ 2026-11-07: "ist etwas schärfer, aber nicht viel, und schon
+    //      gar keine Linien".
+    pub fn set_reassign_dim(&mut self, dim_db: f32) {
+        self.reassign_keep = 10f32.powf(-dim_db.clamp(0.0, 60.0) / 10.0);
     }
 
     pub fn set_avg_tc(&mut self, tc_secs: f32, sample_rate: f64) {
@@ -520,6 +711,33 @@ impl SpectrumAnalyzer {
             // a wide front end, and the hold is off on most lanes.
             if self.hold.is_empty() {
                 fold_power(&mut self.avg_power, &self.work, norm, alpha);
+            } else if self.reassign {
+                // The trace keeps the ordinary average; the row gets the
+                // reassigned power.
+                fold_power(&mut self.avg_power, &self.work, norm, alpha);
+                let frame = &self.pending[at..at + self.window_len];
+                self.work_d.resize(self.fft_size, Complex32::default());
+                apply_window(&mut self.work_d[..self.window_len], frame, &self.dwindow);
+                self.work_d[self.window_len..].fill(Complex32::default());
+                self.fft.process_with_scratch(&mut self.work_d, &mut self.scratch);
+                // A cell moved further than the main lobe's half width
+                // (Blackman-Harris: four bins of the unpadded window) is noise
+                // over noise, not a place.
+                let reach = 4.0 * self.fft_size as f32 / self.window_len as f32;
+                scatter_reassigned(
+                    &mut self.hold,
+                    &mut self.rank,
+                    &self.work,
+                    &self.work_d,
+                    norm,
+                    self.reassign_floor,
+                    reach,
+                    self.reassign_keep,
+                );
+                self.hold_n += 1;
+            } else if self.smooth {
+                fold_power_sum(&mut self.avg_power, &mut self.hold, &self.work, norm, alpha);
+                self.hold_n += 1;
             } else {
                 fold_power_hold(&mut self.avg_power, &mut self.hold, &self.work, norm, alpha);
             }
@@ -591,36 +809,76 @@ impl SpectrumAnalyzer {
         // hold starts on the next one.
         self.hold_read = self.read_hold;
         self.drew_empty_flag = !self.primed;
-        let power: &[f32] =
-            if self.read_hold && !self.hold.is_empty() { &self.hold } else { &self.avg_power };
-
-        // DC spike suppression (hardware LO leakage): read the ±2 bins
-        // around DC as the average of their neighbors. Patch at read time so
-        // the running average stays uncontaminated.
-        let dc_repl = if self.dc_suppress && n > 16 {
-            let mut acc = 0.0f32;
-            for d in 3..=6 {
-                acc += power[d] + power[n - d];
+        // A summed row is turned into its mean once, here; a row with no
+        // transform in it reads as the current spectrum, as the peak does.
+        if self.read_hold && (self.smooth || self.reassign) && !self.hold.is_empty() {
+            if self.hold_n == 0 && self.reassign {
+                // The reassigned grid is in display order and `up` points a bin.
+                let up = (self.hold.len() / n).max(1);
+                for (i, h) in self.hold.iter_mut().enumerate() {
+                    let d = (i / up).min(n - 1);
+                    *h = self.avg_power[if d >= half { d - half } else { d + half }];
+                }
+            } else if self.hold_n == 0 {
+                self.hold.copy_from_slice(&self.avg_power);
+            } else {
+                let k = 1.0 / self.hold_n as f32;
+                self.hold.iter_mut().for_each(|h| *h *= k);
             }
-            Some(acc / 8.0)
-        } else {
-            None
-        };
-        // Rotate into display order once. Natural bin `nat` is drawn at
-        // `(nat + half) % n`, which for an even `n` is the top half of the
-        // spectrum followed by the bottom — two contiguous runs, so the whole
-        // rotation is two `copy_from_slice` calls. See [`Self::view`] for why
-        // this is not done per bin.
-        self.view.clear();
-        self.view.reserve(n);
-        self.view.extend_from_slice(&power[half..]);
-        self.view.extend_from_slice(&power[..half]);
-        if let Some(repl) = dc_repl {
-            // The five bins the old per-bin test picked out — naturally
-            // `0, 1, 2, n-2, n-1` — are contiguous once rotated, because DC is
-            // the middle of a DC-centred display.
-            self.view[half - 2..=half + 2].fill(repl);
+            self.hold_n = 1;
         }
+        // A reassigned row is already in display order, on its own grid.
+        let ra_read = self.read_hold && self.reassign && !self.hold.is_empty();
+        if ra_read {
+            let up = (self.hold.len() / n).max(1);
+            self.view.clear();
+            self.view.extend_from_slice(&self.hold);
+            if self.dc_suppress && n > 16 {
+                // The same ±2 bins around DC, read as the mean of bins 3–6
+                // either side, as below.
+                let bin =
+                    |v: &[f32], d: usize| v[d * up..(d + 1) * up].iter().sum::<f32>() / up as f32;
+                let mut acc = 0.0f32;
+                for d in 3..=6 {
+                    acc += bin(&self.view, half - d) + bin(&self.view, half + d);
+                }
+                self.view[(half - 2) * up..(half + 3) * up].fill(acc / 8.0);
+            }
+        } else {
+            let power: &[f32] =
+                if self.read_hold && !self.hold.is_empty() { &self.hold } else { &self.avg_power };
+
+            // DC spike suppression (hardware LO leakage): read the ±2 bins
+            // around DC as the average of their neighbors. Patch at read time so
+            // the running average stays uncontaminated.
+            let dc_repl = if self.dc_suppress && n > 16 {
+                let mut acc = 0.0f32;
+                for d in 3..=6 {
+                    acc += power[d] + power[n - d];
+                }
+                Some(acc / 8.0)
+            } else {
+                None
+            };
+            // Rotate into display order once. Natural bin `nat` is drawn at
+            // `(nat + half) % n`, which for an even `n` is the top half of the
+            // spectrum followed by the bottom — two contiguous runs, so the whole
+            // rotation is two `copy_from_slice` calls. See [`Self::view`] for why
+            // this is not done per bin.
+            self.view.clear();
+            self.view.reserve(n);
+            self.view.extend_from_slice(&power[half..]);
+            self.view.extend_from_slice(&power[..half]);
+            if let Some(repl) = dc_repl {
+                // The five bins the old per-bin test picked out — naturally
+                // `0, 1, 2, n-2, n-1` — are contiguous once rotated, because DC is
+                // the middle of a DC-centred display.
+                self.view[half - 2..=half + 2].fill(repl);
+            }
+        }
+        // The grid the row is drawn from: the transform, or the finer
+        // reassigned one.
+        let n = self.view.len();
         let view = &self.view[..];
         let lo_bin = frac_lo * n as f64;
         let bin_range = (frac_hi - frac_lo) * n as f64;
@@ -654,12 +912,27 @@ impl SpectrumAnalyzer {
             let per = step.round() as usize;
             if lo_bin == 0.0 && (step - per as f64).abs() < 1e-9 && per >= 1 && per * out_bins <= n
             {
-                pool_to_bins_uniform(&mut bins, &view[..per * out_bins], per, db_floor, scale);
+                pool_to_bins_uniform(
+                    &mut bins,
+                    &view[..per * out_bins],
+                    per,
+                    db_floor,
+                    scale,
+                    self.smooth || self.reassign,
+                );
             } else {
-                pool_to_bins(&mut bins, view, lo_bin, step, db_floor, scale);
+                let mean = self.smooth || self.reassign;
+                pool_to_bins(&mut bins, view, lo_bin, step, db_floor, scale, mean);
             }
         }
 
+        // The reassigned grid for the next row: fine enough that a bin's
+        // worth of it is no wider than a column.
+        if self.reassign && self.read_hold {
+            let bins_shown = ((frac_hi - frac_lo) * self.fft_size as f64).max(1.0);
+            let per_bin = (out_bins as f64 / bins_shown).ceil().max(1.0) as usize;
+            self.ra_up = per_bin.next_power_of_two().clamp(1, 16);
+        }
         self.seq = self.seq.wrapping_add(1);
         SpectrumFrame {
             seq: self.seq,
@@ -984,5 +1257,217 @@ mod tests {
         assert!(db[peak_bin] > -1.0 && db[peak_bin] < 1.0, "{}", db[peak_bin]);
         // Blackman-Harris sidelobes: far bins well below -80 dB.
         assert!(db[n / 4] < -80.0, "{}", db[n / 4]);
+    }
+
+    /// The SMOOTH row: noise between two rows averaged (Welch) instead of
+    /// held at its peak. Over twelve transforms of noise with a tone in it,
+    /// the noise columns of the mean row spread far less than those of the
+    /// peak row, and sit lower; the tone stands clear of them in both.
+    #[test]
+    fn a_mean_row_is_calmer_than_a_peak_row_and_keeps_the_tone() {
+        let fs = 1_000_000.0;
+        let n = 1024;
+        let tone_hz = 250_000.0f32;
+        // Deterministic noise: a small LCG, about ±0.05 per component.
+        let mut seed: u32 = 12345;
+        let mut rnd = move || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5
+        };
+        let input: Vec<Complex32> = (0..n * 12)
+            .map(|i| {
+                let ph = TAU * tone_hz * i as f32 / fs as f32;
+                Complex32::new(0.1 * ph.cos() + 0.1 * rnd(), 0.1 * ph.sin() + 0.1 * rnd())
+            })
+            .collect();
+        let row = |smooth: bool| {
+            let mut an = SpectrumAnalyzer::new(n, fs, 0.0);
+            an.set_dc_suppress(false);
+            an.set_smooth(smooth);
+            an.set_row_hold(true);
+            an.reset_hold();
+            an.process(&input);
+            an.set_read_hold(true);
+            let f = an.make_frame(0.0, fs, -140.0, 0.0, n / 4, None);
+            an.set_read_hold(false);
+            f.bins
+        };
+        let spread = |b: &[u8]| {
+            // The noise: everything but the loudest tenth (the tone's columns).
+            let mut v: Vec<f32> = b.iter().map(|x| *x as f32).collect();
+            v.sort_by(|a, b| a.total_cmp(b));
+            let v = &v[..v.len() * 9 / 10];
+            let m = v.iter().sum::<f32>() / v.len() as f32;
+            ((v.iter().map(|x| (x - m).powi(2)).sum::<f32>() / v.len() as f32).sqrt(), m)
+        };
+        let (peak, mean) = (row(false), row(true));
+        let ((sd_p, m_p), (sd_m, m_m)) = (spread(&peak), spread(&mean));
+        assert!(sd_m < sd_p * 0.7, "noise spread mean {sd_m} vs peak {sd_p}");
+        assert!(m_m < m_p, "noise level mean {m_m} vs peak {m_p}");
+        let top = |b: &[u8]| *b.iter().max().unwrap() as f32;
+        assert!(
+            top(&mean) - m_m > 40.0,
+            "tone over noise in the mean row: {} vs {m_m}",
+            top(&mean)
+        );
+    }
+
+    /// The reassigned row: a tone between two bins drawn as a line one or two
+    /// bins wide, on its own frequency, where the mean row spreads it over the
+    /// window's main lobe; the noise under the gate stays as calm as in the
+    /// mean row and at its level.
+    #[test]
+    fn a_reassigned_row_draws_a_tone_as_a_line_on_its_frequency() {
+        let fs = 48_000.0;
+        let n = 1024;
+        // 37.3 bins above DC: a third of the way between two bins.
+        let tone_hz = 37.3 * fs as f32 / n as f32;
+        let mut seed: u32 = 777;
+        let mut rnd = move || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5
+        };
+        let input: Vec<Complex32> = (0..n * 16)
+            .map(|i| {
+                let ph = TAU * tone_hz * i as f32 / fs as f32;
+                Complex32::new(0.1 * ph.cos() + 0.01 * rnd(), 0.1 * ph.sin() + 0.01 * rnd())
+            })
+            .collect();
+        let row = |reassign: bool| {
+            let mut an = SpectrumAnalyzer::new(n, fs, 0.0);
+            an.set_dc_suppress(false);
+            an.set_smooth(!reassign);
+            an.set_reassign(reassign, 6.0);
+            an.set_row_hold(true);
+            an.reset_hold();
+            an.process(&input);
+            an.set_read_hold(true);
+            let f = an.make_frame(0.0, fs, -140.0, 0.0, n, None);
+            an.set_read_hold(false);
+            f.bins
+        };
+        let (mean, sharp) = (row(false), row(true));
+        // Display order: DC at n/2, so the tone sits at n/2 + 37.3.
+        let at = n / 2 + 37;
+        let peak = |b: &[u8]| (0..b.len()).max_by_key(|&i| b[i]).unwrap();
+        assert!((peak(&sharp) as i64 - at as i64).abs() <= 1, "peak at {}", peak(&sharp));
+        // Width: columns within 10 dB (about 26 steps of 140 dB / 255) of the top.
+        let width = |b: &[u8]| {
+            let top = *b.iter().max().unwrap() as i32;
+            b.iter().filter(|&&v| top - v as i32 <= 18).count()
+        };
+        assert!(width(&sharp) <= 2, "reassigned line {} bins wide", width(&sharp));
+        assert!(width(&mean) >= 4, "mean lobe only {} bins wide", width(&mean));
+        // The noise far from the tone: same level within about 2 dB.
+        let noise = |b: &[u8]| b[..n / 4].iter().map(|v| *v as f32).sum::<f32>() / (n / 4) as f32;
+        assert!(
+            (noise(&sharp) - noise(&mean)).abs() < 4.0,
+            "noise {} vs {}",
+            noise(&sharp),
+            noise(&mean)
+        );
+    }
+
+    /// Where one bin is drawn across many columns — a short window, or a deep
+    /// look at a few bins — the reassigned row is laid on a grid that fine,
+    /// so a tone is a line a few columns wide instead of a bin's worth
+    /// stretched across sixteen; the mean row draws the window's main lobe.
+    #[test]
+    fn a_reassigned_row_draws_a_line_finer_than_a_bin() {
+        let fs = 48_000.0;
+        let n = 256;
+        let bin_hz = fs / n as f64;
+        // 21.37 bins above DC; the view is 32 bins around it, 512 columns.
+        let tone_hz = 21.37 * bin_hz;
+        let (lo, hi) = (tone_hz - 16.0 * bin_hz, tone_hz + 16.0 * bin_hz);
+        let mut seed: u32 = 4242;
+        let mut rnd = move || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5
+        };
+        let input: Vec<Complex32> = (0..n * 32)
+            .map(|i| {
+                let ph = (std::f64::consts::TAU * tone_hz * i as f64 / fs) as f32;
+                Complex32::new(0.1 * ph.cos() + 0.001 * rnd(), 0.1 * ph.sin() + 0.001 * rnd())
+            })
+            .collect();
+        let row = |reassign: bool| {
+            let mut an = SpectrumAnalyzer::new(n, fs, 0.0);
+            an.set_dc_suppress(false);
+            an.set_smooth(!reassign);
+            an.set_reassign(reassign, 6.0);
+            an.set_row_hold(true);
+            // Two rows: the first tells the analyser how fine the second's
+            // grid has to be.
+            let mut bins = Vec::new();
+            for half in input.chunks(input.len() / 2) {
+                an.reset_hold();
+                an.process(half);
+                an.set_read_hold(true);
+                bins = an.make_frame(0.0, fs, -140.0, 0.0, 512, Some((lo, hi))).bins;
+                an.set_read_hold(false);
+            }
+            bins
+        };
+        let (mean, sharp) = (row(false), row(true));
+        let width = |b: &[u8]| {
+            let top = *b.iter().max().unwrap() as i32;
+            b.iter().filter(|&&v| top - v as i32 <= 18).count()
+        };
+        let peak = |b: &[u8]| (0..b.len()).max_by_key(|&i| b[i]).unwrap();
+        // Where the mean row draws it, so switching moves no line. (Both sit
+        // half a bin right of the true frequency: the frame draws a bin from
+        // its frequency up, not centred on it.)
+        assert!(
+            (peak(&sharp) as i64 - peak(&mean) as i64).abs() <= 2,
+            "peak at column {} vs {}",
+            peak(&sharp),
+            peak(&mean)
+        );
+        assert!(width(&sharp) <= 4, "reassigned line {} columns wide", width(&sharp));
+        assert!(width(&mean) >= 24, "mean lobe only {} columns wide", width(&mean));
+    }
+
+    /// REASSIGN's dim: the cells left in place drawn that many dB darker, the
+    /// line moved onto its frequency at its level.
+    #[test]
+    fn a_dimmed_reassigned_row_keeps_the_line_and_darkens_the_ground() {
+        let fs = 48_000.0;
+        let n = 1024;
+        let tone_hz = 37.3 * fs as f32 / n as f32;
+        let mut seed: u32 = 31;
+        let mut rnd = move || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5
+        };
+        let input: Vec<Complex32> = (0..n * 16)
+            .map(|i| {
+                let ph = TAU * tone_hz * i as f32 / fs as f32;
+                Complex32::new(0.1 * ph.cos() + 0.01 * rnd(), 0.1 * ph.sin() + 0.01 * rnd())
+            })
+            .collect();
+        let row = |dim: f32| {
+            let mut an = SpectrumAnalyzer::new(n, fs, 0.0);
+            an.set_dc_suppress(false);
+            // A gate high enough that the noise's own peaks stay in place
+            // too: at 6 dB the cells over it carry about a quarter of the
+            // noise's energy, moved and undimmed, and the ground drops ~6 dB.
+            an.set_reassign(true, 12.0);
+            an.set_reassign_dim(dim);
+            an.set_row_hold(true);
+            an.reset_hold();
+            an.process(&input);
+            an.set_read_hold(true);
+            let f = an.make_frame(0.0, fs, -140.0, 0.0, n, None);
+            an.set_read_hold(false);
+            f.bins
+        };
+        let (plain, dim) = (row(0.0), row(20.0));
+        let ground = |b: &[u8]| b[..n / 4].iter().map(|v| *v as f32).sum::<f32>() / (n / 4) as f32;
+        let top = |b: &[u8]| *b.iter().max().unwrap() as f32;
+        // 20 dB is about 36 steps of 140 dB over 255.
+        let drop = ground(&plain) - ground(&dim);
+        assert!((30.0..42.0).contains(&drop), "ground dropped {drop} steps");
+        assert!((top(&plain) - top(&dim)).abs() <= 2.0, "line {} vs {}", top(&plain), top(&dim));
     }
 }

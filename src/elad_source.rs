@@ -154,6 +154,10 @@ pub struct EladSource {
     attenuator: bool,
     preselector: bool,
 
+    /// [`EladConfig::hear_own_tx`]: keep reading the receiver through an over
+    /// sdroxide keyed, so the station's own signal is heard.
+    hear_own_tx: bool,
+
     /// Which of the two antenna sockets the receiver is on.
     ///
     /// A mirror, like the two switches above, but unlike them it starts as a
@@ -250,6 +254,11 @@ impl EladSource {
         audio_out: Option<&str>,
         center_hz: f64,
     ) -> anyhow::Result<Self> {
+        // Where a copy of ELAD's DLL can be put on a system neither ELAD
+        // program installs on — see `sdroxide_elad::remote`.
+        if let Ok(dir) = sdroxide_config::config_dir() {
+            sdroxide_elad::remote::set_dll_dir(dir);
+        }
         let handle = EladHandle::open(cfg, center_hz)?;
         let model = handle.model;
         let label = handle.label.clone();
@@ -370,6 +379,7 @@ impl EladSource {
             tx_audio_gain: 1.0,
             attenuator: cfg.attenuator,
             preselector: cfg.preselector,
+            hear_own_tx: cfg.hear_own_tx,
             antenna: EladAntenna::default(),
             expect_freq: None,
             rig_vfo: Vfo::A,
@@ -411,6 +421,14 @@ impl EladSource {
 
     pub fn model(&self) -> Model {
         self.model
+    }
+
+    /// Whether the receiver is read through an over sdroxide keyed — the
+    /// operator's choice to hear their own signal ([`EladConfig::hear_own_tx`]).
+    /// The DDC streams through an over either way; this only decides whether
+    /// the engine keeps listening to it.
+    pub fn hears_own_tx(&self) -> bool {
+        self.hear_own_tx && self.can_transmit()
     }
 
     /// Whether the rig can be keyed at all — which is the question the caps'
@@ -654,6 +672,21 @@ impl IqSource for EladSource {
         true
     }
 
+    /// What is waiting and no more: an over the receiver is read through
+    /// ([`EladConfig::hear_own_tx`]) owes the transmitter a block every 10 ms,
+    /// and [`Self::read`]'s nap on an empty ring would come out of that.
+    fn read_available(&mut self, buf: &mut [Complex32]) -> Result<usize> {
+        let need = buf.len() * 2;
+        if self.rx_scratch.len() < need {
+            self.rx_scratch.resize(need, 0.0);
+        }
+        let pairs = self.handle.rx_read(&mut self.rx_scratch[..need]) / 2;
+        for (p, out) in buf.iter_mut().enumerate().take(pairs) {
+            *out = Complex32::new(self.rx_scratch[2 * p], self.rx_scratch[2 * p + 1]);
+        }
+        Ok(pairs)
+    }
+
     fn describe(&self) -> String {
         self.label.clone()
     }
@@ -813,7 +846,10 @@ impl IqSource for EladSource {
                 // The ELAD family asks for no transmit state (see
                 // `Protocol::tx_state_requests`), so this never arrives — but
                 // the day it does, it means the same thing here as anywhere.
-                sdroxide_cat::CatUpdate::Ptt(on) => out.push(ControlUpdate::RigTx(on)),
+                sdroxide_cat::CatUpdate::Ptt(on) => {
+                    sdroxide_elad::set_transmitting(on || self.keyed);
+                    out.push(ControlUpdate::RigTx(on))
+                }
                 // The meters arrive on their own telemetry channels, not here;
                 // and the ELAD dialect has no squelch command, so that read is
                 // never asked for either.
@@ -935,6 +971,10 @@ impl IqSource for EladSource {
         // to land before the key does: the VFO is the only thing that decides
         // what frequency the over goes out on.
         self.keyed = true;
+        // Before the key: an FDM-DUO's wide image is not loaded, and the radio
+        // not put back in stand-alone, while it transmits — the transmitter
+        // goes through the same FPGA (see `sdroxide_elad::remote`).
+        sdroxide_elad::set_transmitting(true);
         self.command_freq(center_hz);
         self.command_ptt(true);
         Ok(self.out.as_ref().map(|(o, _)| o.sample_rate).unwrap_or(48_000.0))
@@ -942,6 +982,7 @@ impl IqSource for EladSource {
 
     fn tx_end(&mut self) -> Result<()> {
         self.command_ptt(false);
+        sdroxide_elad::set_transmitting(false);
         // Give the receive window its centre back, in that order: the VFO is
         // moved once the transmitter is off, never while it is on. Without
         // this the panadapter would spend the rest of the session looking at
@@ -1033,13 +1074,28 @@ impl IqSource for EladSource {
     /// as needing a reopen so the engine reconnects on its own — which is what
     /// makes replugging one Just Work rather than needing Apply pressed.
     fn needs_reopen(&self) -> bool {
-        !self.handle.is_alive() || self.handle.silent_for() >= SILENCE_BEFORE_REOPEN
+        !self.handle.is_alive()
+            || self.handle.silent_for() >= SILENCE_BEFORE_REOPEN
+            || self.handle.wants_reopen()
     }
 
     /// Hand the device back before the engine opens its replacement. Without
     /// this, changing anything in Settings → Radio on a running ELAD fails with
     /// "held by another program" — the other program being us.
     fn release(&mut self) {
+        // The CAT serial port too: it is exclusive, and the replacement opens
+        // it again straight away. Dropping the handle only asks its thread to
+        // stop, so a B/W change (a reopen) found COM still held by this one,
+        // got no answer and lost the control link. Same fix as issue #15.
+        if let Control::Serial(cat) = &mut self.control {
+            cat.release();
+        }
+        // The transmit guard is process-wide: a source let go while keyed
+        // would otherwise refuse every later wide open until a restart.
+        if self.keyed {
+            self.keyed = false;
+            sdroxide_elad::set_transmitting(false);
+        }
         self.handle.release();
     }
 
@@ -1057,12 +1113,9 @@ impl IqSource for EladSource {
         }
         let mut parts = self.status.clone();
         parts.extend(late.iter().cloned());
-        parts.push(
-            "ELAD support is new, and only receiving on an FDM-DUO has been run on a \
-             real radio. If it misbehaves, Settings → Radio has a Copy diagnostic \
-             report button."
-                .to_string(),
-        );
-        Some(parts.join(" — "))
+        // No standing "ELAD support is new" notice here: this is shown at
+        // every open, so a SPAN change put it up again each time and held up
+        // the switch behind it (AJ3G). Settings → Radio already says it.
+        (!parts.is_empty()).then(|| parts.join(" — "))
     }
 }

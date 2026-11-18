@@ -21,4 +21,3 @@ sdroxide-types.workspace = true
 sdroxide-dsp.workspace = true
 crossbeam-channel.workspace = true
 rustfft.workspace = true
-tracing.workspace = true

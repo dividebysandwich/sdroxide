@@ -135,9 +135,73 @@ pub struct RxState {
     pub sk_filter_width: u8,
     /// Run the SK filter behind the NR engine instead of ahead of the AGC:
     /// HDZ heard it as a post-processor that lifts the formants RNN and DFNR
-    /// leave ("Variante B, Reihung gedreht").
-    #[serde(default)]
+    /// leave ("Variante B, Reihung gedreht"). On to start with: all four
+    /// presets were tuned behind NR.
+    // Why: HDZ 2026-11-11: "in NR der SK-Filter sollte 'nach NR' als Default
+    //      haben".
+    #[serde(default = "sk_filter_default_after_nr")]
     pub sk_filter_after_nr: bool,
+    /// Gain added right after the SK filter, in dB ([`SK_FILTER_BOOST_RANGE_DB`]).
+    /// The filter only takes level away — noise bins down to −20 dB, the rest
+    /// at unity — and behind NR it also sits behind the AGC, so nothing puts
+    /// the level back: the result can be very quiet. Ahead of the AGC the
+    /// AGC restores it, so the boost only applies behind NR. A soft limiter
+    /// keeps a boosted peak off full scale. [`SK_FILTER_DEFAULT_BOOST_DB`] to
+    /// start with, also for a state stored before the field existed.
+    // Why: HDZ 2026-11-13: "beim SK würde ich gerne einen kleinen
+    //      Lautstärke-Booster noch dazu haben, weil das Ergebnis sehr leise
+    //      sein kann"; "plus 5 dB Defaultwert".
+    #[serde(default = "sk_filter_default_boost")]
+    pub sk_filter_boost_db: f32,
+    /// NFM "FM-Decrackle": the click eliminator that takes out the 2π phase
+    /// slips a weak FM signal turns into crackle, ~1 ms look-ahead. Ignored
+    /// outside NFM.
+    #[serde(default = "fm_decrackle_default_on")]
+    pub fm_decrackle: bool,
+    /// NFM de-emphasis, 6 dB per octave above 300 Hz. Ignored outside NFM.
+    #[serde(default = "fm_decrackle_default_on")]
+    pub fm_deemph: bool,
+    /// How deep the magnitude must dip, as a share of its mean over ±1 ms, for
+    /// a phase jump to count as a slip. Higher repairs more.
+    #[serde(default = "fm_decrackle_default_dip")]
+    pub fm_decrackle_dip: f32,
+}
+
+/// FM-Decrackle sensitivity: the bench optimum, and the range the NR menu
+/// offers. The share is a window's minimum magnitude against its mean, so from
+/// about 1 the test holds everywhere and only the phase jump is left. On the
+/// bench (NFM, 5.4 kHz filter, ±2 kHz deviation) a clean signal is left
+/// untouched up to 0.7 and loses 22 → 15 dB SINAD at 0.8 (fast modulation
+/// taken for slips); the top sits one step short of that.
+//
+// Why: HDZ 2026-11-10: "am festen Träger könnte noch ne Schippe mehr drauf"
+//      (0.3 → 0.5); 2026-11-11: "0.5 habe ich selber gehört und es war gut",
+//      top at 0.6.
+pub const FM_DECRACKLE_DEFAULT_DIP: f32 = 0.2;
+pub const FM_DECRACKLE_DIP_RANGE: (f32, f32) = (0.1, 0.6);
+
+fn fm_decrackle_default_on() -> bool {
+    true
+}
+
+fn fm_decrackle_default_dip() -> f32 {
+    FM_DECRACKLE_DEFAULT_DIP
+}
+
+/// Whether the SK filter runs behind the NR engine to start with.
+pub const SK_FILTER_DEFAULT_AFTER_NR: bool = true;
+
+/// The SK boost the NR menu offers, in dB.
+pub const SK_FILTER_BOOST_RANGE_DB: (f32, f32) = (0.0, 18.0);
+/// The SK boost to start with, in dB.
+pub const SK_FILTER_DEFAULT_BOOST_DB: f32 = 5.0;
+
+fn sk_filter_default_boost() -> f32 {
+    SK_FILTER_DEFAULT_BOOST_DB
+}
+
+fn sk_filter_default_after_nr() -> bool {
+    SK_FILTER_DEFAULT_AFTER_NR
 }
 
 /// The SK filter's time constant to start with, in seconds (HDZ 2026-11-10:
@@ -198,7 +262,11 @@ impl RxState {
             sk_filter_open_s: SK_FILTER_DEFAULT_OPEN_S,
             sk_filter_close_s: SK_FILTER_DEFAULT_CLOSE_S,
             sk_filter_width: SK_FILTER_DEFAULT_WIDTH,
-            sk_filter_after_nr: false,
+            sk_filter_after_nr: SK_FILTER_DEFAULT_AFTER_NR,
+            sk_filter_boost_db: SK_FILTER_DEFAULT_BOOST_DB,
+            fm_decrackle: true,
+            fm_deemph: true,
+            fm_decrackle_dip: FM_DECRACKLE_DEFAULT_DIP,
         }
     }
 }
@@ -775,5 +843,35 @@ mod zoom_lane_tests {
         // is the only thing that can resolve it, so let the client have it.
         assert_eq!(panadapter_fft_ceiling(2_000_000.0, 800_000.0, 2048), None);
         assert_eq!(panadapter_fft_ceiling(2_000_000.0, 500_000.0, 0), None);
+    }
+}
+
+#[cfg(test)]
+mod sk_filter_tests {
+    use super::{Mode, RxState};
+
+    /// The SK filter runs behind the NR engine to start with — for a fresh
+    /// receiver and for one stored before the switch existed, so an upgraded
+    /// station starts where the four presets were tuned.
+    #[test]
+    fn the_sk_filter_runs_after_nr_to_start_with() {
+        let fresh = RxState::with_mode(Mode::Usb);
+        assert!(fresh.sk_filter_after_nr);
+        let mut stored = serde_json::to_value(fresh).unwrap();
+        stored.as_object_mut().unwrap().remove("sk_filter_after_nr");
+        let read: RxState = serde_json::from_value(stored).unwrap();
+        assert!(read.sk_filter_after_nr, "a stored state without the field");
+    }
+
+    /// The SK boost starts at +5 dB, for a fresh receiver and for one stored
+    /// before the boost existed.
+    #[test]
+    fn the_sk_boost_starts_at_five_db() {
+        let fresh = RxState::with_mode(Mode::Usb);
+        assert_eq!(fresh.sk_filter_boost_db, 5.0);
+        let mut stored = serde_json::to_value(fresh).unwrap();
+        stored.as_object_mut().unwrap().remove("sk_filter_boost_db");
+        let read: RxState = serde_json::from_value(stored).unwrap();
+        assert_eq!(read.sk_filter_boost_db, 5.0, "a stored state without the field");
     }
 }

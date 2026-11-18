@@ -15,6 +15,7 @@ mod aprs_map;
 /// The world the flat maps are drawn from — the globe's own land raster,
 /// sampled on the CPU, plus the border and river geometry and the city table.
 mod basemap;
+mod catalogs;
 pub mod chrome;
 mod colormap;
 mod digi_map;
@@ -34,12 +35,16 @@ mod input;
 pub mod layout;
 mod login;
 mod login_globe;
+mod mean_spectrum;
 /// Multi-radio shell: one window, one radio per tab. Native-only — the
 /// browser client drives a single (remote) radio.
 mod multi;
 mod prop_map;
 /// The PUBLIC SDRS window's map view: the receivers where they stand.
 mod publicsdr_map;
+/// The full-band strip recorded into SQLite, by session (Scanner → PANO).
+#[cfg(not(target_arch = "wasm32"))]
+mod recorder;
 #[cfg(feature = "remote")]
 mod remote;
 /// Pinned certificates for `wss://` stations nothing public vouches for.
@@ -65,7 +70,7 @@ pub use app::SdroxideApp;
 pub use multi::{MultiApp, RadioFactory, RadioTab, RemoteFactory};
 #[cfg(feature = "remote")]
 pub use remote::{AudioBridge, RemoteController};
-/// The solar-system view as a standalone app, for the browser tab the ☀ 3D
+/// The solar-system view as a standalone app, for the browser tab the SOLAR
 /// chip opens. Natively the same view is a child viewport of the main window
 /// instead — see `solar3d::Solar3d`.
 #[cfg(feature = "remote")]

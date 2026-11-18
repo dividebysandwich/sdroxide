@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Built by the release workflow:
      wix build packaging/windows/main.wxs -arch x64 \
-         -d Version=<cargo version> -d BinDir=target/release -o <out>.msi
+         -d Version=<cargo version> -d BinDir=target/x86_64-pc-windows-gnu/release -o <out>.msi
 
-     Note: sdroxide dynamically links SoapySDR.dll; users must install
-     PothosSDR (https://downloads.myriadrf.org/builds/PothosSDR/) and put it
-     on PATH, which also provides the device driver modules. -->
+     Only the standard (non-SoapySDR) build is packaged as an MSI, so the
+     program it installs needs nothing beyond Windows itself; SoapySDR users
+     take the -soapysdr .zip. The files here should match what the release
+     workflow stages into the .zip. -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
     <Package Name="sdroxide"
              Manufacturer="Josef Jahn"
@@ -65,6 +66,14 @@
                           Source="crates/sdroxide-speech/assets/LICENSE-cmudict.txt"
                           Name="LICENSE-cmudict.txt" KeyPath="yes" />
                 </Component>
+                <!-- sdroxide.exe embeds the DeepCW model, which is
+                     AGPL-3.0-only: its notice travels with the binary, as it
+                     does in the .zip. -->
+                <Component Id="DeepcwLicenseFile" Guid="5B2E9C47-0D8A-4F61-A3B5-7E19C4D2F806">
+                    <File Id="DeepcwLicenseTxt"
+                          Source="crates/sdroxide-deepcw/LICENSE"
+                          Name="LICENSE-deepcw.txt" KeyPath="yes" />
+                </Component>
                 <Directory Id="VoicesFolder" Name="voices">
                     <Component Id="VoiceModel" Guid="C1052875-84CF-4257-8F03-24280E266EAC">
                         <File Id="VoiceOnnx"
@@ -113,6 +122,7 @@
             <ComponentRef Id="Rx888FirmwareLicenseFile" />
             <ComponentRef Id="VoiceLicenseFile" />
             <ComponentRef Id="CmudictLicenseFile" />
+            <ComponentRef Id="DeepcwLicenseFile" />
             <ComponentRef Id="VoiceModel" />
             <ComponentRef Id="PathEnv" />
             <ComponentRef Id="StartMenuShortcut" />

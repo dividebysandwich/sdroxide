@@ -343,9 +343,12 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           BIN="target/$CARGO_BUILD_TARGET/release/sdroxide.exe"
-          objdump -p "$BIN" | grep -i "DLL Name:" | sort -u
-          if objdump -p "$BIN" \
-               | grep -Eiq "DLL Name:[[:space:]]*(libstdc\+\+|libgcc_s|libwinpthread)"; then
+          # Captured first: with pipefail, `objdump | grep -q` fails when grep
+          # stops reading early, and the check passed with the DLLs in (#842).
+          dlls="$(objdump -p "$BIN" | grep -i "DLL Name:" | sort -u)"
+          echo "$dlls"
+          if echo "$dlls" \
+               | grep -Ei "DLL Name:[[:space:]]*(libstdc\+\+|libgcc_s|libwinpthread|zlib1)" >/dev/null; then
             echo "::error::sdroxide.exe still needs a MinGW runtime DLL beside it"
             exit 1
           fi

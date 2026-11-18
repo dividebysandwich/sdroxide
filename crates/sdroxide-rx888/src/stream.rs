@@ -417,6 +417,13 @@ fn pump(
 
 /// Apply everything except the dial, which `pump` paces separately.
 fn apply(dev: &mut Device, p: &Pending, settings: &mut Settings) {
+    // The range before the gain, so a pass carrying both programs the gain in
+    // the range it was asked for.
+    if let Some(r) = p.vga_range
+        && let Err(e) = dev.set_vga_range(r)
+    {
+        tracing::warn!("RX-888: {e}");
+    }
     if let Some(db) = p.vga {
         settings.vga_db = db;
         if let Err(e) = dev.set_vga_db(db) {

@@ -31,5 +31,6 @@ pub use bus::{BusError, BusResult, MockBus, TunerBus};
 pub use error::{Error, Result};
 pub use r82xx::{
     BLOG_V4_REF_HZ, Chip, DEFAULT_IF_HZ, GainSetting, R82XX_CHECK_VAL, R82xx, R820T_I2C_ADDR,
-    R820T_XTAL_HZ, R828D_I2C_ADDR, R828D_XTAL_HZ, apply_ppm,
+    R820T_XTAL_HZ, R828D_I2C_ADDR, R828D_XTAL_HZ, STAGE_MAX_INDEX, Stage, apply_ppm,
+    ladder_indices, stage_db, stage_index_for,
 };

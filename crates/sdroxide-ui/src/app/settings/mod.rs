@@ -70,7 +70,7 @@ use crate::theme::ThemedScroll as _;
 /// (keyboard/mouse bindings), the network cockpit (spot feeds + uploads), the
 /// built-in TCI server, and — the other direction — the sdroxide server this
 /// screen connects *out* to.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::app) enum SettingsTab {
     General,
     Radio,
@@ -374,6 +374,10 @@ pub(in crate::app) struct SettingsIo<'a> {
     /// Set when the operator asks for the TX Audio window, which took over
     /// the transmit EQ that used to sit in this tab.
     open_tx_audio: &'a mut bool,
+    /// Set when the operator asks for the station check from the General tab.
+    open_check: &'a mut bool,
+    /// Set when the operator asks for the welcome walkthrough again.
+    open_welcome: &'a mut bool,
     tab: &'a mut SettingsTab,
     /// Which logging service the Uploads tab's own strip is showing. Its own
     /// field rather than state inside the tab's body, because the body is drawn
@@ -1049,6 +1053,8 @@ impl SdroxideApp {
         let digi_seeded = self.digi_cfg_seeded;
         let mut region_edit = self.region_edit;
         let mut open_tx_audio = false;
+        let mut open_check = false;
+        let mut open_welcome = false;
         let mut net_edit = self.net_cfg_edit.clone();
         let mut net_cmds = self.net_cluster_cmds.clone();
         let mut rbn_cmds = self.net_rbn_cmds.clone();
@@ -1270,6 +1276,8 @@ impl SdroxideApp {
                             radio_name_edit: &mut radio_name_edit,
                             region_edit: &mut region_edit,
                             open_tx_audio: &mut open_tx_audio,
+                            open_check: &mut open_check,
+                            open_welcome: &mut open_welcome,
                             tab: &mut tab,
                             upload_tab: &mut upload_tab,
                         },
@@ -1760,6 +1768,12 @@ impl SdroxideApp {
         if open_tx_audio {
             self.tx_audio.open = true;
         }
+        if open_check {
+            self.show_check = true;
+        }
+        if open_welcome {
+            self.welcome.open();
+        }
     }
 
     /// The Settings body: a General tab (station identity + the sound devices)
@@ -1863,6 +1877,24 @@ impl SdroxideApp {
                 });
                 ui.add_space(6.0);
                 ui.label(RichText::new(tr!("settings-your-callsign-grid-shared-across")).weak());
+                ui.add_space(6.0);
+                // Here because this is the page an operator opens when
+                // something about the station is not right, and because the
+                // first two lines of the check are the two boxes above.
+                ui.horizontal(|ui| {
+                    if crate::chrome::chip(ui, false, tr!("check-open"))
+                        .on_hover_text(tr!("check-open", "hint"))
+                        .clicked()
+                    {
+                        *io.open_check = true;
+                    }
+                    if crate::chrome::chip(ui, false, tr!("welcome-open"))
+                        .on_hover_text(tr!("welcome-open", "hint"))
+                        .clicked()
+                    {
+                        *io.open_welcome = true;
+                    }
+                });
 
                 // Its own grid, outside the enabled-ui above: the region comes
                 // from `config.toml` by way of the station announcement, not
@@ -3728,6 +3760,14 @@ fn caret_at(placed: &[(u32, egui::Rect)], slot: usize) -> Option<(f32, egui::Ran
     }
 }
 
+/// Whether a remembered chip drag outlived its release elsewhere: the button
+/// is up, and no chip on the strip reported the release this frame. The frame
+/// that drops a chip has the button up as well, so `dropped` is what keeps the
+/// drop from being cancelled before it is applied.
+fn drag_is_stale(dropped: bool, pointer_down: bool) -> bool {
+    !dropped && !pointer_down
+}
+
 /// `ids` with `dragged` taken out and put back in front of `before` — or at the
 /// end, where `before` is `None`.
 ///
@@ -4035,8 +4075,10 @@ impl SdroxideApp {
         // sorts its tabs to match and records it.
         // A drag whose release this strip never saw — the dialog was closed
         // under it, or the pointer left the window — must not leave a caret
-        // following the mouse the next time the page is opened.
-        if dragging.is_some() && !ui.input(|i| i.pointer.any_down()) {
+        // following the mouse the next time the page is opened. The release
+        // this strip *did* see arrives with the button already up, so it has
+        // to be told apart, or the drop below never runs.
+        if dragging.is_some() && drag_is_stale(dropped, ui.input(|i| i.pointer.any_down())) {
             dragging = None;
         }
         if let Some(id) = dragging {
@@ -4200,6 +4242,17 @@ mod roster_order_tests {
         assert_eq!(reordered(&ids, 3, Some(0)), vec![3, 0, 1, 2], "to the front");
         assert_eq!(reordered(&ids, 0, None), vec![1, 2, 3, 0], "to the end");
         assert_eq!(reordered(&ids, 0, Some(3)), vec![1, 2, 0, 3], "into the middle");
+    }
+
+    /// The drop frame has the button up too; only a release no chip saw is stale.
+    #[test]
+    fn the_release_that_drops_a_chip_does_not_cancel_the_drag() {
+        // Mid-drag: button down.
+        assert!(!drag_is_stale(false, true));
+        // The drop frame: button up, a chip reported drag_stopped.
+        assert!(!drag_is_stale(true, false));
+        // A release the strip never saw: button up, nothing dropped here.
+        assert!(drag_is_stale(false, false));
     }
 }
 

@@ -1012,6 +1012,7 @@ impl RxChain {
         if let Some(d) = self.demod.as_mut() {
             d.set_filter(rx.filter_lo, rx.filter_hi);
             d.set_stereo_enabled(stereo_allowed(rx));
+            d.set_fm_decrackle(rx.fm_decrackle, rx.fm_deemph, rx.fm_decrackle_dip);
         }
         let audio_rate =
             self.demod.as_ref().map(|d| d.audio_rate()).unwrap_or_else(|| self.ddc.out_rate());
@@ -1057,6 +1058,7 @@ impl RxChain {
         self.side_buf.clear();
         demod.process(&self.channel_buf, &mut self.audio_buf);
         demod.set_stereo_enabled(stereo_allowed(rx));
+        demod.set_fm_decrackle(rx.fm_decrackle, rx.fm_deemph, rx.fm_decrackle_dip);
         let stereo = demod.take_side(&mut self.side_buf);
         // The decoder's tap, taken *before* the AGC.
         //
@@ -1240,6 +1242,11 @@ impl RxChain {
         // Why: HDZ 2026-11-10: "mache noch Variante B (Reihung) gedreht".
         if rx.sk_filter_after_nr {
             run_sk(&mut self.sk, &mut self.audio_buf, rx, audio_rate as f32, stereo);
+            // Behind the AGC nothing restores what the filter took: the
+            // operator's boost does, softly limited under full scale.
+            if rx.sk_filter && !stereo {
+                sdroxide_dsp::sk_boost(&mut self.audio_buf, rx.sk_filter_boost_db);
+            }
         }
 
         // Squelch: gate on post-filter (pre-AGC) power, smoothed ~10 ms so
@@ -1428,8 +1435,22 @@ impl RxChain {
 /// scan on a wideband front end asks the FFT for everything busy in a whole
 /// span at once, and a range scan on a CAT rig walks the channel grid. After
 /// that they all visit candidates the same way.
+/// A panorama scan's picture so far: the range it covers and one spectrum
+/// across it, in dB, NaN where no slice has landed yet.
+struct Pano {
+    lo: f64,
+    hi: f64,
+    bins: Vec<f32>,
+    /// When the sweep under way began.
+    sweep_at: Instant,
+    /// Sweeps finished into this panorama: the first had no pause before it.
+    rows: u32,
+}
+
 struct Scan {
     phase: ScanPhase,
+    /// Downwards rather than upwards — ◀ rather than ▶.
+    back: bool,
     /// Still to visit before the queue has to be refilled.
     queue: std::collections::VecDeque<ScanTarget>,
     /// Hardware centres a range sweep works through, and which one is up.
@@ -2843,6 +2864,14 @@ struct Engine {
     /// is not driving that over and must not try to, so nothing here keys, and
     /// nothing here modulates. It only watches.
     rig_tx: bool,
+    /// ELAD only: mute the speakers for an over keyed at the radio itself
+    /// (`CatConfig::elad_mute_on_radio_ptt`, the MIC A chip right of REC when
+    /// off). Read live, so the chip needs no reopen.
+    elad_mute_rig_tx: bool,
+    /// ELAD only: keep reading the receiver through an over sdroxide keyed
+    /// (`EladConfig::hear_own_tx`, the DIG A chip under TX power). Taken at each
+    /// key-down rather than at open, so it too needs no reopen.
+    elad_hear_own_tx: bool,
     /// The transmit frequency the source has already been told, so
     /// [`Self::push_tx_freq`] only speaks when it moves.
     tx_freq_told: Option<f64>,
@@ -3233,6 +3262,14 @@ struct Engine {
     scan_cfg: sdroxide_types::ScannerConfig,
     /// The running scan, or `None` when it is stopped.
     scan: Option<Scan>,
+    /// The panorama a [`ScanKind::Panorama`] scan is stitching, while it runs.
+    pano: Option<Pano>,
+    /// Whether the full-band lane in hand was stitched by a panorama scan
+    /// rather than published by the front end — such a lane is for the strip
+    /// only, never for drawing the main panadapter from.
+    wide_from_pano: bool,
+    /// Seconds between the last two panorama rows — what paces their scale.
+    pano_row_s: f32,
     /// Scratch for the sweep's spectrum read, kept so a scan allocates nothing
     /// per slice.
     scan_db: Vec<f32>,
@@ -4578,6 +4615,8 @@ fn engine_thread(
         voice_blocks: 0,
         hw_ptt: false,
         rig_tx: false,
+        elad_mute_rig_tx: radio_cfg.cat.elad_mute_on_radio_ptt,
+        elad_hear_own_tx: radio_cfg.elad.hear_own_tx,
         tx_freq_told: None,
         drive_trim_db: 0.0,
         drive_trim: radio_cfg.tx_drive_trim.clone(),
@@ -4721,6 +4760,9 @@ fn engine_thread(
         iq_wav: None,
         scan_cfg,
         scan: None,
+        pano: None,
+        wide_from_pano: false,
+        pano_row_s: 0.1,
         scan_db: Vec::new(),
         audio_level: 0.0,
         wsjtx: None,
@@ -7482,7 +7524,14 @@ impl Engine {
             // slotted nor a keyboard modem — it runs a whole NET protocol on
             // its own thread — and nothing further down would notice it had
             // been handed an FT8 decoder.
-            Box::new(AtChatController::new(self.digi_config.clone(), tap_rate))
+            //
+            // Received files go under the config directory, never the working
+            // directory: an installed program runs in its install folder, which
+            // a user cannot write to, and the file would be dropped unsaved.
+            let received = sdroxide_config::config_dir()
+                .map(|d| d.join("atchat_received"))
+                .unwrap_or_else(|_| std::env::temp_dir().join("sdroxide-atchat-received"));
+            Box::new(AtChatController::new(self.digi_config.clone(), tap_rate, received))
         } else if mode.is_sstv() {
             // Both SSTV modes, one controller: HF and VHF differ in the radio
             // underneath, not in the picture — the same reason the two packet
@@ -8083,10 +8132,16 @@ impl Engine {
     /// `wide_spectrum_db` implementation returns before it touches `out`, so a
     /// poll that finds nothing keeps the sweep already held.
     fn poll_wide(&mut self) {
+        // A panorama scan owns the lane while it runs: the front end's own,
+        // where it has one, would overwrite each sweep's row.
+        if self.pano.is_some() {
+            return;
+        }
         let mut bins = std::mem::take(&mut self.wide_bins);
         let sweep = self.source.wide_spectrum_db(&mut bins).filter(|_| !bins.is_empty());
         self.wide_bins = bins;
         if let Some(window) = sweep {
+            self.wide_from_pano = false;
             self.wide_window = Some(window);
             self.wide_at = Instant::now();
             self.wide_fresh = true;
@@ -8182,7 +8237,18 @@ impl Engine {
         // A lane that has just become the drawing one answers its first row
         // from the running average — the current spectrum, which is exactly
         // what every build before the row clock drew — and holds from the next.
-        self.lanes().for_each(|a| a.set_read_hold(true));
+        // Peak or mean, as the client asked: set on every lane here, the one
+        // place all of them pass before a row, rather than wherever each is
+        // built.
+        let smooth = self.cfg.smooth;
+        let (reassign, floor_db) = (self.cfg.reassign, self.cfg.reassign_floor_db);
+        let dim_db = self.cfg.reassign_dim_db;
+        self.lanes().for_each(|a| {
+            a.set_smooth(smooth);
+            a.set_reassign(reassign, floor_db);
+            a.set_reassign_dim(dim_db);
+            a.set_read_hold(true);
+        });
         let frame = self.make_spectrum_frame();
         self.lanes().for_each(|a| {
             a.set_read_hold(false);
@@ -8353,7 +8419,17 @@ impl Engine {
         }
         self.wide_fresh = false;
         let (center_hz, span_hz) = self.wide_window?;
-        let (floor, ceil) = auto_levels(&self.wide_bins, self.wide_levels);
+        // A panorama row comes a whole sweep after the last: seconds apart for
+        // a wide range, a few tenths for one that fits in a single slice. The
+        // smoothing is paced by that time, not by the row, so the scale
+        // follows at the lane's speed in seconds — otherwise, at a few
+        // percent per row, a scale left high by an earlier range kept the
+        // panorama black for minutes.
+        let (floor, ceil) = if self.wide_from_pano {
+            auto_levels_paced(&self.wide_bins, self.wide_levels, self.pano_row_s / 0.1, true)
+        } else {
+            auto_levels(&self.wide_bins, self.wide_levels)
+        };
         self.wide_levels = Some((floor, ceil));
         self.wide_seq = self.wide_seq.wrapping_add(1);
         Some(pool_window_to_frame(
@@ -8409,7 +8485,7 @@ impl Engine {
     /// front end has published nothing wide lately, so a lane that stops
     /// arriving hands the picture back rather than freezing it.
     fn wide_main_window(&self) -> Option<(f64, f64)> {
-        if self.audio_mode || self.wide_at.elapsed() >= SCOPE_MAIN_STALE {
+        if self.audio_mode || self.wide_from_pano || self.wide_at.elapsed() >= SCOPE_MAIN_STALE {
             return None;
         }
         let (wide_center, wide_span) = self.wide_window?;
@@ -9095,10 +9171,30 @@ impl Engine {
                 self.state.rx[rx.index()].auto_notch = on;
                 self.remember_mode_setting(rx, |p| p.auto_notch = Some(on));
             }
-            SetHumFilter { rx, on } => self.state.rx[rx.index()].hum_filter = on,
-            SetSkFilter { rx, on, tau_s, open_s, close_s, width, after_nr } => {
+            SetFmDecrackle { rx, on, deemph, dip } => {
+                let (lo, hi) = sdroxide_types::FM_DECRACKLE_DIP_RANGE;
+                let dip = dip.clamp(lo, hi);
+                let r = &mut self.state.rx[rx.index()];
+                r.fm_decrackle = on;
+                r.fm_deemph = deemph;
+                r.fm_decrackle_dip = dip;
+                self.remember_mode_setting(rx, |p| {
+                    p.fm_decrackle = Some(on);
+                    p.fm_deemph = Some(deemph);
+                    p.fm_decrackle_dip = Some(dip);
+                });
+            }
+            SetHumFilter { rx, on } => {
+                self.state.rx[rx.index()].hum_filter = on;
+                self.remember_mode_setting(rx, |p| p.hum_filter = Some(on));
+            }
+            SetSkFilter { rx, on, tau_s, open_s, close_s, width, after_nr, boost_db } => {
                 let r = &mut self.state.rx[rx.index()];
                 r.sk_filter = on;
+                if boost_db.is_finite() {
+                    let (lo, hi) = sdroxide_types::SK_FILTER_BOOST_RANGE_DB;
+                    r.sk_filter_boost_db = boost_db.clamp(lo, hi);
+                }
                 r.sk_filter_width = width.min(sdroxide_types::SK_FILTER_MAX_WIDTH);
                 r.sk_filter_after_nr = after_nr;
                 use sdroxide_types::{SK_FILTER_CLOSE_RANGE_S as C, SK_FILTER_OPEN_RANGE_S as O};
@@ -9114,6 +9210,22 @@ impl Engine {
                         sdroxide_types::SK_FILTER_TAU_RANGE_S.1,
                     );
                 }
+                // Remembered per mode with the values as clamped, like the
+                // NR engine and FM-DECRACKLE: a restart, or a mode left and
+                // come back to, finds the SK filter as it was set.
+                let (tau, open, close) =
+                    (r.sk_filter_tau_s, r.sk_filter_open_s, r.sk_filter_close_s);
+                let (width, after_nr, boost) =
+                    (r.sk_filter_width, r.sk_filter_after_nr, r.sk_filter_boost_db);
+                self.remember_mode_setting(rx, |p| {
+                    p.sk_filter = Some(on);
+                    p.sk_filter_tau_s = Some(tau);
+                    p.sk_filter_open_s = Some(open);
+                    p.sk_filter_close_s = Some(close);
+                    p.sk_filter_width = Some(width);
+                    p.sk_filter_after_nr = Some(after_nr);
+                    p.sk_filter_boost_db = Some(boost);
+                });
             }
             SetWfmStereo { rx, on } => {
                 self.state.rx[rx.index()].wfm_stereo = on;
@@ -9173,8 +9285,16 @@ impl Engine {
                 // A different kind of scan, or the same kind gathering its
                 // candidates a different way, is a different scan: the plan in
                 // flight belongs to the old setting.
+                // So is a range scan or a panorama given a different range (or
+                // a panorama a different slice width): its slices, and a
+                // panorama's picture, belong to the old one.
+                let ranged = matches!(cfg.kind, ScanKind::Range | ScanKind::Panorama);
                 let restart = self.state.scan.running
-                    && (cfg.kind != self.scan_cfg.kind || cfg.mem_fast != self.scan_cfg.mem_fast);
+                    && (cfg.kind != self.scan_cfg.kind
+                        || cfg.mem_fast != self.scan_cfg.mem_fast
+                        || (ranged && cfg.range() != self.scan_cfg.range())
+                        || (cfg.kind == ScanKind::Panorama
+                            && cfg.pano_usable != self.scan_cfg.pano_usable));
                 // Retuning the range (or changing the grid under it) retires the
                 // channels skipped in the old one — they described *that* band.
                 cfg.forget_stale_skips();
@@ -9188,7 +9308,14 @@ impl Engine {
                 self.save_scanner_config();
             }
             SetScanning(on) => self.set_scanning(on),
-            ScanNext => self.scan_skip(false),
+            ScanNext => {
+                self.scan_set_direction(false);
+                self.scan_skip(false);
+            }
+            ScanBack => {
+                self.scan_set_direction(true);
+                self.scan_skip(false);
+            }
             ScanSkip => self.scan_skip(true),
             SetAudioDuck(gain) => {
                 if let Some(mixer) = self.mixer.as_mut() {
@@ -10960,6 +11087,15 @@ impl Engine {
                 // And the S-meter calibration, live for the same reason: it is
                 // set by watching the meter while dragging the control.
                 self.radio_cal_db = cfg.s_meter_cal_db;
+                // The ELAD's MIC A and DIG A chips, live: the mic-PTT mute applies to
+                // an over already under way, and hearing our own overs is
+                // taken at the next key-down.
+                self.elad_hear_own_tx = cfg.elad.hear_own_tx;
+                if self.elad_mute_rig_tx != cfg.cat.elad_mute_on_radio_ptt {
+                    self.elad_mute_rig_tx = cfg.cat.elad_mute_on_radio_ptt;
+                    let on = self.rig_tx;
+                    self.follow_rig_tx(on);
+                }
                 // Announced from the store rather than echoed from `cfg`, so
                 // what every client shows is what was actually written — a
                 // failed save leaves them on the configuration the radio is
@@ -15168,12 +15304,29 @@ impl Engine {
         )
     }
 
-    fn scan_threshold_db(&self) -> f32 {
-        if self.scan_cfg.follow_squelch {
-            self.state.rx[0].squelch_db
-        } else {
-            self.scan_cfg.threshold_db
+    /// The level a channel has to reach to count as busy, for a channel as
+    /// wide as the receiver's own filter.
+    fn scan_threshold_db(&mut self) -> f32 {
+        let rx = &self.state.rx[0];
+        let bw = (rx.filter_hi - rx.filter_lo).abs().max(1.0) as f64;
+        self.scan_threshold_for(bw)
+    }
+
+    /// The level a channel `bandwidth_hz` wide has to reach to count as busy:
+    /// the squelch, a fixed level, or — judging by S/N — the noise floor of the
+    /// spectrum in hand plus the margin asked for.
+    fn scan_threshold_for(&mut self, bandwidth_hz: f64) -> f32 {
+        let cfg = &self.scan_cfg;
+        if cfg.follow_squelch {
+            return self.state.rx[0].squelch_db;
         }
+        if !cfg.stop_snr {
+            return cfg.threshold_db;
+        }
+        let snr = cfg.snr_db;
+        self.analyzer.spectrum_db(&mut self.scan_db);
+        crate::scanner::channel_noise_floor_db(&self.scan_db, self.state.sample_rate, bandwidth_hz)
+            .map_or(self.scan_cfg.threshold_db, |floor| floor + snr)
     }
 
     fn scan_is_busy(&mut self) -> bool {
@@ -15209,6 +15362,16 @@ impl Engine {
         Duration::from_millis(self.scan_cfg.dwell_ms.max(40) as u64)
     }
 
+    /// The pause a panorama takes after each full sweep, an hour at most.
+    fn scan_pano_pause(&self) -> Duration {
+        let s = self.scan_cfg.pano_pause_s;
+        if s.is_finite() && s > 0.0 {
+            Duration::from_secs_f32(s.min(3600.0))
+        } else {
+            Duration::ZERO
+        }
+    }
+
     /// Start or stop scanning, saying why if it cannot start.
     fn set_scanning(&mut self, on: bool) {
         if !on {
@@ -15233,7 +15396,7 @@ impl Engine {
                 }
                 any
             }
-            ScanKind::Range => {
+            ScanKind::Range | ScanKind::Panorama => {
                 let ok = self.scan_cfg.range_is_usable();
                 if !ok {
                     self.notice("the scan range is empty — check the low and high frequencies");
@@ -15247,15 +15410,17 @@ impl Engine {
         let now = Instant::now();
         self.scan = Some(Scan {
             phase: ScanPhase::Probing(now),
+            back: false,
             queue: std::collections::VecDeque::new(),
             slices: Vec::new(),
             slice: usize::MAX, // rolls over to 0 on the first refill
             stepped: Vec::new(),
-            step_at: 0,
+            step_at: usize::MAX, // as `slice` above: the first step lands on 0
             mem_slices: Vec::new(),
             mem_slice: usize::MAX, // as `slice` above
         });
-        self.state.scan = sdroxide_types::ScanState { running: true, holding: false };
+        self.state.scan =
+            sdroxide_types::ScanState { running: true, holding: false, sweeps: 0, sweep_ms: 0 };
         // Pick the first target now rather than waiting a poll for it, so
         // nothing has to distinguish "just started" from "just finished a
         // dwell" later on.
@@ -15270,6 +15435,7 @@ impl Engine {
             return;
         }
         self.state.scan = sdroxide_types::ScanState::default();
+        self.pano = None;
         // A sweep drives the hardware centre itself, dial and all, so a scan
         // that stopped on a CW signal leaves a self-keying transceiver's VFO on
         // our zero-beat rather than on the station. Put it back before the
@@ -15375,17 +15541,22 @@ impl Engine {
         if self.scan_cfg.kind == ScanKind::Memories {
             return self.scan_read_mem_slice(now);
         }
+        if self.scan_cfg.kind == ScanKind::Panorama {
+            return self.scan_read_pano_slice(now);
+        }
         let (lo, hi) = self.scan_cfg.range();
         let (flo, fhi) = self.scan_cfg.mode.default_filter();
+        let bw = (fhi - flo).abs().max(1.0) as f64;
+        let threshold = self.scan_threshold_for(bw);
         let found = crate::scanner::busy_channels(
             &self.scan_db,
             self.state.center_hz,
             self.state.sample_rate,
             lo,
             hi,
-            (fhi - flo).abs().max(1.0) as f64,
+            bw,
             self.scan_cfg.step_hz.max(1.0),
-            self.scan_threshold_db(),
+            threshold,
         );
         // Dropped here rather than at the stop: a skipped channel then costs
         // nothing at all, instead of a dwell each time round to rediscover that
@@ -15395,6 +15566,90 @@ impl Engine {
             found.into_iter().filter(|&f| !cfg.skips_freq(f)).map(ScanTarget::Freq).collect();
         if let Some(sc) = self.scan.as_mut() {
             sc.queue.extend(keep);
+        }
+        self.scan_advance(now);
+    }
+
+    /// The front end has settled on a panorama slice: write what it sees into
+    /// the panorama, and hand the full-band strip a row once the last slice of
+    /// a sweep is in. Never stops anywhere — on to the next slice.
+    fn scan_read_pano_slice(&mut self, now: Instant) {
+        let (lo, hi) = self.scan_cfg.range();
+        let pano_pause = self.scan_pano_pause();
+        let span = self.state.sample_rate;
+        let center = self.state.center_hz;
+        let fresh = self.pano.as_ref().is_none_or(|p| p.lo != lo || p.hi != hi);
+        if fresh {
+            // A new panorama owes nothing to the scale of whatever the strip
+            // showed before it.
+            self.wide_levels = None;
+            let n = crate::scanner::panorama_bins(lo, hi, span, self.scan_db.len());
+            self.pano = Some(Pano { lo, hi, bins: vec![f32::NAN; n], sweep_at: now, rows: 0 });
+        }
+        let (uh, _) = crate::scanner::panorama_geometry(self.scan_cfg.pano_usable);
+        let last = self.scan.as_ref().is_some_and(|sc| sc.slice + 1 >= sc.slices.len());
+        // The slice before this one in the sweep, whose overlap levels this one.
+        let prev = self.scan.as_ref().and_then(|sc| {
+            let i = sc.slice.checked_sub(1)?;
+            sc.slices.get(i).copied()
+        });
+        if last {
+            self.emit_state();
+        }
+        if let Some(p) = self.pano.as_mut() {
+            // A gain step of a decibel or more between neighbours is the front
+            // end's, not the band's: match this slice to the one before it.
+            // Smaller differences are left alone, so a front end on a fixed
+            // gain does not wander from slice to slice.
+            let offset = prev
+                .and_then(|pc| {
+                    let win = (center - span * uh, pc + span * uh);
+                    crate::scanner::level_offset_db(
+                        &p.bins,
+                        lo,
+                        hi,
+                        &self.scan_db,
+                        center,
+                        span,
+                        uh,
+                        win,
+                    )
+                })
+                .filter(|o| o.abs() >= 1.0)
+                .unwrap_or(0.0);
+            crate::scanner::stitch_slice(
+                &mut p.bins,
+                lo,
+                hi,
+                &self.scan_db,
+                center,
+                span,
+                uh,
+                offset,
+            );
+            if last {
+                let mut row = p.bins.clone();
+                crate::scanner::fill_panorama_gaps(&mut row);
+                // Row to row, the pause included: what paces the strip's scale.
+                let took = now.duration_since(p.sweep_at);
+                p.sweep_at = now;
+                self.state.scan.sweeps = self.state.scan.sweeps.saturating_add(1);
+                // The sweep itself, as shown: the pause is a setting, not
+                // sweeping. The first sweep had none to take off.
+                let pause = if p.rows > 0 { pano_pause } else { Duration::ZERO };
+                p.rows = p.rows.saturating_add(1);
+                let swept = took.saturating_sub(pause);
+                self.state.scan.sweep_ms = swept.as_millis().min(u32::MAX as u128) as u32;
+                if row.iter().all(|v| v.is_finite()) {
+                    self.pano_row_s = took.as_secs_f32();
+                    self.wide_bins = row;
+                    self.wide_window = Some(((lo + hi) / 2.0, hi - lo));
+                    self.wide_at = now;
+                    self.wide_fresh = true;
+                    self.wide_from_pano = true;
+                    self.wide_sweeps = self.wide_sweeps.wrapping_add(1);
+                }
+            }
         }
         self.scan_advance(now);
     }
@@ -15440,7 +15695,11 @@ impl Engine {
         // that refill produced nothing to visit. Anything further waits for the
         // next poll, so no arrangement of settings can spin the DSP thread.
         for _ in 0..2 {
-            if let Some(target) = self.scan.as_mut().and_then(|s| s.queue.pop_front()) {
+            let next = self
+                .scan
+                .as_mut()
+                .and_then(|s| if s.back { s.queue.pop_back() } else { s.queue.pop_front() });
+            if let Some(target) = next {
                 self.scan_goto(target, now);
                 return;
             }
@@ -15476,6 +15735,13 @@ impl Engine {
             }
             ScanKind::Range if self.scan_can_sweep() => self.scan_next_slice(now),
             ScanKind::Range => self.scan_next_stepped(),
+            ScanKind::Panorama if self.scan_can_sweep() => self.scan_next_slice(now),
+            ScanKind::Panorama => {
+                self.stop_scan(Some(
+                    "a panorama needs a front end that sees a span — this one sends audio",
+                ));
+                Refill::Stopped
+            }
         }
     }
 
@@ -15483,22 +15749,33 @@ impl Engine {
     /// once it has settled, which is a poll or two later.
     fn scan_next_slice(&mut self, now: Instant) -> Refill {
         let (lo, hi) = self.scan_cfg.range();
+        let pano = self.scan_cfg.kind == ScanKind::Panorama;
+        let pano_usable = self.scan_cfg.pano_usable;
+        let pano_pause = self.scan_pano_pause();
         let span = self.state.sample_rate;
         let settle = self.scan_settle();
         let Some(sc) = self.scan.as_mut() else { return Refill::Stopped };
         if sc.slices.is_empty() {
-            sc.slices = crate::scanner::slice_centers(lo, hi, span);
+            sc.slices = if pano {
+                let (uh, stride) = crate::scanner::panorama_geometry(pano_usable);
+                crate::scanner::slice_centers_with(lo, hi, span, uh, stride)
+            } else {
+                crate::scanner::slice_centers(lo, hi, span)
+            };
             if sc.slices.is_empty() {
                 self.stop_scan(Some("scan stopped: the range is not a usable one"));
                 return Refill::Stopped;
             }
         }
-        sc.slice = sc.slice.wrapping_add(1);
-        if sc.slice >= sc.slices.len() {
-            sc.slice = 0; // round again: a scanner runs until it is stopped
-        }
+        // Round again at either end: a scanner runs until it is stopped.
+        let before = sc.slice;
+        sc.slice = crate::scanner::step_index(sc.slice, sc.slices.len(), sc.back);
         let center = sc.slices[sc.slice];
-        sc.phase = ScanPhase::Settling(now + settle);
+        // A panorama that has just finished a sweep waits out its pause on the
+        // first slice of the next one; the very first sweep starts at once.
+        let pause =
+            if pano && before != usize::MAX && sc.slice == 0 { pano_pause } else { Duration::ZERO };
+        sc.phase = ScanPhase::Settling(now + settle + pause);
 
         // Park the dial on the slice as well, so the operator sees where the
         // scan is looking rather than a dial left behind on the last candidate.
@@ -15620,14 +15897,23 @@ impl Engine {
             .collect();
         let freqs: Vec<f64> = here.iter().map(|(_, hz, _)| *hz).collect();
         let widths: Vec<f64> = here.iter().map(|(_, _, bw)| *bw).collect();
-        let busy = crate::scanner::busy_memories(
-            &self.scan_db,
-            self.state.center_hz,
-            self.state.sample_rate,
-            &freqs,
-            &widths,
-            self.scan_threshold_db(),
-        );
+        // Each channel against a threshold for its own width: by S/N a wide
+        // channel reads more of the floor than a narrow one, so one threshold
+        // for the window would call the wide ones busy on noise alone.
+        let thresholds: Vec<f32> = widths.iter().map(|&bw| self.scan_threshold_for(bw)).collect();
+        let busy: Vec<usize> = (0..freqs.len())
+            .filter(|&i| {
+                !crate::scanner::busy_memories(
+                    &self.scan_db,
+                    self.state.center_hz,
+                    self.state.sample_rate,
+                    &freqs[i..=i],
+                    &widths[i..=i],
+                    thresholds[i],
+                )
+                .is_empty()
+            })
+            .collect();
         if let Some(sc) = self.scan.as_mut() {
             sc.queue.extend(busy.into_iter().map(|i| ScanTarget::Memory(here[i].0)));
         }
@@ -15659,11 +15945,8 @@ impl Engine {
             // range skipped there is nothing left to visit, and hunting for
             // ever would spin the DSP thread instead of saying so.
             for _ in 0..sc.stepped.len() {
-                if sc.step_at >= sc.stepped.len() {
-                    sc.step_at = 0;
-                }
+                sc.step_at = crate::scanner::step_index(sc.step_at, sc.stepped.len(), sc.back);
                 let f = sc.stepped[sc.step_at];
-                sc.step_at += 1;
                 if !cfg.skips_freq(f) {
                     picked = Some(f);
                     break;
@@ -15736,6 +16019,50 @@ impl Engine {
 
     /// Leave the channel the scan is holding on, optionally never to stop there
     /// again.
+    /// Turn a running scan ▶ or ◀. On a turn, the candidates still queued lie
+    /// in the old direction, so the queue keeps only those on the new side of
+    /// the dial — for a memory scan, the scannable channels before or after the
+    /// one it sits on — and the next one dealt is the nearest that way. A
+    /// panorama only sweeps upwards.
+    fn scan_set_direction(&mut self, back: bool) {
+        if self.scan_cfg.kind == ScanKind::Panorama {
+            return;
+        }
+        let here = self.state.active_freq_hz();
+        // A fast memory scan deals from its window plan, and keeps it.
+        let fast_mem = self.scan_cfg.mem_fast && self.scan_can_sweep();
+        let plain_mem = self.scan_cfg.kind == ScanKind::Memories && !fast_mem;
+        let mem_order: Vec<(u32, f64)> = if plain_mem {
+            self.scannable_memories().map(|m| (m.id, m.freq_hz)).collect()
+        } else {
+            Vec::new()
+        };
+        let Some(sc) = self.scan.as_mut() else { return };
+        if sc.back == back {
+            return;
+        }
+        sc.back = back;
+        if plain_mem {
+            let at = mem_order.iter().position(|&(_, hz)| (hz - here).abs() < 1.0);
+            sc.queue.clear();
+            if let Some(at) = at {
+                let side = if back { &mem_order[..at] } else { &mem_order[at + 1..] };
+                sc.queue.extend(side.iter().map(|&(id, _)| ScanTarget::Memory(id)));
+            }
+        } else {
+            sc.queue.retain(|t| match *t {
+                ScanTarget::Freq(hz) => {
+                    if back {
+                        hz < here
+                    } else {
+                        hz > here
+                    }
+                }
+                ScanTarget::Memory(_) => true,
+            });
+        }
+    }
+
     fn scan_skip(&mut self, forever: bool) {
         if !self.state.scan.running {
             return;
@@ -15764,6 +16091,8 @@ impl Engine {
                     self.save_scanner_config();
                 }
             }
+            // A panorama never stops, so there is nothing to skip.
+            (true, ScanKind::Panorama) => {}
         }
         self.scan_advance(Instant::now());
     }
@@ -17740,9 +18069,12 @@ impl Engine {
         if !self.source.mutes_rx_audio_on_rig_tx() {
             return;
         }
+        // An ELAD owner can choose to hear their own microphone over
+        // (the MIC A chip): the over is still known, just not muted.
+        let mute = on && (self.caps.driver != "elad" || self.elad_mute_rig_tx);
         if let Some(mixer) = self.mixer.as_mut() {
-            mixer.tx_muted = on;
-            mixer.rx_rec_enabled = !on;
+            mixer.tx_muted = mute;
+            mixer.rx_rec_enabled = !mute;
         }
     }
 
@@ -18034,6 +18366,12 @@ impl Engine {
                     // to throw away is an over and not an overrun. Full duplex
                     // is left alone: it is still being read, so anything it
                     // drops there it really did drop.
+                    // An ELAD streams through every over; whether it is read
+                    // through this one is the operator's DIG A chip
+                    // choice (the DIG A chip), taken here so it needs no reopen.
+                    if self.caps.driver == "elad" && self.caps.tx_channels > 0 {
+                        self.caps.full_duplex = self.elad_hear_own_tx;
+                    }
                     if !self.caps.full_duplex {
                         self.source.set_rx_paused(true);
                     }
@@ -21686,7 +22024,30 @@ mod wide_frame_tests {
 ///
 /// Both ends are then smoothed towards their new values: jumping straight there
 /// makes the display flicker every time a signal keys up.
+/// How far above the median a panorama's ceiling sits at the least.
+const PANO_HEADROOM_DB: f32 = 30.0;
+
 fn auto_levels(db: &[f32], prev: Option<(f32, f32)>) -> (f32, f32) {
+    auto_levels_paced(db, prev, 1.0, false)
+}
+
+/// [`auto_levels`] for rows that come `rows` lane-rows apart (a lane-row is a
+/// tenth of a second, the full-band lane's pace): the smoothing compounds
+/// over that many rows, so the scale follows the band at the same speed in
+/// seconds whatever the row rate. A panorama sweep seconds long then adapts
+/// almost fully in one row; one that fits in a single slice, rows a few
+/// tenths apart, is smoothed much as the lane is.
+///
+/// `keep_floor`: where the window has to be widened to its minimum, widen it
+/// upwards from the floor rather than about its middle, so a band of nothing
+/// but noise stays dark instead of filling the middle of the palette — what a
+/// panorama of a quiet band wants.
+fn auto_levels_paced(
+    db: &[f32],
+    prev: Option<(f32, f32)>,
+    rows: f32,
+    keep_floor: bool,
+) -> (f32, f32) {
     const FALLBACK: (f32, f32) = (-120.0, -20.0);
     /// Widest window worth showing; beyond this the interesting part of the
     /// band gets too few levels to distinguish.
@@ -21707,13 +22068,24 @@ fn auto_levels(db: &[f32], prev: Option<(f32, f32)>) -> (f32, f32) {
     // rather than as flat black.
     let mut floor = v[((v.len() - 1) as f64 * 0.10).round() as usize] - 4.0;
     let mut ceil = v[v.len() - 1] + 6.0;
+    if keep_floor {
+        // Headroom over the noise, whatever the loudest bin: in a band of
+        // noise alone the loudest bin is a noise peak a dozen dB up, and a
+        // ceiling just over it puts the noise itself mid-palette.
+        let median = v[(v.len() - 1) / 2];
+        ceil = ceil.max(median + PANO_HEADROOM_DB);
+    }
 
     // Never let the window collapse: a degenerate range maps everything to one
     // colour and looks like a dead receiver.
     if ceil - floor < 24.0 {
-        let mid = 0.5 * (ceil + floor);
-        floor = mid - 12.0;
-        ceil = mid + 12.0;
+        if keep_floor {
+            ceil = floor + 24.0;
+        } else {
+            let mid = 0.5 * (ceil + floor);
+            floor = mid - 12.0;
+            ceil = mid + 12.0;
+        }
     }
     if ceil - floor > MAX_RANGE {
         floor = ceil - MAX_RANGE;
@@ -21724,8 +22096,10 @@ fn auto_levels(db: &[f32], prev: Option<(f32, f32)>) -> (f32, f32) {
         Some((pf, pc)) => {
             // Rise quickly so a band opening is not clipped, fall slowly so the
             // scale does not pump between frames.
+            let rows = rows.max(1.0);
             let smooth = |old: f32, new: f32| {
-                let a = if new > old { 0.35 } else { 0.08 };
+                let a: f32 = if new > old { 0.35 } else { 0.08 };
+                let a = 1.0 - (1.0 - a).powf(rows);
                 old + (new - old) * a
             };
             (smooth(pf, floor), smooth(pc, ceil))
@@ -21813,6 +22187,36 @@ mod auto_level_tests {
         let prev = (-115.0, -25.0);
         assert_eq!(auto_levels(&[], Some(prev)), prev);
         assert_eq!(auto_levels(&[f32::NAN, f32::NAN], Some(prev)), prev);
+    }
+
+    #[test]
+    fn a_quiet_panorama_keeps_its_floor_dark() {
+        // Noise and nothing else, with the odd noise peak 15 dB up: the noise
+        // has to sit in the bottom of the palette, not in its middle.
+        let db: Vec<f32> = (0..1024)
+            .map(|i| -80.0 + (i % 7) as f32 + if i % 97 == 0 { 15.0 } else { 0.0 })
+            .collect();
+        let (floor, ceil) = auto_levels_paced(&db, None, 1.0, true);
+        let median = -77.0;
+        let place = (median - floor) / (ceil - floor);
+        assert!(place < 0.25, "noise at {place:.2} of the palette ({floor}..{ceil})");
+        assert!((floor - (-80.0 - 4.0)).abs() < 1.5, "the floor is just under the noise: {floor}");
+        let (mf, mc) = auto_levels_paced(&db, None, 1.0, false);
+        assert!((median - mf) / (mc - mf) > place, "the lane's own scale is left as it was");
+    }
+
+    #[test]
+    fn paced_levels_follow_in_seconds_not_rows() {
+        // A scale stuck 40 dB high: one panorama row five seconds after the
+        // last comes nearly all the way down; one a tenth later only a step.
+        let db: Vec<f32> = (0..1024).map(|i| if i == 500 { -60.0 } else { -110.0 }).collect();
+        let fresh = auto_levels(&db, None);
+        let stuck = (fresh.0 + 40.0, fresh.1 + 40.0);
+        let slow = auto_levels_paced(&db, Some(stuck), 50.0, false);
+        let fast = auto_levels_paced(&db, Some(stuck), 1.0, false);
+        assert!((slow.1 - fresh.1).abs() < 1.0, "a sweep's worth of time: {slow:?} vs {fresh:?}");
+        assert!(fast.1 - fresh.1 > 30.0, "a tenth of a second: {fast:?}");
+        assert_eq!(auto_levels(&db, Some(stuck)), fast, "unpaced is one lane-row");
     }
 }
 

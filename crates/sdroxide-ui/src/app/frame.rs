@@ -26,6 +26,20 @@ const IDLE_POLL_MS: u64 = 250;
 /// The stream counts as stalled after this long without a new frame (seconds).
 pub(in crate::app) const STREAM_STALE_S: f64 = 1.0;
 
+/// One radio tab's copy of the waterfall interpolation against the value the
+/// tabs share (`theme::waterfall_smooth`). `applied` is what this tab last
+/// agreed on: a copy that left it was changed in this tab (UI tab or FFT
+/// popup) and is handed on; otherwise the copy takes the shared value, which
+/// another tab may have changed.
+fn sync_waterfall_smooth(local: &mut bool, applied: &mut bool) {
+    if *local != *applied {
+        crate::theme::set_waterfall_smooth(*local);
+    } else {
+        *local = crate::theme::waterfall_smooth();
+    }
+    *applied = *local;
+}
+
 /// The wall clock, top-right of the panadapter: UTC and the operator's own
 /// local time, so a listener always has both in view. Draw-only over the
 /// picture — it never reflows the strip — and the local half is dropped when
@@ -97,10 +111,24 @@ fn digi_split(total: f32, divider_h: f32, fraction: f32, row_h: f32) -> (f32, f3
     // window, where 296 points is where the transcript stops being squeezed
     // into less than its own scroll area will accept. Capped at 60% of the
     // area so a floor can never leave the waterfall a sliver.
-    let min_panel = (170.0 + 4.0 * row_h.max(18.0)).min(usable * 0.6);
+    let min_panel = panel_floor(row_h).min(usable * 0.6);
     let min_wf = 80.0_f32.min(usable * 0.5);
     let panel_h = (usable * fraction).clamp(min_panel, (usable - min_wf).max(min_panel));
     (usable - panel_h, panel_h)
+}
+
+/// The least height an operating panel is laid out for: 170 points of fixed
+/// furniture plus four rows (see [`digi_split`], issue #231).
+fn panel_floor(row_h: f32) -> f32 {
+    170.0 + 4.0 * row_h.max(18.0)
+}
+
+/// The height the curtain lays its panel out for: the part that shows, so the
+/// rows pinned to the panel's bottom (Call CQ, Stop TX) stay on screen, but
+/// never less than [`panel_floor`]. Only a curtain pulled below that floor
+/// slides the bottom past the edge (#848).
+fn curtain_layout_h(usable: f32, shown: f32, row_h: f32) -> f32 {
+    shown.max(panel_floor(row_h)).min(usable.max(0.0))
 }
 
 /// How long the operating panel takes to rise over the panadapter on entering
@@ -296,6 +324,11 @@ impl eframe::App for SdroxideApp {
         // …and whether the maps carry cities, which the four of them read
         // through one shared painter.
         crate::theme::set_map_cities(self.ui_settings.map_cities);
+        // The waterfall's interpolation has a switch in the UI tab and one in
+        // the FFT popup, and every radio tab its own copy: a change here goes
+        // to the other tabs, a change there comes in.
+        // Why: HDZ 2026-11-07: "den Schalter doppeln und synchen".
+        sync_waterfall_smooth(&mut self.ui_settings.waterfall_smooth, &mut self.applied_smooth);
         // The interface scale is egui's zoom factor, which egui also lets the
         // operator drive with ctrl+plus / ctrl+minus, so it is written only
         // when the setting itself moves — see `theme::apply_zoom`. It reads
@@ -847,16 +880,17 @@ impl eframe::App for SdroxideApp {
                 hresp.on_hover_text(tr!("frame-curtain-handle-tip"));
             }
             if show_panel && split {
-                // The curtain: the panel laid out for the whole height, the
-                // part that shows given to it, the rest below the edge clipped
+                // The curtain: the panel laid out for the part that shows
+                // (never less than its floor), anything below the edge clipped
                 // — and clipped at the sides too, so a row wider than the
                 // window ends at the frame rather than fraying past it.
+                let layout_h = curtain_layout_h(usable, panel_h, ui.spacing().interact_size.y);
                 let (shown, _) =
                     ui.allocate_exact_size(egui::vec2(width, panel_h), egui::Sense::hover());
-                let whole = egui::Rect::from_min_size(shown.min, egui::vec2(width, usable));
+                let whole = egui::Rect::from_min_size(shown.min, egui::vec2(width, layout_h));
                 let mut panel_ui = ui.new_child(egui::UiBuilder::new().max_rect(whole));
                 panel_ui.set_clip_rect(shown.intersect(ui.clip_rect()));
-                self.draw_operating_panel(&mut panel_ui, &mut cmds, mode, usable);
+                self.draw_operating_panel(&mut panel_ui, &mut cmds, mode, layout_h);
             } else if show_panel {
                 ui.allocate_ui(egui::vec2(width, panel_h), |ui| {
                     clip_to_given_rect(ui);
@@ -891,12 +925,14 @@ impl eframe::App for SdroxideApp {
                 && !self.panadapter_window_wanted()
                 && let Some(wide) = self.wide_frame.clone()
             {
+                let lines = self.wide_guide_lines();
                 crate::widgets::wide_spectrum::show(
                     ui,
                     &mut self.wide_wf,
                     &wide,
                     &self.state,
                     self.ui_settings.waterfall_palette,
+                    lines,
                     &mut cmds,
                 );
                 ui.add_space(2.0);
@@ -992,6 +1028,8 @@ impl eframe::App for SdroxideApp {
         // were already issued inside the widget).
         if let Some(spot) = clicked_spot {
             self.prefill_from_spot(&spot);
+            // The SPOTS window's map marks it too: where it is sent from.
+            self.pick_spot_on_map(&spot);
         }
 
         // **The operating pane, floating in this window**, drawn beside the tool
@@ -1017,6 +1055,7 @@ impl eframe::App for SdroxideApp {
         self.text_macro_window(&ctx, &mut cmds);
         self.ais_setup_window(&ctx, &mut cmds);
         self.vdl2_setup_window(&ctx, &mut cmds);
+        self.snr_guide_publish(&ctx);
         self.rds_window(&ctx);
         self.drm_window(&ctx, &mut cmds);
         self.hd_window(&ctx, &mut cmds);
@@ -1026,6 +1065,8 @@ impl eframe::App for SdroxideApp {
         self.digi_settings_window(&ctx, &mut cmds);
         self.logbook_window(&ctx, &mut cmds);
         self.palette_window(&ctx, now, &mut cmds);
+        self.check_window(&ctx, now, &mut cmds);
+        self.welcome_window(&ctx, now, &mut cmds);
         self.mail_window(&ctx, &mut cmds);
         self.mail_log_window(&ctx);
         self.spots_window(&ctx, &mut cmds);
@@ -1621,7 +1662,11 @@ impl SdroxideApp {
                     // this the strip from the previous backend stays on screen
                     // for good, showing a band nothing is receiving any more.
                     self.wide_frame = None;
+                    self.wide_grid = None;
+                    self.wide_guide = None;
                     self.wide_wf.clear();
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.rec_tab.source_changed();
                     // This also fires on a reconnect, and pictures may have
                     // come in while the link was down. Read the stores again
                     // rather than leaving a gallery that stops at the moment
@@ -1680,6 +1725,8 @@ impl SdroxideApp {
                     }
                 }
                 RadioEvent::Spectrum(mut f) => {
+                    // The S/N guide takes every frame, also one superseded below.
+                    self.snr_guide_note_frame(&f);
                     // This runs once per repaint and only the frame it leaves
                     // here is drawn, so anything it replaces mid-pass is a
                     // picture nobody sees. Its *rows* are another matter: the
@@ -1705,7 +1752,14 @@ impl SdroxideApp {
                 // the "waiting for spectrum" notice, and a full-band frame is
                 // not evidence that the tuned receiver is producing samples.
                 RadioEvent::WideSpectrum(f) => {
-                    self.wide_frame = Some(std::sync::Arc::new(f));
+                    // Recorded whatever the strip is showing: a loaded
+                    // recording holds the strip, not the recorder.
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.rec_tab.on_wide_frame(&f);
+                    if !self.rec_viewing() {
+                        self.wide_guide_note_frame(&f);
+                        self.wide_frame = Some(std::sync::Arc::new(f));
+                    }
                 }
                 RadioEvent::Meters(m) => {
                     if self.focused {
@@ -2175,6 +2229,10 @@ impl SdroxideApp {
                 RadioEvent::RadioConfig(_) => {}
             }
         }
+        // A recorder row whose interval is over goes out now, not with the
+        // next sweep — a slow PANO sweep can be tens of seconds away.
+        #[cfg(not(target_arch = "wasm32"))]
+        self.rec_tab.tick();
         // A switched-off skimmer stops emitting, so its last boxes would sit on
         // the waterfall until something else replaced them; drop them per kind.
         if !self.skimmer_spots.is_empty() {
@@ -2458,7 +2516,32 @@ impl SdroxideApp {
 mod tests {
     use sdroxide_types::{Band, Mode};
 
-    use super::{BODY_MARGIN, digi_split, qsy_clears_decodes};
+    use super::{BODY_MARGIN, digi_split, qsy_clears_decodes, sync_waterfall_smooth};
+
+    /// Two radio tabs, one setting: a switch flipped in one tab (FFT popup or
+    /// UI tab) reaches the other on its next frame, and the other's stale copy
+    /// never writes the old value back. The only test touching the shared
+    /// value, so no other test can race it.
+    #[test]
+    fn interpolation_switched_in_one_tab_reaches_the_other() {
+        crate::theme::set_waterfall_smooth(true);
+        let (mut a, mut a_seen) = (true, true);
+        let (mut b, mut b_seen) = (true, true);
+        a = !a; // the chip in tab A
+        sync_waterfall_smooth(&mut a, &mut a_seen);
+        sync_waterfall_smooth(&mut b, &mut b_seen);
+        assert!(!crate::theme::waterfall_smooth());
+        assert!(!a && !b, "tab B follows tab A");
+        // Nothing changed since: further frames in either order keep it off.
+        sync_waterfall_smooth(&mut b, &mut b_seen);
+        sync_waterfall_smooth(&mut a, &mut a_seen);
+        assert!(!a && !b && !crate::theme::waterfall_smooth());
+        // And back, from the other tab (the UI tab's checkbox in tab B).
+        b = true;
+        sync_waterfall_smooth(&mut b, &mut b_seen);
+        sync_waterfall_smooth(&mut a, &mut a_seen);
+        assert!(a && b && crate::theme::waterfall_smooth());
+    }
 
     /// The reported bug: 20 m to 40 m left the previous band's decodes in the
     /// list, because the only thing that cleared it was a mode change and the
@@ -2539,6 +2622,16 @@ mod tests {
                 assert_eq!((wf, shown), (0.0, usable), "all the way up covers the waterfall");
             }
         }
+    }
+
+    /// #848: a curtain partly down lays its panel out for what shows, so the
+    /// transmit row at its bottom stays on screen; below the floor it slides.
+    #[test]
+    fn a_partly_lowered_curtain_fits_its_panel_into_what_shows() {
+        let floor = super::panel_floor(18.0);
+        assert_eq!(super::curtain_layout_h(800.0, 600.0, 18.0), 600.0);
+        assert_eq!(super::curtain_layout_h(800.0, 100.0, 18.0), floor);
+        assert_eq!(super::curtain_layout_h(200.0, 100.0, 18.0), 200.0);
     }
 
     #[test]

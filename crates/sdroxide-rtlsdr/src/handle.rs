@@ -23,6 +23,9 @@ const STATS_INTERVAL: Duration = Duration::from_secs(2);
 pub(crate) enum Ctrl {
     Center(f64),
     Gain(f64),
+    /// One tuner stage on its own (USB only: `rtl_tcp` has no such opcode
+    /// for the R82xx), as dB for LNA and mixer, steps for the VGA.
+    Stage(sdroxide_r82xx::Stage, f64),
     Agc(RtlSdrAgc),
     HfMode(RtlSdrHfMode),
     Ppm(i32),
@@ -46,6 +49,8 @@ pub(crate) enum Ctrl {
 pub(crate) struct Pending {
     pub center: Option<f64>,
     pub gain: Option<f64>,
+    /// Tuner stages set on their own, last value wins per stage.
+    pub stages: Vec<(sdroxide_r82xx::Stage, f64)>,
     /// `rsp_tcp` controls, last value wins per opcode. A `Vec` rather than a
     /// field apiece: they are pass-through writes, and a dial drag never
     /// touches them.
@@ -62,6 +67,10 @@ impl Pending {
         match c {
             Ctrl::Center(v) => self.center = Some(v),
             Ctrl::Gain(v) => self.gain = Some(v),
+            Ctrl::Stage(st, v) => match self.stages.iter_mut().find(|(s, _)| *s == st) {
+                Some(slot) => slot.1 = v,
+                None => self.stages.push((st, v)),
+            },
             Ctrl::Agc(v) => self.agc = Some(v),
             Ctrl::HfMode(v) => self.hf_mode = Some(v),
             Ctrl::Ppm(v) => self.ppm = Some(v),
@@ -455,6 +464,11 @@ impl RtlSdrHandle {
 
     pub fn set_gain_db(&self, db: f64) {
         self.send(Ctrl::Gain(db));
+    }
+
+    /// Set one tuner stage on its own — see [`sdroxide_r82xx::Stage`].
+    pub fn set_stage(&self, stage: sdroxide_r82xx::Stage, value: f64) {
+        self.send(Ctrl::Stage(stage, value));
     }
 
     pub fn set_agc(&self, agc: RtlSdrAgc) {

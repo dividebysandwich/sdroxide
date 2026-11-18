@@ -47,7 +47,12 @@ fn main() {
     // from a copy of the tree in place keeps every path in the generated
     // makefiles relative, because the source directory then *is* the binary
     // directory. sdroxide-rade carries the same workaround, for the same reason.
-    let rtl433 = if cfg!(windows) {
+    //
+    // This also copies the tree to prevent inadvertant rebuilds, as the CMake
+    // project generates a header file as part of the build process. If the tree
+    // is not copied, this means that every build sees this directory as stale,
+    // triggering a rebuild.
+    let rtl433 = {
         let in_tree = cmake_out.join("build");
         // The crate wipes a build directory whose cache names a source
         // directory other than the one it is handed — which here is the copy
@@ -59,8 +64,6 @@ fn main() {
         }
         copy_tree(&vendor, &in_tree);
         in_tree
-    } else {
-        vendor.clone()
     };
 
     let dst = cmake::Config::new(&rtl433)
@@ -106,6 +109,11 @@ fn main() {
 
     let includes = [rtl433.join("include"), build.join("include")];
 
+    println!("cargo:rerun-if-changed=src/rtl433/shim.c");
+    println!("cargo:rerun-if-changed=src/rtl433/shim.h");
+    println!("cargo:rerun-if-changed={}", vendor.join("src").display());
+    println!("cargo:rerun-if-changed={}", vendor.join("include").display());
+
     let mut shim = cc::Build::new();
     shim.file(manifest.join("src/rtl433/shim.c")).opt_level(2).std("c99");
     for inc in &includes {
@@ -125,11 +133,6 @@ fn main() {
         .expect("bindgen over shim.h");
 
     bindings.write_to_file(out.join("bindings.rs")).expect("write bindings.rs");
-
-    println!("cargo:rerun-if-changed=src/rtl433/shim.c");
-    println!("cargo:rerun-if-changed=src/rtl433/shim.h");
-    println!("cargo:rerun-if-changed={}", vendor.join("src").display());
-    println!("cargo:rerun-if-changed={}", vendor.join("include").display());
 }
 
 /// Whether `build` holds a CMake cache from a build of some *other* source

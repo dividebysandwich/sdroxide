@@ -143,6 +143,10 @@ fn engine(declare: bool) -> EngineHandles {
             db_floor: -140.0,
             db_ceil: 0.0,
             viewport: None,
+            smooth: false,
+            reassign: false,
+            reassign_floor_db: 6.0,
+            reassign_dim_db: 0.0,
             fps: 60,
             avg_tc: 0.0,
         }))

@@ -1877,6 +1877,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af9673d8203fcb076b19dfd17e38b3d4ae9f44959416ea532ce72415a6020365"
 
 [[package]]
+name = "fallible-iterator"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
+
+[[package]]
+name = "fallible-streaming-iterator"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2008,6 +2020,12 @@ dependencies = [
  "memchr",
  "thiserror 2.0.20",
 ]
+
+[[package]]
+name = "foldhash"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "foldhash"
@@ -2215,7 +2233,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed4a1bb24121291d27230c1b1b44e07d6a9b28cefdb32fe1581dfb84e14f940a"
 dependencies = [
  "bytemuck",
- "foldhash",
+ "foldhash 0.2.0",
  "hashbrown 0.17.1",
  "log",
  "peniko",
@@ -2381,13 +2399,22 @@ checksum = "43a3c133739dddd0d2990f9a4bdf8eb4b21ef50e4851ca85ab661199821d510e"
 
 [[package]]
 name = "hashbrown"
+version = "0.15.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
+dependencies = [
+ "foldhash 0.1.5",
+]
+
+[[package]]
+name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 dependencies = [
  "allocator-api2",
  "equivalent",
- "foldhash",
+ "foldhash 0.2.0",
 ]
 
 [[package]]
@@ -2396,7 +2423,16 @@ version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
- "foldhash",
+ "foldhash 0.2.0",
+]
+
+[[package]]
+name = "hashlink"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7382cf6263419f2d8df38c55d7da83da5c18aef87fc7a7fc1fb1e344edfe14c1"
+dependencies = [
+ "hashbrown 0.15.5",
 ]
 
 [[package]]
@@ -3080,6 +3116,17 @@ dependencies = [
  "libc",
  "plain",
  "redox_syscall 0.9.3",
+]
+
+[[package]]
+name = "libsqlite3-sys"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "133c182a6a2c87864fe97778797e46c7e999672690dc9fa3ee8e241aa4a9c13f"
+dependencies = [
+ "cc",
+ "pkg-config",
+ "vcpkg",
 ]
 
 [[package]]
@@ -4972,6 +5019,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rusqlite"
+version = "0.37.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "165ca6e57b20e1351573e3729b958bc62f0e48025386970b6e4d29e7a7e71f3f"
+dependencies = [
+ "bitflags 2.13.1",
+ "fallible-iterator",
+ "fallible-streaming-iterator",
+ "hashlink",
+ "libsqlite3-sys",
+ "smallvec",
+]
+
+[[package]]
 name = "rust-embed"
 version = "8.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5205,7 +5266,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "sdroxide"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -5249,7 +5310,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-adsb"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "num-complex",
@@ -5260,7 +5321,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-airspy"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "nusb",
@@ -5274,7 +5335,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-airspyhf"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "num-complex",
@@ -5290,7 +5351,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-ais"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "num-complex",
@@ -5302,7 +5363,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-aprs"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "sdroxide-types",
  "thiserror 2.0.20",
@@ -5310,7 +5371,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-atchat"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -5331,7 +5392,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-audio"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "cpal",
  "rtrb",
@@ -5342,7 +5403,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-ax25"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "thiserror 2.0.20",
@@ -5351,7 +5412,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-cat"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "roxmltree",
@@ -5364,7 +5425,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-config"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "directories",
  "sdroxide-types",
@@ -5378,7 +5439,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-data2g"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "cc",
  "cmake",
@@ -5388,7 +5449,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-deepcw"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "rten",
@@ -5400,7 +5461,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-digi"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "fax 0.3.0",
@@ -5430,7 +5491,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-drm"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "bindgen",
  "cc",
@@ -5447,7 +5508,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-dsp"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "deep_filter",
  "hound",
@@ -5462,7 +5523,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-elad"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "nusb",
@@ -5476,14 +5537,14 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-faad2"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "sdroxide-fobos"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "libloading 0.9.0",
@@ -5496,7 +5557,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-hackrf"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "nusb",
@@ -5510,7 +5571,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-hardrock"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "sdroxide-types",
@@ -5520,7 +5581,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-hfdl"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "sdroxide-dsp",
@@ -5532,7 +5593,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-hpsdr"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "network-interface",
@@ -5545,7 +5606,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-hydrasdr"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "nusb",
@@ -5560,11 +5621,10 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-icomnet"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "rtrb",
- "sdroxide-types",
  "thiserror 2.0.20",
  "tracing",
  "tracing-subscriber",
@@ -5572,7 +5632,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-ism"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "bindgen",
  "cc",
@@ -5586,7 +5646,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-kiss"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "sdroxide-ax25",
@@ -5595,7 +5655,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-kiwisdr"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "rtrb",
@@ -5609,7 +5669,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-lime"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "libloading 0.9.0",
  "num-complex",
@@ -5622,7 +5682,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-limerfe"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "libc",
@@ -5635,7 +5695,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-mercury"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "cc",
  "crossbeam-channel",
@@ -5645,7 +5705,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-midi"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "midir",
@@ -5655,7 +5715,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-net"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "ring",
@@ -5672,7 +5732,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-nrsc5"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "libloading 0.9.0",
  "num-complex",
@@ -5685,7 +5745,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-picup"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "ab_glyph",
  "chrono",
@@ -5701,7 +5761,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-pluto"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "network-interface",
@@ -5715,7 +5775,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-proto"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "image",
  "postcard",
@@ -5728,18 +5788,17 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-qo100"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "rustfft",
  "sdroxide-dsp",
  "sdroxide-types",
- "tracing",
 ]
 
 [[package]]
 name = "sdroxide-r82xx"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "thiserror 2.0.20",
  "tracing",
@@ -5747,7 +5806,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-rade"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -5765,7 +5824,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-radio"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "image",
@@ -5811,7 +5870,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-relay"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "libc",
@@ -5825,7 +5884,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-rigctld"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "sdroxide-types",
@@ -5834,7 +5893,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-rotator"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "sdroxide-types",
@@ -5843,7 +5902,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-rtlsdr"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "nusb",
@@ -5857,7 +5916,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-rx888"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "nusb",
@@ -5872,7 +5931,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-sdrplay"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "libloading 0.9.0",
@@ -5886,7 +5945,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-server"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "axum",
  "crossbeam-channel",
@@ -5916,7 +5975,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-skimmer"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "num-complex",
@@ -5929,7 +5988,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-smartsdr"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "rtrb",
@@ -5942,7 +6001,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-solar"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "image",
@@ -5958,7 +6017,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-sonde"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "rustfft",
@@ -5970,7 +6029,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-speech"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "hound",
@@ -5990,7 +6049,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-spyserver"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "rtrb",
@@ -6002,7 +6061,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-tci"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "rtrb",
@@ -6014,15 +6073,14 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-tnc"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
- "tracing",
 ]
 
 [[package]]
 name = "sdroxide-types"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "postcard",
  "serde",
@@ -6031,7 +6089,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-ui"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "ab_glyph",
  "bytemuck",
@@ -6050,6 +6108,7 @@ dependencies = [
  "rfd",
  "ring",
  "ron",
+ "rusqlite",
  "rust-embed",
  "rustls",
  "sdroxide-aprs",
@@ -6076,7 +6135,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-vdl2"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "num-complex",
@@ -6088,11 +6147,11 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-version"
-version = "1.7.1"
+version = "1.7.3"
 
 [[package]]
 name = "sdroxide-web"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "console_error_panic_hook",
  "eframe",
@@ -6107,7 +6166,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-winlink"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "md-5",
@@ -6122,7 +6181,7 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-wsjtx"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "sdroxide-types",
  "tracing",
@@ -6130,13 +6189,12 @@ dependencies = [
 
 [[package]]
 name = "sdroxide-wxsat"
-version = "1.7.1"
+version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "rustfft",
  "sdroxide-dsp",
  "sdroxide-types",
- "tracing",
 ]
 
 [[package]]
@@ -7625,6 +7683,12 @@ name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
+
+[[package]]
+name = "vcpkg"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "vello_common"

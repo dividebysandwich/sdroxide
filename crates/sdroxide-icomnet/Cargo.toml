@@ -9,7 +9,6 @@ license.workspace = true
 # wire-level radio simulator. Plain UDP sockets from std: pure Rust, no system
 # library. Must never be a dependency of any wasm-targeted crate.
 [dependencies]
-sdroxide-types.workspace = true
 crossbeam-channel.workspace = true
 rtrb.workspace = true
 thiserror.workspace = true

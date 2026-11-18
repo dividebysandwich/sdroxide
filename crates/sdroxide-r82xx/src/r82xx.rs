@@ -95,6 +95,67 @@ pub enum GainSetting {
     Manual { total_db: f64 },
 }
 
+/// One of the three gain stages, set on its own rather than through the
+/// combined LNA/mixer ladder of [`GainSetting::Manual`].
+// Why: HDZ 2026-11-09: "beim RTL-SDR gibt es in SDR++ typischerweise zwei
+//      unterschiedliche Verstärkungsregler: LNA Gain … IF Gain"; the mixer
+//      as a third.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage {
+    /// R5 low nibble, [`LNA_GAIN_STEPS`].
+    Lna,
+    /// R7 low nibble, [`MIXER_GAIN_STEPS`].
+    Mixer,
+    /// The IF VGA, R12 low nibble. No measured table: librtlsdr names two of
+    /// its codes, 0x08 ≈ 16.3 dB and 0x0b ≈ 26.5 dB, so it is offered in
+    /// steps rather than in invented decibels.
+    Vga,
+}
+
+/// Highest index of each stage's 16-step ladder.
+pub const STAGE_MAX_INDEX: u8 = 15;
+
+/// What `index` steps of `stage` add up to, in dB: the measured increments
+/// summed for LNA and mixer, the index itself for the VGA.
+pub fn stage_db(stage: Stage, index: u8) -> f64 {
+    let i = usize::from(index.min(STAGE_MAX_INDEX));
+    match stage {
+        Stage::Lna => LNA_GAIN_STEPS[..=i].iter().sum::<i32>() as f64 / 10.0,
+        Stage::Mixer => MIXER_GAIN_STEPS[..=i].iter().sum::<i32>() as f64 / 10.0,
+        Stage::Vga => i as f64,
+    }
+}
+
+/// The index of `stage` that comes nearest `db` (lowest on a tie).
+pub fn stage_index_for(stage: Stage, db: f64) -> u8 {
+    (0..=STAGE_MAX_INDEX)
+        .min_by(|a, b| {
+            (stage_db(stage, *a) - db).abs().total_cmp(&(stage_db(stage, *b) - db).abs())
+        })
+        .unwrap_or(0)
+}
+
+/// The LNA and mixer indices the combined ladder lands on for `total_db` —
+/// the same walk [`R82xx::set_gain`] makes.
+pub fn ladder_indices(total_db: f64) -> (u8, u8) {
+    let want = tables::snap_gain_tenth_db(total_db);
+    let mut total = 0i32;
+    let (mut lna_index, mut mix_index) = (0usize, 0usize);
+    for _ in 0..15 {
+        if total >= want {
+            break;
+        }
+        lna_index += 1;
+        total += LNA_GAIN_STEPS[lna_index];
+        if total >= want {
+            break;
+        }
+        mix_index += 1;
+        total += MIXER_GAIN_STEPS[mix_index];
+    }
+    (lna_index as u8, mix_index as u8)
+}
+
 pub struct R82xx {
     chip: Chip,
     is_blog_v4: bool,
@@ -114,6 +175,9 @@ pub struct R82xx {
     init_done: bool,
     /// Last LO actually programmed, so an unchanged retune costs nothing.
     last_lo_hz: Option<f64>,
+    /// The IF VGA's code under manual gain: librtlsdr's fixed 0x08 until
+    /// [`Stage::Vga`] is set, and kept across a change of the combined gain.
+    vga_index: u8,
 }
 
 impl R82xx {
@@ -130,6 +194,7 @@ impl R82xx {
             input: 0,
             init_done: false,
             last_lo_hz: None,
+            vga_index: 0x08,
         }
     }
 
@@ -654,33 +719,42 @@ impl R82xx {
             GainSetting::Manual { total_db } => {
                 let want = tables::snap_gain_tenth_db(total_db);
 
-                // LNA and mixer loops off, VGA fixed at ~16.3 dB.
+                // LNA and mixer loops off, VGA where it was left (~16.3 dB,
+                // 0x08, until the IF stage is set on its own).
                 self.write_reg_mask(bus, 0x05, 0x10, 0x10)?;
                 self.write_reg_mask(bus, 0x07, 0, 0x10)?;
                 let _ = self.read(bus, 4)?;
-                self.write_reg_mask(bus, 0x0c, 0x08, 0x9f)?;
+                self.write_reg_mask(bus, 0x0c, self.vga_index, 0x9f)?;
 
                 // Walk the two stages alternately until the target is met.
-                let mut total = 0i32;
-                let (mut lna_index, mut mix_index) = (0usize, 0usize);
-                for _ in 0..15 {
-                    if total >= want {
-                        break;
-                    }
-                    lna_index += 1;
-                    total += LNA_GAIN_STEPS[lna_index];
-                    if total >= want {
-                        break;
-                    }
-                    mix_index += 1;
-                    total += MIXER_GAIN_STEPS[mix_index];
-                }
+                let (lna_index, mix_index) = ladder_indices(f64::from(want) / 10.0);
+                let total = stage_db(Stage::Lna, lna_index) + stage_db(Stage::Mixer, mix_index);
 
-                self.write_reg_mask(bus, 0x05, lna_index as u8, 0x0f)?;
-                self.write_reg_mask(bus, 0x07, mix_index as u8, 0x0f)?;
-                Ok(Some(total as f64 / 10.0))
+                self.write_reg_mask(bus, 0x05, lna_index, 0x0f)?;
+                self.write_reg_mask(bus, 0x07, mix_index, 0x0f)?;
+                Ok(Some(total))
             }
         }
+    }
+
+    /// Set one stage to `index` on its own ladder, its automatic loop off.
+    /// The other stages stay where they are. Returns the stage's gain (in
+    /// steps for the VGA).
+    pub fn set_stage(&mut self, bus: &dyn TunerBus, stage: Stage, index: u8) -> Result<f64> {
+        let index = index.min(STAGE_MAX_INDEX);
+        match stage {
+            Stage::Lna => {
+                self.write_reg_mask(bus, 0x05, 0x10 | index, 0x1f)?;
+            }
+            Stage::Mixer => {
+                self.write_reg_mask(bus, 0x07, index, 0x1f)?;
+            }
+            Stage::Vga => {
+                self.vga_index = index;
+                self.write_reg_mask(bus, 0x0c, index, 0x9f)?;
+            }
+        }
+        Ok(stage_db(stage, index))
     }
 
     /// The gain values this tuner can produce, in dB.
@@ -693,6 +767,25 @@ impl R82xx {
 mod tests {
     use super::*;
     use crate::bus::MockBus;
+
+    /// The stages one by one: the measured ladders summed, the combined
+    /// ladder landing on exactly the gains librtlsdr lists, and a gain asked
+    /// of a stage taking its nearest step.
+    #[test]
+    fn stages_add_up_to_the_ladder() {
+        assert_eq!(stage_db(Stage::Lna, 0), 0.0);
+        assert!((stage_db(Stage::Lna, 15) - 33.5).abs() < 1e-9);
+        assert!((stage_db(Stage::Mixer, 14) - 16.1).abs() < 1e-9);
+        assert_eq!(stage_db(Stage::Vga, 9), 9.0);
+        for g in tables::GAINS_TENTH_DB {
+            let (l, m) = ladder_indices(f64::from(g) / 10.0);
+            let sum = stage_db(Stage::Lna, l) + stage_db(Stage::Mixer, m);
+            assert!((sum - f64::from(g) / 10.0).abs() < 0.05, "{g}: {l}/{m} gives {sum}");
+        }
+        assert_eq!(stage_index_for(Stage::Lna, 33.5), 15);
+        assert_eq!(stage_index_for(Stage::Lna, 0.4), 0);
+        assert_eq!(stage_index_for(Stage::Vga, 12.2), 12);
+    }
 
     /// Every register this driver writes to bring an R828D up on 145 MHz with
     /// the 8 MHz IF filter — which is exactly the RX-888's VHF sequence.
