@@ -1056,6 +1056,15 @@ impl SdroxideApp {
     /// The same source the FT8 and APRS maps use, so the three never disagree
     /// about where the station is. `None` until it has been filled in, which is
     /// why the range column and the RANGE sort are conditional.
+    /// What the range log files this radio's positions under: the name the
+    /// PANO recorder gives a session, the radio's label or else its driver.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(in crate::app) fn adsb_instrument(&self) -> String {
+        self.caps.as_ref().map_or_else(String::new, |c| {
+            if c.label.is_empty() { c.driver.clone() } else { c.label.clone() }
+        })
+    }
+
     pub(in crate::app) fn adsb_home(&self) -> Option<(f64, f64)> {
         let grid = self.digi_cfg_edit.my_grid.trim();
         (!grid.is_empty()).then(|| sdroxide_types::grid_to_latlon(grid)).flatten()
@@ -1083,7 +1092,11 @@ impl SdroxideApp {
         // the engine persists whatever arrives and echoes it back in the state,
         // so there is no apply step and no way for the two copies to drift.
         let mut cfg = self.state.adsb;
+        #[cfg(not(target_arch = "wasm32"))]
+        let (instrument, home) = (self.adsb_instrument(), self.adsb_home());
         let coverage = &mut self.adsb_coverage;
+        #[cfg(not(target_arch = "wasm32"))]
+        let range = &mut self.adsb_range;
         let resp = egui::Window::new(tr!("adsb-ads-b-setup"))
             .id(crate::layout::salted_id(ctx, "AdsbSetup"))
             .open(&mut open)
@@ -1198,6 +1211,20 @@ impl SdroxideApp {
                         }
                     }
                 });
+                // The range log: the diagram's cells by setup and day, kept
+                // past the week and past a reset.
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    ui.separator();
+                    egui::CollapsingHeader::new(tr!("adsb-range-log"))
+                        .id_salt("adsb-range-log")
+                        .show(ui, |ui| {
+                            let now = ui.input(|i| i.time);
+                            range.show(ui, &instrument, home, now);
+                        })
+                        .header_response
+                        .on_hover_text(tr!("adsb-range-log-tip"));
+                }
             });
         if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);

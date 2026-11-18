@@ -6472,6 +6472,36 @@ Moving **My grid** starts a new diagram. After changing the antenna, clear it
 with **Reset…** in **SETUP**. The browser version keeps the current session
 only.
 
+#### The range log
+
+The diagram shows how the antenna does this week; the **range log** keeps the
+same cells by **setup** and **day**, for as long as its size limit allows, so a
+setup can be set against the one before it — the antenna on the roof against
+the one at the window, a receiver in a plastic case against a metal one. Open it
+under **Range log** in **SETUP**.
+
+A setup is the receiver the positions came from (named as its tab names it),
+an antenna label and your position, with a version counted per receiver
+(`RTL-SDR v2`). Each receiver has its own open setup, so going from one radio to
+another and back carries on where it was. Moving **My grid** starts the next
+version by itself; anything else — a new antenna, a new place on the roof — is
+started by hand: type the label under **Antenna** and press **NEW SETUP**. The
+old version is closed and kept. **NAME** gives the open setup the label without
+starting a new one.
+
+Each setup lists its days, the farthest steady range it reached and the space
+it takes; click it for its days: positions, how many of the 72 directions
+reached a steady range, and the farthest (with the median over the directions
+and the bearing in the tooltip). **DELETE** removes one setup in two clicks,
+**INIT** all of them; over the size limit (**Limit**, 50 MB to start with —
+well over a year at the 80 kB of a busy day) the oldest days go first, and the
+setups stay listed.
+
+The log is the SQLite file `adsb-range.sqlite` in the configuration directory.
+Its view `range_log` has one line per setup, day and 5° direction with the
+range in kilometres, the positions and the strongest signal, for a spreadsheet
+or DuckDB while the radio is off. The browser version has no range log.
+
 #### The sighting log
 
 The list forgets an aircraft a minute after its last frame. The **LOG** chip
@@ -16806,6 +16836,7 @@ and not the station's.
 | `adsb.json` | JSON | ADS-B decoder ([§3.13](#313-ads-b-aircraft-on-1090-mhz)): the two timeouts, how many history dots to keep, how far ahead the speed vectors reach, and the ceiling on the aircraft table. Restored at startup, and — like `ism.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
 | `adsb-routes/` | directory | ADS-B standing data ([§3.13](#313-ads-b-aircraft-on-1090-mhz)): the route, airline, aircraft and address-block files fetched from Virtual Radar Server, and `map-airports.csv` cut from OurAirports. Refetched after a week; safe to delete. |
 | `adsb-coverage/` | directory | The ADS-B coverage diagram, one file an hour, seven days. **Reset…** in the ADS-B setup empties it. |
+| `adsb-range.sqlite` | SQLite | The ADS-B range log: range by setup (receiver, antenna, position, version) and day, size-limited; the view `range_log` reads as a table. **INIT** under **Range log** in the ADS-B setup empties it. |
 | `adsb-log/` | directory | The ADS-B sighting log, one CSV file a day (`<date>.csv`), thirty days. |
 | `adsb-tracks/` | directory | ADS-B flight tracks, thinned to a point every 15 s or on a turn or climb, one CSV file a day, thirty days. |
 | `vdl2.json` | JSON | VDL2 decoder ([§3.15](#315-vdl2-what-the-aircraft-are-saying)): which of the fourteen channels to listen on, the burst threshold in dB, how much log and how many stations to keep, and how long a silent station stays on the list. Restored at startup, and — like `adsb.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |

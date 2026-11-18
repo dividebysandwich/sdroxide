@@ -10,6 +10,9 @@
 mod adsb_coverage;
 mod adsb_log;
 mod adsb_map;
+/// How far each setup hears aircraft, by day, in SQLite (ADS-B SETUP → Range log).
+#[cfg(not(target_arch = "wasm32"))]
+mod adsb_range;
 mod adsb_route;
 // The browser build has no disk to keep tracks on.
 #[cfg(not(target_arch = "wasm32"))]

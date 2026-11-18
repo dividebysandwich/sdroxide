@@ -55,7 +55,7 @@ impl Cell {
         if self.n == 0 { f32::NEG_INFINITY } else { self.rssi_sum / self.n as f32 }
     }
 
-    fn add(&mut self, rssi: f32) {
+    pub(crate) fn add(&mut self, rssi: f32) {
         self.rssi_max = if self.n == 0 { rssi } else { self.rssi_max.max(rssi) };
         self.n += 1;
         self.rssi_sum += rssi;
