@@ -1721,7 +1721,11 @@ use sdroxide_types::{
 ///
 /// v211: ELAD monitoring. `CatConfig` gains `elad_mute_on_radio_ptt` and
 /// `EladConfig` gains `hear_own_tx`, which changes every `RadioConfig`.
-pub const PROTO_VERSION: u16 = 211;
+///
+/// v212: Mode-S Beast in and out. `Command::SetBeastConfig`,
+/// `ServerMsg::BeastStatus` appended; `StationConfig` gains `beast` and
+/// `AdsbStatus` gains `feed` and `feed_state` at their tails.
+pub const PROTO_VERSION: u16 = 212;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
@@ -2231,6 +2235,17 @@ pub enum ServerMsg {
     ///
     /// Appended last, for the usual reason.
     SondeStatus(Box<sdroxide_types::SondeStatus>),
+
+    /// `RadioEvent::BeastStatus`: the Beast output server's state, for the
+    /// settings dialog on a remote client.
+    ///
+    /// Appended last, for the usual reason.
+    BeastStatus {
+        running: bool,
+        addr: String,
+        clients: usize,
+        error: Option<String>,
+    },
 }
 
 /// One radio in a station's roster, as a client sees it.

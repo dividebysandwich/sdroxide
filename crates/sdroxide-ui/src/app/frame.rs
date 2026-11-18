@@ -2083,6 +2083,16 @@ impl SdroxideApp {
                         client_error,
                     });
                 }
+                RadioEvent::BeastStatus { running, addr, clients, error } => {
+                    self.beast_status = Some(TciServerStatus {
+                        running,
+                        addr,
+                        clients,
+                        error,
+                        client_connected: false,
+                        client_error: None,
+                    });
+                }
                 RadioEvent::RigctldStatus { running, addr, clients, error } => {
                     self.rigctld_status = Some(TciServerStatus {
                         running,
@@ -2122,6 +2132,10 @@ impl SdroxideApp {
                     if !self.rigctld_seeded {
                         self.rigctld_edit = c.rigctld.clone();
                         self.rigctld_seeded = true;
+                    }
+                    if !self.beast_seeded {
+                        self.beast_edit = c.beast.clone();
+                        self.beast_seeded = true;
                     }
                     if !self.tci_srv_seeded {
                         self.tci_srv_edit = c.tci_server.clone();

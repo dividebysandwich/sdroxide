@@ -116,19 +116,48 @@ impl SdroxideApp {
     /// a digit tips the whole tail onto a second line and moves every pane below
     /// it. On a busy band these counters change several times a second.
     fn adsb_header(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, st: &AdsbStatus) {
+        use sdroxide_types::AdsbFeed;
         let dial = self.state.rx_freq_hz();
         let on_channel =
             (dial - sdroxide_types::ADSB_FREQ_HZ).abs() < 100_000.0 && st.unavailable.is_none();
+        let beast = st.feed == AdsbFeed::Beast;
 
         ui.horizontal_wrapped(|ui| {
             ui.set_min_height(22.0);
             ui.label(RichText::new(tr!("adsb-ads-b")).size(11.0).strong().color(theme::CYAN()));
             ui.label(RichText::new(tr!("adsb-t-1090-mhz-mode-s")).weak().size(10.5));
 
+            // Where the frames come from: this receiver, or a Beast stream from
+            // another program. Only once the station has said how it is set
+            // up, or a click would write defaults over `beast.json`.
+            if self.beast_seeded {
+                for (feed, label, tip) in [
+                    (AdsbFeed::Radio, tr!("adsb-feed-radio"), tr!("adsb-feed-radio-tip")),
+                    (AdsbFeed::Beast, tr!("adsb-feed-beast"), tr!("adsb-feed-beast-tip")),
+                ] {
+                    if crate::chrome::chip(ui, self.beast_edit.feed == feed, label)
+                        .on_hover_text(tip)
+                        .clicked()
+                        && self.beast_edit.feed != feed
+                    {
+                        self.beast_edit.feed = feed;
+                        if feed == AdsbFeed::Beast && self.beast_edit.in_target().is_none() {
+                            self.show_adsb_setup = true;
+                        }
+                        cmds.push(Command::SetBeastConfig(self.beast_edit.clone()));
+                    }
+                }
+            }
+
             // The one preset there is. A chip rather than a note, because the
-            // fix for "nothing is decoding" is nearly always this.
-            if crate::chrome::chip(ui, on_channel, "1090.000")
-                .on_hover_text(tr!("adsb-tune-receiver-1090-000-mhz"))
+            // fix for "nothing is decoding" is nearly always this. Dimmed on a
+            // Beast feed, where this receiver's dial decides nothing.
+            if ui
+                .add_enabled_ui(!beast, |ui| {
+                    crate::chrome::chip(ui, on_channel, "1090.000")
+                        .on_hover_text(tr!("adsb-tune-receiver-1090-000-mhz"))
+                })
+                .inner
                 .clicked()
             {
                 cmds.push(Command::SetVfo {
@@ -144,15 +173,18 @@ impl SdroxideApp {
             // band that is busy with something the decoder cannot read, or of a
             // receiver picking up its own noise. Worth showing rather than
             // leaving the panel looking broken.
-            slot(
-                ui,
-                88.0,
-                &tr!("adsb-preambles", preambles = count(st.preambles)),
-                theme::gray(120),
-            );
-            slot(ui, 78.0, &tr!("adsb-bad-crc", bad_crc = count(st.bad_crc)), theme::gray(120));
+            //
+            // Neither number exists on a Beast feed: the sender has already
+            // thrown away its preambles and its failed checks.
+            let (pre, bad) = if beast {
+                ("—".to_string(), "—".to_string())
+            } else {
+                (count(st.preambles), count(st.bad_crc))
+            };
+            slot(ui, 88.0, &tr!("adsb-preambles", preambles = pre), theme::gray(120));
+            slot(ui, 78.0, &tr!("adsb-bad-crc", bad_crc = bad), theme::gray(120));
 
-            if st.window_rate_hz > 0.0 {
+            if st.window_rate_hz > 0.0 && !beast {
                 slot(
                     ui,
                     148.0,
@@ -174,6 +206,14 @@ impl SdroxideApp {
             }
         });
 
+        if let Some(link) = &st.feed_state {
+            let up = link.ends_with("connected");
+            ui.label(
+                RichText::new(tr!("adsb-feed-state", state = link.clone()))
+                    .size(10.5)
+                    .color(if up { theme::CYAN() } else { theme::HAZARD() }),
+            );
+        }
         if let Some(why) = &st.unavailable {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(why).size(10.5).color(theme::HAZARD()));
@@ -441,6 +481,7 @@ impl SdroxideApp {
         // the engine persists whatever arrives and echoes it back in the state,
         // so there is no apply step and no way for the two copies to drift.
         let mut cfg = self.state.adsb;
+        let mut beast_addr_done = false;
         let resp = egui::Window::new(tr!("adsb-ads-b-setup"))
             .id(crate::layout::salted_id(ctx, "AdsbSetup"))
             .open(&mut open)
@@ -525,7 +566,28 @@ impl SdroxideApp {
                 ui.label(
                     RichText::new(tr!("adsb-aircraft-ground-are-placed-against")).size(10.0).weak(),
                 );
+                if self.beast_seeded {
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.label(tr!("adsb-beast-input"));
+                        let r = crate::chrome::field(
+                            ui,
+                            egui::TextEdit::singleline(&mut self.beast_edit.in_addr)
+                                .desired_width(180.0)
+                                .hint_text("192.168.1.20:30005"),
+                        );
+                        // Sent when the field is left, not per keystroke: every
+                        // change of address is a new connection.
+                        if r.lost_focus() {
+                            beast_addr_done = true;
+                        }
+                    });
+                    ui.label(RichText::new(tr!("adsb-beast-input-tip")).size(10.0).weak());
+                }
             });
+        if beast_addr_done {
+            cmds.push(Command::SetBeastConfig(self.beast_edit.clone()));
+        }
         if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);
         }

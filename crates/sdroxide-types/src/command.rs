@@ -1322,4 +1322,8 @@ pub enum Command {
     /// [`Command::ScanNext`], and turns it back upwards). Appended: postcard
     /// numbers variants by position.
     ScanBack,
+    /// Mode-S Beast in and out: the output server and the panel's feed. Kept
+    /// in `beast.json`, answered by [`crate::RadioEvent::BeastStatus`] and the
+    /// station config. Appended last, for the usual reason.
+    SetBeastConfig(crate::BeastConfig),
 }

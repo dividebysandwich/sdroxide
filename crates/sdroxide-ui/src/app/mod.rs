@@ -1063,6 +1063,13 @@ pub struct SdroxideApp {
     /// Live status from `RadioEvent::RigctldStatus`. Same shape as the TCI
     /// server's, so the two share one status type.
     rigctld_status: Option<TciServerStatus>,
+    /// Mode-S Beast in and out, as the station has it, and the edit the
+    /// settings dialog and the ADS-B panel work on. Seeded from the station
+    /// config, like `rigctld_edit`.
+    beast_edit: sdroxide_types::BeastConfig,
+    beast_seeded: bool,
+    /// Live status of the Beast output, from `RadioEvent::BeastStatus`.
+    beast_status: Option<TciServerStatus>,
     /// Editable "extra cluster commands" (one per line), split into
     /// `net_cfg_edit.cluster.commands` on apply.
     net_cluster_cmds: String,
@@ -1929,6 +1936,9 @@ impl SdroxideApp {
             picup_test: None,
             picup_last: None,
             rigctld_status: None,
+            beast_edit: sdroxide_types::BeastConfig::default(),
+            beast_seeded: false,
+            beast_status: None,
             tci_srv_edit: sdroxide_types::TciServerConfig::default(),
             tci_srv_seeded: false,
             tci_srv_status: None,

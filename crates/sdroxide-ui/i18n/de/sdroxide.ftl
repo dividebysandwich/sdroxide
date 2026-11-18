@@ -6188,3 +6188,16 @@ textmodem-psk-coded-hint =
             [one] Träger
            *[other] Träger
         }, { $code }, { $bw } Hz breit
+
+## Mode-S Beast ein und aus
+adsb-feed-radio = RADIO
+adsb-feed-radio-tip = Meldungen dieses Empfängers auf 1090 MHz
+adsb-feed-beast = BEAST
+adsb-feed-beast-tip = Meldungen aus dem Beast-Ausgang eines anderen Programms (readsb, dump1090); braucht hier keinen Empfänger
+adsb-feed-state = Beast · { $state }
+adsb-beast-input = Beast-Eingang
+adsb-beast-input-tip = host:port eines Beast-Ausgangs, z. B. readsb auf einem Raspberry Pi. Ohne Port gilt 30005. Meldungen von dort werden angezeigt, nie weitergesendet.
+settings-servers-beast-out = Mode-S-Beast-Ausgang (ADS-B)
+settings-servers-beast-waiting = Warte auf die Beast-Einstellungen der Station…
+settings-servers-beast-port-tip = 30005: Port, den jeder Beast-Leser erwartet
+settings-servers-beast-about = Sendet jede ADS-B-Meldung, die dieser Empfänger dekodiert, im Beast-Format an readsb, tar1090 und Feeder. In readsb --net-connector <dieser Rechner>,30005,beast_in eintragen. Zeitstempel zählen Samples, keine GPS-Zeit: gut zum Zusammenführen, unbrauchbar für MLAT. Meldungen aus einem Beast-Eingang gehen hier nie raus.

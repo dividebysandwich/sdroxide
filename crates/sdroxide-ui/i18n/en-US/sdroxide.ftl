@@ -6392,3 +6392,16 @@ textmodem-psk-coded-hint =
         }, { $code }, { $bw } Hz wide
 textmodem-psk-rx-only = receive only
 textmodem-psk-rx-only-hint = This bank receives — fldigi's recording of it reads — but our own transmission of it does not read back through the same receiver yet, so transmit is refused rather than putting an unproven signal on the air.
+
+## Mode-S Beast in and out
+adsb-feed-radio = RADIO
+adsb-feed-radio-tip = Frames from this receiver, tuned to 1090 MHz
+adsb-feed-beast = BEAST
+adsb-feed-beast-tip = Frames from another program's Beast output (readsb, dump1090); needs no receiver here
+adsb-feed-state = Beast · { $state }
+adsb-beast-input = Beast input
+adsb-beast-input-tip = host:port of a Beast output, e.g. readsb on a Raspberry Pi. Port 30005 if left out. Frames from here are shown, never sent on.
+settings-servers-beast-out = Mode-S Beast output (ADS-B)
+settings-servers-beast-waiting = Waiting for the station's Beast configuration…
+settings-servers-beast-port-tip = 30005: the port every Beast reader expects
+settings-servers-beast-about = Serves every ADS-B frame this receiver decodes in Beast format, for readsb, tar1090 and the feeders. In readsb add --net-connector <this machine>,30005,beast_in. Timestamps count samples, not GPS time: good for merging, useless for MLAT. Frames received from a Beast input are never sent here.
