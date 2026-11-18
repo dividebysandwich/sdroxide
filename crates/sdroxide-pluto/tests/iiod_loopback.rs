@@ -204,6 +204,13 @@ struct DeviceState {
     /// `rf_port_select` takes only the port the part is already on and answers
     /// `-EINVAL` to any other (issue #314).
     ports_locked: bool,
+    /// On a dual-pair buffer, put a running count in both chains' Q instead
+    /// of the fixed patterns, the same count in both halves of a sample set:
+    /// the two chains' samples of one instant are then recognisable as twins,
+    /// and a pair read out of step shows as a count that differs (#525).
+    count_pairs: bool,
+    /// The next count [`Self::count_pairs`] hands out, 0..2047.
+    pair_count: u16,
 }
 
 /// The sample-rate floor a stock Pluto publishes — and refuses.
@@ -691,8 +698,23 @@ fn serve(
                 let want: usize = words[2].parse().unwrap_or(0);
                 let sets = want / set.len();
                 let mut data = Vec::with_capacity(sets * set.len());
+                let mut count = {
+                    let g = state.lock().expect("lock");
+                    (dual && g.count_pairs).then_some(g.pair_count)
+                };
                 for _ in 0..sets {
                     data.extend_from_slice(&set);
+                    if let Some(c) = count.as_mut() {
+                        // Both Qs: bytes 2-3 of each chain's half.
+                        let q = c.to_le_bytes();
+                        let at = data.len() - set.len();
+                        data[at + 2..at + 4].copy_from_slice(&q);
+                        data[at + 6..at + 8].copy_from_slice(&q);
+                        *c = (*c + 1) % 2048;
+                    }
+                }
+                if let Some(c) = count {
+                    state.lock().expect("lock").pair_count = c;
                 }
                 // Deliberately answered in two chunks, each with its own mask,
                 // because that is the shape the protocol allows and the client
@@ -2219,4 +2241,127 @@ fn a_chain_found_in_the_wrong_mode_is_put_right_and_the_gain_retried() {
         g.get("ad9361-phy/INPUT/voltage1/gain_control_mode") == Some("manual")
             && g.get("ad9361-phy/INPUT/voltage1/hardwaregain").is_some_and(|v| v.starts_with("11"))
     });
+}
+
+/// Issue #525: RX2 borrowed by the RX1 radio as its own second aerial. What
+/// has to hold is that the two chains come out of the rings *paired* — each
+/// read hands over chain 0's and chain 1's samples of the same instants — and
+/// that chain 0's history from before the attach still comes through, only
+/// unpaired, rather than being thrown away or mistaken for pairs.
+#[test]
+fn a_borrowed_second_chain_is_read_in_step_with_the_first() {
+    use sdroxide_pluto::PlutoRig;
+
+    let fake = Fake::start_pluto_plus();
+    let rig = PlutoRig::open(&fake.address(), &config(), 435_000_000.0).expect("open");
+    let mut r0 = rig.rx(0).expect("attach chain 0");
+    // Let chain 0 queue some history of its own first.
+    let mut buf = vec![0f32; 4096];
+    wait_for("chain 0 samples", || r0.rx_read(&mut buf) > 0);
+    std::thread::sleep(Duration::from_millis(50));
+
+    let mut aux = rig.aux_rx().expect("borrow chain 1");
+    // Not a second radio's to take while it is borrowed.
+    assert!(rig.rx(1).is_err());
+    wait_for("a dual-pair open", || {
+        fake.state.lock().expect("lock").rx_open_masks.last().map(String::as_str)
+            == Some("0000000f")
+    });
+
+    let mut side = vec![0f32; 4096];
+    let mut unpaired_seen = 0usize;
+    let mut paired_reads = 0usize;
+    wait_for("paired reads", || {
+        let (n, paired) = r0.rx_read_paired(&mut aux, &mut buf, &mut side);
+        if n == 0 {
+            return false;
+        }
+        assert!((buf[0] - (SAMPLE_I as f32 / 2048.0)).abs() < 1e-6, "chain 0 is chain 0's");
+        if paired == 0 {
+            // History from before the pair began — only ever *before* it.
+            assert_eq!(paired_reads, 0, "an unpaired block after pairing began");
+            unpaired_seen += n;
+            return false;
+        }
+        assert_eq!(paired, n, "a block is paired whole or not at all");
+        assert!(
+            (side[0] - (SAMPLE2_I as f32 / 2048.0)).abs() < 1e-6
+                && (side[1] - (SAMPLE2_Q as f32 / 2048.0)).abs() < 1e-6,
+            "the second chain's half is chain 1's"
+        );
+        paired_reads += 1;
+        paired_reads >= 5
+    });
+    let _ = unpaired_seen;
+
+    // Discarding keeps the pair: the next read is still whole.
+    r0.discard_pending_paired(&mut aux);
+    wait_for("a paired read after a discard", || {
+        let (n, paired) = r0.rx_read_paired(&mut aux, &mut buf, &mut side);
+        assert!(n == 0 || paired == n, "the discard broke the pairing");
+        n > 0
+    });
+
+    // Giving it back frees RX2 for a radio of its own.
+    drop(aux);
+    let r1 = rig.rx(1).expect("RX2 is free again");
+    drop(r1);
+    drop(r0);
+    rig.release();
+}
+
+/// Issue #525, review of #743: the reader must not take a pair's chain-0 half
+/// as unpaired history. The receive thread records where pairing begins and
+/// then commits the first pair; a reader that saw "not paired yet", and then
+/// drained the ring without a limit, could take that pair's first half with
+/// it — after which every paired read hands RX2 up to a buffer behind RX1,
+/// for good, and nothing says so.
+///
+/// The fake counts in both chains' Q, the same count for the two halves of
+/// one instant, so a pair read out of step is a pair whose counts differ. The
+/// reader spins on the paired read from the moment the second chain is
+/// borrowed, which is the window the race needs, and the borrow is repeated
+/// so that the window is crossed many times.
+#[test]
+fn a_pair_read_while_pairing_begins_stays_in_step() {
+    use sdroxide_pluto::PlutoRig;
+
+    let fake = Fake::start_with(
+        DeviceState { count_pairs: true, ..DeviceState::default() },
+        pluto_plus_xml(),
+    );
+    let rig = PlutoRig::open(&fake.address(), &config(), 435_000_000.0).expect("open");
+    let mut r0 = rig.rx(0).expect("attach chain 0");
+    let mut buf = vec![0f32; 4096];
+    let mut side = vec![0f32; 4096];
+    let count = |q: f32| (q * 2048.0).round() as i32;
+    for round in 0..12 {
+        let mut aux = rig.aux_rx().expect("borrow chain 1");
+        let mut paired_reads = 0usize;
+        wait_for("paired reads", || {
+            let (n, paired) = r0.rx_read_paired(&mut aux, &mut buf, &mut side);
+            if paired == 0 {
+                return false;
+            }
+            for (k, (a, b)) in buf[..n].chunks_exact(2).zip(side[..n].chunks_exact(2)).enumerate() {
+                assert_eq!(
+                    count(a[1]),
+                    count(b[1]),
+                    "round {round}, read {paired_reads}, sample {k}: RX1 and RX2 out of step"
+                );
+            }
+            paired_reads += 1;
+            paired_reads >= 20
+        });
+        drop(aux);
+        // Back to one chain before the next borrow, so each round starts
+        // pairing afresh.
+        wait_for("a single-pair open", || {
+            fake.state.lock().expect("lock").rx_open_masks.last().map(String::as_str)
+                == Some("00000003")
+        });
+        while r0.rx_read(&mut buf) > 0 {}
+    }
+    drop(r0);
+    rig.release();
 }

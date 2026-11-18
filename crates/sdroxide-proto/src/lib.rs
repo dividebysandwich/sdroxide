@@ -1721,7 +1721,14 @@ use sdroxide_types::{
 ///
 /// v211: ELAD monitoring. `CatConfig` gains `elad_mute_on_radio_ptt` and
 /// `EladConfig` gains `hear_own_tx`, which changes every `RadioConfig`.
-pub const PROTO_VERSION: u16 = 211;
+///
+/// v212: the PlutoSDR's second receive chain can serve the RX1 radio as a
+/// second aerial or as PureSignal feedback (issue #525). `PlutoConfig` gains
+/// `aux` (`PlutoAuxConfig`, the same block a LimeSDR's second chain uses) on
+/// its tail, and the radio configuration rides whole in both a command and an
+/// event, so a v211 peer reads the extra bytes as the start of the next field
+/// and fails to decode either.
+pub const PROTO_VERSION: u16 = 212;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

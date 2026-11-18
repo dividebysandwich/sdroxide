@@ -8862,6 +8862,12 @@ fn div_settings(cfg: &sdroxide_types::RadioConfig) -> Option<(DiversityMode, f32
         sdroxide_types::Backend::Lime => {
             Some((cfg.lime.aux.mode, cfg.lime.aux.rate, cfg.lime.aux.frozen))
         }
+        // RX2 borrowed by the RX1 radio carries the LimeSDR's own block
+        // (`PlutoAuxConfig` is `LimeAuxConfig`); `caps.diversity` keeps the box
+        // off screen unless that block's role is a second aerial (#525).
+        sdroxide_types::Backend::Pluto => {
+            Some((cfg.pluto.aux.mode, cfg.pluto.aux.rate, cfg.pluto.aux.frozen))
+        }
         sdroxide_types::Backend::SdrPlay => {
             Some((cfg.sdrplay.duo.mode, cfg.sdrplay.duo.rate, cfg.sdrplay.duo.frozen))
         }
@@ -8883,6 +8889,10 @@ fn set_div_setting(cfg: &mut sdroxide_types::RadioConfig, element: &str, db: f64
     let (mode, rate, frozen) = match cfg.backend {
         sdroxide_types::Backend::Lime => {
             let a = &mut cfg.lime.aux;
+            (&mut a.mode, &mut a.rate, &mut a.frozen)
+        }
+        sdroxide_types::Backend::Pluto => {
+            let a = &mut cfg.pluto.aux;
             (&mut a.mode, &mut a.rate, &mut a.frozen)
         }
         sdroxide_types::Backend::SdrPlay => {
