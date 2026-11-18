@@ -6405,3 +6405,6 @@ settings-servers-beast-out = Mode-S Beast output (ADS-B)
 settings-servers-beast-waiting = Waiting for the station's Beast configuration…
 settings-servers-beast-port-tip = 30005: the port every Beast reader expects
 settings-servers-beast-about = Serves every ADS-B frame this receiver decodes in Beast format, for readsb, tar1090 and the feeders. In readsb add --net-connector <this machine>,30005,beast_in. Timestamps count samples, not GPS time: good for merging, useless for MLAT. Frames received from a Beast input are never sent here.
+adsb-beast-out-on = Own Beast server running on port { $port } · { $clients }
+adsb-beast-out-off = Own Beast server off
+adsb-beast-out-failed = Own Beast server failed: { $error }

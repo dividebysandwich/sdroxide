@@ -154,8 +154,11 @@ impl SdroxideApp {
             // Beast feed, where this receiver's dial decides nothing.
             if ui
                 .add_enabled_ui(!beast, |ui| {
-                    crate::chrome::chip(ui, on_channel, "1090.000")
-                        .on_hover_text(tr!("adsb-tune-receiver-1090-000-mhz"))
+                    crate::chrome::chip(ui, on_channel, "1090.000").on_hover_text(format!(
+                        "{}\n{}",
+                        tr!("adsb-tune-receiver-1090-000-mhz"),
+                        beast_out_line(&self.beast_status)
+                    ))
                 })
                 .inner
                 .clicked()
@@ -810,6 +813,27 @@ fn sort_rows(rows: &mut [&AdsbAircraft], by: AdsbSort, desc: bool, home: Option<
 /// The frame and preamble counts run for as long as the decoder does — an
 /// afternoon on a busy sector is millions — and a header readout that grew a
 /// digit an hour would eventually push everything beside it off the row.
+/// One line on this station's own Beast output, for the tooltip over the
+/// frequency chip, so whether the frames are going out can be seen from the
+/// panel (HDZ 2026-11-18: „über dem frequenz knopf … own server running on
+/// port xy oder own beast server off“).
+fn beast_out_line(status: &Option<crate::app::TciServerStatus>) -> String {
+    match status {
+        Some(s) if s.running => {
+            let port = s.addr.rsplit_once(':').map_or(s.addr.as_str(), |(_, p)| p).to_string();
+            let clients = match s.clients {
+                1 => tr!("settings-servers-t-1-client").to_string(),
+                n => tr!("settings-servers-n-clients", n = n),
+            };
+            tr!("adsb-beast-out-on", port = port, clients = clients)
+        }
+        Some(s) if s.error.is_some() => {
+            tr!("adsb-beast-out-failed", error = s.error.clone().unwrap_or_default())
+        }
+        _ => tr!("adsb-beast-out-off").to_string(),
+    }
+}
+
 fn count(n: u64) -> String {
     let m = n as f64;
     if n < 10_000 {
@@ -853,6 +877,25 @@ mod tests {
 
     /// An aircraft that has not reported an altitude yet is not the lowest one
     /// in the sky — it sorts last whichever way the column is pointing.
+    #[test]
+    fn the_tooltip_says_whether_the_own_beast_server_runs_and_on_which_port() {
+        let st = |running, error: Option<&str>| {
+            Some(crate::app::TciServerStatus {
+                running,
+                addr: "0.0.0.0:30005".into(),
+                clients: 1,
+                error: error.map(str::to_string),
+                client_connected: false,
+                client_error: None,
+            })
+        };
+        let on = beast_out_line(&st(true, None));
+        assert!(on.contains("30005") && !on.contains("0.0.0.0"), "{on}");
+        assert!(beast_out_line(&st(false, None)).contains("off"));
+        assert!(beast_out_line(&None).contains("off"), "no status yet reads as off");
+        assert!(beast_out_line(&st(false, Some("in use"))).contains("in use"));
+    }
+
     #[test]
     fn a_missing_value_sorts_last_in_both_directions() {
         let a = ac(1, "AAA", Some(35_000), 10);

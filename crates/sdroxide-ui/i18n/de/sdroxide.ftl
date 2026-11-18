@@ -6201,3 +6201,6 @@ settings-servers-beast-out = Mode-S-Beast-Ausgang (ADS-B)
 settings-servers-beast-waiting = Warte auf die Beast-Einstellungen der Station…
 settings-servers-beast-port-tip = 30005: Port, den jeder Beast-Leser erwartet
 settings-servers-beast-about = Sendet jede ADS-B-Meldung, die dieser Empfänger dekodiert, im Beast-Format an readsb, tar1090 und Feeder. In readsb --net-connector <dieser Rechner>,30005,beast_in eintragen. Zeitstempel zählen Samples, keine GPS-Zeit: gut zum Zusammenführen, unbrauchbar für MLAT. Meldungen aus einem Beast-Eingang gehen hier nie raus.
+adsb-beast-out-on = Eigener Beast-Server läuft auf Port { $port } · { $clients }
+adsb-beast-out-off = Eigener Beast-Server aus
+adsb-beast-out-failed = Eigener Beast-Server gescheitert: { $error }
