@@ -690,6 +690,9 @@ impl SdroxideApp {
                     .changed()
                 {
                     self.adsb_log_day = (i < last).then(|| days[i].clone());
+                    // LIVE is today's table; another day ends it.
+                    // Why: HDZ 2026-11-18: „Minibug: LIVE mit Tagesauswahl detoggeln“.
+                    self.adsb_log_live = false;
                 }
             }
             ui.label(RichText::new(&label).monospace().size(10.0).color(theme::CYAN()));
@@ -703,6 +706,7 @@ impl SdroxideApp {
                     .clicked()
                 {
                     self.adsb_log_week = w;
+                    self.adsb_log_live = false;
                 }
             }
             if is_today
@@ -715,6 +719,11 @@ impl SdroxideApp {
                 .clicked()
             {
                 self.adsb_log_live = !self.adsb_log_live;
+                // LIVE is one moment, not a week: it takes the span back to
+                // the day.
+                if self.adsb_log_live {
+                    self.adsb_log_week = false;
+                }
             }
         });
         let text = self.adsb_filter.trim().to_ascii_uppercase();

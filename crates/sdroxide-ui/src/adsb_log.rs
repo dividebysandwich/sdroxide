@@ -485,7 +485,7 @@ mod tests {
     /// least distance keeps those heard that far out, and a line with no
     /// position passes only while the distance filter is off.
     #[test]
-    fn the_filters_match_any_field_and_a_least_distance() {
+    fn the_text_filter_matches_any_field() {
         let s = Sighting {
             icao: 0x3E28E4,
             call: "DIGRK".into(),

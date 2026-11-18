@@ -194,6 +194,7 @@ pub fn draw(ui: &mut egui::Ui, b: &Bars, size: egui::Vec2, bar: Color32, ink: Co
     let widest = b.labels.iter().map(|l| l.chars().count()).max().unwrap_or(1) as f32 * 6.0 + 4.0;
     let every = (widest / slot).ceil().max(1.0) as usize;
     let pointer = resp.hover_pos();
+    let mut hovered = None;
     for (i, &c) in b.counts.iter().enumerate() {
         let x0 = plot.left() + i as f32 * slot + gap / 2.0;
         let rect = egui::Rect::from_min_max(
@@ -224,9 +225,22 @@ pub fn draw(ui: &mut egui::Ui, b: &Bars, size: egui::Vec2, bar: Color32, ink: Co
             );
         }
         if hot {
-            let label = b.labels.get(i).cloned().unwrap_or_default();
-            resp.clone().on_hover_text(format!("{label}: {c}"));
+            hovered = Some((i, c));
         }
+    }
+    // The hovered bar's value, painted beside the pointer: a tooltip of a
+    // widget this large is placed at its corner, far from the bar.
+    if let (Some((i, c)), Some(p)) = (hovered, pointer) {
+        let label = b.labels.get(i).cloned().unwrap_or_default();
+        let galley = painter.layout_no_wrap(format!("{label}: {c}"), font.clone(), ink);
+        let at = egui::pos2(
+            (p.x + 12.0).min(r.right() - galley.size().x - 8.0),
+            (p.y - galley.size().y - 10.0).max(r.top()),
+        );
+        let frame = egui::Rect::from_min_size(at, galley.size()).expand(4.0);
+        painter.rect_filled(frame, 2.0, Color32::from_black_alpha(220));
+        painter.rect_stroke(frame, 2.0, Stroke::new(1.0, bar), egui::StrokeKind::Inside);
+        painter.galley(at, galley, ink);
     }
     painter.line_segment(
         [plot.left_bottom(), plot.right_bottom()],
