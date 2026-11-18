@@ -5234,8 +5234,14 @@ fn engine_thread(
             // spends that budget: the transmit ring empties, and hardware that
             // answers an underrun by skipping ahead (SoapySX does) puts the
             // over on the air as chirps. See `IqSource::read_available`.
+            //
+            // A source that streams faster than one block a tick may take more
+            // when more are already waiting (`IqSource::full_duplex_reads_per_tick`):
+            // still only what has arrived, so the budget is never spent
+            // waiting. Every other source keeps the one block.
             if engine.rx_drawn_during_tx() {
-                if let Ok(n @ 1..) = engine.source.read_available(&mut buf) {
+                for _ in 0..engine.source.full_duplex_reads_per_tick().max(1) {
+                    let Ok(n @ 1..) = engine.source.read_available(&mut buf) else { break };
                     lane_samples += n as u64;
                     engine.samples_read += n as u64;
                     engine.last_block = n as u64;
@@ -5248,6 +5254,9 @@ fn engine_thread(
                     // QO-100 station watches its own downlink through the over
                     // (#652).
                     engine.process_block(iq, pool.as_ref());
+                    if n < buf.len() {
+                        break; // drained
+                    }
                 }
             }
         } else {
