@@ -1972,6 +1972,52 @@ const TCI_IQ_DEFAULT_HZ: f64 = 192_000.0;
 const TCI_TX_FIFO_CAP: usize = 24_000;
 /// Sample rate of the TX baseband/audio fed to the TX-monitor analyzer.
 const TX_MONITOR_RATE: f64 = 48_000.0;
+
+/// The classic two-tone test signal: 700 Hz and 1900 Hz, equal amplitude.
+///
+/// Neither tone is a harmonic of the other and both sit well inside a voice
+/// passband, so the third- and fifth-order products (at 1200 Hz spacing from
+/// each tone) land where a panadapter shows them plainly. Each tone is half
+/// scale, so the sum peaks at exactly the level it is multiplied by — the
+/// TUNE level — and its envelope swings to zero 1200 times a second, which is
+/// what visits every point of an amplifier's curve (issue #525).
+#[derive(Debug, Default, Clone, Copy)]
+struct TwoTone {
+    ph: [f32; 2],
+}
+
+impl TwoTone {
+    const HZ: [f32; 2] = [700.0, 1900.0];
+
+    fn step(&mut self) -> [f32; 2] {
+        let now = self.ph;
+        for (p, hz) in self.ph.iter_mut().zip(Self::HZ) {
+            *p += std::f32::consts::TAU * hz / TX_MONITOR_RATE as f32;
+            if *p > std::f32::consts::TAU {
+                *p -= std::f32::consts::TAU;
+            }
+        }
+        now
+    }
+
+    /// The next audio sample, peak 1.0, for a rig that modulates itself.
+    fn next_audio(&mut self) -> f32 {
+        let [a, b] = self.step();
+        0.5 * (a.cos() + b.cos())
+    }
+
+    /// The next sample both ways at once, from one step of the phases: the
+    /// complex baseband for the transmitter and the audio the recording tap
+    /// hears, which is the same signal.
+    fn next_both(&mut self, lower: bool) -> (Complex32, f32) {
+        let [a, b] = self.step();
+        let sign = if lower { -1.0 } else { 1.0 };
+        (
+            Complex32::from_polar(0.5, sign * a) + Complex32::from_polar(0.5, sign * b),
+            0.5 * (a.cos() + b.cos()),
+        )
+    }
+}
 /// The TX monitor's baseband/IQ runs near digital full scale (~0 dBFS), far
 /// hotter than any received signal, so on the shared floor/ceil it would clamp
 /// the waterfall to maximum. Dim it so the strongest TX lands this many dB below
@@ -2952,6 +2998,9 @@ struct Engine {
     /// Phase accumulator for the TUNE tone on audio-modulated rigs (CAT/TCI),
     /// which need an audio carrier to key up.
     tune_phase: f32,
+    /// The two-tone test signal's two phase accumulators — see
+    /// [`TwoTone`] and `TxState::two_tone`.
+    two_tone: TwoTone,
     /// The CTCSS tone or DCS stream going out under the voice, built from
     /// [`RadioState::repeater`] and rebuilt whenever that changes. `None` with
     /// the tone off, which is also what every non-FM mode gets: sub-audible
@@ -4659,6 +4708,7 @@ fn engine_thread(
         ),
         tx_mon_buf: Vec::new(),
         tune_phase: 0.0,
+        two_tone: TwoTone::default(),
         sub_tone: None,
         burst: None,
         burst_unkeys: false,
@@ -9377,12 +9427,23 @@ impl Engine {
                 self.end_tci_tx();
                 self.cancel_voice_play();
                 self.state.tx.tune = on;
+                if !on {
+                    self.end_two_tone();
+                }
                 self.sync_tx_state();
                 // Toggled mid-over (PTT held): already keyed, so `sync_tx_state`
                 // left the rig alone — swap the power level over by hand.
                 if self.tx_active {
                     self.source.set_tx_drive(self.tx_power_level() as f64);
                 }
+            }
+            SetTuneTwoTone(on) => {
+                // Only the waveform: TUNE keys and levels it as it always has,
+                // so the drive guards, the T/R switch and the time limit all
+                // apply unchanged.
+                self.state.tx.two_tone = on;
+                self.two_tone = TwoTone::default();
+                self.emit_state();
             }
             SetSwrGuard { enabled, limit } => {
                 // Clamped, not trusted. Below about 1.1:1 no real antenna ever
@@ -15063,6 +15124,7 @@ impl Engine {
         if rx == RxId::Main && mode.is_rx_only() && (self.state.tx.ptt || self.state.tx.tune) {
             self.state.tx.ptt = false;
             self.state.tx.tune = false;
+            self.end_two_tone();
             self.sync_tx_state();
             self.notice(&format!("{} is receive-only — the transmitter was unkeyed", mode.label()));
         }
@@ -16100,6 +16162,7 @@ impl Engine {
         warn!("TX refused on radio {} ({:?}): {reason}", self.instance + 1, self.state.rx[0].mode);
         self.state.tx.ptt = false;
         self.state.tx.tune = false;
+        self.end_two_tone();
         // Every deny happens before the transmitter keyed, so a gate claimed
         // moments ago by the rail sequence has to be handed back — and if this
         // radio never held it, releasing is a no-op by contract.
@@ -16116,6 +16179,17 @@ impl Engine {
     /// refused *because the rig is transmitting on its own PTT* being the case
     /// in point. Dropping the contacts there would open an antenna relay under
     /// somebody else's live RF and throw it straight back on the next tick.
+    /// TUNE has ended, so the two-tone choice goes with it.
+    ///
+    /// The choice belongs to the TUNE it was made for. Only the main window's
+    /// chips ever send `SetTuneTwoTone`; the footswitch and hotkey, rigctld's
+    /// `TUNE`, TCI's `tune:`, remote clients and a headless tune all send a
+    /// bare `SetTune(true)`, and each of those means a carrier. Left set, the
+    /// next of them would key a two-tone instead (review of #743).
+    fn end_two_tone(&mut self) {
+        self.state.tx.two_tone = false;
+    }
+
     fn release_tx_gate(&self) {
         if let Some(gate) = self.tx_gate.as_ref() {
             gate.release(self.instance);
@@ -19293,25 +19367,40 @@ impl Engine {
         tx.mod_buf.clear();
         let mut burst_done = false;
         if self.state.tx.tune || tx.modulator.is_none() {
-            // Steady carrier at the tune level. A PTT in CW only gets here with
-            // no keyer to hold the over for (see `set_ptt`).
+            // Steady carrier at the tune level — or, with two-tone on, the test
+            // signal at the same peak level. A PTT in CW only gets here with no
+            // keyer to hold the over for (see `set_ptt`).
             let level = tune_level;
-            tx.mod_buf.resize(TX_AUDIO_BLOCK, Complex32::new(level, 0.0));
-            self.mic_fifo.clear();
             // The recording tap has no other source of TX audio during tune —
             // without this the tap goes quiet for the tune's duration and
-            // drifts out of sync with RX, worse with every tune. Same audible
-            // tone `tx_block_audio`'s tune branch already generates.
-            if let Some(mixer) = self.mixer.as_mut() {
-                let mut tone = [0.0f32; TX_AUDIO_BLOCK];
-                let inc = std::f32::consts::TAU * 1000.0 / TX_MONITOR_RATE as f32;
-                for a in &mut tone {
-                    *a = self.tune_phase.cos() * level;
-                    self.tune_phase += inc;
-                    if self.tune_phase > std::f32::consts::TAU {
-                        self.tune_phase -= std::f32::consts::TAU;
+            // drifts out of sync with RX, worse with every tune. It hears what
+            // is on the air: the two tones with two-tone on, otherwise the same
+            // 1 kHz tone `tx_block_audio`'s tune branch generates.
+            let mut tone = [0.0f32; TX_AUDIO_BLOCK];
+            if self.state.tx.tune && self.state.tx.two_tone {
+                // The sideband at the transmit dial, which is where SSTV and
+                // RADE take theirs from on 160/80/40 m.
+                let lower = self.state.rx[0].mode.is_lower_sideband_at(self.state.tx_freq_hz());
+                for t in &mut tone {
+                    let (iq, audio) = self.two_tone.next_both(lower);
+                    tx.mod_buf.push(iq * level);
+                    *t = audio * level;
+                }
+            } else {
+                tx.mod_buf.resize(TX_AUDIO_BLOCK, Complex32::new(level, 0.0));
+                if self.mixer.is_some() {
+                    let inc = std::f32::consts::TAU * 1000.0 / TX_MONITOR_RATE as f32;
+                    for a in &mut tone {
+                        *a = self.tune_phase.cos() * level;
+                        self.tune_phase += inc;
+                        if self.tune_phase > std::f32::consts::TAU {
+                            self.tune_phase -= std::f32::consts::TAU;
+                        }
                     }
                 }
+            }
+            self.mic_fifo.clear();
+            if let Some(mixer) = self.mixer.as_mut() {
                 mixer.push_tx(&tone);
             }
         } else {
@@ -19565,12 +19654,20 @@ impl Engine {
             } else {
                 self.state.tx.tune_drive.clamp(0.05, 1.0)
             };
-            let inc = std::f32::consts::TAU * 1000.0 / TX_MONITOR_RATE as f32;
-            for a in &mut audio {
-                *a = self.tune_phase.cos() * amp;
-                self.tune_phase += inc;
-                if self.tune_phase > std::f32::consts::TAU {
-                    self.tune_phase -= std::f32::consts::TAU;
+            if self.state.tx.two_tone {
+                // The rig's own SSB modulator puts the audio in the sideband,
+                // so the real sum of the two tones is all it needs.
+                for a in &mut audio {
+                    *a = self.two_tone.next_audio() * amp;
+                }
+            } else {
+                let inc = std::f32::consts::TAU * 1000.0 / TX_MONITOR_RATE as f32;
+                for a in &mut audio {
+                    *a = self.tune_phase.cos() * amp;
+                    self.tune_phase += inc;
+                    if self.tune_phase > std::f32::consts::TAU {
+                        self.tune_phase -= std::f32::consts::TAU;
+                    }
                 }
             }
         } else if self.burst.is_some() && self.state.rx[0].mode == Mode::Nfm {
@@ -22669,5 +22766,45 @@ mod tx_voice_tester_tests {
         assert!(!t.is_recording());
         t.stop();
         assert_eq!(t.status().0, TxVoiceTest::Idle);
+    }
+}
+
+#[cfg(test)]
+mod two_tone_tests {
+    use super::*;
+
+    /// Peaks at the level it is scaled by and no higher, so TUNE's level is
+    /// still the most the transmitter is asked for; and the envelope really
+    /// does swing to (near) zero, which is the point of the signal.
+    #[test]
+    fn the_two_tone_signal_peaks_at_full_scale_and_beats_to_zero() {
+        let mut t = TwoTone::default();
+        let (mut peak, mut floor) = (0.0f32, f32::MAX);
+        for _ in 0..48_000 {
+            let m = t.next_both(false).0.norm();
+            peak = peak.max(m);
+            floor = floor.min(m);
+        }
+        assert!(peak <= 1.0 + 1e-4 && peak > 0.99, "peak {peak}");
+        assert!(floor < 0.02, "the envelope never beat down: floor {floor}");
+    }
+
+    /// The tones land in the sideband asked for: positive frequencies for
+    /// upper, negative for lower — measured as the phase advance per sample.
+    #[test]
+    fn the_two_tone_signal_follows_the_sideband() {
+        let rotation = |lower: bool| {
+            let mut t = TwoTone::default();
+            let mut prev = t.next_both(lower).0;
+            let mut turn = 0.0f32;
+            for _ in 0..4800 {
+                let z = t.next_both(lower).0;
+                turn += (z * prev.conj()).arg();
+                prev = z;
+            }
+            turn
+        };
+        assert!(rotation(false) > 0.0, "upper sideband should turn positive");
+        assert!(rotation(true) < 0.0, "lower sideband should turn negative");
     }
 }

@@ -1721,7 +1721,12 @@ use sdroxide_types::{
 ///
 /// v211: ELAD monitoring. `CatConfig` gains `elad_mute_on_radio_ptt` and
 /// `EladConfig` gains `hear_own_tx`, which changes every `RadioConfig`.
-pub const PROTO_VERSION: u16 = 211;
+///
+/// v212: TUNE can send a two-tone test signal (issue #525). `TxState` gains
+/// `two_tone` on its tail and `Command` gains a trailing `SetTuneTwoTone`;
+/// `TxState` rides whole inside `RadioState`, so a v211 peer reads the extra
+/// byte as the start of the next field and fails to decode every state.
+pub const PROTO_VERSION: u16 = 212;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
