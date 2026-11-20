@@ -1447,7 +1447,7 @@ The **waterfall colour scheme** and the **spectrum background gradient** are set
 on the **UI** tab of the Settings window (see
 [§6.3](#63-ui-display-preferences-and-voice-announcements)). The colour scheme is one of
 `Classic`, `Viridis`, `Gray`, `Icom`, `Neon`, `Synthwave`, `Matrix`, `Tron`,
-`Amber`, or `Rainbow`;
+`Amber`, `Rainbow`, `Blue`, or `SimpleSDR`;
 the gradient fills the spectrum area from a top colour down to a bottom colour
 (default dark red → black) and can be turned off. The same tab also themes the
 UI itself — colour theme, button shape and window shape — independently of the
@@ -18610,8 +18610,10 @@ have are not offered.
 peaking at red with no white blow-out), `Neon`, `Synthwave`, `Matrix`, `Tron`,
 `Amber` (one warm phosphor family, to wear with the **Amber Phosphor** UI
 theme), `Rainbow` (the full spectrum in order, to wear with the **Rainbow**
-UI theme) and `Blue` — the traditional blue waterfall SDR# has used since the
+UI theme), `Blue` — the traditional blue waterfall SDR# has used since the
 beginning and SDR++ inherited: a navy floor rather than a black one, so the
 noise keeps its texture, and a top half that runs white, yellow, orange and two
-shades of red where the other ramps have already saturated. Chosen on the **UI**
+shades of red where the other ramps have already saturated — and `SimpleSDR`, a
+cool ramp on a charcoal floor: navy and blue for the noise, aqua for a signal,
+then yellow, orange and white for the strong ones, with no green step. Chosen on the **UI**
 tab of the Settings window ([6.3](#63-ui-display-preferences-and-voice-announcements)).
