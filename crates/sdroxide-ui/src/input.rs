@@ -1146,9 +1146,20 @@ impl InputRuntime {
                                     None => deltas.push((ix, delta as f32)),
                                 }
                             }
-                            // A dial bound to a button action fires once per
-                            // report it moves in.
-                            ActionKind::Momentary => buttons.push((ix, true)),
+                            // A dial bound to a button action is a tap per
+                            // report it moves in: pressed and let go, so
+                            // nothing stays held. Never one that keys the
+                            // transmitter, which a turning knob would key and
+                            // unkey, or latch on, with every report.
+                            ActionKind::Momentary
+                                if matches!(
+                                    b.action,
+                                    Action::Ptt | Action::TuneCarrier | Action::CwStraight
+                                ) => {}
+                            ActionKind::Momentary => {
+                                buttons.push((ix, true));
+                                buttons.push((ix, false));
+                            }
                         }
                     }
                 }
@@ -1849,8 +1860,6 @@ mod tests {
         assert_eq!(cmds, vec![Command::SetPtt(false)]);
     }
 
-    /// A TMate 2 key held for PTT keys and unkeys the rig, and pulling the
-    /// controller out while it is held unkeys it too.
     #[test]
     fn tuning_lock_holds_the_frequency() {
         let mut state = RadioState { vfo_a_hz: 7_100_000.0, ..RadioState::default() };
@@ -1899,6 +1908,8 @@ mod tests {
         assert_eq!(step_digit(50.0), None);
     }
 
+    /// A TMate 2 key held for PTT keys and unkeys the rig, and pulling the
+    /// controller out while it is held unkeys it too.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn tmate2_ptt_is_released_when_the_controller_goes_away() {
