@@ -444,16 +444,28 @@ impl SdroxideApp {
     /// Tune the active VFO onto a spot (CW dialed a pitch below, so it lands in
     /// the CW passband), set its mode, and open a pre-filled log entry.
     fn select_spot(&mut self, spot: &Spot, cmds: &mut Vec<Command>) {
+        // Already in the spot's mode, the mode is not sent again: setting a
+        // mode applies its default filter, which threw away the operator's own
+        // width (#916). CW then lands on the operator's own pitch.
+        let current = self.state.rx[0].mode;
         match spot.radio_mode() {
             Some(Mode::Cw) => {
-                let (lo, hi) = Mode::Cw.default_filter();
-                let pitch = ((lo + hi) * 0.5) as f64;
+                let pitch = if current == Mode::Cw {
+                    f64::from(self.cw_pitch_hz())
+                } else {
+                    let (lo, hi) = Mode::Cw.default_filter();
+                    ((lo + hi) * 0.5) as f64
+                };
                 cmds.push(Command::SetVfo { vfo: self.state.active_vfo, hz: spot.freq_hz - pitch });
-                cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Cw });
+                if current != Mode::Cw {
+                    cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Cw });
+                }
             }
             Some(m) => {
                 cmds.push(Command::SetVfo { vfo: self.state.active_vfo, hz: spot.freq_hz });
-                cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
+                if current != m {
+                    cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
+                }
             }
             None => cmds.push(Command::SetVfo { vfo: self.state.active_vfo, hz: spot.freq_hz }),
         }

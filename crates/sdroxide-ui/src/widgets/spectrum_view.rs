@@ -1208,13 +1208,33 @@ fn draw_net_box(p: &egui::Painter, b: &NetBox, spot: &Spot, hovered: bool, alpha
 /// moves onto the spot, and a radio that tunes with its dial comes along
 /// exactly as it does for the readout (see the command's docs for why it no
 /// longer stays put).
-fn tune_to_net_spot(spot: &Spot, state: &RadioState, cmds: &mut Vec<Command>) {
+///
+/// Already in the spot's mode, the mode is not sent again: the engine sets a
+/// mode's default filter whenever a mode is set, and that threw away the
+/// operator's own width (#916, as #821 was for skimmer spots). CW lands on the
+/// operator's own pitch when there is one, as a skimmer spot does.
+fn tune_to_net_spot(
+    spot: &Spot,
+    state: &RadioState,
+    cursor_hz: Option<f32>,
+    cmds: &mut Vec<Command>,
+) {
+    let set_mode = |m: Mode, cmds: &mut Vec<Command>| {
+        if state.rx[0].mode != m {
+            cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
+        }
+    };
     match spot.radio_mode() {
         Some(Mode::Cw) => {
-            let (lo, hi) = Mode::Cw.default_filter();
-            let pitch = ((lo + hi) * 0.5) as f64;
+            let pitch = cursor_hz
+                .filter(|_| state.rx[0].mode == Mode::Cw)
+                .map(f64::from)
+                .unwrap_or_else(|| {
+                    let (lo, hi) = Mode::Cw.default_filter();
+                    ((lo + hi) * 0.5) as f64
+                });
             cmds.push(Command::TuneInSpan { vfo: state.active_vfo, hz: spot.freq_hz - pitch });
-            cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Cw });
+            set_mode(Mode::Cw, cmds);
         }
         Some(m) if m.holds_standard_tones() => {
             let af = m.standard_tone_offset_hz().unwrap_or_default();
@@ -1222,12 +1242,12 @@ fn tune_to_net_spot(spot: &Spot, state: &RadioState, cmds: &mut Vec<Command>) {
                 vfo: state.active_vfo,
                 hz: spot.freq_hz - f64::from(af),
             });
-            cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
+            set_mode(m, cmds);
             cmds.push(Command::SetDigiAudioFreq(af));
         }
         Some(m) => {
             cmds.push(Command::TuneInSpan { vfo: state.active_vfo, hz: spot.freq_hz });
-            cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
+            set_mode(m, cmds);
         }
         None => cmds.push(Command::TuneInSpan { vfo: state.active_vfo, hz: spot.freq_hz }),
     }
@@ -2204,7 +2224,7 @@ pub fn show_ext(
                     // Network spot: tune + set mode, and hand the spot back so the
                     // app can pre-fill a log entry (and optionally look it up).
                     let spot = &net_spots[nb.idx];
-                    tune_to_net_spot(spot, state, cmds);
+                    tune_to_net_spot(spot, state, cursor_hz, cmds);
                     *clicked_spot = Some(spot.clone());
                 } else if let Some(sb) = spot_boxes.iter().find(|b| b.rect.contains(pos)) {
                     let spot = &skimmer[sb.idx];
@@ -3827,6 +3847,50 @@ mod axis_tests {
 
 #[cfg(test)]
 mod tests {
+
+    fn cw_spot() -> Spot {
+        Spot {
+            id: 1,
+            kind: sdroxide_types::SpotKind::DxCluster,
+            freq_hz: 14_025_000.0,
+            call: "DL1ABC".into(),
+            spotter: String::new(),
+            mode: "CW".into(),
+            comment: String::new(),
+            reference: None,
+            grid: None,
+            loc: None,
+            when_utc: 0,
+            snr_db: None,
+            color: None,
+        }
+    }
+
+    /// Clicking a cluster spot while already in CW keeps the operator's
+    /// filter and pitch: re-sending the mode would reset the width (#916).
+    #[test]
+    fn a_cluster_spot_in_the_same_mode_keeps_the_filter() {
+        let mut state = RadioState::default();
+        state.rx[0].mode = Mode::Cw;
+        let mut cmds = Vec::new();
+        tune_to_net_spot(&cw_spot(), &state, Some(700.0), &mut cmds);
+        assert!(!cmds.iter().any(|c| matches!(c, Command::SetMode { .. })), "{cmds:?}");
+        assert!(
+            cmds.iter().any(
+                |c| matches!(c, Command::TuneInSpan { hz, .. } if (*hz - 14_024_300.0).abs() < 0.5)
+            ),
+            "{cmds:?}"
+        );
+
+        // From another mode it still switches to CW.
+        state.rx[0].mode = Mode::Usb;
+        let mut cmds = Vec::new();
+        tune_to_net_spot(&cw_spot(), &state, None, &mut cmds);
+        assert!(
+            cmds.iter().any(|c| matches!(c, Command::SetMode { mode: Mode::Cw, .. })),
+            "{cmds:?}"
+        );
+    }
 
     /// WELCH's trace smoothing leaves an even spectrum as it is and takes
     /// most of the zigzag out of a speckled one.
