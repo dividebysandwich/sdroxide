@@ -16529,15 +16529,6 @@ impl Engine {
         self.notice(&format!("transmit refused — {reason}"));
     }
 
-    /// Hand back the station's transmit interlock, if this engine holds it,
-    /// and reconcile the external T/R switch with what is actually happening.
-    ///
-    /// Reconciled rather than released, and the difference matters: this is
-    /// called from [`Engine::deny_tx`], which runs on refusals that have
-    /// nothing to do with whether the station is on the air — a key-down
-    /// refused *because the rig is transmitting on its own PTT* being the case
-    /// in point. Dropping the contacts there would open an antenna relay under
-    /// somebody else's live RF and throw it straight back on the next tick.
     /// TUNE has ended, so the two-tone choice goes with it.
     ///
     /// The choice belongs to the TUNE it was made for. Only the main window's
@@ -16549,6 +16540,15 @@ impl Engine {
         self.state.tx.two_tone = false;
     }
 
+    /// Hand back the station's transmit interlock, if this engine holds it,
+    /// and reconcile the external T/R switch with what is actually happening.
+    ///
+    /// Reconciled rather than released, and the difference matters: this is
+    /// called from [`Engine::deny_tx`], which runs on refusals that have
+    /// nothing to do with whether the station is on the air — a key-down
+    /// refused *because the rig is transmitting on its own PTT* being the case
+    /// in point. Dropping the contacts there would open an antenna relay under
+    /// somebody else's live RF and throw it straight back on the next tick.
     fn release_tx_gate(&self) {
         if let Some(gate) = self.tx_gate.as_ref() {
             gate.release(self.instance);
@@ -17885,7 +17885,13 @@ impl Engine {
             antenna_rx: self.source.current_antenna(),
             antenna_tx: self.source.current_tx_antenna(),
             // The levels carry over; a keyed transmit never does.
-            tx: sdroxide_types::TxState { ptt: false, tune: false, ..self.state.tx },
+            // Two-tone ends with the TUNE it was chosen for, here too.
+            tx: sdroxide_types::TxState {
+                ptt: false,
+                tune: false,
+                two_tone: false,
+                ..self.state.tx
+            },
             // The scan was walking the old front end's span.
             scan: sdroxide_types::ScanState::default(),
             skimmer: if self.audio_mode {
