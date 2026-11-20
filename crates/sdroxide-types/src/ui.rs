@@ -328,6 +328,10 @@ pub enum UiTheme {
     /// A near-monochrome light theme: white panels, graphite lines and a
     /// single restrained blue accent — the modern development-tool look.
     ModernMinimalist,
+    /// Neutral charcoal panels, soft white text and one plain blue accent,
+    /// with the window chrome left a quiet grey — the flat, undecorated look
+    /// of a modern desktop application rather than an instrument panel.
+    SimpleSdr,
     /// White panels, near-black ink, dark saturated accents — the one theme
     /// that inverts the ground. The instruments (panadapter, S-meter, map,
     /// solar globe) keep their dark glass: a waterfall has no bright-ground
@@ -348,7 +352,7 @@ pub enum UiTheme {
 }
 
 impl UiTheme {
-    pub const ALL: [UiTheme; 17] = [
+    pub const ALL: [UiTheme; 18] = [
         UiTheme::Default,
         UiTheme::Light,
         UiTheme::HighContrast,
@@ -366,6 +370,7 @@ impl UiTheme {
         UiTheme::CatppuccinMocha,
         UiTheme::CatppuccinLatte,
         UiTheme::ModernMinimalist,
+        UiTheme::SimpleSdr,
     ];
 
     pub fn label(self) -> &'static str {
@@ -387,6 +392,7 @@ impl UiTheme {
             UiTheme::CatppuccinMocha => "Catppuccin mocha",
             UiTheme::CatppuccinLatte => "Catppuccin latte",
             UiTheme::ModernMinimalist => "Modern minimalist",
+            UiTheme::SimpleSdr => "SimpleSDR",
         }
     }
 }

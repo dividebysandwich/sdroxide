@@ -13407,7 +13407,9 @@ spoken announcements below them under `[speech]`:
   one of ten schemes after the editor palettes of the same names: **Nord**,
   **Nord dark**, **Gruvbox**, **Everforest**, **Solarized dark**, **Dracula** and
   **Catppuccin mocha** on dark grounds, and **Solarized**, **Catppuccin latte**
-  and **Modern minimalist** on bright ones. Where a palette's own accent would be
+  and **Modern minimalist** on bright ones, or **SimpleSDR** (flat charcoal
+  panels, one plain blue accent and grey window outlines, for the look of an
+  ordinary desktop application). Where a palette's own accent would be
   too faint to read on its panel it is lightened (or, on a bright ground,
   darkened) just far enough to be, so a scheme can differ a shade from the
   editor theme it is named after. The meters, scopes and maps take their
