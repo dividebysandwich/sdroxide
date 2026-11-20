@@ -16760,7 +16760,6 @@ impl Engine {
         }
     }
 
-
     /// Re-publish the receiving antenna when the radio has since said
     /// something about it.
     ///

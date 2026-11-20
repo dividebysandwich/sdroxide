@@ -433,10 +433,8 @@ impl SdroxideApp {
             };
             let resp = ui
                 .add_enabled_ui(!beast, |ui| {
-                    crate::chrome::chip(ui, on_channel, "1090.000").on_hover_text(format!(
-                        "{tip}\n{}",
-                        beast_out_line(&self.beast_status)
-                    ))
+                    crate::chrome::chip(ui, on_channel, "1090.000")
+                        .on_hover_text(format!("{tip}\n{}", beast_out_line(&self.beast_status)))
                 })
                 .inner;
             if resp.clicked() {

@@ -1338,8 +1338,7 @@ fn amp_panel_inner(
                 } else {
                     theme::GREEN()
                 };
-                let label =
-                    ui.label(RichText::new(state).size(14.0 * s).strong().color(col));
+                let label = ui.label(RichText::new(state).size(14.0 * s).strong().color(col));
                 if let Some(hover) = hover {
                     label.on_hover_text(hover);
                 }
