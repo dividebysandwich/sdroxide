@@ -1746,7 +1746,10 @@ use sdroxide_types::{
 /// changes layout. The labels travel in the new `ServerMsg::TciSpots`, appended
 /// last, apart from `Spots` because they belong to one radio and the feeds to
 /// the station.
-pub const PROTO_VERSION: u16 = 217;
+///
+/// v218: SAM sidebands. `RxState` gains `sam_sideband` and `sam_mrc_tau_s` at
+/// its tail and `Command::SetSamSideband` is appended.
+pub const PROTO_VERSION: u16 = 218;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

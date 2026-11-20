@@ -1326,4 +1326,13 @@ pub enum Command {
     /// in `beast.json`, answered by [`crate::RadioEvent::BeastStatus`] and the
     /// station config. Appended last, for the usual reason.
     SetBeastConfig(crate::BeastConfig),
+
+    /// Which sidebands SAM hears for a receiver, and MRC's averaging time
+    /// (see `RxState::sam_sideband`, `RxState::sam_mrc_tau_s`). Appended:
+    /// postcard numbers variants by position.
+    SetSamSideband {
+        rx: RxId,
+        sideband: crate::SamSideband,
+        tau_s: f32,
+    },
 }

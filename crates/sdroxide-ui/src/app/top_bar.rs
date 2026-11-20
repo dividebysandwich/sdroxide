@@ -4553,6 +4553,57 @@ impl SdroxideApp {
                 }
             });
         });
+
+        // SAM's sidebands: its own row, one of four, greyed out outside SAM.
+        // Why: HDZ 2026-11-16: "die SAM-Implementation ist nicht gut, machst du
+        //      das als Toggle-Knopf"; "das MRC klang gut"; later the same day
+        //      "neben SAM MRC noch SAM USB und SAM LSB, damit wir da alle SAM-
+        //      Varianten haben", and τ fixed ("0.2 sek wäre universell").
+        crate::chrome::menu_caption(ui, &tr!("topbar-sam-sideband"));
+        let sam = self.state.rx[0].mode == Mode::Sam;
+        ui.add_enabled_ui(sam, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                use sdroxide_types::SamSideband as S;
+                let (now, tau) = (self.state.rx[0].sam_sideband, self.state.rx[0].sam_mrc_tau_s);
+                let mut want = None;
+                for sb in S::ALL {
+                    let (label, hint) = match sb {
+                        S::Both => (tr!("topbar-sam-dsb"), tr!("topbar-sam-dsb-hint")),
+                        S::Mrc => (tr!("topbar-sam-mrc-chip"), tr!("topbar-sam-mrc-hint")),
+                        S::Upper => (tr!("topbar-sam-usb"), tr!("topbar-sam-usb-hint")),
+                        S::Lower => (tr!("topbar-sam-lsb"), tr!("topbar-sam-lsb-hint")),
+                    };
+                    if crate::chrome::chip(ui, now == sb, label).on_hover_text(hint).clicked()
+                        && now != sb
+                    {
+                        want = Some((sb, tau));
+                    }
+                }
+                // MRC's averaging time, three steps, live only in MRC.
+                ui.separator();
+                ui.add_enabled_ui(now == S::Mrc, |ui| {
+                    for (t, label) in sdroxide_types::SAM_MRC_TAU_CHOICES_S.into_iter().zip([
+                        tr!("topbar-sam-tau-short"),
+                        tr!("topbar-sam-tau-mid"),
+                        tr!("topbar-sam-tau-long"),
+                    ]) {
+                        if crate::chrome::chip(ui, tau == t, label)
+                            .on_hover_text(tr!("topbar-sam-tau-hint"))
+                            .clicked()
+                            && tau != t
+                        {
+                            want = Some((now, t));
+                        }
+                    }
+                });
+                if let Some((sideband, tau_s)) = want {
+                    let r = &mut self.state.rx[0]; // optimistic echo
+                    r.sam_sideband = sideband;
+                    r.sam_mrc_tau_s = tau_s;
+                    cmds.push(Command::SetSamSideband { rx: RxId::Main, sideband, tau_s });
+                }
+            });
+        });
     }
 
     /// The sub-audible readout: the CTCSS tone or DCS code being received, and a

@@ -816,6 +816,27 @@ menu. Ordinary dragging and keyboard adjustment still work.
     slider is the **sensitivity**, 0.1 to 0.6: how deep the magnitude must dip,
     as a share of its mean, for a jump to count as a slip; 0.2 is the start,
     higher repairs more. All three are remembered for NFM.
+  - **SAM** (SAM only, greyed out in other modes) — a row of its own that
+    picks what the synchronous detector hears after it has locked the
+    carrier. **DSB** is plain SAM, both sidebands with equal weight.
+    **MRC** (the start) works against the fading of a skywave AM station
+    and is usually the best choice there.
+    Two paths a millisecond apart turn the channel into a comb of notches
+    that drifts across the signal: a notch on the carrier makes plain AM
+    distort, and a notch on one sideband takes out that audio frequency on
+    that side only. MRC combines the upper and lower sideband frequency by
+    frequency, each in proportion to how well it came through
+    (maximal-ratio combining), so where one sideband is in a notch the other
+    carries that frequency; on a channel without fading it sounds exactly
+    like DSB. Beside it, **0.2 s**, **0.5 s** and **1 s** set how long MRC
+    averages each sideband's quality: 0.2 s (the start) follows fast fading,
+    longer is steadier. **USB** and **LSB** take one sideband
+    alone, at the same level, for a neighbour that sits on the other side
+    of the carrier. In MRC, USB and LSB the carrier loop also steers in
+    proportion to the carrier's level, so it stays on frequency while the
+    carrier is faded instead of wandering off with the noise and having to
+    pull in again; these three delay the audio by about 27 ms. The choice is
+    remembered for SAM.
 
 - **BIN** (CW and SSB) — **binaural** audio: the receive passband spread across
   the two ears, so that a signal's *pitch* becomes a *direction*. Whatever sits
@@ -1099,7 +1120,7 @@ of an FT8 decoder, and a slow AGC is kinder to a signal sitting in the noise
 than the fast one that sounds right on a strong local. So each mode carries a
 set of starting values for **AGC**, **Man**, **SQL**, **NR**, **ANC**, **BIN**
 and WFM's **ST**, and for the NR menu's filters (**HUM**, the **SK** post-filter
-with its τ, width and place, NFM's **FM-DECRACKLE**), and selecting a mode — here, or on a CAT rig's own controls —
+with its τ, width and place, NFM's **FM-DECRACKLE**, SAM's sidebands), and selecting a mode — here, or on a CAT rig's own controls —
 lays its own on the receiver.
 
 The built-in defaults are deliberately plain. A slow AGC on the weak-signal
