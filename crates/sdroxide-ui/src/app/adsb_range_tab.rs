@@ -10,7 +10,9 @@ use crate::i18n::tr;
 use crate::recorder::mb;
 
 /// How often the inventory is read back while the window is open, seconds.
-const REFRESH_S: f64 = 2.0;
+// The data changes only on each minute's flush; the read is a whole-table
+// aggregate, so not every frame or two.
+const REFRESH_S: f64 = 15.0;
 
 #[derive(Default)]
 pub(in crate::app) struct RangeTab {

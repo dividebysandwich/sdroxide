@@ -4226,7 +4226,7 @@ adsb-chip-wx = WETTER
 adsb-chip-wx-tip = Niederschlag: { $src }
   { $lic } · Rechtsklick: Quelle
 adsbmap-wx-credit = Radar: Deutscher Wetterdienst, { $time }
-adsbmap-wx-loading = Radar: Deutscher Wetterdienst, wird geladen …
+adsbmap-wx-loading = Radar: wird geladen …
 adsbmap-wx-credit-us = Radar: NOAA NWS NEXRAD über Iowa Environmental Mesonet, { $time }
 adsbmap-wx-credit-ca = Radar: Environment and Climate Change Canada, { $time }
 adsbmap-wx-credit-world = Niederschlag aus Satelliten: NASA GPM IMERG über GIBS, { $time }
@@ -5041,7 +5041,7 @@ solarstate-dwarf-planets = ZWERGPLANETEN
 ## adsbmap (src/adsb_map.rs)
 
 adsbmap-double-click-reframe = Doppelklick zum Neurahmen
-adsbmap-stamp = SDR Oxide · { $n } planes · { $time } UTC
+adsbmap-stamp = SDR Oxide · { $n } Flugzeuge · { $time } UTC
 adsbmap-cell = Zelle: { $n } Positionen, Ø { $rssi } dBFS
 adsbmap-cell-empty = Zelle: kein Empfang
 adsbmap-cell-outside = jenseits { $km } km Diagramm

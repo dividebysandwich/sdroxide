@@ -1321,11 +1321,6 @@ impl SdroxideApp {
         }
     }
 
-    /// The operator's own position, from the grid in the digital-mode setup.
-    ///
-    /// The same source the FT8 and APRS maps use, so the three never disagree
-    /// about where the station is. `None` until it has been filled in, which is
-    /// why the range column and the RANGE sort are conditional.
     /// What the range log files this radio's positions under: the name the
     /// PANO recorder gives a session, the radio's label or else its driver.
     #[cfg(not(target_arch = "wasm32"))]
@@ -1335,6 +1330,11 @@ impl SdroxideApp {
         })
     }
 
+    /// The operator's own position, from the grid in the digital-mode setup.
+    ///
+    /// The same source the FT8 and APRS maps use, so the three never disagree
+    /// about where the station is. `None` until it has been filled in, which is
+    /// why the range column and the RANGE sort are conditional.
     pub(in crate::app) fn adsb_home(&self) -> Option<(f64, f64)> {
         let grid = self.digi_cfg_edit.my_grid.trim();
         (!grid.is_empty()).then(|| sdroxide_types::grid_to_latlon(grid)).flatten()
@@ -1788,8 +1788,6 @@ fn sighting_links(s: &crate::adsb_log::Sighting) -> Vec<(String, String)> {
     v
 }
 
-/// `Mo 17.11.` for `2026-11-17`: the day the sighting log shows, as its
-/// slider and summary name it. The date itself when it does not parse.
 /// The chart axis as the list over it names it.
 fn axis_name(a: crate::adsb_plots::Axis) -> String {
     use crate::adsb_plots::Axis;
@@ -1802,6 +1800,8 @@ fn axis_name(a: crate::adsb_plots::Axis) -> String {
     }
 }
 
+/// `Mo 17.11.` for `2026-11-17`: the day the sighting log shows, as its
+/// slider and summary name it. The date itself when it does not parse.
 fn day_label(day: &str) -> String {
     let Some((wd, d, m)) = crate::adsb_log::day_parts(day) else { return day.to_string() };
     let wd = match wd {

@@ -4295,7 +4295,7 @@ adsb-chip-wx = WEATHER
 adsb-chip-wx-tip = Precipitation: { $src }
   { $lic } · right-click: source
 adsbmap-wx-credit = Radar: Deutscher Wetterdienst, { $time }
-adsbmap-wx-loading = Radar: Deutscher Wetterdienst, loading …
+adsbmap-wx-loading = Radar: loading …
 adsbmap-wx-credit-us = Radar: NOAA NWS NEXRAD via Iowa Environmental Mesonet, { $time }
 adsbmap-wx-credit-ca = Radar: Environment and Climate Change Canada, { $time }
 adsbmap-wx-credit-world = Satellite precipitation: NASA GPM IMERG via GIBS, { $time }

@@ -217,6 +217,9 @@ impl WxRadar {
             self.tex = None;
             self.fetched_at = 0;
             self.asked_at = i64::MIN / 2;
+            // The old source's fetch is no longer wanted; do not wait for it.
+            self.generation = self.generation.wrapping_add(1);
+            self.pending = false;
         }
         while let Ok((generation, from, res)) = self.rx.try_recv() {
             if generation != self.generation {
