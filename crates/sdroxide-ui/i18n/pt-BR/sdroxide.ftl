@@ -2286,7 +2286,6 @@ topbar-recent = RECENTES
 topbar-recent-empty =
     Preenche após 3 s em um local
 topbar-mode = MODO
-topbar-digital = DIGITAL
 
 ## Barra superior: os chips de janela da caixa Sistema.
 

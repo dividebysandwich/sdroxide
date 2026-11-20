@@ -2265,7 +2265,6 @@ topbar-recent = 最近
 topbar-recent-empty =
     同じ場所に3秒いると記録されます
 topbar-mode = モード
-topbar-digital = デジタル
 
 ## 上部バー：システムボックスのウィンドウチップ。
 

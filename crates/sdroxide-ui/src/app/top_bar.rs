@@ -2426,6 +2426,7 @@ impl SdroxideApp {
         let here = (Band::containing(state.active_freq_hz()), mode);
         let popup_id = egui::Popup::default_response_id(&btn);
         let mut dock = false;
+        let mut probes = self.probe_row();
         crate::chrome::fading_menu_popup(ui, &btn, &mut self.mode_popup_since, |ui| {
             if can_dock
                 && crate::chrome::chip(ui, false, tr!("topbar-dock"))
@@ -2436,8 +2437,22 @@ impl SdroxideApp {
             }
             ui.add_space(2.0);
             crate::app::workplaces::workplace_rows(ui, recent, here, state.active_vfo, cmds);
-            band_mode_menu(ui, mode, state, caps.as_ref(), stated, conditions, daylight, cmds);
+            band_mode_menu(
+                ui,
+                mode,
+                state,
+                caps.as_ref(),
+                stated,
+                conditions,
+                daylight,
+                &mut probes,
+                cmds,
+            );
         });
+        if let Some(p) = probes.picked {
+            self.open_probe(p);
+            egui::Popup::close_id(ui.ctx(), popup_id);
+        }
         if dock {
             self.band_docked = true;
             self.band_dock_visible = true;
@@ -2460,6 +2475,7 @@ impl SdroxideApp {
             self.state.active_vfo,
             cmds,
         );
+        let mut probes = self.probe_row();
         band_mode_menu(
             ui,
             mode,
@@ -2468,8 +2484,58 @@ impl SdroxideApp {
             stated,
             self.band_conditions.as_ref(),
             self.daylight,
+            &mut probes,
             cmds,
         );
+        if let Some(p) = probes.picked {
+            self.open_probe(p);
+        }
+    }
+
+    /// Which PROBES chips in the band/mode menu are lit: the window is open,
+    /// or its decoder is running with the window closed — the same rule the
+    /// SAT and ISM chips in the system row follow.
+    fn probe_row(&self) -> ProbeRow {
+        let qo100_page = self.show_sat && self.sat_tab == crate::app::sat::SatTab::Qo100;
+        let lit = Probe::ALL
+            .into_iter()
+            .filter(|p| match p {
+                Probe::Ism => self.show_ism || self.state.ism.any_enabled(),
+                Probe::Sondes => self.sonde.show || self.state.sonde.enabled,
+                Probe::Sat => (self.show_sat && !qo100_page) || self.sat_track.is_some(),
+                Probe::WxSat => self.wxsat.show || self.state.wxsat.enabled,
+                Probe::Qo100 => qo100_page || self.state.qo100.enabled,
+            })
+            .collect();
+        ProbeRow { lit, picked: None }
+    }
+
+    /// A PROBES chip was clicked: open its window, or close it if it is
+    /// already the one showing. QO-100 and SAT share the SATELLITE window and
+    /// differ by its page, so each one opens the window on its own page.
+    pub(in crate::app) fn open_probe(&mut self, p: Probe) {
+        use crate::app::sat::SatTab;
+        match p {
+            Probe::Ism => self.show_ism = !self.show_ism,
+            Probe::Sondes => self.sonde.show = !self.sonde.show,
+            Probe::WxSat => self.wxsat.show = !self.wxsat.show,
+            Probe::Sat => {
+                if self.show_sat && self.sat_tab != SatTab::Qo100 {
+                    self.show_sat = false;
+                } else {
+                    self.show_sat = true;
+                    self.sat_tab = SatTab::Satellites;
+                }
+            }
+            Probe::Qo100 => {
+                if self.show_sat && self.sat_tab == SatTab::Qo100 {
+                    self.show_sat = false;
+                } else {
+                    self.show_sat = true;
+                    self.sat_tab = SatTab::Qo100;
+                }
+            }
+        }
     }
 
     /// The band/mode selector docked as a column beside the panadapter: the
@@ -8786,6 +8852,8 @@ fn band_mode_menu(
     // solar window has been opened once, and colours nothing.
     conditions: Option<&sdroxide_solar::BandConditions>,
     daylight: bool,
+    // The PROBES row: lit chips in, the clicked one out.
+    probes: &mut ProbeRow,
     cmds: &mut Vec<Command>,
 ) {
     crate::chrome::menu_caption(ui, &tr!("topbar-band"));
@@ -8892,7 +8960,7 @@ fn band_mode_menu(
             let resp = crate::chrome::chip_enabled(ui, why.is_none(), mode == m, m.label());
             let resp = match why {
                 Some(why) => resp.on_disabled_hover_text(why),
-                None => resp,
+                None => late_mode_tip(resp, m),
             };
             if resp.clicked() {
                 cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
@@ -8900,26 +8968,284 @@ fn band_mode_menu(
         }
     });
     ui.add_space(6.0);
-    crate::chrome::menu_caption(ui, &tr!("topbar-digital"));
-    ui.horizontal_wrapped(|ui| {
-        // ADS-B, VDL2, AIS and HFDL ride along at the end of this row rather
-        // than in [`Mode::DIGITAL`] itself: that list is what the digi engine
-        // decodes and transmits, and none of these is — each has its own lane,
-        // no QSO and no transmitter. They are digital signals all the same, and
-        // this is where an operator looks for one.
-        for m in Mode::DIGITAL.into_iter().chain([Mode::Adsb, Mode::Vdl2, Mode::Ais, Mode::Hfdl]) {
-            if crate::chrome::chip(ui, mode == m, m.label()).clicked() {
-                if mode == m {
-                    // Clicked again: leave it. The curtain falls and the mode
-                    // before it comes back (see `frame::curtain_drop_id`).
-                    ui.ctx()
-                        .data_mut(|d| d.insert_temp(crate::app::frame::curtain_drop_id(), true));
-                } else {
-                    cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
+    // DIGITAL, sorted by what the operator is after rather than in one row of
+    // forty: HAM for the modes one works other stations in, MONITOR for the
+    // services one listens to (HDZ 17.11.: „mich nervt das Bedienchaos“). The
+    // groups are a table here, not an order in [`Mode::DIGITAL`] — that list
+    // is serialised, and its order is the wire's, not the menu's.
+    for (family, groups) in [(DigiFamily::Ham, HAM_GROUPS), (DigiFamily::Monitor, MONITOR_GROUPS)] {
+        crate::chrome::menu_caption(ui, &family.caption());
+        for &(group, modes) in groups {
+            digi_group_caption(ui, &group.caption());
+            ui.horizontal_wrapped(|ui| {
+                for &m in modes {
+                    if late_mode_tip(crate::chrome::chip(ui, mode == m, m.label()), m).clicked() {
+                        if mode == m {
+                            // Clicked again: leave it. The curtain falls and the
+                            // mode before it comes back (see
+                            // `frame::curtain_drop_id`).
+                            ui.ctx().data_mut(|d| {
+                                d.insert_temp(crate::app::frame::curtain_drop_id(), true)
+                            });
+                        } else {
+                            cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
+                        }
+                    }
                 }
-            }
+            });
         }
-    });
+        if family == DigiFamily::Monitor {
+            // Probes are windows, not modes: each decoder there sets its own
+            // receiver up, so the chip opens the window and the window does
+            // the rest. Here so that radiosondes are no longer only behind
+            // the ISM window's header and weather satellites only behind the
+            // SAT window's (HDZ: „Satelliten sind Sonden“).
+            digi_group_caption(ui, &tr!("topbar-digi-probes"));
+            ui.horizontal_wrapped(|ui| {
+                for p in Probe::ALL {
+                    let lit = probes.lit.contains(&p);
+                    if crate::chrome::chip(ui, lit, p.label()).on_hover_text(p.hint()).clicked() {
+                        probes.picked = Some(p);
+                    }
+                }
+            });
+        }
+        ui.add_space(4.0);
+    }
+}
+
+/// How long the pointer rests on a mode chip before its tooltip shows.
+/// Longer than the general tooltip delay on purpose: these chips are pressed
+/// many times a session, and a tooltip on every pass would cover the next
+/// chip (HDZ 17.11.: tooltips on the modes, „wenigstens nach 3 sek“).
+const MODE_TIP_DELAY_S: f32 = 3.0;
+
+/// A mode chip's tooltip, once the pointer has rested on it for
+/// [`MODE_TIP_DELAY_S`]. Asks for the one repaint that shows it, since a
+/// resting pointer sends no events.
+fn late_mode_tip(resp: egui::Response, m: Mode) -> egui::Response {
+    if !resp.hovered() {
+        return resp;
+    }
+    let still = resp.ctx.input(|i| i.pointer.time_since_last_movement());
+    if still >= MODE_TIP_DELAY_S {
+        resp.on_hover_text(mode_tip(m))
+    } else {
+        resp.ctx
+            .request_repaint_after(std::time::Duration::from_secs_f32(MODE_TIP_DELAY_S - still));
+        resp
+    }
+}
+
+/// One line on what a mode is and where it is used. Exhaustive on purpose: a
+/// mode added to [`Mode`] does not compile until it has its line.
+fn mode_tip(m: Mode) -> String {
+    match m {
+        Mode::Lsb => tr!("mode-tip-lsb"),
+        Mode::Usb => tr!("mode-tip-usb"),
+        Mode::Cw => tr!("mode-tip-cw"),
+        Mode::Am => tr!("mode-tip-am"),
+        Mode::Sam => tr!("mode-tip-sam"),
+        Mode::Nfm => tr!("mode-tip-nfm"),
+        Mode::Wfm => tr!("mode-tip-wfm"),
+        Mode::Drm => tr!("mode-tip-drm"),
+        Mode::HdRadio => tr!("mode-tip-hdradio"),
+        Mode::Digu => tr!("mode-tip-digu"),
+        Mode::Digl => tr!("mode-tip-digl"),
+        Mode::Dsb => tr!("mode-tip-dsb"),
+        Mode::Isb => tr!("mode-tip-isb"),
+        Mode::Spec => tr!("mode-tip-spec"),
+        Mode::Psk => tr!("mode-tip-psk"),
+        Mode::Rtty => tr!("mode-tip-rtty"),
+        Mode::RttyFm => tr!("mode-tip-rttyfm"),
+        Mode::Olivia => tr!("mode-tip-olivia"),
+        Mode::Contestia => tr!("mode-tip-contestia"),
+        Mode::Thor => tr!("mode-tip-thor"),
+        Mode::DominoEx => tr!("mode-tip-dominoex"),
+        Mode::Mfsk => tr!("mode-tip-mfsk"),
+        Mode::Mt63 => tr!("mode-tip-mt63"),
+        Mode::Fsq => tr!("mode-tip-fsq"),
+        Mode::Jtty => tr!("mode-tip-jtty"),
+        Mode::Hell => tr!("mode-tip-hell"),
+        Mode::AtChat => tr!("mode-tip-atchat"),
+        Mode::Rade => tr!("mode-tip-rade"),
+        Mode::Ft8 => tr!("mode-tip-ft8"),
+        Mode::Ft4 => tr!("mode-tip-ft4"),
+        Mode::Ft2 => tr!("mode-tip-ft2"),
+        Mode::Js8 => tr!("mode-tip-js8"),
+        Mode::Wspr => tr!("mode-tip-wspr"),
+        Mode::Pi4 => tr!("mode-tip-pi4"),
+        Mode::Fst4 => tr!("mode-tip-fst4"),
+        Mode::Q65 => tr!("mode-tip-q65"),
+        Mode::Jt65 => tr!("mode-tip-jt65"),
+        Mode::Jt9 => tr!("mode-tip-jt9"),
+        Mode::Msk144 => tr!("mode-tip-msk144"),
+        Mode::Fsk441 => tr!("mode-tip-fsk441"),
+        Mode::Sstv => tr!("mode-tip-sstv"),
+        Mode::SstvFm => tr!("mode-tip-sstvfm"),
+        Mode::Rifp => tr!("mode-tip-rifp"),
+        Mode::RfPaint => tr!("mode-tip-rfpaint"),
+        Mode::Packet => tr!("mode-tip-packet"),
+        Mode::PacketHf => tr!("mode-tip-packethf"),
+        Mode::Aprs => tr!("mode-tip-aprs"),
+        Mode::Mercury => tr!("mode-tip-mercury"),
+        Mode::Data2g => tr!("mode-tip-data2g"),
+        Mode::Adsb => tr!("mode-tip-adsb"),
+        Mode::Vdl2 => tr!("mode-tip-vdl2"),
+        Mode::Acars => tr!("mode-tip-acars"),
+        Mode::Hfdl => tr!("mode-tip-hfdl"),
+        Mode::Ais => tr!("mode-tip-ais"),
+        Mode::Navtex => tr!("mode-tip-navtex"),
+        Mode::Wefax => tr!("mode-tip-wefax"),
+    }
+}
+
+/// The two halves of DIGITAL in the band/mode menu.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum DigiFamily {
+    /// Modes for working other stations: conversation, weak-signal, pictures, data.
+    Ham,
+    /// Services one listens to: aircraft, ships, probes.
+    Monitor,
+}
+
+impl DigiFamily {
+    fn caption(self) -> String {
+        match self {
+            DigiFamily::Ham => tr!("topbar-ham"),
+            DigiFamily::Monitor => tr!("topbar-monitor"),
+        }
+    }
+}
+
+/// A small heading over one group of chips in DIGITAL.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum DigiGroup {
+    Talk,
+    DigiModes,
+    Image,
+    Data,
+    Aviation,
+    Sea,
+}
+
+impl DigiGroup {
+    fn caption(self) -> String {
+        match self {
+            DigiGroup::Talk => tr!("topbar-digi-talk"),
+            DigiGroup::DigiModes => tr!("topbar-digi-modes"),
+            DigiGroup::Image => tr!("topbar-digi-image"),
+            DigiGroup::Data => tr!("topbar-digi-data"),
+            DigiGroup::Aviation => tr!("topbar-digi-aviation"),
+            DigiGroup::Sea => tr!("topbar-digi-sea"),
+        }
+    }
+}
+
+/// HAM: the digital modes for working other stations. Every mode of
+/// [`Mode::DIGITAL`] and the four lanes of their own (ADS-B, VDL2, AIS, HFDL)
+/// is in exactly one group of HAM or MONITOR — see
+/// `every_digital_mode_is_in_exactly_one_group`.
+const HAM_GROUPS: &[(DigiGroup, &[Mode])] = &[
+    // Keyboard conversation: text in, text out, a QSO at typing speed.
+    (
+        DigiGroup::Talk,
+        &[
+            Mode::Psk,
+            Mode::Rtty,
+            Mode::RttyFm,
+            Mode::Olivia,
+            Mode::Contestia,
+            Mode::Thor,
+            Mode::DominoEx,
+            Mode::Mfsk,
+            Mode::Mt63,
+            Mode::Fsq,
+            Mode::Jtty,
+            Mode::Hell,
+            Mode::AtChat,
+            Mode::Rade,
+        ],
+    ),
+    // Structured weak-signal modes: fixed messages in timed slots.
+    (
+        DigiGroup::DigiModes,
+        &[
+            Mode::Ft8,
+            Mode::Ft4,
+            Mode::Ft2,
+            Mode::Js8,
+            Mode::Wspr,
+            Mode::Pi4,
+            Mode::Fst4,
+            Mode::Q65,
+            Mode::Jt65,
+            Mode::Jt9,
+            Mode::Msk144,
+            Mode::Fsk441,
+        ],
+    ),
+    (DigiGroup::Image, &[Mode::Sstv, Mode::SstvFm, Mode::Rifp, Mode::RfPaint]),
+    (DigiGroup::Data, &[Mode::Packet, Mode::PacketHf, Mode::Aprs, Mode::Mercury, Mode::Data2g]),
+];
+
+/// MONITOR: services one listens to. WEFAX and NAVTEX are here rather than
+/// under HAM because what they carry is the maritime weather and safety
+/// service (DWD Pinneberg, the coast stations), not other amateurs.
+const MONITOR_GROUPS: &[(DigiGroup, &[Mode])] = &[
+    (DigiGroup::Aviation, &[Mode::Adsb, Mode::Vdl2, Mode::Acars, Mode::Hfdl]),
+    (DigiGroup::Sea, &[Mode::Ais, Mode::Navtex, Mode::Wefax]),
+];
+
+/// A group heading inside DIGITAL: smaller and dimmer than the section
+/// captions, so HAM and MONITOR still read as the two sections.
+fn digi_group_caption(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(1.0);
+    ui.label(RichText::new(text).color(crate::theme::TEXT()).size(8.5));
+}
+
+/// The PROBES row of MONITOR: windows rather than modes. The menu only says
+/// which was picked; opening it is the caller's, who owns the windows.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(in crate::app) enum Probe {
+    Ism,
+    Sondes,
+    Sat,
+    WxSat,
+    Qo100,
+}
+
+impl Probe {
+    pub(in crate::app) const ALL: [Probe; 5] =
+        [Probe::Ism, Probe::Sondes, Probe::Sat, Probe::WxSat, Probe::Qo100];
+
+    fn label(self) -> String {
+        match self {
+            Probe::Ism => tr!("topbar-chip-ism"),
+            Probe::Sondes => tr!("ism-sonde-chip"),
+            Probe::Sat => tr!("topbar-chip-sat"),
+            Probe::WxSat => tr!("sat-wxsat"),
+            Probe::Qo100 => "QO-100".to_string(),
+        }
+    }
+
+    fn hint(self) -> String {
+        match self {
+            Probe::Ism => tr!("topbar-ism-band-devices-weather-sensors"),
+            Probe::Sondes => tr!("ism-sonde-chip-hover"),
+            Probe::Sat => tr!("topbar-satellite-doppler-tracking-qo-100"),
+            Probe::WxSat => tr!("sat-wxsat-hint"),
+            Probe::Qo100 => tr!("topbar-satellite-qo-100-beacon-calibration"),
+        }
+    }
+}
+
+/// What the PROBES row needs from its caller and gives back: which chips to
+/// light, and which one was clicked this frame.
+#[derive(Default)]
+pub(in crate::app) struct ProbeRow {
+    pub(in crate::app) lit: Vec<Probe>,
+    pub(in crate::app) picked: Option<Probe>,
 }
 
 /// The VFO A/B selector chips. In the frequency box on a desktop, in the VFO
@@ -10855,7 +11181,17 @@ mod tests {
         let (ctx, input) = desktop_ctx();
         let draw = |input: egui::RawInput, cmds: &mut Vec<Command>| {
             ctx.run_ui(input, |ui| {
-                band_mode_menu(ui, state.rx[0].mode, state, None, false, None, true, cmds);
+                band_mode_menu(
+                    ui,
+                    state.rx[0].mode,
+                    state,
+                    None,
+                    false,
+                    None,
+                    true,
+                    &mut ProbeRow::default(),
+                    cmds,
+                );
             })
         };
         let first = draw(input.clone(), &mut Vec::new());
@@ -10954,6 +11290,7 @@ mod tests {
                     false,
                     None,
                     true,
+                    &mut ProbeRow::default(),
                     &mut Vec::new(),
                 );
             });
@@ -11062,6 +11399,125 @@ mod tests {
         );
         // ...and outside the digital modes a click is a band change as before.
         assert_eq!(band_chip_dial(Mode::Lsb, Band::M20, None), None);
+    }
+
+    /// DIGITAL is sorted into groups by a table in the UI, apart from the
+    /// serialised [`Mode::DIGITAL`]. A mode added there and forgotten here
+    /// would vanish from the menu, and one listed twice would light two
+    /// chips — so every digital mode, and the four lanes of their own, is in
+    /// exactly one group.
+    #[test]
+    fn every_digital_mode_is_in_exactly_one_group() {
+        let grouped: Vec<Mode> = HAM_GROUPS
+            .iter()
+            .chain(MONITOR_GROUPS)
+            .flat_map(|(_, modes)| modes.iter().copied())
+            .collect();
+        let wanted: Vec<Mode> = Mode::DIGITAL
+            .into_iter()
+            .chain([Mode::Adsb, Mode::Vdl2, Mode::Ais, Mode::Hfdl])
+            .collect();
+        for m in &wanted {
+            let n = grouped.iter().filter(|g| *g == m).count();
+            assert_eq!(n, 1, "{} is in {n} groups", m.label());
+        }
+        assert_eq!(grouped.len(), wanted.len(), "a group holds a mode DIGITAL does not");
+    }
+
+    /// Every chip in the menu has its line, and the line stays a line: one
+    /// row of a tooltip, not a paragraph (the manual has the paragraphs).
+    #[test]
+    fn every_mode_chip_has_a_one_line_tip() {
+        let menu = Mode::DIGITAL.into_iter().chain([
+            Mode::Adsb,
+            Mode::Vdl2,
+            Mode::Ais,
+            Mode::Hfdl,
+            Mode::Lsb,
+            Mode::Usb,
+            Mode::Cw,
+            Mode::Am,
+            Mode::Sam,
+            Mode::Nfm,
+            Mode::Wfm,
+            Mode::Drm,
+            Mode::HdRadio,
+            Mode::Digu,
+            Mode::Digl,
+            Mode::Dsb,
+            Mode::Isb,
+            Mode::Spec,
+        ]);
+        for m in menu {
+            let tip = mode_tip(m);
+            assert!(!tip.is_empty() && !tip.starts_with("mode-tip-"), "{}: no tip", m.label());
+            assert!(tip.chars().count() <= 72 && !tip.contains('\n'), "{}: {tip}", m.label());
+        }
+    }
+
+    /// A mode chip inside a group still sets the mode, and a PROBES chip asks
+    /// for its window rather than for a mode.
+    #[test]
+    fn grouped_chips_set_modes_and_probes_open_windows() {
+        let state = RadioState::default();
+        assert!(
+            click_in_band_mode_menu(&state, "FT8")
+                .iter()
+                .any(|c| matches!(c, Command::SetMode { mode: Mode::Ft8, .. }))
+        );
+        assert!(
+            click_in_band_mode_menu(&state, "NAVTEX")
+                .iter()
+                .any(|c| matches!(c, Command::SetMode { mode: Mode::Navtex, .. }))
+        );
+
+        let (ctx, input) = desktop_ctx();
+        let mut picked = None;
+        let mut draw = |input: egui::RawInput, picked: &mut Option<Probe>| {
+            ctx.run_ui(input, |ui| {
+                let mut probes = ProbeRow::default();
+                let mut cmds = Vec::new();
+                band_mode_menu(
+                    ui,
+                    Mode::Usb,
+                    &state,
+                    None,
+                    false,
+                    None,
+                    true,
+                    &mut probes,
+                    &mut cmds,
+                );
+                assert!(cmds.is_empty(), "a probe chip sent {cmds:?}");
+                if probes.picked.is_some() {
+                    *picked = probes.picked;
+                }
+            })
+        };
+        let first = draw(input.clone(), &mut picked);
+        let label = tr!("ism-sonde-chip");
+        let at = first
+            .shapes
+            .iter()
+            .find_map(|c| match &c.shape {
+                egui::Shape::Text(t) if t.galley.text() == label => {
+                    Some(t.pos + t.galley.rect.center().to_vec2())
+                }
+                _ => None,
+            })
+            .expect("RADIOSONDES is in the menu");
+        first.drop_without_applying_deltas();
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        for events in [vec![egui::Event::PointerMoved(at), button(true)], vec![button(false)]] {
+            draw(egui::RawInput { events, ..input.clone() }, &mut picked)
+                .drop_without_applying_deltas();
+        }
+        assert_eq!(picked, Some(Probe::Sondes));
     }
 
     /// The longest menu in the program, on the smallest screens it opens on.

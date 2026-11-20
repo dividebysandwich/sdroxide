@@ -2397,7 +2397,76 @@ topbar-recent = RECENT
 topbar-recent-empty =
     Fills after 3 s on a place
 topbar-mode = MODE
-topbar-digital = DIGITAL
+# The two halves of DIGITAL in the band/mode menu: modes for working other
+# stations, and services one listens to.
+topbar-ham = HAM
+topbar-monitor = MONITOR
+# Small headings over the groups inside HAM and MONITOR.
+topbar-digi-talk = Talk
+topbar-digi-modes = Digi modes
+topbar-digi-image = Image
+topbar-digi-data = Data
+topbar-digi-aviation = Aviation
+topbar-digi-sea = Sea
+topbar-digi-probes = Probes
+# One line per mode, shown when the pointer rests on its chip in the
+# Band/Mode menu.
+mode-tip-lsb = Lower sideband voice; usual below 10 MHz
+mode-tip-usb = Upper sideband voice; usual from 10 MHz and on VHF
+mode-tip-cw = Morse telegraphy; narrow filter, tone offset
+mode-tip-am = Amplitude modulation; broadcast, airband
+mode-tip-sam = Synchronous AM; carrier-locked, less fading distortion
+mode-tip-nfm = Narrow FM; repeaters, PMR, CB, VHF/UHF
+mode-tip-wfm = Wide FM; FM broadcast with RDS
+mode-tip-drm = Digital Radio Mondiale; digital broadcast on LW, MW, SW
+mode-tip-hdradio = HD Radio (NRSC-5); digital sidebands of US FM broadcast
+mode-tip-digu = Upper sideband, flat audio; for external digital-mode software
+mode-tip-digl = Lower sideband, flat audio; for external digital-mode software
+mode-tip-dsb = Double sideband, carrier suppressed
+mode-tip-isb = Independent sidebands; two services on one carrier, one per ear
+mode-tip-spec = Spectrum only; no demodulation, no audio
+mode-tip-psk = PSK31 and relatives; narrow keyboard QSO
+mode-tip-rtty = Radioteletype, Baudot FSK; contests, keyboard QSO
+mode-tip-rttyfm = RTTY on an FM carrier; VHF/UHF
+mode-tip-olivia = MFSK with strong FEC; readable below the noise
+mode-tip-contestia = Olivia variant; faster, less robust
+mode-tip-thor = IFK+ with FEC, DominoEX family; robust keyboard mode
+mode-tip-dominoex = Incremental frequency keying; tolerant of drift and multipath
+mode-tip-mfsk = MFSK16 and relatives; robust keyboard mode
+mode-tip-mt63 = 64 tones, wide, heavy interleaving; robust, emergency nets
+mode-tip-fsq = Fast Simple QSO; directed calls (FSQCALL), NVIS
+mode-tip-jtty = Asynchronous keyboard mode from WSJT-X 3.2; RTTY-like, with FEC
+mode-tip-hell = Hellschreiber; text painted as a picture
+mode-tip-atchat = AtCHAT NET; multi-station keyboard net
+mode-tip-rade = FreeDV RADE; digital voice
+mode-tip-ft8 = 15 s slots, automatic QSO; most-used weak-signal mode
+mode-tip-ft4 = 7.5 s slots, automatic QSO; contests
+mode-tip-ft2 = Faster than FT4, automatic QSO
+mode-tip-js8 = FT8 waveform, free text; keyboard chat, relaying
+mode-tip-wspr = Beacon, 2 min slots; propagation paths, no QSO
+mode-tip-pi4 = VHF/microwave beacon mode; receive only
+mode-tip-fst4 = T/R 15–300 s; weak signal on LF, MF, HF
+mode-tip-q65 = 65 tones; EME, ionoscatter, rain scatter
+mode-tip-jt65 = 1 min slots; EME, HF weak signal
+mode-tip-jt9 = 1 min slots, narrow; LF/HF weak signal
+mode-tip-msk144 = Meteor scatter; VHF
+mode-tip-fsk441 = Meteor scatter, original WSJT mode; VHF
+mode-tip-sstv = Slow-scan TV; pictures over SSB
+mode-tip-sstvfm = SSTV on an FM carrier; VHF/UHF, ISS
+mode-tip-rifp = Packetised image protocol (RIFP); pictures in packets
+mode-tip-rfpaint = Transmit only; picture painted into the waterfall
+mode-tip-packet = AX.25 packet, 1200 Bd AFSK; VHF
+mode-tip-packethf = AX.25 packet, 300 Bd; HF
+mode-tip-aprs = Positions, messages, weather on a map; 144.800 MHz in Europe
+mode-tip-mercury = Open HF ARQ data modem; connected link, adaptive speed
+mode-tip-data2g = Open HF ARQ data modem; connected link, adaptive speed
+mode-tip-adsb = Aircraft on 1090 MHz; positions, radar map
+mode-tip-vdl2 = VHF Data Link Mode 2; airline datalink around 136 MHz
+mode-tip-acars = Airline text datalink, AM; 131.550 MHz
+mode-tip-hfdl = HF Data Link; aircraft messages and positions over HF
+mode-tip-ais = Ships on 162 MHz; positions, map
+mode-tip-navtex = Maritime safety text; 518 and 490 kHz
+mode-tip-wefax = Weather charts by radio fax; e.g. DWD Pinneberg
 
 ## Top bar: the System box's window chips.
 

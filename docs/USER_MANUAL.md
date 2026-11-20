@@ -398,8 +398,15 @@ popup with three rows:
   has a standard calling frequency carry a cyan underline; see
   [§3.1](#31-general-considerations).
 - **MODE:** `LSB USB CW AM SAM NFM WFM DRM HD DIGU DIGL DSB ISB SPEC`.
-- **DIGITAL:** `FT8 FT4 FT2 JS8 WSPR PI4 MSK144 JT65 JT9 FST4 Q65 FSK441 JTTY PSK RTTY RTTY-FM OLIVIA THOR FSQ ATCHAT HELL SSTV SSTV-FM RIFP WEFAX NAVTEX ACARS RFPAINT RADE PACKET PACKET-HF APRS ADS-B VDL2 AIS HFDL` (see
-  [Digital modes](#3-digital-modes)).
+- **HAM:** the digital modes for working other stations, in four groups —
+  *Talk* (PSK, RTTY, OLIVIA, MT63, ATCHAT, RADE and the other keyboard modes),
+  *Digi modes* (FT8, FT4, FT2, JS8, WSPR and the other slotted modes), *Image*
+  (SSTV, SSTV-FM, RIFP, RFPAINT) and *Data* (PACKET, PACKET-HF, APRS, MERCURY,
+  DATA2G).
+- **MONITOR:** services to listen to — *Aviation* (ADS-B, VDL2, ACARS, HFDL),
+  *Sea* (AIS, NAVTEX, WEFAX) and *Probes* (ISM, RADIOSONDES, SAT, WEATHER
+  SATELLITES, QO-100), whose chips open their windows directly. The full table
+  is in [§3.1](#31-general-considerations).
 
 On a desktop or tablet layout the popup carries a **DOCK** chip. It moves the
 selector into a resizable column beside the waterfall so it stays open while you
@@ -2832,7 +2839,8 @@ go out.
 
 #### 2.16.2 Weather satellites (NOAA APT and Meteor LRPT)
 
-The **WEATHER SATELLITES** chip at the top right of the SAT window opens a
+The **WEATHER SATELLITES** chip under **MONITOR › Probes** in the Band/Mode
+popup, or the one at the top right of the SAT window, opens a
 window of its own with the picture a weather satellite sends on 137 MHz, drawn
 as it comes in. It is not a radio mode: the decoder runs off its own
 downconversion of the sample window and the radio keeps its mode, so it needs a
@@ -4125,7 +4133,36 @@ is a list of paths rather than contacts (3.11).
 ### 3.1 General considerations
 
 Every digital mode is entered the same way: open the Band/Mode popup and choose
-the mode from the **DIGITAL** row. The panadapter locks to the digital sub-band
+the mode under **HAM** or **MONITOR**. The two sections sort the digital modes by
+what you are after, with a small heading over each group:
+
+| Section | Group | Modes |
+|---|---|---|
+| **HAM** — working other stations | Talk | PSK, RTTY, RTTY-FM, OLIVIA, CONTESTIA, THOR, DOMINOEX, MFSK, MT63, FSQ, JTTY, HELL, ATCHAT, RADE |
+| | Digi modes | FT8, FT4, FT2, JS8, WSPR, PI4, FST4, Q65, JT65, JT9, MSK144, FSK441 |
+| | Image | SSTV, SSTV-FM, RIFP, RFPAINT |
+| | Data | PACKET, PACKET-HF, APRS, MERCURY, DATA2G |
+| **MONITOR** — services to listen to | Aviation | ADS-B, VDL2, ACARS, HFDL |
+| | Sea | AIS, NAVTEX, WEFAX |
+| | Probes | ISM, RADIOSONDES, SAT, WEATHER SATELLITES, QO-100 |
+
+WEFAX and NAVTEX are under Sea because what they carry is the maritime weather
+and safety service. The **Probes** chips are windows rather than modes: each
+opens its window directly — the ISM decoder ([5](#5-ism-band-decoder)), the
+radiosonde map ([5.8](#58-radiosondes-400406-mhz)), the satellite window on its
+satellite page or on its QO-100 page ([2.16](#216-satellite-operation-sat),
+[2.22](#222-qo-100-beacon-plugin)), and the weather-satellite picture
+([2.16.2](#2162-weather-satellites-noaa-apt-and-meteor-lrpt)). A chip is lit
+while its window is open or its decoder is running; clicking a lit one closes
+its window. The **SAT** and **ISM** buttons in the System box still open the
+same windows.
+
+Rest the pointer on any mode chip, in MODE as well as under HAM and MONITOR, for
+three seconds and a one-line tooltip says what the mode is and where it is
+used. The wait is longer than for other tooltips so that the chips can be
+clicked in passing without one opening over the next.
+
+The panadapter locks to the digital sub-band
 (the audio range just above the dial), and the mode's operating panel rises over
 it like a curtain, covering the spectrum and the waterfall. The `— — —` handle
 on its top edge slides it down to show the waterfall above it, and the panel
@@ -4133,7 +4170,7 @@ fits itself into what is left, so its transmit buttons (Call CQ, Stop TX) stay
 in view. Only once it is pulled below the height the panel needs does its
 bottom slide past the window's edge. Its header row always stays in view to pull it up
 again, and a double-click on the handle sends it all the way up or back to
-where it was. Click the lit mode in the **DIGITAL** row again to leave it: the
+where it was. Click the lit mode chip again to leave it: the
 curtain falls and the mode you were in before comes back.
 
 While in a digital mode the **BAND** row of the Band/Mode popup doubles as a
@@ -4177,7 +4214,7 @@ FT8, FT4, FT2, JS8 and WSPR are worked on **one dial frequency per band**, in
 lockstep with everyone else on it — a receiver a few kilohertz off is not
 off-centre, it is deaf — and each of them keeps its own. On 20 m that is 14.074,
 14.080, 14.084, 14.078 and 14.095600 respectively, so even arriving from the
-mode next door is a move. Picking one of them from the DIGITAL row therefore
+mode next door is a move. Picking one of them under **HAM › Digi modes** therefore
 tunes the dial to that band's agreed frequency, the same way APRS, ADS-B, VDL2
 and AIS already do ([3.12](#312-aprs), [3.13](#313-ads-b-aircraft-on-1090-mhz),
 [3.15](#315-vdl2-what-the-aircraft-are-saying),
@@ -4286,8 +4323,8 @@ The FT8/FT4/FT2 decode list has its own **CSV** and **ADIF** buttons instead
 ### 3.2 FT8, FT4 and FT2
 
 **FT8**, **FT4** and **FT2** are the automatic modes: timeslot-based, with QSO
-sequencing, a world map, a transcript, and automatic logging. Choose one from
-the DIGITAL row ([3.1](#31-general-considerations)) and the operating panel
+sequencing, a world map, a transcript, and automatic logging. Choose one under
+**HAM › Digi modes** ([3.1](#31-general-considerations)) and the operating panel
 appears in the lower part of the window.
 
 Choosing one also puts the **dial** on that band's agreed frequency — 14.074,
@@ -4816,7 +4853,7 @@ The log is stored in `qso_log.json`.
 
 ### 3.3 PSK31 and RTTY
 
-Choose **PSK** or **RTTY** from the DIGITAL row of the Band/Mode popup. As with
+Choose **PSK** or **RTTY** under **HAM › Talk** in the Band/Mode popup. As with
 FT8/FT4/FT2 the panadapter switches to a zoomed sub-band waterfall, but the lower
 panel is a live **messaging area** instead of a QSO sequencer.
 
@@ -4937,7 +4974,7 @@ transmit. A label already in that mode leaves your own offset alone.
 **On VHF and UHF, use RTTY-FM instead.** Some national societies still send
 their weekly bulletin as RTTY on a 2 m FM channel, and that is not the same
 signal as RTTY on a sideband — the tone pair modulates an FM carrier rather than
-riding on one edge of a passband. **RTTY-FM** is on the DIGITAL row beside RTTY.
+riding on one edge of a passband. **RTTY-FM** is under HAM › Talk beside RTTY.
 
 Everything about the modem is the same: the same Baudot alphabet, the same
 2125/2295 Hz tone pair, the same shift, baud and **Reverse** controls and the
@@ -4959,7 +4996,7 @@ store it in a memory.
 
 ### 3.4 Olivia, THOR and FSQ
 
-Three more keyboard modes are on the DIGITAL row. **Olivia** and **THOR** reuse
+Three more keyboard modes are under **HAM › Talk**. **Olivia** and **THOR** reuse
 the same messaging panel as PSK/RTTY — including **SEND ON RETURN**
 ([3.3](#33-psk31-and-rtty)), which is worth a look in these modes in particular:
 at 32/1000 Olivia a typed correction takes long enough to send that it is better
@@ -5008,7 +5045,7 @@ signals.
 
 #### 3.4.1 MT63
 
-**MT63** is on the DIGITAL row with the other keyboard modes and uses the same
+**MT63** is under HAM › Talk with the other keyboard modes and uses the same
 messaging panel, including **SEND ON RETURN**. It is fldigi's 64-carrier mode:
 every character is spread over all 64 carriers by a Walsh code and interleaved
 over the next 32 (or 64) characters, so it rides through fading, static crashes
@@ -5115,7 +5152,7 @@ against fldigi on the air.
 
 ### 3.5 Hellschreiber
 
-Choose **HELL** from the DIGITAL row for **Hellschreiber** — the oldest digital
+Choose **HELL** under **HAM › Talk** for **Hellschreiber** — the oldest digital
 mode still in regular amateur use, and the only one you read with your eyes
 instead of a decoder.
 
@@ -5232,7 +5269,7 @@ more here than the numbers do. Check them against a current plan for your region
 
 ### 3.6 SSTV
 
-Choose **SSTV** from the DIGITAL row to send and receive pictures. The panel has
+Choose **SSTV** under **HAM › Image** to send and receive pictures. The panel has
 a received-image gallery on the left and a transmit compositor on the right, with
 a row of mode buttons across the top: **Auto**, **Scottie 1**, **Scottie 2**,
 **Scottie DX**, **Martin 1**, **Martin 2**, **Robot 72**, **Robot 36**,
@@ -5287,7 +5324,7 @@ radio whose SSB modulation source is already set to USB, or one with no data
 mode at all.
 
 **On VHF and UHF, use SSTV-FM instead.** Above 30 MHz a picture is normally sent
-on an FM carrier rather than a sideband, so the DIGITAL row has a second entry —
+on an FM carrier rather than a sideband, so HAM › Image has a second entry —
 **SSTV-FM** — beside SSTV. Everything about the picture is the same: the same
 transmission modes, the same decoder, the same gallery and the same
 compositor. What differs is the radio underneath. SSTV puts a CAT-controlled rig
@@ -5421,7 +5458,7 @@ QSSTV does it — see [Received pictures → FTP](#received-pictures--ftp) on th
 
 ### 3.7 RIFP (Radio Image Framing Protocol)
 
-Choose **RIFP** from the DIGITAL row to send and receive pictures over
+Choose **RIFP** under **HAM › Image** to send and receive pictures over
 [draft-dulaunoy-rifp-00](https://datatracker.ietf.org/doc/draft-dulaunoy-rifp/) —
 a packetised image protocol, and the only mode here that is *not* single
 sideband. Its `rifp-cpfsk-4800` radio profile keys the carrier itself:
@@ -5490,7 +5527,7 @@ extension.
 
 ### 3.8 Weather fax (WEFAX / radiofax)
 
-Choose **WEFAX** from the DIGITAL row to receive the weather charts the
+Choose **WEFAX** under **MONITOR › Sea** to receive the weather charts the
 meteorological services broadcast on short wave — surface analyses, wave
 heights, ice edges, satellite composites. It is **receive only**: these are
 commercial and military transmitters, and an amateur station has nothing to send
@@ -5614,7 +5651,7 @@ does not reappear on the next listing.
 
 ### 3.9 JS8
 
-Choose **JS8** from the DIGITAL row. JS8 uses FT8's waveform — the same eight
+Choose **JS8** under **HAM › Digi modes**. JS8 uses FT8's waveform — the same eight
 tones in the same 79-symbol frame — but carries a conversation instead of a
 contest exchange: free text, questions you can ask another station, and a
 periodic "I am here" heartbeat. Because it is slotted like FT8 it decodes far
@@ -5866,7 +5903,7 @@ decision for the operator.
 
 ### 3.10 RF Paint (spectrum painting)
 
-Choose **RFPAINT** from the DIGITAL row for **RF Paint** — a transmit-only mode
+Choose **RFPAINT** under **HAM › Image** for **RF Paint** — a transmit-only mode
 that draws text and pictures **directly onto a receiver's waterfall**. There is no
 decoder and no message format: the picture *is* the signal. Anyone watching their
 panadapter on your frequency simply *sees* what you paint, so it is a fun way to
@@ -5906,7 +5943,7 @@ your own waterfall like any other signal.
 
 ### 3.11 WSPR (Weak Signal Propagation Reporter)
 
-Choose **WSPR** from the DIGITAL row. This is the one mode here that is not
+Choose **WSPR** under **HAM › Digi modes**. This is the one mode here that is not
 trying to make a contact. A WSPR transmission is 110.6 seconds of four-tone FSK
 six hertz wide, carrying a callsign, a four-character grid and a power level and
 nothing else, sent in a two-minute slot. It decodes about ten decibels below
@@ -6049,7 +6086,7 @@ both use the callsign and grid from the General tab.
 
 ### 3.12 APRS
 
-Choose **APRS** from the DIGITAL row. This is the Automatic Packet Reporting
+Choose **APRS** under **HAM › Data**. This is the Automatic Packet Reporting
 System: 1200 baud AX.25 on one shared FM channel per region, carrying positions,
 weather, telemetry, objects and short messages. It is not a QSO mode — almost
 everything on the channel is a broadcast that nobody answers — so the panel is a
@@ -6287,9 +6324,9 @@ hundredths of an inch the protocol carries.
 
 ### 3.13 ADS-B (aircraft on 1090 MHz)
 
-Choose **ADS-B** from the end of the **DIGITAL** row. It sits apart from the
-rest of that row all the same: there is no QSO to work and no transmitter, only
-a signal to point the radio at. Every civil aircraft in the sky transmits its identity,
+Choose **ADS-B** under **MONITOR › Aviation**. Like everything under MONITOR it
+is a service to listen to: there is no QSO to work and no transmitter, only a
+signal to point the radio at. Every civil aircraft in the sky transmits its identity,
 altitude, velocity and position on 1090 MHz, twice a second, in clear and with a
 checksum. The panel is a target list on the left and a radar picture on the
 right.
@@ -6834,7 +6871,7 @@ capture is 10 dB above it, no decoder will find anything in it.
 
 ### 3.14 NAVTEX
 
-Choose **NAVTEX** from the DIGITAL row. It is the maritime safety broadcast
+Choose **NAVTEX** under **MONITOR › Sea**. It is the maritime safety broadcast
 every coast station in the world sends: navigational and meteorological
 warnings, search-and-rescue bulletins, ice reports, pilot notices.
 
@@ -6898,7 +6935,7 @@ tuning instruction for the service says.
 
 ### 3.15 VDL2 (what the aircraft are saying)
 
-Choose **VDL2** from the end of the **DIGITAL** row. VHF Data Link Mode 2 is the
+Choose **VDL2** under **MONITOR › Aviation**. VHF Data Link Mode 2 is the
 datalink airliners and ground stations exchange ACARS over — company messages,
 position reports, weather requests, fuel and arrival figures, and the link
 management that carries them — on fourteen 25 kHz channels between 136.650 and
@@ -7131,7 +7168,7 @@ silent while the others show bursts, what the others are showing is not VDL2.
 
 ### 3.16 AIS (ships on 162 MHz)
 
-Choose **AIS** from the end of the **DIGITAL** row. The Automatic Identification
+Choose **AIS** under **MONITOR › Sea**. The Automatic Identification
 System is what every ship of any size transmits about itself — its identity,
 position, course, speed, name, dimensions, draught and where it is going — on
 two 25 kHz channels either side of 162.000 MHz. The panel is a vessel list on
@@ -7276,7 +7313,7 @@ way at both ends agrees with itself.
 
 ### 3.17 AtCHAT NET
 
-Choose **ATCHAT** from the DIGITAL row. AtCHAT NET is a multi-station keyboard
+Choose **ATCHAT** under **HAM › Talk**. AtCHAT NET is a multi-station keyboard
 and file mode built out of nostalgia for the old packet-radio net: several
 stations share one channel, chat both openly and directly, and pass files and
 pictures around, all while the net itself works out who is in charge without
@@ -7359,7 +7396,7 @@ never collide.
 
 ACARS (Aircraft Communications Addressing and Reporting System) is the text datalink airliners and ground stations use on VHF airband. Aircraft send position reports, crew requests and company messages; ground stations answer with clearance data, gate assignments and weather. Every exchange is a short burst — a second or two of 2400-baud MSK (tones at 1200 and 2400 Hz) carried as the audio of an AM transmitter.
 
-**Where to listen.** ACARS lives on a handful of airband channels shared with voice. 131.550 MHz is the primary almost everywhere; Europe also works 131.525, 131.725 and 131.825 MHz, and North America 129.125, 130.025, 130.450, 131.125 and 136.700 MHz. Pick **ACARS** in the mode picker (or start with `--mode ACARS`) and put the dial on the channel: the mode demodulates the AM carrier itself, so the carrier belongs on the dial exactly as it does for listening to AM voice. The chips in the panel tune straight to those channels. A transceiver driven over CAT is put in AM, whatever the digital modes' sideband setting says.
+**Where to listen.** ACARS lives on a handful of airband channels shared with voice. 131.550 MHz is the primary almost everywhere; Europe also works 131.525, 131.725 and 131.825 MHz, and North America 129.125, 130.025, 130.450, 131.125 and 136.700 MHz. Pick **ACARS** under **MONITOR › Aviation** in the Band/Mode popup (or start with `--mode ACARS`) and put the dial on the channel: the mode demodulates the AM carrier itself, so the carrier belongs on the dial exactly as it does for listening to AM voice. The chips in the panel tune straight to those channels. A transceiver driven over CAT is put in AM, whatever the digital modes' sideband setting says.
 
 **What you see.** The panel lists messages newest first: the time (UTC), the aircraft registration (`F-GTAE`, `N12345`), the mode character, the two-character label that says what kind of message it is (`H1` to or from the crew, `Q0` a link test, `_d` a general response), the acknowledgement (`NAK` when there is none), the block identifier, and the text. Only messages whose block check matches are listed; a damaged one is counted in the header's **bad** figure instead. The level meter sits beside the counters — a channel with no ACARS traffic shows no messages, but the meter still moves with airband noise, so you know the passband is open.
 
@@ -7373,7 +7410,7 @@ ACARS is also carried over VDL2 on higher frequencies — see [3.15](#315-vdl2-w
 
 HFDL (High Frequency Data Link, ARINC 635) is the datalink airliners use where nothing else reaches: the oceans and the poles. A handful of ground stations spread around the world transmit on assigned shortwave channels between 2.8 and 22 MHz, aircraft answer on the same channel, and the exchange carries squitters, logons, position and performance reports, frequency data, and ACARS messages riding inside it. It is slow — 300 to 1800 bits per second of PSK on a 2.8 kHz single-sideband channel — and it is the only aircraft datalink you can hear from the other side of an ocean.
 
-Choose **HFDL** from the end of the **DIGITAL** row, or press the **HFDL** chip in the Display box, beside SKIM. The panel docks under the waterfall: the decode log on the left, an aircraft map on the right, with a draggable divider between them that is remembered with the rest of the layout.
+Choose **HFDL** under **MONITOR › Aviation**, or press the **HFDL** chip in the Display box, beside SKIM. The panel docks under the waterfall: the decode log on the left, an aircraft map on the right, with a draggable divider between them that is remembered with the rest of the layout.
 
 **One channel at a time, and you choose which.** This is the difference between HFDL and the other aircraft lanes. ADS-B has exactly one frequency and AIS and VDL2 cover all of their channels at once, because theirs sit next to each other. HFDL's do not — they are scattered across the whole shortwave spectrum — so the decoder listens to one 24 kHz lane and the frequency is yours to pick.
 
@@ -7425,7 +7462,7 @@ It has **not** been watched working against live aircraft traffic. That capture 
 
 ### 3.20 PI4 (Next Generation Beacon)
 
-Choose **PI4** from the DIGITAL row. Like WSPR this is not a QSO mode — a PI4
+Choose **PI4** under **HAM › Digi modes**. Like WSPR this is not a QSO mode — a PI4
 transmission carries a callsign (occasionally a status string instead) and
 nothing else — but unlike WSPR it is **receive only** here: this is a decoder
 for the "Next Generation Beacon" propagation-beacon network
@@ -7664,7 +7701,7 @@ handshake and the panel decodes rather than sequences.
 
 ### 3.25 FSK441
 
-Choose **FSK441** from the DIGITAL row. FSK441 is the **original
+Choose **FSK441** under **HAM › Digi modes**. FSK441 is the **original
 meteor-scatter mode** — MSK144's older sibling — and it works the same way: the
 signal bounces off the brief ionised trail a meteor leaves about 100 km up,
 which lasts from a few milliseconds to a few hundred. It is the classic way to
@@ -7719,7 +7756,7 @@ the mode has always been.
 > **not yet off the air**. Treat a decode as worth a second look and a first
 > contact as a test.
 
-Choose **JTTY** from the DIGITAL row. JTTY is the **asynchronous keyboard
+Choose **JTTY** under **HAM › Talk**. JTTY is the **asynchronous keyboard
 mode** from the WSJT-X 3.2 release: it is worked like RTTY — either side types
 and sends whenever it likes — but carries forward error correction, so a signal
 that would be marginal and error-prone as 45.45-baud RTTY still copies. It is
@@ -7768,7 +7805,7 @@ tune where the station you want says it will be.
 > simulated channels inside sdroxide, but **not yet on the air** from here.
 > Treat a first contact as a test.
 
-**MERCURY** and **DATA2G** in the DIGITAL row are two open HF **ARQ data
+**MERCURY** and **DATA2G** under HAM › Data are two open HF **ARQ data
 modems**: connected-mode links where two stations hand-shake, then trade
 bursts and acknowledgements, with the speed climbing and falling with the path.
 Whatever is sent arrives complete and in order, or the link says it failed —
@@ -8396,7 +8433,8 @@ look like.
 
 ### 5.8 Radiosondes (400–406 MHz)
 
-The **RADIOSONDES** chip in the ISM window's header opens a window of its own
+The **RADIOSONDES** chip under **MONITOR › Probes** in the Band/Mode popup, or
+the one in the ISM window's header, opens a window of its own
 for the weather balloons launched twice a day from meteorological stations. Each
 carries a radiosonde that sends its GPS position, and often the air temperature,
 humidity and pressure, on a channel between 400 and 406 MHz. Fourteen kinds are

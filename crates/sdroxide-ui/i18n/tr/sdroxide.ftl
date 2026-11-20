@@ -2284,7 +2284,6 @@ topbar-recent = SON
 topbar-recent-empty =
     Bir yerde 3 sn sonra dolar
 topbar-mode = MOD
-topbar-digital = DİJİTAL
 
 ## Üst çubuk: Sistem kutusunun pencere çipleri.
 
