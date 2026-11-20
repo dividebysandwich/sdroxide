@@ -275,6 +275,13 @@ tracing-subscriber.workspace = true
 num-complex.workspace = true
 rtrb.workspace = true
 
+
+# The console a Windows build opens is the legacy one whenever the shortcut runs
+# it minimised, and that one prints colour codes as text unless asked to
+# interpret them (#914). Already in the lock file through tracing-subscriber.
+[target.'cfg(windows)'.dependencies]
+nu-ansi-term = "0.50"
+
 [features]
 default = ["soapy", "rtl433"]
 # SoapySDR device support. Turn off (`--no-default-features`) for a CAT-only

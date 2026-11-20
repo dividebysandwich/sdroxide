@@ -252,7 +252,17 @@ impl Cli {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Colour only where it is drawn as colour. A console started minimised on
+    // Windows is the legacy conhost, which prints the escape codes as text
+    // unless they are switched on, and a log redirected to a file wants none
+    // (#914).
+    #[cfg(windows)]
+    let ansi = std::io::IsTerminal::is_terminal(&std::io::stdout())
+        && nu_ansi_term::enable_ansi_support().is_ok();
+    #[cfg(not(windows))]
+    let ansi = std::io::IsTerminal::is_terminal(&std::io::stdout());
     tracing_subscriber::fmt()
+        .with_ansi(ansi)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
