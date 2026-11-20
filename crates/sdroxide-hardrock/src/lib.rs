@@ -67,6 +67,9 @@ impl From<serialport::Error> for Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Frames that answered nothing, kept for [`Amp::listen`].
+const UNSOLICITED_KEEP: usize = 64;
+
 /// An amplifier on a byte stream — a serial port in use, anything `Read +
 /// Write` in tests.
 pub struct Amp<P: Read + Write> {
@@ -153,6 +156,12 @@ impl<P: Read + Write> Amp<P> {
                 let r = Response::parse(&frame);
                 if answers {
                     return Ok(r);
+                }
+                // Nothing in the panel's link reads these, so only the
+                // latest few are kept: an amplifier left running for hours
+                // must not grow this without end.
+                if self.unsolicited.len() >= UNSOLICITED_KEEP {
+                    self.unsolicited.remove(0);
                 }
                 self.unsolicited.push(r);
             }
