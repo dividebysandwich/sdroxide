@@ -57,6 +57,8 @@
 //! only just, it is
 //! [`sdroxide_types::AdsbStatus::degraded`], for the same reason.
 
+pub mod beast;
+pub mod beast_net;
 mod controller;
 pub mod cpr;
 pub mod crc;

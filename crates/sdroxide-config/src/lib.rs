@@ -1962,6 +1962,17 @@ pub fn save_adsb_config(cfg: &sdroxide_types::AdsbSettings) -> Result<(), Config
     save_json("adsb.json", cfg)
 }
 
+/// Mode-S Beast in and out (`beast.json`). One file for the station, like
+/// `adsb.json`: the output port is the machine's, and only the primary engine
+/// binds it.
+pub fn load_beast_config() -> sdroxide_types::BeastConfig {
+    load_json::<sdroxide_types::BeastConfig>("beast.json")
+}
+
+pub fn save_beast_config(cfg: &sdroxide_types::BeastConfig) -> Result<(), ConfigError> {
+    save_json("beast.json", cfg)
+}
+
 /// VDL Mode 2 decoder preferences.
 ///
 /// Kept apart from the live `RadioState.vdl2` for the same reason the ADS-B and

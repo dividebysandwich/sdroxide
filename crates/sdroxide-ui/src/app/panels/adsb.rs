@@ -376,17 +376,42 @@ impl SdroxideApp {
     /// a digit tips the whole tail onto a second line and moves every pane below
     /// it. On a busy band these counters change several times a second.
     fn adsb_header(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, st: &AdsbStatus) {
+        use sdroxide_types::AdsbFeed;
         let dial = self.state.rx_freq_hz();
         let on_channel =
             (dial - sdroxide_types::ADSB_FREQ_HZ).abs() < 100_000.0 && st.unavailable.is_none();
+        let beast = st.feed == AdsbFeed::Beast;
 
         ui.horizontal_wrapped(|ui| {
             ui.set_min_height(22.0);
             ui.label(RichText::new(tr!("adsb-ads-b")).size(11.0).strong().color(theme::CYAN()));
             ui.label(RichText::new(tr!("adsb-t-1090-mhz-mode-s")).weak().size(10.5));
 
+            // Where the frames come from: this receiver, or a Beast stream from
+            // another program. Only once the station has said how it is set
+            // up, or a click would write defaults over `beast.json`.
+            if self.beast_seeded {
+                for (feed, label, tip) in [
+                    (AdsbFeed::Radio, tr!("adsb-feed-radio"), tr!("adsb-feed-radio-tip")),
+                    (AdsbFeed::Beast, tr!("adsb-feed-beast"), tr!("adsb-feed-beast-tip")),
+                ] {
+                    if crate::chrome::chip(ui, self.beast_edit.feed == feed, label)
+                        .on_hover_text(tip)
+                        .clicked()
+                        && self.beast_edit.feed != feed
+                    {
+                        self.beast_edit.feed = feed;
+                        if feed == AdsbFeed::Beast && self.beast_edit.in_target().is_none() {
+                            self.show_adsb_setup = true;
+                        }
+                        cmds.push(Command::SetBeastConfig(self.beast_edit.clone()));
+                    }
+                }
+            }
+
             // The one preset there is. A chip rather than a note, because the
-            // fix for "nothing is decoding" is nearly always this. A left
+            // fix for "nothing is decoding" is nearly always this. Dimmed on a
+            // Beast feed, where this receiver's dial decides nothing. A left
             // click tunes and sets the gains saved for ADS-B on this device;
             // saving is the right click's menu, so a quick click can never
             // overwrite a good setting with whatever happens to be on.
@@ -406,7 +431,14 @@ impl SdroxideApp {
                 }
                 None => tr!("adsb-tune-gains-none-tip", now = fmt_gains(&now_gains)),
             };
-            let resp = crate::chrome::chip(ui, on_channel, "1090.000").on_hover_text(tip);
+            let resp = ui
+                .add_enabled_ui(!beast, |ui| {
+                    crate::chrome::chip(ui, on_channel, "1090.000").on_hover_text(format!(
+                        "{tip}\n{}",
+                        beast_out_line(&self.beast_status)
+                    ))
+                })
+                .inner;
             if resp.clicked() {
                 cmds.push(Command::SetVfo {
                     vfo: self.state.active_vfo,
@@ -476,15 +508,18 @@ impl SdroxideApp {
             // band that is busy with something the decoder cannot read, or of a
             // receiver picking up its own noise. Worth showing rather than
             // leaving the panel looking broken.
-            slot(
-                ui,
-                88.0,
-                &tr!("adsb-preambles", preambles = count(st.preambles)),
-                theme::gray(120),
-            );
-            slot(ui, 78.0, &tr!("adsb-bad-crc", bad_crc = count(st.bad_crc)), theme::gray(120));
+            //
+            // Neither number exists on a Beast feed: the sender has already
+            // thrown away its preambles and its failed checks.
+            let (pre, bad) = if beast {
+                ("—".to_string(), "—".to_string())
+            } else {
+                (count(st.preambles), count(st.bad_crc))
+            };
+            slot(ui, 88.0, &tr!("adsb-preambles", preambles = pre), theme::gray(120));
+            slot(ui, 78.0, &tr!("adsb-bad-crc", bad_crc = bad), theme::gray(120));
 
-            if st.window_rate_hz > 0.0 {
+            if st.window_rate_hz > 0.0 && !beast {
                 slot(
                     ui,
                     148.0,
@@ -506,6 +541,14 @@ impl SdroxideApp {
             }
         });
 
+        if let Some(link) = &st.feed_state {
+            let up = link.ends_with("connected");
+            ui.label(
+                RichText::new(tr!("adsb-feed-state", state = link.clone()))
+                    .size(10.5)
+                    .color(if up { theme::CYAN() } else { theme::HAZARD() }),
+            );
+        }
         if let Some(why) = &st.unavailable {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(why).size(10.5).color(theme::HAZARD()));
@@ -1370,6 +1413,7 @@ impl SdroxideApp {
         let alt_planes = &mut self.view.adsb_alt_planes;
         #[cfg(not(target_arch = "wasm32"))]
         let range = &mut self.adsb_range;
+        let mut beast_addr_done = false;
         let resp = egui::Window::new(tr!("adsb-ads-b-setup"))
             .id(crate::layout::salted_id(ctx, "AdsbSetup"))
             .open(&mut open)
@@ -1542,7 +1586,28 @@ impl SdroxideApp {
                         .header_response
                         .on_hover_text(tr!("adsb-range-log-tip"));
                 }
+                if self.beast_seeded {
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.label(tr!("adsb-beast-input"));
+                        let r = crate::chrome::field(
+                            ui,
+                            egui::TextEdit::singleline(&mut self.beast_edit.in_addr)
+                                .desired_width(180.0)
+                                .hint_text("192.168.1.20:30005"),
+                        );
+                        // Sent when the field is left, not per keystroke: every
+                        // change of address is a new connection.
+                        if r.lost_focus() {
+                            beast_addr_done = true;
+                        }
+                    });
+                    ui.label(RichText::new(tr!("adsb-beast-input-tip")).size(10.0).weak());
+                }
             });
+        if beast_addr_done {
+            cmds.push(Command::SetBeastConfig(self.beast_edit.clone()));
+        }
         if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);
         }
@@ -2089,6 +2154,27 @@ fn sort_rows(rows: &mut [&AdsbAircraft], by: AdsbSort, desc: bool, home: Option<
 /// The frame and preamble counts run for as long as the decoder does — an
 /// afternoon on a busy sector is millions — and a header readout that grew a
 /// digit an hour would eventually push everything beside it off the row.
+/// One line on this station's own Beast output, for the tooltip over the
+/// frequency chip, so whether the frames are going out can be seen from the
+/// panel (HDZ 2026-11-18: „über dem frequenz knopf … own server running on
+/// port xy oder own beast server off“).
+fn beast_out_line(status: &Option<crate::app::TciServerStatus>) -> String {
+    match status {
+        Some(s) if s.running => {
+            let port = s.addr.rsplit_once(':').map_or(s.addr.as_str(), |(_, p)| p).to_string();
+            let clients = match s.clients {
+                1 => tr!("settings-servers-t-1-client").to_string(),
+                n => tr!("settings-servers-n-clients", n = n),
+            };
+            tr!("adsb-beast-out-on", port = port, clients = clients)
+        }
+        Some(s) if s.error.is_some() => {
+            tr!("adsb-beast-out-failed", error = s.error.clone().unwrap_or_default())
+        }
+        _ => tr!("adsb-beast-out-off").to_string(),
+    }
+}
+
 fn count(n: u64) -> String {
     let m = n as f64;
     if n < 10_000 {
@@ -2132,6 +2218,25 @@ mod tests {
 
     /// An aircraft that has not reported an altitude yet is not the lowest one
     /// in the sky — it sorts last whichever way the column is pointing.
+    #[test]
+    fn the_tooltip_says_whether_the_own_beast_server_runs_and_on_which_port() {
+        let st = |running, error: Option<&str>| {
+            Some(crate::app::TciServerStatus {
+                running,
+                addr: "0.0.0.0:30005".into(),
+                clients: 1,
+                error: error.map(str::to_string),
+                client_connected: false,
+                client_error: None,
+            })
+        };
+        let on = beast_out_line(&st(true, None));
+        assert!(on.contains("30005") && !on.contains("0.0.0.0"), "{on}");
+        assert!(beast_out_line(&st(false, None)).contains("off"));
+        assert!(beast_out_line(&None).contains("off"), "no status yet reads as off");
+        assert!(beast_out_line(&st(false, Some("in use"))).contains("in use"));
+    }
+
     #[test]
     fn a_missing_value_sorts_last_in_both_directions() {
         let a = ac(1, "AAA", Some(35_000), 10);

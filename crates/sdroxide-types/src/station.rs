@@ -103,4 +103,9 @@ pub struct StationConfig {
     ///
     /// Appended last, for the usual reason.
     pub amp: crate::AmpConfig,
+    /// Mode-S Beast in and out (`beast.json`): the ADS-B frames this station
+    /// serves, and the stream its ADS-B panel may show instead of its own.
+    ///
+    /// Appended last, for the usual reason.
+    pub beast: crate::BeastConfig,
 }

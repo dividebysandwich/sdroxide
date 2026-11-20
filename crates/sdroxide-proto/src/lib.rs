@@ -1728,7 +1728,11 @@ use sdroxide_types::{
 ///
 /// v213: ADS-B carrier. `AdsbAircraft` gains `carrier_hz` (where the
 /// transponder's carrier sits) at its tail, which changes every `AdsbStatus`.
-pub const PROTO_VERSION: u16 = 213;
+///
+/// v214: Mode-S Beast in and out. `Command::SetBeastConfig`,
+/// `ServerMsg::BeastStatus` appended; `StationConfig` gains `beast` and
+/// `AdsbStatus` gains `feed` and `feed_state` at their tails.
+pub const PROTO_VERSION: u16 = 214;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
@@ -2238,6 +2242,17 @@ pub enum ServerMsg {
     ///
     /// Appended last, for the usual reason.
     SondeStatus(Box<sdroxide_types::SondeStatus>),
+
+    /// `RadioEvent::BeastStatus`: the Beast output server's state, for the
+    /// settings dialog on a remote client.
+    ///
+    /// Appended last, for the usual reason.
+    BeastStatus {
+        running: bool,
+        addr: String,
+        clients: usize,
+        error: Option<String>,
+    },
 }
 
 /// One radio in a station's roster, as a client sees it.

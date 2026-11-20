@@ -3144,6 +3144,20 @@ struct Engine {
     /// panel that connected while the lane was down would sit on "starting the
     /// decoder" forever.
     adsb_idle_sent: Option<Option<String>>,
+    /// Mode-S Beast in and out (`beast.json`): the output server and the feed
+    /// the ADS-B panel shows.
+    beast_cfg: sdroxide_types::BeastConfig,
+    /// The Beast output, while enabled and bound. On the primary engine only:
+    /// a station has one port 30005, not one per radio.
+    beast_srv: Option<sdroxide_adsb::beast_net::BeastServer>,
+    /// Last bind failure, for the settings dialog — usually `readsb` or
+    /// `dump1090` already serving 30005 on this machine.
+    beast_err: Option<String>,
+    /// Readers last reported, so the status goes out on a change only.
+    beast_clients: usize,
+    /// The feed the running ADS-B worker was started on. A change of feed is a
+    /// new worker, since it is a new table on a new clock.
+    adsb_feed: sdroxide_types::AdsbFeed,
 
     /// The VDL Mode 2 lane: a fourth window, on the 136.7-137.0 MHz datalink
     /// channels.
@@ -4721,6 +4735,13 @@ fn engine_thread(
         adsb_cfg,
         adsb_home: None,
         adsb_idle_sent: None,
+        // Loaded here rather than beside the servers below: `sync_adsb` runs
+        // before them and has to know which feed to start on.
+        beast_cfg: sdroxide_config::load_beast_config(),
+        beast_srv: None,
+        beast_err: None,
+        beast_clients: 0,
+        adsb_feed: sdroxide_types::AdsbFeed::Radio,
         vdl2_ddc: None,
         vdl2: None,
         vdl2_buf: Vec::new(),
@@ -4967,6 +4988,11 @@ fn engine_thread(
     // commonly already taken by a real rigctld, and it has no authentication.
     engine.rigctld_cfg = engine.store.load_rigctld_config();
     engine.sync_rigctld();
+    // The Beast output is off unless the operator turned it on, and only the
+    // primary engine holds it.
+    if engine.primary {
+        engine.sync_beast_out();
+    }
     // WSJT-X UDP broadcast is likewise off unless the operator turned it on.
     engine.wsjtx_cfg = engine.store.load_wsjtx_config();
     engine.sync_wsjtx();
@@ -10436,6 +10462,25 @@ impl Engine {
 
             // Built-in rigctld server (no RadioState change → return before
             // the State emit below).
+            // Mode-S Beast in and out (no RadioState change → return before
+            // the State emit below).
+            SetBeastConfig(cfg) => {
+                if let Err(e) = sdroxide_config::save_beast_config(&cfg) {
+                    warn!("saving Beast config: {e}");
+                }
+                self.beast_cfg = cfg;
+                if self.primary {
+                    self.sync_beast_out();
+                }
+                // A change of feed restarts the lane; a new address on the
+                // same feed only redirects the subscription.
+                self.sync_adsb();
+                if let Some(d) = self.adsb.as_ref() {
+                    d.set_feed(self.beast_cfg.feed, self.beast_cfg.in_target());
+                }
+                self.emit_station_config();
+                return;
+            }
             SetRigctldConfig(cfg) => {
                 if let Err(e) = self.store.save_rigctld_config(&cfg) {
                     warn!("saving rigctld config: {e}");
@@ -12283,7 +12328,10 @@ impl Engine {
     /// to arithmetic rather than to propagation.
     fn adsb_degraded(&self) -> Option<String> {
         let rate = Ddc::rate_for(self.state.sample_rate, self.adsb_target_rate_hz());
-        if rate >= sdroxide_types::ADSB_GOOD_RATE_HZ || self.adsb_unavailable().is_some() {
+        if rate >= sdroxide_types::ADSB_GOOD_RATE_HZ
+            || self.adsb_unavailable().is_some()
+            || self.beast_cfg.feed == sdroxide_types::AdsbFeed::Beast
+        {
             return None;
         }
         Some(format!(
@@ -12317,6 +12365,11 @@ impl Engine {
     /// "this receiver was never going to hear any" produce the same empty list,
     /// and only this tells them apart.
     fn adsb_unavailable(&self) -> Option<String> {
+        // A Beast feed asks nothing of this receiver: not its rate, not its
+        // tuning, not even that it delivers I/Q.
+        if self.beast_cfg.feed == sdroxide_types::AdsbFeed::Beast {
+            return None;
+        }
         if self.audio_mode {
             return Some(
                 "this front end hands over demodulated audio; ADS-B needs the raw I/Q stream"
@@ -12374,22 +12427,47 @@ impl Engine {
     /// and nothing else can be listened to through that.
     fn sync_adsb(&mut self) {
         let want = self.state.rx[0].mode.is_adsb() && self.adsb_unavailable().is_none();
+        let feed = self.beast_cfg.feed;
+        let beast = feed == sdroxide_types::AdsbFeed::Beast;
         // The operator's own preference survives being overruled: `state.adsb`
         // is what the panel reads, `adsb_cfg` is what they chose.
-        if self.audio_mode {
+        if self.audio_mode && !beast {
             self.state.adsb = sdroxide_types::AdsbSettings::OFF;
         } else {
             self.state.adsb = self.adsb_cfg;
         }
+        // Another feed is another worker: a new table, on another clock.
+        if self.adsb.is_some() && self.adsb_feed != feed {
+            self.adsb = None;
+            self.adsb_ddc = None;
+            self.adsb_buf.clear();
+            info!(?feed, "ADS-B decoder restarting on another feed");
+        }
         match (want, self.adsb.is_some()) {
+            (true, false) if beast => {
+                // No window and no down-converter: nothing from this receiver
+                // reaches the worker, which is the point.
+                let c = AdsbController::new(
+                    sdroxide_types::ADSB_FREQ_HZ,
+                    sdroxide_types::ADSB_GOOD_RATE_HZ,
+                    self.state.adsb,
+                );
+                c.set_home(self.adsb_home);
+                c.set_feed(feed, self.beast_cfg.in_target());
+                self.adsb = Some(c);
+                self.adsb_feed = feed;
+                info!(addr = ?self.beast_cfg.in_target(), "ADS-B decoder started on a Beast feed");
+            }
             (true, false) => {
                 let (ddc, center) = self.build_adsb_window();
                 let out_rate = ddc.out_rate();
                 let c = AdsbController::new(center, out_rate, self.state.adsb);
                 c.set_home(self.adsb_home);
+                c.set_out(self.beast_srv.as_ref().map(|s| s.out()));
                 self.adsb = Some(c);
                 self.adsb_ddc = Some(ddc);
                 self.adsb_center_hz = center;
+                self.adsb_feed = feed;
                 info!(rate = out_rate, center, "ADS-B decoder started");
             }
             (false, true) => {
@@ -12516,6 +12594,7 @@ impl Engine {
     /// been decoding, so the "why is this empty" fields are filled in here,
     /// where the front end's capabilities are.
     fn poll_adsb(&mut self) {
+        self.poll_beast_out();
         let unavailable = self.adsb_unavailable();
         let Some(d) = self.adsb.as_ref() else {
             // Nothing running. On the ADS-B mode that is a fact worth sending —
@@ -13053,6 +13132,59 @@ impl Engine {
             }
         }
         self.emit_rigctld_status();
+    }
+
+    /// Start, stop or rebind the Beast output to match `beast_cfg`.
+    fn sync_beast_out(&mut self) {
+        let want = self.beast_cfg.out_enabled.then(|| self.beast_cfg.out_addr());
+        let have = self.beast_srv.as_ref().map(|s| s.local_addr().to_string());
+        if want.is_some() && want == have {
+            self.emit_beast_status();
+            return;
+        }
+        // Dropped first, so a rebind to the same port finds it free.
+        self.beast_srv = None;
+        self.beast_err = None;
+        if let Some(addr) = want {
+            match sdroxide_adsb::beast_net::BeastServer::bind(&addr) {
+                Ok(srv) => self.beast_srv = Some(srv),
+                Err(e) => {
+                    warn!("Beast output {addr}: {e}");
+                    self.beast_err = Some(if e.kind() == std::io::ErrorKind::AddrInUse {
+                        format!("{addr} is in use — readsb or dump1090 on this machine?")
+                    } else {
+                        format!("{addr}: {e}")
+                    });
+                }
+            }
+        }
+        if let Some(d) = self.adsb.as_ref() {
+            d.set_out(self.beast_srv.as_ref().map(|s| s.out()));
+        }
+        self.beast_clients = 0;
+        self.emit_beast_status();
+    }
+
+    /// Tell the settings dialog when a reader comes or goes.
+    fn poll_beast_out(&mut self) {
+        let n = self.beast_srv.as_ref().map_or(0, |s| s.clients());
+        if n != self.beast_clients {
+            self.beast_clients = n;
+            self.emit_beast_status();
+        }
+    }
+
+    fn emit_beast_status(&self) {
+        let _ = self.event_tx.send(RadioEvent::BeastStatus {
+            running: self.beast_srv.is_some(),
+            addr: self
+                .beast_srv
+                .as_ref()
+                .map(|s| s.local_addr().to_string())
+                .unwrap_or_else(|| self.beast_cfg.out_addr()),
+            clients: self.beast_clients,
+            error: self.beast_err.clone(),
+        });
     }
 
     fn emit_rigctld_status(&self) {
@@ -13655,6 +13787,7 @@ impl Engine {
                 band_plan: sdroxide_types::band_plan().clone(),
                 digi_presets: sdroxide_types::digi_presets().to_vec(),
                 picture_upload: self.picup_cfg.clone(),
+                beast: self.beast_cfg.clone(),
             },
         )));
     }

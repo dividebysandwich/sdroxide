@@ -293,6 +293,110 @@ pub(in crate::app) fn settings_rigctld_tab(
     ui.label(RichText::new(tr!("settings-servers-lets-any-hamlib-capable-program")).weak());
 }
 
+/// The Mode-S Beast output: every ADS-B frame this station decodes, served to
+/// `readsb`, `tar1090`, the feeders. Read-only data, so no transmit warning;
+/// on by choice only, because it opens a port.
+pub(in crate::app) fn settings_beast_out_tab(
+    ui: &mut egui::Ui,
+    cfg: &mut sdroxide_types::BeastConfig,
+    seeded: bool,
+    status: &Option<TciServerStatus>,
+    apply: &mut bool,
+) {
+    use sdroxide_types::BeastConfig;
+
+    ui.label(
+        RichText::new(tr!("settings-servers-beast-out"))
+            .size(14.0)
+            .strong()
+            .color(crate::theme::CYAN()),
+    );
+    ui.add_space(4.0);
+    if !seeded {
+        ui.label(RichText::new(tr!("settings-servers-beast-waiting")).weak());
+        return;
+    }
+    ui.add_space(2.0);
+    crate::chrome::checkbox(ui, &mut cfg.out_enabled, tr!("settings-servers-enable"));
+    ui.add_space(6.0);
+
+    ui.add_enabled_ui(cfg.out_enabled, |ui| {
+        egui::Grid::new("beast-out-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+            ui.label(tr!("settings-servers-listen"));
+            ComboBox::from_id_salt("beast_bind").selected_text(&cfg.out_bind).show_styled(
+                ui,
+                |ui| {
+                    for b in BeastConfig::BINDS {
+                        let label = if b == "127.0.0.1" {
+                            tr!("settings-servers-t-127-0-0-1-machine")
+                        } else {
+                            tr!("settings-servers-t-0-0-0-0-whole")
+                        };
+                        if ui.selectable_label(cfg.out_bind == b, label).clicked() {
+                            cfg.out_bind = b.to_string();
+                        }
+                    }
+                },
+            );
+            ui.end_row();
+
+            ui.label(tr!("settings-servers-port"));
+            ui.add(egui::DragValue::new(&mut cfg.out_port).range(1..=65535))
+                .on_hover_text(tr!("settings-servers-beast-port-tip"));
+            ui.end_row();
+        });
+    });
+
+    ui.add_space(8.0);
+    match status {
+        Some(s) if s.running => {
+            let clients = match s.clients {
+                1 => tr!("settings-servers-t-1-client").to_string(),
+                n => tr!("settings-servers-n-clients", n = n),
+            };
+            ui.label(
+                RichText::new(tr!(
+                    "settings-servers-listening",
+                    addr = s.addr.to_string(),
+                    clients = clients
+                ))
+                .color(Color32::from_rgb(90, 200, 110)),
+            );
+        }
+        Some(s) => match &s.error {
+            Some(e) => {
+                ui.label(
+                    RichText::new(tr!("settings-servers-failed", error = e.to_string()))
+                        .color(Color32::from_rgb(230, 90, 80)),
+                );
+            }
+            None => {
+                ui.label(RichText::new(tr!("settings-servers-not-running")).weak());
+            }
+        },
+        None => {
+            ui.label(RichText::new(tr!("settings-servers-status-unknown-press-apply")).weak());
+        }
+    }
+
+    ui.add_space(8.0);
+    if crate::chrome::chip_accent(
+        ui,
+        false,
+        RichText::new(tr!("settings-servers-apply")).strong(),
+        crate::theme::GREEN(),
+        crate::theme::INK_ON_CYAN(),
+    )
+    .on_hover_text(tr!("settings-servers-persist-re-bind-server"))
+    .clicked()
+    {
+        *apply = true;
+    }
+
+    ui.add_space(8.0);
+    ui.label(RichText::new(tr!("settings-servers-beast-about")).weak());
+}
+
 /// The rotctld *client* — the one interface on this tab where sdroxide dials
 /// out instead of listening. Driven by the satellite lock's az/el.
 pub(in crate::app) fn settings_rotator_tab(

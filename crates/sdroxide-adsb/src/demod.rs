@@ -1020,6 +1020,62 @@ mod tests {
         }
     }
 
+    /// What the one-bit repair in [`crate::frame`] buys, for an aircraft
+    /// already tracked: DF17s at every arrival phase in Gaussian noise, at
+    /// levels where the plain check starts losing them. Counted as a frame if
+    /// any candidate the demodulator offers checks out (plain) or checks out
+    /// or repairs (with repair) to the transmitted message. Measured on these
+    /// seeds when written: 104 → 136 of 200 at 2.4 Msps / 12 dB, 20 → 28 at
+    /// 10 dB, 78 → 95 at 4 Msps / 8 dB, and no wrong message. Each floor is the
+    /// repaired count less two.
+    #[test]
+    fn a_one_bit_repair_recovers_weak_squitters() {
+        let np = 1e-4f64;
+        let icao = u32::from(DF17[1]) << 16 | u32::from(DF17[2]) << 8 | u32::from(DF17[3]);
+        let want = crate::frame::accept(&DF17, |_| false).unwrap().message().clone();
+        for (rate, snr_db, floor) in
+            [(2_400_000.0f64, 12.0f64, 134usize), (2_400_000.0, 10.0, 26), (4_000_000.0, 8.0, 93)]
+        {
+            let amp = (np * 10f64.powf(snr_db / 10.0)).sqrt() as f32;
+            const N: usize = 200;
+            let (mut plain, mut repaired, mut wrong) = (0usize, 0usize, 0usize);
+            for k in 0..N {
+                let t0 = 10.0 + (k as f64 / N as f64) * (1e6 / rate);
+                let clean = modulate_at(&DF17, rate, t0, amp, 0.0, 1);
+                let mut g = Gauss(0x7777_0000 + k as u64);
+                let warm: Vec<Complex32> = (0..32_768).map(|_| g.next(np as f32)).collect();
+                let iq: Vec<Complex32> = clean.iter().map(|z| z + g.next(np as f32)).collect();
+                let mut d = Demod::new(rate);
+                let mut out = Vec::new();
+                d.push(&warm, &mut out);
+                out.clear();
+                d.push(&iq, &mut out);
+                if out.iter().any(|c| c.bytes == DF17) {
+                    plain += 1;
+                }
+                let mut got = false;
+                for c in &out {
+                    if let Ok(acc) = crate::frame::accept(&c.bytes, |i| i == icao) {
+                        if *acc.message() == want {
+                            got = true;
+                        } else if acc.icao() == icao {
+                            wrong += 1;
+                        }
+                    }
+                }
+                repaired += usize::from(got);
+            }
+            assert_eq!(wrong, 0, "{snr_db} dB: a repair produced a different message");
+            assert!(
+                repaired >= floor && repaired > plain,
+                "{snr_db} dB at {rate:.0} sps: plain {plain}/{N}, with repair {repaired}/{N}"
+            );
+            eprintln!(
+                "{snr_db} dB at {rate:.0} sps: plain {plain}/{N}, with repair {repaired}/{N}"
+            );
+        }
+    }
+
     /// Complex Gaussian noise of a given mean power, deterministically: there
     /// is no `rand` in this tree.
     struct Gauss(u64);

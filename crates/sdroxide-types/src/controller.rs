@@ -431,6 +431,17 @@ pub enum RadioEvent {
     ///
     /// Appended last, for the usual reason.
     Recordings(crate::RecordingListing),
+    /// The Beast output server: whether it is listening, where, how many
+    /// readers are connected, and any bind error. The shape of
+    /// [`RadioEvent::RigctldStatus`], emitted on every transition.
+    ///
+    /// Appended last, for the usual reason.
+    BeastStatus {
+        running: bool,
+        addr: String,
+        clients: usize,
+        error: Option<String>,
+    },
 }
 
 /// Snapshot of the frontend's switchable sound devices (native clients).

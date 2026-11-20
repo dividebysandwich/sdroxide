@@ -162,7 +162,7 @@ impl Tracker {
         e.ac.last_at = now;
         e.ac.frames = e.ac.frames.saturating_add(1);
         e.ac.rssi_dbfs = rssi_dbfs;
-        e.ac.source = if verified { AdsbSource::Squitter } else { AdsbSource::Reply };
+        e.ac.source = if acc.is_squitter() { AdsbSource::Squitter } else { AdsbSource::Reply };
         e.ac.raw_hex = bytes.iter().map(|b| format!("{b:02X}")).collect();
 
         match &acc.message().body {

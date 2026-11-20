@@ -6726,9 +6726,16 @@ squawk column and the faster altitude updates without inventing aeroplanes. It
 is also why a squawk appears for some aircraft and not others: it depends on
 whether a radar is interrogating them where you can hear the answer.
 
-**No error correction.** Other decoders will flip a bit, or two, looking for a
-frame that checks out; it recovers some weak transmissions and it also invents
-aircraft, and an invented aircraft on a map looks exactly like a real one.
+**One-bit repair, for aircraft already on the table.** Other decoders will flip a
+bit, or two, looking for a frame that checks out; it recovers some weak
+transmissions and it also invents aircraft, and an invented aircraft on a map
+looks exactly like a real one. SDRoxide repairs a single wrong bit in an
+extended squitter only when the address — taken as received, never repaired —
+already belongs to an aircraft heard from a verified squitter. A repair can
+therefore add a position or a speed to an aircraft on the map, and can never
+put a new one there. Near the edge of reception that is about a quarter to a
+third more frames from the weak aircraft (measured on synthetic bursts in
+Gaussian noise, 2.4 Msps at 10–12 dB). Two wrong bits are not repaired.
 
 Two encodings are deliberately not decoded, and an aircraft using either shows no
 altitude rather than a wrong one: the 100-foot Gillham encoding, used above
@@ -6760,6 +6767,40 @@ SDROXIDE_ADSB_IQ=/path/to/dump1090_rs/test_iq \
 
 SDRoxide finds all fourteen messages in those three captures, and nothing the
 reference does not also find.
+
+#### Beast: aircraft from another receiver
+
+The panel can show the frames of another program instead of this receiver's.
+A Raspberry Pi with an RTL-SDR stick at the window, running `readsb` or
+`dump1090`, serves everything it decodes in the **Beast** format on port
+30005. A home network carries that easily — about 20 kbit/s for twenty
+aircraft — where it would never carry the raw I/Q.
+
+1. Open **SETUP** and enter the Pi's address under **Beast input**, for
+   example `192.168.1.20` (port 30005 is added when none is given).
+2. Click **BEAST** at the left of the panel header. **RADIO** goes back to
+   this receiver.
+
+The line under the header says where the frames come from and whether the
+link is up: `Beast · 192.168.1.20:30005 · connected`. When the Pi goes away
+the panel says so and reconnects by itself, after 2 seconds at first and at
+most every 30.
+
+On a Beast feed the receiver's dial, sample rate and antenna play no part:
+the **1090.000** button is dimmed, the rate warnings do not appear, and
+**preambles** and **bad CRC** show `—`, because the sender has already
+thrown those away. **frames** counts the frames that arrived and passed the
+same checks this decoder applies to its own. The table starts afresh when
+you switch, since the two sources keep time by different clocks.
+
+**Without any radio.** The panel belongs to a radio's window, so something
+has to be open. With no hardware at all, start with the built-in signal
+generator (`sdroxide --siggen`), choose **ADS-B** and then **BEAST**.
+
+Frames that arrive over Beast are only shown. They are never passed to this
+station's own Beast output ([§6.8.4](#684-mode-s-beast-output-ads-b)), so a
+station whose output is merged by the same Pi it reads from does not send its
+frames round in a circle.
 
 #### If nothing is decoding
 
@@ -14473,6 +14514,37 @@ copy; two radios sending to one port arrive interleaved.
 
 It sends only while the radio is in CW with the panel decoding; the skimmer's
 spots are not part of it.
+
+#### 6.8.4 Mode-S Beast output (ADS-B)
+
+Below the TCI server. Serves every ADS-B frame this receiver decodes in the
+Beast format — the format `readsb`, `dump1090`, `tar1090`, `mlat-client` and
+the feeders speak — to any program that connects. Off until you enable it.
+
+| Field | Default | Meaning |
+|---|---|---|
+| Enable | off | Listen for Beast readers |
+| Listen | `0.0.0.0` (whole network) | The usual reader is on another machine; the stream carries no control |
+| Port | 30005 | The port every Beast reader expects |
+
+Press **APPLY**. The status line shows `● Listening on 0.0.0.0:30005 — 1 client`
+or the reason it could not bind — most often a `readsb` or `dump1090` on this
+same machine already holding 30005; choose another port then.
+
+To merge this receiver into a `readsb` on a Raspberry Pi, so that its
+`tar1090` map shows both, add to the Pi's `readsb` options (in
+`/etc/default/readsb`, `NET_OPTIONS`):
+
+```
+--net-connector <this computer's address>,30005,beast_in
+```
+
+What goes out: every frame the decoder believes, including those with one
+bit repaired ([§3.13](#313-ads-b-aircraft-on-1090-mhz), *What is decoded, and
+what is believed*), in their repaired form. Timestamps count samples at
+12 MHz, as the format asks, but they are not tied to GPS time: good for
+merging, of no use for multilateration (MLAT). Frames this station receives
+over a Beast input are never sent here.
 
 ### 6.10 TLE: satellites and their frequencies
 

@@ -1239,6 +1239,9 @@ fn handle_event(shared: &Shared, ev: RadioEvent) {
             RadioEvent::RigctldStatus { running, addr, clients, error } => {
                 Some(ServerMsg::RigctldStatus { running, addr, clients, error })
             }
+            RadioEvent::BeastStatus { running, addr, clients, error } => {
+                Some(ServerMsg::BeastStatus { running, addr, clients, error })
+            }
             RadioEvent::TciServerStatus {
                 running,
                 addr,

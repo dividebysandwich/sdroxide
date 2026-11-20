@@ -55,7 +55,8 @@ use self::radio::{
 #[cfg(not(target_arch = "wasm32"))]
 use self::remote::settings_remote_tab;
 use self::servers::{
-    settings_rigctld_tab, settings_rotator_tab, settings_tci_server_tab, settings_wsjtx_tab,
+    settings_beast_out_tab, settings_rigctld_tab, settings_rotator_tab, settings_tci_server_tab,
+    settings_wsjtx_tab,
 };
 use self::tle::settings_tle_tab;
 use self::ui_tab::settings_ui_tab;
@@ -284,6 +285,9 @@ pub(in crate::app) struct SettingsIo<'a> {
     /// "NET rigctl" client speaks.
     rigctld_edit: &'a mut sdroxide_types::RigctldConfig,
     rigctld_apply: &'a mut bool,
+    /// The Mode-S Beast output (the input lives in the ADS-B panel).
+    beast_edit: &'a mut sdroxide_types::BeastConfig,
+    beast_apply: &'a mut bool,
     /// The WSJT-X UDP broadcast — decodes, status and logged QSOs for
     /// GridTracker, JTAlert, N1MM+ and Log4OM.
     wsjtx_edit: &'a mut sdroxide_types::WsjtxConfig,
@@ -1061,6 +1065,8 @@ impl SdroxideApp {
         let mut tci_srv_apply = false;
         let mut rigctld_edit = self.rigctld_edit.clone();
         let mut rigctld_apply = false;
+        let mut beast_edit = self.beast_edit.clone();
+        let mut beast_apply = false;
         let mut wsjtx_edit = self.wsjtx_edit.clone();
         let mut wsjtx_apply = false;
         let mut picup_edit = self.picup_edit.clone();
@@ -1241,6 +1247,8 @@ impl SdroxideApp {
                             tci_srv_apply: &mut tci_srv_apply,
                             rigctld_edit: &mut rigctld_edit,
                             rigctld_apply: &mut rigctld_apply,
+                            beast_edit: &mut beast_edit,
+                            beast_apply: &mut beast_apply,
                             wsjtx_edit: &mut wsjtx_edit,
                             wsjtx_apply: &mut wsjtx_apply,
                             picup_edit: &mut picup_edit,
@@ -1338,6 +1346,12 @@ impl SdroxideApp {
         if rigctld_apply {
             // The engine persists rigctld.json when it binds (or fails to).
             cmds.push(Command::SetRigctldConfig(self.rigctld_edit.clone()));
+        }
+        // Kept every frame, like the other servers' edits, or a tick in the
+        // box would be gone again before APPLY could send it.
+        take_beast_out_edit(&mut self.beast_edit, beast_edit);
+        if beast_apply {
+            cmds.push(Command::SetBeastConfig(self.beast_edit.clone()));
         }
         self.wsjtx_edit = wsjtx_edit;
         if wsjtx_apply {
@@ -3394,6 +3408,16 @@ impl SdroxideApp {
                 ui.add_space(12.0);
                 ui.separator();
                 ui.add_space(8.0);
+                settings_beast_out_tab(
+                    ui,
+                    io.beast_edit,
+                    self.beast_seeded,
+                    &self.beast_status,
+                    io.beast_apply,
+                );
+                ui.add_space(12.0);
+                ui.separator();
+                ui.add_space(8.0);
                 settings_wsjtx_tab(ui, io.wsjtx_edit, self.wsjtx_seeded, io.wsjtx_apply);
                 ui.add_space(12.0);
                 ui.separator();
@@ -4271,5 +4295,45 @@ mod tests {
     fn soapy_only_appears_when_supported() {
         assert!(iface_opts(true).contains(&sdroxide_types::Backend::Soapy));
         assert!(!iface_opts(false).contains(&sdroxide_types::Backend::Soapy));
+    }
+}
+
+/// Take the Beast output's fields from the dialog's working copy into the
+/// app's. Only those: the feed and the input address belong to the ADS-B
+/// panel, which may have changed them while the dialog was open.
+fn take_beast_out_edit(
+    stored: &mut sdroxide_types::BeastConfig,
+    edited: sdroxide_types::BeastConfig,
+) {
+    stored.out_enabled = edited.out_enabled;
+    stored.out_bind = edited.out_bind;
+    stored.out_port = edited.out_port;
+}
+
+#[cfg(test)]
+mod beast_out_edit_tests {
+    use super::take_beast_out_edit;
+    use sdroxide_types::{AdsbFeed, BeastConfig};
+
+    /// A tick in "Enable" survives to the next frame — the bug HDZ met on
+    /// 2026-11-18 („kann nicht enable anklicken“), when the copy was only
+    /// taken on APPLY — and the panel's feed and address are left alone.
+    #[test]
+    fn the_output_fields_are_kept_and_the_panels_are_not_touched() {
+        let mut stored = BeastConfig {
+            feed: AdsbFeed::Beast,
+            in_addr: "192.168.178.127".into(),
+            ..BeastConfig::default()
+        };
+        let mut edited = stored.clone();
+        edited.out_enabled = true;
+        edited.out_port = 30105;
+        edited.feed = AdsbFeed::Radio;
+        edited.in_addr.clear();
+        take_beast_out_edit(&mut stored, edited);
+        assert!(stored.out_enabled);
+        assert_eq!(stored.out_port, 30105);
+        assert_eq!(stored.feed, AdsbFeed::Beast);
+        assert_eq!(stored.in_addr, "192.168.178.127");
     }
 }
