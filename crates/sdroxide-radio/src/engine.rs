@@ -5730,6 +5730,11 @@ struct RigDigest {
     /// The CW sidetone pitch, by bit pattern — a client's CW filter is centred
     /// on it, so a change has to reach the protocol layer.
     cw_pitch: u32,
+    /// The sampled span and the rate it is divided from, by bit pattern, plus
+    /// whether there is a decimation at all — `SPECTRUM_SPAN` over rigctl.
+    span: u64,
+    device_rate: u64,
+    can_decimate: bool,
     /// The front-end gain's setting and range, by bit pattern.
     rf_gain: Option<(u64, u64, u64)>,
     ranges: (usize, usize),
@@ -5763,6 +5768,9 @@ impl RigDigest {
             rig_squelch: s.rig_squelch.map(f32::to_bits),
             agc: s.agc,
             cw_pitch: s.cw_pitch_hz.to_bits(),
+            span: s.span_hz.to_bits(),
+            device_rate: s.device_rate_hz.to_bits(),
+            can_decimate: s.can_decimate,
             rf_gain: s
                 .rf_gain
                 .as_ref()
@@ -13236,6 +13244,9 @@ impl Engine {
             rig_squelch: self.caps.commands_squelch.then_some(self.state.rig_squelch),
             agc: rx.agc,
             cw_pitch_hz: self.cw_pitch_hz(),
+            span_hz: self.state.sample_rate,
+            device_rate_hz: self.radio_fs,
+            can_decimate: !self.audio_mode,
             rf_gain: self.rigctld_rf_gain().map(|(g, value)| sdroxide_rigctld::RfGain {
                 element: g.name.clone(),
                 min: g.min_db,
@@ -13308,6 +13319,9 @@ impl Engine {
             rig_squelch: self.caps.commands_squelch.then_some(self.state.rig_squelch.to_bits()),
             agc: rx.agc,
             cw_pitch: self.cw_pitch_hz().to_bits(),
+            span: self.state.sample_rate.to_bits(),
+            device_rate: self.radio_fs.to_bits(),
+            can_decimate: !self.audio_mode,
             rf_gain: self
                 .rigctld_rf_gain()
                 .map(|(g, value)| (value.to_bits(), g.min_db.to_bits(), g.max_db.to_bits())),
