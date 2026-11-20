@@ -325,7 +325,7 @@ settings-added-radio-s-s-meter =
 settings-t-0-db = 0 dB
 settings-antenna-somewhere-else-no-locator = L'antenna è altrove e non è impostato alcun locatore, quindi nulla di ciò che questa radio sente viene riportato a PSK Reporter, WSPRnet o FreeDV Reporter. Scrivi il locatore del ricevitore qui sopra per riportare da lì.
 settings-ranges-are-mhz-low-high = Le gamme sono in MHz, da-a, separate da virgole: 144-146, 430-440 — cioè 144000000-146000000 Hz e 430000000-440000000 Hz. Sono frequenze di sintonia: un offset del convertitore non le sposta. L'offset del convertitore qui sopra è il campo in hertz. Lascia vuota una gamma per usare ciò che il dispositivo riferisce di sé; un dispositivo che non riferisce nulla viene preso sulla parola.
-settings-careful-rtl-sdr-blog-v4 = Attenzione con un RTL-SDR: il Blog V4 fa un upconversion da solo sotto 28,8 MHz, quindi un offset negativo che porta l'hardware lì sposta il segnale due volte.
+settings-careful-rtl-sdr-blog-v4 = Attenzione con un RTL-SDR: il Blog V4/V4L fa un upconversion da solo sotto 28,8 MHz, quindi un offset negativo che porta l'hardware lì sposta il segnale due volte.
 settings-transmit-audio = Audio di trasmissione
 settings-use = in uso
 settings-every-stage-off = tutti gli stadi disattivati
@@ -1409,7 +1409,7 @@ settings-radio-applies-immediately-no-reconnect-tuner = Ha effetto subito — se
 settings-radio-crystal-error-parts-per-million = Errore del cristallo in parti per milione. Avvia con RUST_LOG=sdroxide_rtlsdr=debug e il log stampa l'errore di clock misurato dopo circa 20 secondi — è il numero da inserire. Ha effetto subito.
 settings-radio-hf-reception = Ricezione HF
 settings-radio-tuner-itself-starts-24-mhz =
-    Il sintonizzatore stesso parte da 24 MHz. Un RTL-SDR Blog V4 converte verso l'alto sotto quella frequenza via hardware; le altre chiavette raggiungono le HF solo campionando direttamente l'ADC, attraverso la porta HF del V3. Automatico affida all'ADC tutto ciò che è sotto i 24 MHz e al sintonizzatore tutto ciò che è sopra.
+    Il sintonizzatore stesso parte da 24 MHz. Un RTL-SDR Blog V4/V4L converte verso l'alto sotto quella frequenza via hardware; le altre chiavette raggiungono le HF solo campionando direttamente l'ADC, attraverso la porta HF del V3. Automatico affida all'ADC tutto ciò che è sotto i 24 MHz e al sintonizzatore tutto ciò che è sopra.
 
     Il campionamento diretto copre ogni banda HF, compresi i 17 m e i 15 m — arrivano nella seconda zona di Nyquist dell'ADC, con il verso giusto. Però nulla filtra l'ingresso dell'ADC, quindi insieme a loro arriva qualsiasi cosa si trovi a 28,8 MHz meno la sintonia: 10,7 MHz sotto i 17 m, 7,726 MHz sotto i 15 m.
 

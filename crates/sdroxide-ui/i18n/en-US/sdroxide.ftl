@@ -342,7 +342,7 @@ settings-antenna-somewhere-else-no-locator = The antenna is somewhere else and n
 settings-ranges-are-mhz-low-high = Ranges are in MHz, low-high, separated by commas: 144-146, 430-440 — that is 144000000-146000000 Hz and 430000000-440000000 Hz. They are dial frequencies: a converter offset does not move them. The converter offset above is the field in hertz. Leave a range empty to use whatever the device reports about itself; a device that reports nothing is taken at its word.
 settings-dwell-recentre = Centre the window on a resting dial
 settings-dwell-recentre-hover = After five seconds of rest more than a twentieth of the window off its middle, the I/Q window is centred on the dial, once per resting place. Off: the window stays where it is until the dial leaves it.
-settings-careful-rtl-sdr-blog-v4 = Careful on an RTL-SDR: the Blog V4 upconverts on its own below 28.8 MHz, so a negative offset that lands the hardware there shifts twice.
+settings-careful-rtl-sdr-blog-v4 = Careful on an RTL-SDR: the Blog V4/V4L upconverts on its own below 28.8 MHz, so a negative offset that lands the hardware there shifts twice.
 settings-transmit-audio = Transmit audio
 settings-use = in use
 settings-every-stage-off = every stage off
@@ -1439,7 +1439,7 @@ settings-radio-applies-immediately-no-reconnect-tuner = Applies immediately — 
 settings-radio-crystal-error-parts-per-million = Crystal error in parts per million. Run with RUST_LOG=sdroxide_rtlsdr=debug and the log prints the measured clock error after about 20 seconds — that is the number to enter. Applies immediately.
 settings-radio-hf-reception = HF reception
 settings-radio-tuner-itself-starts-24-mhz =
-    The tuner itself starts at 24 MHz. An RTL-SDR Blog V4 upconverts below that in hardware; other dongles reach HF only by sampling the ADC directly, through the V3's HF port. Automatic hands everything below 24 MHz to the ADC and everything above it to the tuner.
+    The tuner itself starts at 24 MHz. An RTL-SDR Blog V4/V4L upconverts below that in hardware; other dongles reach HF only by sampling the ADC directly, through the V3's HF port. Automatic hands everything below 24 MHz to the ADC and everything above it to the tuner.
 
     Direct sampling covers every HF band, 17 m and 15 m included — they arrive in the ADC's second Nyquist zone, the right way up. Nothing filters the ADC's input, though, so whatever is at 28.8 MHz minus the dial comes with them: 10.7 MHz under 17 m, 7.726 MHz under 15 m.
 

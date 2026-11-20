@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 
 use nusb::transfer::{Bulk, In};
 use sdroxide_dsp::WideSpectrum;
-use sdroxide_r82xx::{Chip, R82xx, R828D_I2C_ADDR};
+use sdroxide_r82xx::{Board, Chip, R82xx, R828D_I2C_ADDR};
 
 use sdroxide_rx888::device::{Device, Settings};
 use sdroxide_rx888::{band, convert, protocol, si5351, tuner};
@@ -131,7 +131,7 @@ fn main() {
     }
     println!("   gpio 0x{:08x} (VHF_EN {})", dev.gpio_word(), on_off(dev.gpio_word(), 15));
 
-    let mut tuner = R82xx::new(Chip::R828D, false, 0);
+    let mut tuner = R82xx::new(Chip::R828D, Board::Plain, 0);
     if let Err(e) = tuner.init(dev.usb()) {
         println!("   ** tuner init failed: {e}");
         println!("   ** a PLL that will not lock here usually means CLK2 is not reaching it.");

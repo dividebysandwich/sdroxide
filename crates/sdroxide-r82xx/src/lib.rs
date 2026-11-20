@@ -21,6 +21,11 @@
 //! GPL-3.0-or-later. Do not mix forks: they differ in `r82xx_set_bw`, the gain
 //! tables and the PLL refdiv branch, and blending them produces a radio that is
 //! subtly deaf.
+//!
+//! The RTL-SDR Blog V4L branches come from the next osmocom commit,
+//! `0204c9cfb1c5ff7bd64f466ce5b8fe53b40a636a` ("Add RTL-SDR Blog V4L Support"),
+//! which touches nothing else in this file's scope. Its tracking-filter bypass
+//! on HF was already here for the V4.
 
 pub mod bus;
 mod error;
@@ -30,7 +35,7 @@ pub mod tables;
 pub use bus::{BusError, BusResult, MockBus, TunerBus};
 pub use error::{Error, Result};
 pub use r82xx::{
-    BLOG_V4_REF_HZ, Chip, DEFAULT_IF_HZ, GainSetting, R82XX_CHECK_VAL, R82xx, R820T_I2C_ADDR,
-    R820T_XTAL_HZ, R828D_I2C_ADDR, R828D_XTAL_HZ, STAGE_MAX_INDEX, Stage, apply_ppm,
-    ladder_indices, stage_db, stage_index_for,
+    BLOG_V4_REF_HZ, Board, Chip, DEFAULT_IF_HZ, GainSetting, R82XX_CHECK_VAL, R82xx,
+    R820T_I2C_ADDR, R820T_XTAL_HZ, R828D_I2C_ADDR, R828D_XTAL_HZ, STAGE_MAX_INDEX, Stage,
+    apply_ppm, ladder_indices, stage_db, stage_index_for,
 };

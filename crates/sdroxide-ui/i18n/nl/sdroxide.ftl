@@ -325,7 +325,7 @@ settings-added-radio-s-s-meter =
 settings-t-0-db = 0 dB
 settings-antenna-somewhere-else-no-locator = De antenne staat ergens anders en er is geen locator ingesteld, dus wat deze radio hoort, wordt niet gemeld aan PSK Reporter, WSPRnet of FreeDV Reporter. Typ hierboven de locator van de ontvanger om vanaf daar te melden.
 settings-ranges-are-mhz-low-high = Bereiken staan in MHz, laag-hoog, gescheiden door komma's: 144-146, 430-440 — dat is 144000000-146000000 Hz en 430000000-440000000 Hz. Het zijn dialfrequenties: een converteroffset verschuift ze niet. De converteroffset hierboven is het veld in hertz. Laat een bereik leeg om te gebruiken wat het apparaat over zichzelf meldt; een apparaat dat niets meldt, wordt op zijn woord geloofd.
-settings-careful-rtl-sdr-blog-v4 = Pas op met een RTL-SDR: de Blog V4 zet zelf onder 28,8 MHz al op, dus een negatieve offset die de hardware daarheen brengt, verschuift twee keer.
+settings-careful-rtl-sdr-blog-v4 = Pas op met een RTL-SDR: de Blog V4/V4L zet zelf onder 28,8 MHz al op, dus een negatieve offset die de hardware daarheen brengt, verschuift twee keer.
 settings-transmit-audio = Zendaudio
 settings-use = in gebruik
 settings-every-stage-off = elke trap uit
@@ -1400,7 +1400,7 @@ settings-radio-applies-immediately-no-reconnect-tuner = Werkt meteen — zonder 
 settings-radio-crystal-error-parts-per-million = Kristalfout in delen per miljoen. Draai met RUST_LOG=sdroxide_rtlsdr=debug en het logboek drukt na ongeveer 20 seconden de gemeten klookfout af — dat is het getal om in te voeren. Werkt meteen.
 settings-radio-hf-reception = HF-ontvangst
 settings-radio-tuner-itself-starts-24-mhz =
-    De tuner zelf begint bij 24 MHz. Een RTL-SDR Blog V4 zet daaronder in de hardware zelf op; andere dongles bereiken HF alleen door de ADC rechtstreeks te bemonsteren, via de HF-poort van de V3. Automatisch geeft alles onder 24 MHz aan de ADC en alles erboven aan de tuner.
+    De tuner zelf begint bij 24 MHz. Een RTL-SDR Blog V4/V4L zet daaronder in de hardware zelf op; andere dongles bereiken HF alleen door de ADC rechtstreeks te bemonsteren, via de HF-poort van de V3. Automatisch geeft alles onder 24 MHz aan de ADC en alles erboven aan de tuner.
 
     Directe bemonstering dekt elke HF-band, 17 m en 15 m inbegrepen — ze komen in de tweede Nyquist-zone van de ADC binnen, rechtop. Niets filtert de ingang van de ADC, dus wat er op 28,8 MHz min de dial zit, komt er ook mee: 10,7 MHz onder 17 m, 7,726 MHz onder 15 m.
 

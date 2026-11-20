@@ -329,7 +329,7 @@ settings-added-radio-s-s-meter =
 settings-t-0-db = 0 dB
 settings-antenna-somewhere-else-no-locator = アンテナは別の場所にあり、ロケーターが設定されていないため、この無線機が受信した内容は PSK Reporter、WSPRnet、FreeDV Reporter に報告されません。上に受信機のロケーターを入力すると、そこから報告されます。
 settings-ranges-are-mhz-low-high = 範囲は MHz で、低-高の形式で、カンマ区切りで指定します：144-146, 430-440。これは 144000000-146000000 Hz と 430000000-440000000 Hz を意味します。これらはダイヤル周波数で、コンバーターのオフセットは移動させません。上のコンバーターのオフセットは Hz 単位の欄です。範囲を空欄にすると、デバイスが自身について報告する値を使います。何も報告しないデバイスは、その申告が信頼されます。
-settings-careful-rtl-sdr-blog-v4 = RTL-SDR を使う場合は注意：Blog V4 は 28.8 MHz 未満で自身がアップコンバートするため、ハードウェアがそこに来る負のオフセットは二重にずれます。
+settings-careful-rtl-sdr-blog-v4 = RTL-SDR を使う場合は注意：Blog V4/V4L は 28.8 MHz 未満で自身がアップコンバートするため、ハードウェアがそこに来る負のオフセットは二重にずれます。
 settings-transmit-audio = 送信音声
 settings-use = 使用中
 settings-every-stage-off = すべての段がオフ
@@ -1385,7 +1385,7 @@ settings-radio-applies-immediately-no-reconnect-tuner = 即座に適用されま
 settings-radio-crystal-error-parts-per-million = 水晶の誤差（百万分率）。RUST_LOG=sdroxide_rtlsdr=debug で実行すると、約 20 秒後にログが測定されたクロック誤差を出力します。これが入力すべき数値です。即座に適用されます。
 settings-radio-hf-reception = HF 受信
 settings-radio-tuner-itself-starts-24-mhz =
-    チューナー自体は 24 MHz から始まります。RTL-SDR Blog V4 は、それより下をハードウェアでアップコンバートします。ほかのドングルは、V3 の HF ポートを通して ADC を直接サンプリングすることでしか HF に届きません。自動では、24 MHz より下のすべてを ADC に、それより上のすべてをチューナーに振り分けます。
+    チューナー自体は 24 MHz から始まります。RTL-SDR Blog V4/V4L は、それより下をハードウェアでアップコンバートします。ほかのドングルは、V3 の HF ポートを通して ADC を直接サンプリングすることでしか HF に届きません。自動では、24 MHz より下のすべてを ADC に、それより上のすべてをチューナーに振り分けます。
 
     直接サンプリングは、17 m と 15 m を含むすべての HF バンドをカバーします。これらは ADC の 2 番目のナイキスト帯域に、正しい向きで入ってきます。ただし ADC の入力にはフィルターがないため、28.8 MHz からダイヤルを引いた周波数も一緒に入ります。17 m では 10.7 MHz、15 m では 7.726 MHz です。
 
