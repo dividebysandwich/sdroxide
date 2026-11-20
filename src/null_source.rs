@@ -29,13 +29,15 @@ impl NullSource {
     /// pairing enough on its own: nothing has to remember to wake this radio
     /// up, and an attempt that loses the race to the borrower's release is
     /// simply tried again.
-    pub fn attached(center_hz: f64, owner: u32) -> Self {
+    ///
+    /// `owner` is the borrowing radio as its tab shows it (see `radio_label`
+    /// in main.rs), not a roster id: ids are not positions (#913).
+    pub fn attached(center_hz: f64, owner: &str) -> Self {
         NullSource {
             center: center_hz,
             status: format!(
-                "This radio is the panadapter for radio {} — its spectrum and audio are on that \
-                 radio's tab. Clear the Panadapter receiver box there to use it on its own again.",
-                owner + 1
+                "This radio is the panadapter for {owner} — its spectrum and audio are on that \
+                 radio's tab. Clear the Panadapter receiver box there to use it on its own again."
             ),
             retry: true,
         }

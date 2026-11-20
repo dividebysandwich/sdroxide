@@ -404,12 +404,19 @@ fn boot_radios(cli: &mut Cli, settings: &Settings) -> anyhow::Result<Vec<RadioBo
         if let Some(&owner) = owners.get(&slot.id) {
             let mut c = secondary_cli(cli);
             let initial_mode = c.apply_session(store.load_session());
-            tracing::info!("radio {} is radio {}'s panadapter receiver", slot.id + 1, owner + 1);
+            tracing::info!(
+                "radio {} is the panadapter receiver of {}",
+                slot.id + 1,
+                radio_label(owner)
+            );
             radios.push(RadioBoot {
                 id: slot.id,
                 name: slot.name.clone(),
                 enabled: slot.enabled,
-                source: Box::new(null_source::NullSource::attached(c.center_hz(), owner)),
+                source: Box::new(null_source::NullSource::attached(
+                    c.center_hz(),
+                    &radio_label(owner),
+                )),
                 // Says which radio has it, so the shell can keep this one off
                 // the tab strip and name the borrower.
                 caps: DeviceCaps { lent_to: Some(owner), ..synthetic_caps("Panadapter receiver") },
@@ -569,7 +576,7 @@ fn reopen_factory_for(
         match lent_answer(panadapter_owners().get(&id).copied(), &mut was_lent) {
             Some(Ok(owner)) => {
                 return Ok((
-                    Box::new(null_source::NullSource::attached(c.center_hz(), owner))
+                    Box::new(null_source::NullSource::attached(c.center_hz(), &radio_label(owner)))
                         as Box<dyn IqSource>,
                     DeviceCaps { lent_to: Some(owner), ..synthetic_caps("Panadapter receiver") },
                 ));
@@ -614,7 +621,7 @@ fn lent_answer(owner: Option<u32>, was_lent: &mut bool) -> Option<Result<u32, St
         return None;
     };
     if std::mem::replace(was_lent, true) {
-        Some(Err(format!("this radio is radio {}'s panadapter receiver", owner + 1)))
+        Some(Err(format!("this radio is the panadapter receiver of {}", radio_label(owner))))
     } else {
         Some(Ok(owner))
     }
@@ -1397,6 +1404,21 @@ fn open_paired_source(
 /// Read once at boot from every scope's `radio.json`. Such a radio does not
 /// open its own device — the radio that borrowed it does — so it comes up on
 /// the stand-in source instead, with a tab that says as much.
+/// A radio as the operator knows it, for messages: the name they gave it, or
+/// "radio N" by its place in the tab order when it has none. The roster id is
+/// never shown on its own: ids are not positions, and a station whose ids run
+/// 0, 5, 6, 7 read "radio 7" for the sixth radio (#913).
+fn radio_label(id: u32) -> String {
+    let roster = sdroxide_config::load_radios();
+    if let Some(slot) = roster.radios.iter().find(|s| s.id == id) {
+        if !slot.name.trim().is_empty() {
+            return format!("\"{}\"", slot.name.trim());
+        }
+    }
+    let place = roster.radios.iter().position(|s| s.id == id).map_or(id, |p| p as u32);
+    format!("radio {}", place + 1)
+}
+
 fn panadapter_owners() -> std::collections::HashMap<u32, u32> {
     let roster = sdroxide_config::load_radios();
     let mut owners = std::collections::HashMap::new();
