@@ -1735,7 +1735,11 @@ use sdroxide_types::{
 ///
 /// v215: ELAD transverter port. `DeviceCaps` gains `rx_antenna_is_xvtr` and
 /// `Transverter` gains `elad_rf_out`, which changes every `RadioConfig`.
-pub const PROTO_VERSION: u16 = 215;
+///
+/// v216: the Hardrock tuner's last tunes. `AtuNetwork` gains `start_swr` and
+/// `AtuReadout` gains `history` (`Vec<TuneRecord>`) on their tails, which
+/// changes the layout of every `ServerMsg::AmpStatus` with a tuner.
+pub const PROTO_VERSION: u16 = 216;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

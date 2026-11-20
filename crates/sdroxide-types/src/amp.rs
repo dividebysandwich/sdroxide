@@ -442,6 +442,35 @@ pub struct AtuReadout {
     pub last_result: Option<String>,
     /// From `HRTMP`; `None` until the tuner has answered.
     pub network: Option<AtuNetwork>,
+    /// The tunes this link has seen end, newest first, at most
+    /// [`TUNE_HISTORY`].
+    #[serde(default)]
+    pub history: Vec<TuneRecord>,
+}
+
+/// How many ended tunes [`AtuReadout::history`] keeps: the AMP window's Last
+/// tunes list shows them all.
+pub const TUNE_HISTORY: usize = 4;
+
+/// [`AtuReadout::last_result`] after a completed tune (the tuner's `S`).
+pub const TUNE_RESULT_TUNED: &str = "Tuned";
+
+/// [`AtuReadout::last_result`] after a tune that found the load already
+/// better than 1.3:1 and left the network bypassed (the tuner's `T`; WA2EUJ
+/// explained, 16 Nov 2026).
+pub const TUNE_RESULT_BYPASSED: &str = "Tuned: under 1.3:1, bypassed";
+
+/// One tune, as the tuner reported it when it ended.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TuneRecord {
+    /// When it ended, in seconds since 1970 (UTC), by the engine's clock.
+    pub at_unix: u64,
+    /// The amplifier's band code then (1 = 10 m … 10 = 160 m).
+    pub band: Option<u8>,
+    /// How it ended, in the same words as [`AtuReadout::last_result`].
+    pub result: String,
+    /// The network, SWR and starting SWR the tuner reported after it.
+    pub network: Option<AtuNetwork>,
 }
 
 /// The L network the tuner has switched in.
@@ -453,6 +482,10 @@ pub struct AtuNetwork {
     /// Capacitor on the antenna side of the inductor.
     pub cap_output: bool,
     pub swr: Option<f32>,
+    /// The SWR before the last tune, from the tuner's starting return loss
+    /// (`S` in `HRTMP`); `None` before any tune.
+    #[serde(default)]
+    pub start_swr: Option<f32>,
 }
 
 /// What the engine knows about the amplifier, sent when it changes.

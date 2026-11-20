@@ -12,7 +12,8 @@
 //!   mode <off|ptt>          bypass, or key with the radio
 //!   ant <1|2>               select an antenna
 //!   atu <on|off|tune|state> ATU in line, bypassed, start a tune, or report
-//!   raw <text>              send anything, print whatever answers
+//!   raw <text>              send anything (tuner pass-throughs: reads only,
+//!                           interlock #5), print whatever answers
 //! ```
 //!
 //! Without `--port` the amplifier is found by scanning, which sends only the

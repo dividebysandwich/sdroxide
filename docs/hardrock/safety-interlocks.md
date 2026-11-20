@@ -33,7 +33,16 @@ Before removing or loosening any of these, read why it is there.
 - **Why:** in OFF (bypass) the radio's own power goes straight through to the tuner, so an operator can run a 100 W radio barefoot through the bypassed amp (AJ3G, 18 Oct 2026). Switching to PTT with that still applied would drive the amplifier far past its trip level and can damage the VRF2944 output devices.
 - **What the operator sees:** the PTT/OFF button greys while the drive is over the limit, and hovering says "Lower the drive first", with the drive and the limit. In bypass the DRV reading and tile stay green whatever they read, ATU in or not (AJ3G), because high drive there is not a fault.
 
+## 5. Only reads are passed through to the tuner (amplifier link)
+
+- **Where:** `crates/sdroxide-hardrock/src/lib.rs`, `Amp::send()`, through `protocol::passthrough_allowed()`. Every frame the amplifier link or the `hrctl` example sends goes through `Amp::send()`, `Command::Raw` included.
+- **Blocks:** any tuner pass-through (`HRTM…`) that isn't a read. Allowed are `I`, `V`, `P`, `S`, `F` and `R` alone, and any letter followed by `?`. Refused, among others: `D1`/`D0` (the tuner's own directional coupler in or out of line), `A` (an autotune; TUNE goes as the amplifier's own `HRTU`), `E` (clears the tuner's memory), `Q` (writes its EEPROM), `U` (waits for a bootloader) and every set (`B`, `C`, `H`, `L`, `N`, `Y` with a value). The frame is not written; the caller gets an error naming interlock #5.
+- **Why:** WA2EUJ explained (16 Nov 2026) that the tuner is designed to tune on the driver's power, so its coupler should see at most 20 to 40 W; switching it in with `D1` and then transmitting at full power can damage it. The pass-through also reaches commands that wipe or rewrite the tuner. SDRoxide itself only ever sends `HRTMP`; this makes sure nothing else, including a typed `hrctl raw` frame, can send more.
+- **What the operator sees:** nothing in normal use. `hrctl raw` with a refused frame prints "not sent: only reads may be passed through to the tuner (interlock #5)".
+- **Added:** (AJ3G to vet, 16 Nov 2026), design decision 7. Tested by `only_reads_pass_through_to_the_tuner` and `a_tuner_write_is_refused_before_it_is_sent`.
+
 ## Not interlocks, but related
 
 - TUNE is allowed while transmitting: tuning needs a carrier, and the ATU switches its own relays under its own control at tuning power.
+- TUNE is not checked against the amplifier's drive limit (AJ3G to vet, 16 Nov 2026). The AMP window's TUNE only sends `HRTU`; the carrier comes from the radio, keyed at the operator's Tune drive under SDRoxide's own SWR guard. The 8 W drive limit applies only to OFF to PTT (#4) and the DRV colours. Hardrock Panel judges its own TUNE against a separate 10 W limit (`tune_max_w`); SDRoxide has no such check to set it on.
 - Yellow and red are kept for warnings only (AJ3G): states such as OFF, BYP and tuning use the neutral blue.

@@ -106,7 +106,8 @@ pub use ais::{
 pub use alert::{AlertEvent, AlertEvents, AlertReply, AlertRule, AlertSettings, AlertSound};
 pub use amp::{
     AMP_BAUD_RATES, AmpAction, AmpAlerts, AmpConfig, AmpGauge, AmpLevel, AmpLimits, AmpModel,
-    AmpReadings, AmpStatus, AtuNetwork, AtuReadout, AtuScale, amp_band_label,
+    AmpReadings, AmpStatus, AtuNetwork, AtuReadout, AtuScale, TUNE_HISTORY, TUNE_RESULT_BYPASSED,
+    TUNE_RESULT_TUNED, TuneRecord, amp_band_label,
 };
 pub use aprs::{
     APRS_MESSAGE_MAX, APRS_MSG_RETRIES, APRS_STATION_MAX, APRS_TRACK_MAX, APRS_TRAFFIC_MAX,

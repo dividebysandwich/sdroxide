@@ -158,7 +158,7 @@ The path from the input jack to the antenna jack in bypass (relays, low-pass fil
 
 AJ3G supplied the ATU-500's own firmware, V1.1F ("HR500 ATU version 1.1"), as a hex file for a PIC18F26K22. It was disassembled (gputils `gpdasm`) and read at two places. The file is HobbyPCB's and isn't kept in this repo.
 
-**The status reply.** The tuner answers with `L%03u-C%03u-H%01u-B%01u-S%03u-F%03u-`. L and C are the inductor and capacitor step variables, H is set when the capacitor is on the output side, B when the tuner is bypassed. S and F are two more stored values, not yet identified.
+**The status reply.** The tuner answers with `L%03u-C%03u-H%01u-B%01u-S%03u-F%03u-`. L and C are the inductor and capacitor step variables, H is set when the capacitor is on the output side, B when the tuner is bypassed. S and F were not identified from the firmware; WA2EUJ has since explained them (see "The tuner's status reply and results" below).
 
 **The relay drive** (the routine at 0x04E8). The firmware shifts two bytes into the chained 74HC595s (U3, then U2; sheet 3):
 
@@ -186,3 +186,54 @@ With C as the sum of the bits, the floor was refitted to the two 20 m readings (
 10 pF fits best. It gives the same 170 pF at step 12 as the earlier 50 pF + 10 pF a step, so the 20 m bench tune reads the same as before. The floor is now much smaller, which is more believable for relay and trace strays alone.
 
 The other two points can't separate the readings. On 80 m (step 9) every reading predicts about 1.62:1, as before. On 10 m (step 3) the sum of the bits gives 45 pF and predicts 1.83:1 into 30.5 Ω, against the tuner's 1.13:1; the old linear reading predicted about 1.45:1. But the load wasn't measured at 28 MHz, and the T and cable change a lot there, so this isn't taken as evidence against the firmware, which shows how the relays are actually driven.
+
+## How the ATU-500 tunes (14 Nov 2026)
+
+Jim, WA2EUJ (HobbyPCB), explained the tuner's search to AJ3G by email on 14 Nov 2026. Until then SDRoxide's handling and these notes rested on what had been seen of the tuner, and it had been assumed that it stops at the first match that is "good enough". It doesn't: it aims for 1.3:1 and always keeps the best setting it has seen.
+
+The tuner works on return loss, read on its own coupler. On a TUNE it:
+
+1. Reads the load with the tuner bypassed. If that is already better than 1.3:1 (17.7 dB return loss), it stays bypassed and is done. If the return loss is under 2.5 dB (about 6:1), it doesn't try: it stays bypassed and reports the error the AMP window shows as "SWR above 6:1".
+2. Puts back the setting it last tuned to. If that gives better than 1.2:1 (20 dB), it keeps it. Steps 1 and 2 take a few milliseconds.
+3. If that setting gives better than 1.5:1 (14 dB), it fine-tunes from there and stops at 1.3:1 or better.
+4. Otherwise it sweeps widely, stops when it reaches 1.3:1 (19 dB), then follows that contour to the best match it can find.
+5. Whatever happens, it applies the best setting it saw, so a tune never ends worse than the load it started from.
+
+What this means in the AMP window:
+
+- A load already under 1.3:1 is left bypassed after a successful tune. The tuner drawing shows the bypass relays, and the line under TUNE reads, in green, "Tuned: under 1.3:1 without the tuner". A stepped L/C tuner can rarely improve a load that close, so this is the expected result, not a failure.
+- A load over about 6:1 is not tuned at all: TUNE turns red and the line under it reads "SWR above 6:1: check the antenna". Check the antenna and the feed line. On an HR500 with its tuner the SWR tile turns red from 6.1:1 at the latest, just past where the tuner gives up.
+- With a stored setting that still fits, a tune is over almost at once. A wide sweep takes longer.
+- The SWR tile comes from the coupler on the amplifier's low-pass filter board; the tuner's own reading (the SWR shown beside the tuner's state, under TUNE) comes from the tuner's coupler. They can differ by up to about 0.2.
+- Tune once on each band or antenna before an over. The tuner keeps the setting, so the over starts matched.
+
+## The tuner's status reply and results (16 Nov 2026)
+
+WA2EUJ explained the rest of the tuner's status reply to AJ3G on 16 Nov 2026 (AJ3G to vet, 16 Nov 2026). The HR500 passes tuner commands through as `HRTM<letter>`, and the tuner's `P` reply (`HRTMP`), `L%03u-C%03u-H%01u-B%01u-S%03u-F%03u-`, carries:
+
+| Field | Meaning |
+|---|---|
+| L | The inductor step, 0 to 63. |
+| C | The capacitor step, 0 to 127. |
+| H | 1 when the capacitor is on the output (antenna) side, 0 on the input side. |
+| B | 1 when the network is bypassed because the match was already good enough. |
+| S | The starting (untuned) return loss, in tenths of a dB. |
+| F | The final (tuned) return loss, in tenths of a dB. |
+
+255 in S or F means nothing measured yet, as a tuner idle since power-up reads. B is the tuner's own bypass, not the amplifier's: `HRTB0`/`HRTB1` switches the amplifier's relay round the whole tuner and leaves B as it was. (SDRoxide had read B as the tuner's band, from an idle tuner that read B1 whatever HRTB said; that was wrong.)
+
+How the last tune ended (`HRTR`, the tuner's `S` command):
+
+| Letter | Meaning | The AMP window says |
+|---|---|---|
+| A | Aborted | Aborted |
+| E | The untuned SWR was too high | SWR above 6:1: check the antenna |
+| T | The untuned load was better than 1.3:1, so the network is left bypassed | Tuned: under 1.3:1 without the tuner |
+| F | The tune ran, but the final return loss is worse than 9.5 dB (about 2:1) | Failed (above 2:1): try again |
+| H | Forward power too high | Power too high: lower the drive |
+| L | Forward power too low | Lo power: key a steady carrier |
+| S | Tuned | Tuned |
+
+So every tune reports the SWR it started from as well as the one it ended at, both from the tuner's own coupler. The AMP window shows both on the tuner's line, keeps the last four tunes under it and writes each one to the log.
+
+He also warned that the tuner is built to tune on the driver's power, not the amplifier's: its coupler should see at most 20 to 40 W, so switching it in (`D1`) and then transmitting at full power can damage it. Other tuner commands clear its memory (`E`), write its EEPROM (`Q`) or wait for a bootloader (`U`). SDRoxide only ever passes reads through to the tuner (safety interlock #5).
