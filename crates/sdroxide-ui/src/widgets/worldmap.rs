@@ -415,9 +415,14 @@ pub(crate) fn draw_base_layers(
     map: &theme::MapPalette,
     night: Option<eframe::egui::TextureId>,
     cities: bool,
+    under_night: impl FnOnce(),
     between: impl FnOnce(),
 ) -> f32 {
     let dot_r = draw_ground(p, rect, clat, clon, lon_span, lat_span, map);
+    // What lies on the ground's side of the grey line and darkens with it:
+    // cloud is lit by the Sun like the land under it (HDZ 2026-11-17: „die
+    // Wolken musst du evtl. noch im Nachtmodus shaden“).
+    under_night();
     if let Some(tex) = night {
         let strength = (map.night_max / sdroxide_solar::NIGHT_MAX_ALPHA).clamp(0.0, 1.0);
         let tint = Color32::WHITE.gamma_multiply(strength);

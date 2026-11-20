@@ -257,6 +257,29 @@ impl SdroxideApp {
             {
                 self.view.adsb_map_pointer = !self.view.adsb_map_pointer;
             }
+            if crate::chrome::chip(ui, self.view.adsb_map_clouds, small(tr!("adsb-chip-clouds")))
+                .on_hover_text(tr!("adsb-chip-clouds-tip"))
+                .context_menu_link(NOWCOAST)
+                .clicked()
+            {
+                self.view.adsb_map_clouds = !self.view.adsb_map_clouds;
+            }
+            if crate::chrome::chip(ui, self.view.adsb_map_storms, small(tr!("adsb-chip-storms")))
+                .on_hover_text(tr!("adsb-chip-storms-tip"))
+                .context_menu_link(NOWCOAST)
+                .clicked()
+            {
+                self.view.adsb_map_storms = !self.view.adsb_map_storms;
+            }
+            let (wx_name, wx_lic, wx_url) =
+                crate::adsb_wx::Source::pick(self.view.adsb_wx_source, self.adsb_home()).info();
+            if crate::chrome::chip(ui, self.view.adsb_map_wx, small(tr!("adsb-chip-wx")))
+                .on_hover_text(tr!("adsb-chip-wx-tip", src = wx_name, lic = wx_lic))
+                .context_menu_link(wx_url)
+                .clicked()
+            {
+                self.view.adsb_map_wx = !self.view.adsb_map_wx;
+            }
             let range = self.view.adsb_map_range;
             let tip =
                 if have_home { tr!("adsb-chip-range-tip") } else { tr!("adsb-chip-range-no-home") };
@@ -278,6 +301,16 @@ impl SdroxideApp {
                         self.view.adsb_range_window = i as u8;
                     }
                 }
+            }
+            // Everything fetched for the map, fetched again now: the pictures
+            // on screen go at once, so stale weather visibly leaves. The
+            // aircraft need none, they arrive live twice a second.
+            if crate::chrome::chip(ui, false, small("↻".into()))
+                .on_hover_text(tr!("adsb-map-reload-tip"))
+                .clicked()
+            {
+                self.adsb_wx.reload();
+                self.adsb_clouds.reload();
             }
             #[cfg(not(target_arch = "wasm32"))]
             if !in_window
@@ -966,6 +999,34 @@ impl SdroxideApp {
             .map(|r| r.iter().filter_map(|c| self.adsb_routes.airport(c)).collect())
             .unwrap_or_default();
         let night = self.night_texture(ui.ctx());
+        let (clouds_tex, clouds_credit) = if self.view.adsb_map_clouds || self.view.adsb_map_storms
+        {
+            self.adsb_clouds.poll(ui.ctx(), now);
+            let tex = self.adsb_clouds.texture();
+            let credit = if tex.is_some() {
+                tr!(
+                    "adsbmap-clouds-credit",
+                    time = crate::adsb_log::local_hm(self.adsb_clouds.frame_unix)
+                )
+            } else {
+                tr!("adsbmap-clouds-loading")
+            };
+            (tex.filter(|_| self.view.adsb_map_clouds), Some(credit))
+        } else {
+            (None, None)
+        };
+        let wx = if self.view.adsb_map_wx {
+            let src = crate::adsb_wx::Source::pick(self.view.adsb_wx_source, home);
+            let tex = self.adsb_wx.texture(ui.ctx(), now, src);
+            let credit = if tex.is_some() {
+                src.credit(&crate::adsb_log::local_hm(self.adsb_wx.fetched_at))
+            } else {
+                tr!("adsbmap-wx-loading")
+            };
+            Some(crate::adsb_map::WxLayer { tex, bbox: src.bbox(), credit })
+        } else {
+            None
+        };
         let hours = match self.view.adsb_range_window {
             0 => 1,
             1 => 24,
@@ -980,6 +1041,10 @@ impl SdroxideApp {
             cities: self.view.adsb_map_cities,
             coverage: coverage.as_ref(),
             pointer: self.view.adsb_map_pointer,
+            wx,
+            clouds: clouds_tex,
+            storms: self.view.adsb_map_storms.then_some(self.adsb_clouds.cells.as_slice()),
+            clouds_credit,
             airports,
         };
         let state = &mut self.adsb_map;
@@ -1085,6 +1150,7 @@ impl SdroxideApp {
         // so there is no apply step and no way for the two copies to drift.
         let mut cfg = self.state.adsb;
         let coverage = &mut self.adsb_coverage;
+        let wx_source = &mut self.view.adsb_wx_source;
         let resp = egui::Window::new(tr!("adsb-ads-b-setup"))
             .id(crate::layout::salted_id(ctx, "AdsbSetup"))
             .open(&mut open)
@@ -1177,6 +1243,35 @@ impl SdroxideApp {
                     RichText::new(tr!("adsb-aircraft-ground-are-placed-against")).size(10.0).weak(),
                 );
                 ui.separator();
+                // Which weather radar the WEATHER chip shows: by home, or
+                // forced, so another region's radar can be looked at (HDZ
+                // 2026-11-17: „ich will sehen, wie das US-Wetter aussieht“).
+                ui.horizontal(|ui| {
+                    ui.label(tr!("adsb-wx-source"));
+                    use crate::adsb_wx::Source;
+                    for (i, label, tip, src) in [
+                        (0u8, tr!("adsb-wx-auto"), tr!("adsb-wx-auto-tip"), None),
+                        (1, tr!("adsb-wx-dwd"), tr!("adsb-wx-dwd-tip"), Some(Source::Dwd)),
+                        (2, tr!("adsb-wx-us"), tr!("adsb-wx-us-tip"), Some(Source::Nexrad)),
+                        (3, tr!("adsb-wx-ca"), tr!("adsb-wx-ca-tip"), Some(Source::Canada)),
+                        (4, tr!("adsb-wx-world"), tr!("adsb-wx-world-tip"), Some(Source::World)),
+                    ] {
+                        let resp = crate::chrome::chip(
+                            ui,
+                            *wx_source == i,
+                            RichText::new(label).size(9.5),
+                        )
+                        .on_hover_text(tip);
+                        let resp = match src {
+                            Some(s) => resp.context_menu_link(s.info().2),
+                            None => resp,
+                        };
+                        if resp.clicked() {
+                            *wx_source = i;
+                        }
+                    }
+                });
+                ui.separator();
                 // Reset in two clicks, as it throws away up to a week.
                 let arm = ui.id().with("adsb-coverage-reset");
                 let armed = ui.data(|d| d.get_temp::<bool>(arm)).unwrap_or(false);
@@ -1217,6 +1312,9 @@ impl SdroxideApp {
         self.show_adsb_setup = open;
     }
 }
+
+/// The cloud mosaic's home, for CLOUDS and STORMS.
+const NOWCOAST: &str = "https://nowcoast.noaa.gov/";
 
 /// A right-click on a data chip offers the source's page, where its licence
 /// is written down; a tooltip cannot hold a link that can be clicked.

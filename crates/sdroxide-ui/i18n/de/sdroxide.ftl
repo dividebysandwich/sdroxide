@@ -4209,6 +4209,42 @@ adsb-map-window = ADS-B-Karte
 adsb-chip-cities = STÄDTE
 adsb-chip-cities-tip = Städtenamen auf dieser Karte
 adsb-source-open = Quelle und Lizenz öffnen
+adsb-lic-ccby = CC BY 4.0
+adsb-lic-pd = gemeinfrei
+adsb-lic-ogl = Open Government Licence – Canada
+adsb-lic-nasa = NASA, frei
+adsb-chip-clouds = WOLKEN
+adsb-chip-clouds-tip = Bewölkung aus Satelliten, stündlich, weltweit
+  NOAA/NESDIS über nowCOAST, gemeinfrei · Rechtsklick: Quelle
+adsb-chip-storms = GEWITTER
+adsb-chip-storms-tip = Gewitterzellen, geschätzt aus kalten Wolkenobergrenzen, stündlich
+  NOAA/NESDIS über nowCOAST, gemeinfrei · Rechtsklick: Quelle
+adsbmap-clouds-credit = Wolken: NOAA/NESDIS Satellitenmosaik, { $time }
+adsbmap-clouds-loading = Wolken: NOAA/NESDIS, wird geladen …
+adsbmap-storm = Gewitter: Tops { $top } km, ~{ $rate } Blitze/min
+adsb-chip-wx = WETTER
+adsb-chip-wx-tip = Niederschlag: { $src }
+  { $lic } · Rechtsklick: Quelle
+adsbmap-wx-credit = Radar: Deutscher Wetterdienst, { $time }
+adsbmap-wx-loading = Radar: Deutscher Wetterdienst, wird geladen …
+adsbmap-wx-credit-us = Radar: NOAA NWS NEXRAD über Iowa Environmental Mesonet, { $time }
+adsbmap-wx-credit-ca = Radar: Environment and Climate Change Canada, { $time }
+adsbmap-wx-credit-world = Niederschlag aus Satelliten: NASA GPM IMERG über GIBS, { $time }
+adsb-wx-ca = KANADA
+adsb-wx-ca-tip = ECCC-Radar, Kanada
+  Open Government Licence – Canada · Rechtsklick: Quelle
+adsb-wx-world = WELT
+adsb-wx-world-tip = Niederschlag aus Satelliten, 60° N bis 60° S, Stunden verzögert
+  NASA GPM IMERG, frei · Rechtsklick: Quelle
+adsb-wx-source = Wetterradar
+adsb-wx-auto = AUTO
+adsb-wx-auto-tip = Nach Standort: DWD, USA, Kanada; sonst Satellit (WELT)
+adsb-wx-dwd = DWD
+adsb-wx-dwd-tip = Deutscher Wetterdienst, Deutschland und Nachbarn
+  CC BY 4.0 · Rechtsklick: Quelle
+adsb-wx-us = USA
+adsb-wx-us-tip = NOAA NEXRAD über Iowa Environmental Mesonet, USA
+  gemeinfrei · Rechtsklick: Quelle
 adsb-tune-gains-tip = Klick: auf 1090 MHz abstimmen und Verstärker setzen: { $gains }
   jetzt: { $now } · Rechtsklick: speichern oder vergessen
 adsb-tune-gains-none-tip = Klick: auf 1090 MHz abstimmen (noch kein Verstärker-Preset)
@@ -4249,6 +4285,8 @@ adsb-range-1h = 1 H
 adsb-range-24h = 24 H
 adsb-range-7d = 7 T
 adsb-map-out-tip = Karte in eigenes Fenster
+adsb-map-reload-tip = Wetter, Wolken und Gewitter jetzt neu holen
+  Bilder auf der Karte verschwinden bis zur Ankunft der neuen
 adsb-copy-callsign = Rufzeichen { $call } kopieren
 adsb-copy-icao = ICAO { $icao } kopieren
 adsb-link-planespotters = Auf planespotters.net ansehen …

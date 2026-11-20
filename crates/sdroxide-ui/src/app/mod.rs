@@ -853,6 +853,10 @@ pub struct SdroxideApp {
     /// (see [`crate::adsb_tracks`]). Fed as each table arrives.
     #[cfg(not(target_arch = "wasm32"))]
     adsb_tracks: crate::adsb_tracks::TrackBook,
+    /// The DWD precipitation radar for the ADS-B map's WEATHER layer.
+    adsb_wx: crate::adsb_wx::WxRadar,
+    /// Cloud and storm cells for the ADS-B map's CLOUDS and STORMS layers.
+    adsb_clouds: crate::adsb_clouds::CloudLayer,
     /// The note beside the 1090.000 chip after a gain save or recall, and
     /// when it was set.
     adsb_gain_note: Option<(String, i64)>,
@@ -1837,6 +1841,8 @@ impl SdroxideApp {
             adsb_log: Default::default(),
             #[cfg(not(target_arch = "wasm32"))]
             adsb_tracks: Default::default(),
+            adsb_wx: Default::default(),
+            adsb_clouds: Default::default(),
             adsb_gain_note: None,
             adsb_filter: String::new(),
             show_adsb_setup: false,

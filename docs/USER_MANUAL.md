@@ -6441,9 +6441,57 @@ The chips above the map switch what lies under the traffic. Each is remembered.
 | **NIGHT** | The day–night boundary, as on the other maps. |
 | **CURSOR** | A readout beside the pointer: bearing and distance from your station, with a faint line and range ring through the pointer, the airport under it, and with RANGE on what the coverage diagram holds there. It is painted rather than a tooltip because it is read while moving. Off, there is no readout at all. |
 | **RANGE** | The coverage diagram, see below, with **1 H**, **24 H** and **7 D** to choose how far back it reaches. Needs your position (**My grid**). |
+| **CLOUDS** | Cloud cover from geostationary satellites, worldwide, a new picture every hour. Drawn under the night shading, so day and night still read through it. |
+| **STORMS** | Thunderstorm cells: a ring in the hazard colour with a lightning stroke, thicker for a harder-working storm. With CURSOR on, the readout over a cell gives its cloud-top height and an estimated flash rate. |
+| **WEATHER** | Precipitation, from the weather radar of your region; see *Weather* below. |
+
+**↻** fetches the weather radar, the clouds and the storm cells again at
+once, past the picture kept from the last run: what is on the map goes
+straight away and the new pictures appear as they arrive, so old weather
+visibly leaves. The aircraft need no such button; they arrive live.
 
 The last button puts the map into a window of its own, which can be as large
 as the screen. Closing that window brings the map back into the panel.
+
+#### Weather
+
+Pilots fly around weather, so a radar picture without it leaves the reason for
+a detour out. Three chips lay it over the map; each one names its source and
+the time of its picture in the corner of the map while it is on, and a
+right-click on the chip opens the source and its licence.
+
+![CLOUDS, STORMS and WEATHER (WORLD) together: cloud cover under the night shading, satellite precipitation and thunderstorm cells, with the sources in the corner](images/adsb-weather.jpg)
+
+**WEATHER** is precipitation. Which source draws it is set under **Weather
+radar** in **SETUP**:
+
+| Choice | Source | Covers | Terms |
+| --- | --- | --- | --- |
+| **AUTO** | the one below whose area holds your position (Canada from 49° N in America), else **WORLD**; with no position set, **DWD** | | |
+| **DWD** | Deutscher Wetterdienst radar composite, 1 km, every 5 minutes | Germany and its neighbours | CC BY 4.0, with the credit the map shows |
+| **USA** | NOAA NWS NEXRAD mosaic, through the Iowa Environmental Mesonet | contiguous United States | public domain |
+| **CANADA** | Environment and Climate Change Canada radar composite | Canada | Open Government Licence – Canada |
+| **WORLD** | NASA GPM IMERG precipitation estimated from satellites, through NASA GIBS | 60° N to 60° S, oceans included | NASA, free of restriction |
+
+Choosing a source by hand is how you look at another region's weather. The
+radar sources are fetched again every five minutes. The last picture of each
+source is kept in the `adsb-wx` folder of the configuration directory; on the
+next start one less than two hours old is shown at once while a fresh one is
+fetched behind it — the DWD server can take half a minute to answer. Older
+pictures are not shown. **WORLD** covers Africa,
+Australia and the oceans, where no free radar is, but it is coarser than radar
+and some hours late — read it as where it has been raining, not where it is.
+
+**CLOUDS** and **STORMS** come from the same NOAA/NESDIS global satellite mosaic
+as the 3D globe, through nowCOAST (public domain): infrared for the height of
+the cloud tops, the visible channel for low cloud by day. **STORMS** marks deep
+convection — very cold, very high cloud tops — and estimates the activity from
+them. It is an estimate from the satellite picture, not a lightning network:
+a cell on the map is where a thunderstorm is very likely, not a count of
+strikes.
+
+The weather layers are fetched by the desktop application only; the browser
+version shows the map without them.
 
 #### The coverage diagram
 
@@ -6522,6 +6570,7 @@ software are built in. Everything else is a link.
 | Routes, airline names, aircraft (registration, type, operator, year), country by address block | Virtual Radar Server standing data, `github.com/vradarserver/standing-data` | public domain (CC0) |
 | Airports on the map and the places in FROM › TO | OurAirports, `ourairports.com/data` | public domain |
 | Country flags | packaged with SDRoxide | public domain |
+| Precipitation, clouds, thunderstorms | see *Weather* above | CC BY 4.0, public domain, Open Government Licence – Canada, NASA |
 | planespotters.net, ADS-B Exchange, adsb.lol, OpenSky, Flightradar24 | right-click links only | — |
 
 The standing data is built from user submissions and knows a share of what
@@ -16810,6 +16859,7 @@ and not the station's.
 | `adsb-routes/` | directory | ADS-B standing data ([§3.13](#313-ads-b-aircraft-on-1090-mhz)): the route, airline, aircraft and address-block files fetched from Virtual Radar Server, and `map-airports.csv` cut from OurAirports. Refetched after a week; safe to delete. |
 | `adsb-coverage/` | directory | The ADS-B coverage diagram, one file an hour, seven days. **Reset…** in the ADS-B setup empties it. |
 | `adsb-log/` | directory | The ADS-B sighting log, one CSV file a day (`<date>.csv`), thirty days. |
+| `adsb-wx/` | directory | The last ADS-B weather radar picture per source (`dwd.png`, `usa.png`, `canada.png`, `world.png`), shown at start if less than two hours old. Safe to delete. |
 | `adsb-tracks/` | directory | ADS-B flight tracks, thinned to a point every 15 s or on a turn or climb, one CSV file a day, thirty days. |
 | `vdl2.json` | JSON | VDL2 decoder ([§3.15](#315-vdl2-what-the-aircraft-are-saying)): which of the fourteen channels to listen on, the burst threshold in dB, how much log and how many stations to keep, and how long a silent station stays on the list. Restored at startup, and — like `adsb.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
 | `ais.json` | JSON | AIS decoder ([§3.16](#316-ais-ships-on-162-mhz)): which of the two channels to listen on, the slot threshold in dB, the two timeouts, how many minutes of trail to keep, how far ahead the vectors reach, and the ceiling on the vessel table. Restored at startup, and — like `adsb.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
