@@ -150,6 +150,10 @@ pub fn figure_to_code(ch: char) -> Option<u8> {
 
 // ─────────────────────────── the receiver ───────────────────────────
 
+/// The rate the per-sample constants below were tuned at. Faster input is
+/// decimated to about this in the front end; see [`NavtexRx::decim`].
+const DESIGN_RATE: f64 = 8_000.0;
+
 /// Decision references settle at this rate per bit.
 const ATC_SMOOTH: f32 = 0.05;
 /// …and a branch that has been idle a while relaxes towards the other at this
@@ -250,7 +254,20 @@ pub enum CharSource {
 
 /// A NAVTEX / SITOR-B receiver: audio in, text out.
 pub struct NavtexRx {
+    /// The rate everything after the front end runs at: the input rate
+    /// divided by [`NavtexRx::decim`].
     rate: f64,
+    /// The rate audio is handed in at.
+    rate_in: f64,
+    /// Input samples per processed one. The loops below are tuned per sample
+    /// at the 8 kHz the receiver was designed at — reference smoothing, level
+    /// peak, AFC gain, clock pulls — and at the 48 kHz the engine feeds them
+    /// they all ran six times as fast: a clean 518 kHz broadcast lost a
+    /// quarter of its characters, where the same audio at 12 kHz lost none
+    /// (#608). So the front end decimates back down to about that rate.
+    decim: usize,
+    /// Where in the current group of `decim` input samples we are.
+    decim_pos: usize,
     center_hz: f32,
     reverse: bool,
 
@@ -357,9 +374,14 @@ impl BitPhase {
 }
 
 impl NavtexRx {
-    pub fn new(rate: f64) -> Self {
+    pub fn new(rate_in: f64) -> Self {
+        let decim = ((rate_in / DESIGN_RATE).floor() as usize).max(1);
+        let rate = rate_in / decim as f64;
         let mut rx = NavtexRx {
             rate,
+            rate_in,
+            decim,
+            decim_pos: 0,
             center_hz: NAVTEX_CENTER_HZ,
             reverse: false,
             ph: 0.0,
@@ -370,7 +392,18 @@ impl NavtexRx {
             // the very thing AFC exists to find. The matched filters below do
             // the real noise rejection, so all this has to do is keep
             // neighbours out.
-            lpf: ComplexFir::new(bandpass_taps(129, -front_end_hz(), front_end_hz(), rate)),
+            //
+            // At the input rate, so it is also the anti-alias filter for the
+            // decimation, and with the tap count scaled by it so it is exactly
+            // as selective as at the design rate. 129 taps at 48 kHz is six
+            // times as wide, and on a real broadcast with a neighbour that
+            // was the difference between none lost and most of it (#608).
+            lpf: ComplexFir::new(bandpass_taps(
+                128 * decim + 1,
+                -front_end_hz(),
+                front_end_hz(),
+                rate_in,
+            )),
             tone_ph: 0.0,
             tone_inc: 0.0,
             mark_int: Integrator::new((rate / NAVTEX_BAUD) as usize),
@@ -413,7 +446,7 @@ impl NavtexRx {
     }
 
     fn retune(&mut self) {
-        self.ph_inc = std::f32::consts::TAU * self.center_hz / self.rate as f32;
+        self.ph_inc = std::f32::consts::TAU * self.center_hz / self.rate_in as f32;
         self.tone_inc = std::f32::consts::TAU * (NAVTEX_SHIFT_HZ / 2.0) / self.rate as f32;
     }
 
@@ -421,7 +454,7 @@ impl NavtexRx {
     /// never the tone separation: the filter is still centred on the tones, so
     /// a corrected signal is filtered exactly as a well-tuned one is.
     fn apply_afc(&mut self) {
-        self.ph_inc = std::f32::consts::TAU * (self.center_hz + self.afc_hz) / self.rate as f32;
+        self.ph_inc = std::f32::consts::TAU * (self.center_hz + self.afc_hz) / self.rate_in as f32;
     }
 
     /// Move the expected audio centre. The shift is fixed by the standard, but
@@ -496,8 +529,15 @@ impl NavtexRx {
             }
             mixed.push(z);
         }
-        let mut bb = Vec::with_capacity(audio.len());
-        self.lpf.process(&mixed, &mut bb);
+        let mut filtered = Vec::with_capacity(audio.len());
+        self.lpf.process(&mixed, &mut filtered);
+        let mut bb = Vec::with_capacity(filtered.len() / self.decim + 1);
+        for z in filtered {
+            if self.decim_pos == 0 {
+                bb.push(z);
+            }
+            self.decim_pos = (self.decim_pos + 1) % self.decim;
+        }
 
         for z in bb {
             let (s, c) = (self.tone_ph.sin(), self.tone_ph.cos());
@@ -950,6 +990,32 @@ pub fn synth(bits: &[bool], rate: f64, center_hz: f32, amplitude: f32) -> Vec<f3
 
 #[cfg(test)]
 mod tests {
+    /// A real broadcast, as USB audio (mono WAV, any rate, tones on
+    /// 1615/1785 Hz): `NAVTEX_WAV=/path/a.wav cargo test -p sdroxide-dsp --lib
+    /// navtex::tests::real_recording -- --ignored --nocapture`. Prints what
+    /// both tone senses read and the decoder's own counts (#608).
+    #[test]
+    #[ignore = "needs a recording in NAVTEX_WAV"]
+    fn real_recording() {
+        let Ok(path) = std::env::var("NAVTEX_WAV") else { return };
+        let mut r = hound::WavReader::open(&path).expect("open");
+        let rate = f64::from(r.spec().sample_rate);
+        let audio: Vec<f32> = r.samples::<i16>().map(|s| f32::from(s.unwrap()) / 32768.0).collect();
+        for reverse in [false, true] {
+            let mut rx = NavtexRx::new(rate);
+            rx.set_reverse(reverse);
+            let mut text = String::new();
+            for block in audio.chunks((rate / 50.0) as usize) {
+                text.push_str(&rx.process(block));
+            }
+            let (direct, repaired, lost) = rx.counts();
+            println!(
+                "reverse={reverse} afc={:+.1} Hz direct={direct} repaired={repaired} lost={lost}\n{text}\n",
+                rx.afc_offset_hz()
+            );
+        }
+    }
+
     use super::*;
 
     /// The alphabet is what makes the mode self-checking: every legal code has
@@ -1032,6 +1098,37 @@ mod tests {
         assert!(got.contains("NNNN"), "decoded {got:?}");
         let (_, _, lost) = rx.counts();
         assert_eq!(lost, 0, "a clean signal lost {lost} characters");
+    }
+
+    /// The engine feeds 48 kHz, not the 8 kHz the loops were tuned at. Noisy
+    /// enough that a receiver whose per-sample loops ran six times too fast
+    /// loses characters, as it did on a real broadcast (#608).
+    #[test]
+    fn noisy_audio_at_48k_decodes_as_it_does_at_8k() {
+        let msg = "ZCZC PB07 NAVAREA ONE GALE WARNING NNNN";
+        let bits = encode_bits(msg);
+        for rate in [8000.0, 48_000.0] {
+            let mut audio = synth(&bits, rate, NAVTEX_CENTER_HZ, 0.4);
+            let mut x = 0x2545_f491_4f6c_dd1du64;
+            // White noise has the same power per sample at either rate, so
+            // its density per hertz drops with the rate; scale it to keep the
+            // signal-to-noise ratio in the passband the same.
+            let amp = 0.08 * (rate as f32 / 8000.0).sqrt();
+            for a in &mut audio {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                *a += ((x >> 40) as f32 / 8_388_608.0 - 1.0) * amp;
+            }
+            let mut rx = NavtexRx::new(rate);
+            let mut got = String::new();
+            for chunk in audio.chunks((rate / 50.0) as usize) {
+                got.push_str(&rx.process(chunk));
+            }
+            let (_, _, lost) = rx.counts();
+            assert!(got.contains("NAVAREA ONE GALE WARNING"), "{rate} Hz decoded {got:?}");
+            assert!(lost <= 1, "{rate} Hz lost {lost} characters");
+        }
     }
 
     /// …and it still decodes with the noise a 518 kHz signal actually arrives
