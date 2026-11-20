@@ -463,6 +463,12 @@ const TUNER_READS: [char; 6] = ['I', 'V', 'P', 'S', 'F', 'R'];
 /// (waits for a bootloader), and every set (`B`, `C`, `H`, `L`, `N`, `Y` with
 /// a value).
 pub fn passthrough_allowed(frame: &str) -> bool {
+    // Every frame of a chained string is checked, so `HRST;HRTMD1` cannot
+    // carry a tuner write past the first.
+    frame.split(';').filter(|f| !f.trim().is_empty()).all(single_frame_allowed)
+}
+
+fn single_frame_allowed(frame: &str) -> bool {
     let up = frame.trim().trim_end_matches(';').trim().to_ascii_uppercase();
     let Some(rest) = up.strip_prefix("HRTM") else {
         return true;

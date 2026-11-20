@@ -349,7 +349,14 @@ fn run<P: std::io::Read + std::io::Write>(
 ) -> bool {
     let mut has_atu = *atu_seen || atu_present(&mut amp);
     *atu_seen |= has_atu;
-    set(status, |s| s.atu = has_atu.then(AtuReadout::default));
+    // A reopen keeps the tuner's history and last result.
+    set(status, |s| {
+        if has_atu {
+            s.atu.get_or_insert_with(AtuReadout::default);
+        } else {
+            s.atu = None;
+        }
+    });
     let mut next_probe = Instant::now() + ATU_PROBE;
     let mut celsius: Option<bool> = None;
     let mut misses = 0;
