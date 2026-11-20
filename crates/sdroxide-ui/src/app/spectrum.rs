@@ -254,6 +254,24 @@ const SNR_LABEL_REACH_HZ: f64 = 2_000.0;
 fn snr_label_off_db(on: f32) -> f32 {
     on - (on / 2.0).clamp(0.0, 1.5)
 }
+/// The spots to label, one per name and frequency: the first of each stays.
+///
+/// The broadcast schedule lists a transmission once per language, target area
+/// or day mask, and several of those rows are often on the air at once. Each
+/// becomes a spot with the same name on the same frequency, and they stacked
+/// as identical labels over one signal. Measured on EiBi B26 at 07:50 UTC:
+/// 55 frequencies with a repeated name, 79 labels too many, "VFF Iqaluit
+/// Radio" on 4363 kHz seven times. The twins carry nothing the first does
+/// not show. "Same frequency" is the 100 Hz bucket `Spot::make_id` uses;
+/// "same text" is the label's text, byte for byte. The SPOTS list keeps all
+/// rows: there the language and target column tell them apart.
+// Why: HDZ 2026-11-18: "die Schilder kurz ausmisten … die mit gleicher
+//      Frequenz und textuell gleichem Inhalt".
+fn one_label_each<'a>(spots: impl Iterator<Item = &'a Spot>) -> impl Iterator<Item = &'a Spot> {
+    let mut seen = std::collections::HashSet::new();
+    spots.filter(move |s| seen.insert((s.call.as_str(), (s.freq_hz / 100.0).round() as i64)))
+}
+
 /// How often the labels are decided anew, seconds.
 const SNR_LABEL_RECHECK_S: f32 = 2.0;
 /// How long a label takes to fade in or out, seconds.
@@ -1023,10 +1041,10 @@ impl SdroxideApp {
         if !self.view.spot_labels {
             return (spots, alpha);
         }
-        for s in self.all_spots() {
-            if !self.spot_visible(s) {
-                continue;
-            }
+        // One label per name and frequency (see `one_label_each`), picked
+        // before the S/N judgement so a shared id's fade is not stepped once
+        // per twin.
+        for s in one_label_each(self.all_spots().filter(|s| self.spot_visible(s))) {
             let carrier = ["AM", "CW"].iter().any(|m| s.mode.eq_ignore_ascii_case(m));
             let snr_alpha = self.snr_label_alpha(s.id, s.freq_hz, carrier, recheck, step);
             if snr_alpha < 0.15 {
@@ -1436,6 +1454,40 @@ fn focus_hz(mode: Mode, dial_hz: f64, audio_hz: f32, cw_qrg: bool) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    /// One label per name and frequency: three rows of one broadcaster on one
+    /// channel (other language, other target) give one label; the same name
+    /// 5 kHz up, another name on the same channel and a twin 30 Hz off (one
+    /// 100 Hz bucket) are told apart as they should be. Order is kept.
+    #[test]
+    fn twins_on_one_frequency_give_one_label() {
+        let st = |name: &str, khz: f64, lang: &str| {
+            serde_json::from_value::<sdroxide_types::BroadcastStation>(serde_json::json!({
+                "name": name, "freq_khz": khz, "lang": lang,
+            }))
+            .unwrap()
+            .to_spot(0)
+        };
+        let spots = [
+            st("China Radio International", 7345.0, "E"),
+            st("China Radio International", 7345.0, "F"),
+            st("Radio Romania", 7345.0, "E"),
+            st("China Radio International", 7345.0, "R"),
+            st("China Radio International", 7350.0, "E"),
+            st("Radio Romania", 7345.03, "D"),
+        ];
+        let kept: Vec<(&str, f64, &str)> = super::one_label_each(spots.iter())
+            .map(|s| (s.call.as_str(), s.freq_hz, s.comment.as_str()))
+            .collect();
+        assert_eq!(
+            kept,
+            vec![
+                ("China Radio International", 7_345_000.0, "E"),
+                ("Radio Romania", 7_345_000.0, "E"),
+                ("China Radio International", 7_350_000.0, "E"),
+            ]
+        );
+    }
+
     /// The S/N filter's reading of the guide: a carrier 6 dB up 1 kHz off the
     /// spot is found, plain noise reads 0 dB, and a guide with too few frames
     /// gives no verdict yet.
