@@ -4268,6 +4268,43 @@ adsb-coverage-reset-tip = Reichweitenkarte leeren, auch auf der Platte
   nach Antennenwechsel oder Umzug
 adsb-coverage-reset-sure = Wirklich löschen
 adsb-coverage-reset-keep = Behalten
+adsb-range-log = Reichweiten-Log
+adsb-range-log-tip = Reichweite je Aufbau und Tag, in adsb-range.sqlite
+    Aufbau = Empfänger, Antenne, Standort; Versionen je Empfänger
+adsb-range-summary = Reichweiten-Log { $size } · { $n } Aufbauten
+adsb-range-limit = Grenze
+adsb-range-limit-tip = Über der Grenze gehen die ältesten Tage zuerst, über alle Aufbauten
+adsb-range-init = INIT
+adsb-range-init-sure = INIT — SICHER?
+adsb-range-init-tip = Alle Aufbauten löschen, Platz freigeben
+adsb-range-init-warning = Löscht { $n } Aufbauten, { $size }. Grenze bleibt.
+adsb-range-cancel = Abbrechen
+adsb-range-now = Schreibt in { $setup }
+adsb-range-no-home = Standort (Locator) setzen, dann schreibt das Log
+adsb-range-waiting = Nächste Position legt einen Aufbau für { $instrument } an
+adsb-range-antenna = Antenne
+adsb-range-antenna-hint = Dachdipol, Fenster, Kunststoffgehäuse …
+adsb-range-new = NEUER AUFBAU
+adsb-range-new-tip = Aktuellen Aufbau schließen, nächste Version mit dieser Bezeichnung
+    Alte Version bleibt zum Vergleich
+adsb-range-name = BENENNEN
+adsb-range-name-tip = Aktuellem Aufbau diese Bezeichnung geben
+adsb-range-empty = Noch nichts aufgezeichnet
+adsb-range-col-setup = AUFBAU
+adsb-range-col-antenna = ANTENNE
+adsb-range-col-when = TAGE VON–BIS
+adsb-range-col-days = TAGE
+adsb-range-col-km = MAX KM
+adsb-range-col-size = GRÖSSE
+adsb-range-open-days = Tage zeigen
+adsb-range-delete = LÖSCHEN
+adsb-range-delete-sure = SICHER?
+adsb-range-delete-tip = Aufbau und seine Tage löschen
+adsb-range-day-positions = { $n } Positionen
+adsb-range-day-sectors = { $n }/{ $all } Sektoren
+adsb-range-day-far = Median über Sektoren { $median } km
+    Am weitesten bei { $bearing }°
+adsb-range-db-error = Reichweiten-Log: { $err }
 adsb-chip-log = BUCH
 adsb-chip-log-tip = Sichtungsbuch: gehörte Flugzeuge, eine Zeile je Flugzeug und Tag
   Tagesdatei adsb-log/<Datum>.csv im Konfig-Ordner, 30 Tage

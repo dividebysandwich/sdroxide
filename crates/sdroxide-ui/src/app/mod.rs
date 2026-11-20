@@ -19,6 +19,9 @@
 //! below directly; what they expose *to each other* is marked
 //! `pub(in crate::app)`, which is as wide as anything here ever gets.
 
+/// ADS-B SETUP → Range log: setups and their days.
+#[cfg(not(target_arch = "wasm32"))]
+mod adsb_range_tab;
 pub(in crate::app) mod alerts;
 mod amp;
 pub(in crate::app) mod awards;
@@ -846,6 +849,10 @@ pub struct SdroxideApp {
     /// Where this station hears aircraft, by bearing and distance, by the
     /// hour (see [`crate::adsb_coverage`]). Fed as each table arrives.
     adsb_coverage: crate::adsb_coverage::CoverageBook,
+    /// How far each setup hears, by day, in SQLite (see
+    /// [`crate::adsb_range`]). Fed as each table arrives.
+    #[cfg(not(target_arch = "wasm32"))]
+    adsb_range: adsb_range_tab::RangeTab,
     /// Every aircraft heard, a line a day, and the types learnt from them
     /// (see [`crate::adsb_log`]). Fed as each table arrives.
     adsb_log: crate::adsb_log::SightingBook,
@@ -1846,6 +1853,8 @@ impl SdroxideApp {
             adsb_map: crate::adsb_map::AdsbMapState::default(),
             adsb_routes: crate::adsb_route::RouteBook::default(),
             adsb_coverage: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            adsb_range: Default::default(),
             adsb_log: Default::default(),
             #[cfg(not(target_arch = "wasm32"))]
             adsb_tracks: Default::default(),

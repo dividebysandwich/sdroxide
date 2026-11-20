@@ -4337,6 +4337,43 @@ adsb-coverage-reset-tip = Clear the coverage map, on disk too
   after an antenna change or a move
 adsb-coverage-reset-sure = Really delete
 adsb-coverage-reset-keep = Keep
+adsb-range-log = Range log
+adsb-range-log-tip = Range per setup and day, kept in adsb-range.sqlite
+    Setup = receiver, antenna, home; versions per receiver
+adsb-range-summary = Range log { $size } · { $n } setups
+adsb-range-limit = Limit
+adsb-range-limit-tip = Over the limit, oldest days go first, across all setups
+adsb-range-init = INIT
+adsb-range-init-sure = INIT — SURE?
+adsb-range-init-tip = Delete every setup and give the space back
+adsb-range-init-warning = Deletes { $n } setups, { $size }. Limit stays.
+adsb-range-cancel = Cancel
+adsb-range-now = Logging to { $setup }
+adsb-range-no-home = Set home (grid square) to log range
+adsb-range-waiting = Next position starts a setup for { $instrument }
+adsb-range-antenna = Antenna
+adsb-range-antenna-hint = roof dipole, window, plastic case …
+adsb-range-new = NEW SETUP
+adsb-range-new-tip = Close current setup, start next version with this label
+    Old version stays for comparison
+adsb-range-name = NAME
+adsb-range-name-tip = Give current setup this label
+adsb-range-empty = Nothing logged yet
+adsb-range-col-setup = SETUP
+adsb-range-col-antenna = ANTENNA
+adsb-range-col-when = DAYS FROM–TO
+adsb-range-col-days = DAYS
+adsb-range-col-km = MAX KM
+adsb-range-col-size = SIZE
+adsb-range-open-days = Show days
+adsb-range-delete = DELETE
+adsb-range-delete-sure = SURE?
+adsb-range-delete-tip = Delete setup and its days
+adsb-range-day-positions = { $n } positions
+adsb-range-day-sectors = { $n }/{ $all } sectors
+adsb-range-day-far = Median over sectors { $median } km
+    Farthest at { $bearing }°
+adsb-range-db-error = Range log: { $err }
 adsb-chip-log = LOG
 adsb-chip-log-tip = Sighting log: aircraft heard, one line each a day
   Daily file adsb-log/<date>.csv in the config folder, 30 days
