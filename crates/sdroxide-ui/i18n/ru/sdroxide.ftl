@@ -5012,7 +5012,6 @@ acars-mode = режим { $mode }
 
 ## adsb: сообщения со значениями (src/app/panels/adsb.rs)
 
-adsb-aircraft-3 = { $aircraft } бортов
 adsb-frames = кадров: { $frames }
 adsb-preambles = преамбул: { $preambles }
 adsb-bad-crc = плохих CRC: { $bad_crc }

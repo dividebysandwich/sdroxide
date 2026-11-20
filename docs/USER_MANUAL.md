@@ -7387,7 +7387,7 @@ The strip along the top of the panel:
 | --- | --- |
 | **RUNNING** / **OFF** | Whether the decoder is switched on. |
 | dBFS | The level in the lane. It moves with band noise even when nothing is decoding, which is how you know the lane is actually fed. |
-| aircraft | How many aeroplanes are on the map. |
+| aircraft | Two counts, `20 (44) aircraft`: first those heard in the last 10 seconds, in brackets all on the list. The list keeps an aircraft a minute after its last frame, so the bracket answers a gain change only after that; the first count answers within seconds, which makes it the one to watch while tuning the gain. |
 | bursts | Blocks of the channel in which the demodulator found a transmission. |
 | decodes | Messages that came out of them whole. |
 

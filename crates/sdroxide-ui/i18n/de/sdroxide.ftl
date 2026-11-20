@@ -5313,7 +5313,9 @@ acars-mode = Modus { $mode }
 
 ## adsb: messages with values (src/app/panels/adsb.rs)
 
-adsb-aircraft-3 = { $aircraft } Flugzeuge
+adsb-aircraft-active = { $active } ({ $aircraft }) Flugzeuge
+adsb-aircraft-active-tip = In den letzten { $s } s gehört (auf der Liste)
+    Erste Zahl folgt Verstärkeränderungen binnen Sekunden
 adsb-frames = { $frames } Rahmen
 adsb-preambles = { $preambles } Präambeln
 adsb-bad-crc = { $bad_crc } fehlerhafte CRC

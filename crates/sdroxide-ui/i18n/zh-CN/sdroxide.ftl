@@ -4966,7 +4966,6 @@ acars-mode = 模式 { $mode }
 
 ## adsb：带数值的消息（src/app/panels/adsb.rs）
 
-adsb-aircraft-3 = { $aircraft } 架飞机
 adsb-frames = { $frames } 帧
 adsb-preambles = { $preambles } 个前导码
 adsb-bad-crc = { $bad_crc } 个 CRC 错误

@@ -5012,7 +5012,6 @@ acars-mode = modo { $mode }
 
 ## adsb: mensagens com valores (src/app/panels/adsb.rs)
 
-adsb-aircraft-3 = { $aircraft } aeronaves
 adsb-frames = { $frames } quadros
 adsb-preambles = { $preambles } preâmbulos
 adsb-bad-crc = { $bad_crc } CRC ruins
