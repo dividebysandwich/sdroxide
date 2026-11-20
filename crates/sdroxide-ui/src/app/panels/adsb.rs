@@ -2203,8 +2203,6 @@ fn count(n: u64) -> String {
     }
 }
 
-/// A readout in a slot of fixed width, so a number that grows a digit cannot
-/// re-flow the header.
 /// An aircraft counts as active this long after its last accepted frame,
 /// seconds.
 pub const ACTIVE_S: i64 = 10;
@@ -2214,6 +2212,8 @@ fn active_count(aircraft: &[AdsbAircraft], now: i64) -> usize {
     aircraft.iter().filter(|a| now - a.last_at <= ACTIVE_S).count()
 }
 
+/// A readout in a slot of fixed width, so a number that grows a digit cannot
+/// re-flow the header.
 fn slot(ui: &mut egui::Ui, w: f32, text: &str, color: egui::Color32) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 16.0), egui::Sense::hover());
     if !ui.is_rect_visible(rect) {
