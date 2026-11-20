@@ -2,6 +2,9 @@
 //! flares.
 //!
 //! <https://ccmc.gsfc.nasa.gov/tools/DONKI/> — the web service needs no API key.
+//! When CCMC's own host is unreachable, which has lasted weeks at a time
+//! (#895), the same data comes from NASA's API gateway, [`MIRROR`], with the
+//! shared `DEMO_KEY`: same query, same JSON.
 //!
 //! Parsing here is defensive because the live data demands it, not out of
 //! habit. In a representative 30-day window: 44 of 209 CME analyses carry a
@@ -17,6 +20,11 @@ use crate::timefmt;
 
 pub const BASE: &str = "https://kauai.ccmc.gsfc.nasa.gov/DONKI/WS/get";
 
+/// NASA's API gateway in front of the same service. `DEMO_KEY` allows about
+/// 50 requests a day per address, which is why the feed only falls back to it
+/// and polls it no more than hourly there.
+pub const MIRROR: &str = "https://api.nasa.gov/DONKI";
+
 /// Typical half-width when an analysis omits it, degrees.
 const DEFAULT_HALF_ANGLE: f64 = 25.0;
 /// Typical CME speed when an analysis omits it, km/s.
@@ -28,6 +36,13 @@ pub fn cme_url(start_unix: i64, end_unix: i64) -> String {
 
 pub fn flare_url(start_unix: i64, end_unix: i64) -> String {
     format!("{BASE}/FLR?startDate={}&endDate={}", timefmt::ymd(start_unix), timefmt::ymd(end_unix))
+}
+
+/// The [`MIRROR`] URL for the same query as `primary` (one of [`cme_url`] or
+/// [`flare_url`]); `None` for anything else.
+pub fn mirror_url(primary: &str) -> Option<String> {
+    let rest = primary.strip_prefix(BASE)?;
+    Some(format!("{MIRROR}{rest}&api_key=DEMO_KEY"))
 }
 
 /// A CME with enough information to place a cone in space.
@@ -246,6 +261,16 @@ pub fn parse_flares(json: &str) -> Result<Vec<FlareEvent>, serde_json::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_mirror_asks_the_same_question() {
+        let p = cme_url(0, 86_400);
+        assert_eq!(
+            mirror_url(&p).unwrap(),
+            "https://api.nasa.gov/DONKI/CME?startDate=1970-01-01&endDate=1970-01-02&api_key=DEMO_KEY"
+        );
+        assert!(mirror_url("https://services.swpc.noaa.gov/x.json").is_none());
+    }
 
     const CME_JSON: &str = include_str!("../tests/fixtures/cme.json");
     const FLR_JSON: &str = include_str!("../tests/fixtures/flr.json");
