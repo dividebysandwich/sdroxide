@@ -416,6 +416,9 @@ pub struct RouteBook {
     split: std::collections::HashSet<String>,
     queue: std::collections::VecDeque<Job>,
     in_flight: usize,
+    /// Whether the operator has allowed the online lookups; until then the
+    /// queue waits and nothing is fetched.
+    pub online: bool,
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     tx: std::sync::mpsc::Sender<Done>,
     rx: std::sync::mpsc::Receiver<Done>,
@@ -434,6 +437,7 @@ impl Default for RouteBook {
             split: Default::default(),
             queue: Default::default(),
             in_flight: 0,
+            online: false,
             tx,
             rx,
         }
@@ -554,7 +558,7 @@ impl RouteBook {
             self.take(job, res);
         }
         #[cfg(not(target_arch = "wasm32"))]
-        while self.in_flight < MAX_IN_FLIGHT {
+        while self.online && self.in_flight < MAX_IN_FLIGHT {
             let Some(job) = self.queue.pop_front() else { break };
             self.in_flight += 1;
             let tx = self.tx.clone();

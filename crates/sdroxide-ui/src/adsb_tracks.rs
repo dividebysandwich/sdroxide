@@ -142,6 +142,15 @@ impl TrackBook {
     }
 }
 
+/// The lines of the last minute go to disk on exit. Not in tests, which must
+/// not write into the real configuration directory.
+#[cfg(not(test))]
+impl Drop for TrackBook {
+    fn drop(&mut self) {
+        self.flush();
+    }
+}
+
 /// Append `lines` to `<dir>/<day>.csv`, with the header if the file is new.
 fn append(dir: &std::path::Path, day: &str, lines: &str) {
     use std::io::Write as _;

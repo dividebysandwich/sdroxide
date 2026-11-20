@@ -433,6 +433,11 @@ pub struct ViewState {
     //      sein, das ist sinnvoll neben den Städten“.
     #[serde(default = "adsb_map_cities_default")]
     pub adsb_map_airports: bool,
+    /// Routes, airlines, registrations and the map's airports fetched from
+    /// the internet. Off until the operator switches it on, as nothing is
+    /// asked of a server unbidden (see `sonde_online`).
+    #[serde(default)]
+    pub adsb_online_lookups: bool,
     /// The coverage diagram on the ADS-B map (see `adsb_coverage`).
     #[serde(default = "adsb_map_cities_default")]
     pub adsb_map_range: bool,
@@ -891,6 +896,7 @@ impl Default for ViewState {
             adsb_map_cities: adsb_map_cities_default(),
             adsb_map_range: adsb_map_cities_default(),
             adsb_map_airports: adsb_map_cities_default(),
+            adsb_online_lookups: false,
             adsb_show_log: false,
             adsb_gain_presets: Default::default(),
             adsb_map_pointer: adsb_map_cities_default(),

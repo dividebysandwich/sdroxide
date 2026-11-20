@@ -6539,7 +6539,10 @@ CC0). It is the route the callsign usually flies, not the plan filed today; a
 charter, a diversion or a callsign reused for another flight will show the
 wrong airports or none. An aircraft far off its dashed line is the sign.
 
-The data is fetched as aircraft are heard: one small file per airline and one
+Nothing is fetched until **Online lookups** is ticked in ADS-B SETUP; it is off
+by default, and the ROUTE, TYPE and country columns, the card's extra lines and
+the map's AIRPORTS layer stay empty without it. Once on, the data is fetched as
+aircraft are heard: one small file per airline and one
 per group of airports, from `raw.githubusercontent.com`, and kept for a week in
 the `adsb-routes` folder of the configuration directory. Only the file name is
 asked for — nothing about your station or the aircraft is sent. A callsign that

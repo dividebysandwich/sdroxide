@@ -144,6 +144,7 @@ impl SdroxideApp {
 
         self.adsb_header(ui, cmds, &st);
         ui.add_space(3.0);
+        self.adsb_routes.online = self.view.adsb_online_lookups;
         self.adsb_routes.poll(ui.ctx());
 
         let avail_h = (content_bottom - ui.cursor().top()).max(80.0);
@@ -1120,6 +1121,13 @@ impl SdroxideApp {
                     });
                     ui.end_row();
 
+                    ui.label(tr!("adsb-online-lookups"));
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut self.view.adsb_online_lookups, "");
+                        ui.label(RichText::new(tr!("adsb-online-lookups-hint")).size(9.5).weak());
+                    });
+                    ui.end_row();
+
                     ui.label(tr!("adsb-trail-length"));
                     ui.horizontal(|ui| {
                         ui.add(
@@ -1772,8 +1780,6 @@ mod tests {
         assert_eq!(count(4_500_000), "4.5M");
     }
 
-    /// The columns must not overlap at any width the panel can be dragged to,
-    /// and the trailing ones drop out rather than printing on top of each other.
     #[test]
     fn the_log_sorts_by_any_column_and_puts_the_unknown_last() {
         use crate::adsb_log::Sighting;
@@ -1864,6 +1870,8 @@ mod tests {
         }
     }
 
+    /// The columns must not overlap at any width the panel can be dragged to,
+    /// and the trailing ones drop out rather than printing on top of each other.
     #[test]
     fn the_columns_never_overprint_however_narrow_the_panel_gets() {
         let mut w = 200.0f32;

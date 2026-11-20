@@ -69,6 +69,17 @@ pub struct SightingBook {
     saved_at: i64,
 }
 
+/// What is left of the minute between saves goes to disk on exit. Not in
+/// tests, which must not write into the real configuration directory.
+#[cfg(not(test))]
+impl Drop for SightingBook {
+    fn drop(&mut self) {
+        if self.loaded && self.dirty {
+            self.save(self.saved_at);
+        }
+    }
+}
+
 /// The airline part of a callsign, `PGT` of `PGT49BX`.
 fn airline_of(call: &str) -> Option<&str> {
     let b = call.as_bytes();
