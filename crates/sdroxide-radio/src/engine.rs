@@ -16473,23 +16473,6 @@ impl Engine {
         let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
     }
 
-    /// Re-publish the receiving antenna when the radio has since said
-    /// something about it.
-    ///
-    /// The same shape as [`Engine::refresh_antennas`], and there for the same
-    /// reason: a control link answers a round trip after the capabilities went
-    /// out, and whether this radio *has* a receiving antenna connector is only
-    /// known once its antenna reply has been seen — the flag rides behind the
-    /// socket, and a radio without the connector answers the socket alone.
-    ///
-    /// Both halves move in the same pass on purpose, so no client ever sees the
-    /// capability turn on with a stale setting behind it.
-    ///
-    /// One thing this cannot do is notice the operator reaching for the RX ANT
-    /// button on the radio itself without changing band: the setting is not
-    /// polled, so the chip is stale until the next band change. That is a
-    /// display error and never a relay movement — sdroxide writes the byte only
-    /// on a click, and every write carries the value last read back.
     /// Switch an ELAD FDM-DUO's transmit to its 0 dBm RF OUT port when the
     /// dial enters a Transverters row that asks for it, and back to the PA when
     /// it leaves — see [`IqSource::transverter_port`].
@@ -16531,6 +16514,24 @@ impl Engine {
         }
     }
 
+
+    /// Re-publish the receiving antenna when the radio has since said
+    /// something about it.
+    ///
+    /// The same shape as [`Engine::refresh_antennas`], and there for the same
+    /// reason: a control link answers a round trip after the capabilities went
+    /// out, and whether this radio *has* a receiving antenna connector is only
+    /// known once its antenna reply has been seen — the flag rides behind the
+    /// socket, and a radio without the connector answers the socket alone.
+    ///
+    /// Both halves move in the same pass on purpose, so no client ever sees the
+    /// capability turn on with a stale setting behind it.
+    ///
+    /// One thing this cannot do is notice the operator reaching for the RX ANT
+    /// button on the radio itself without changing band: the setting is not
+    /// polled, so the chip is stale until the next band change. That is a
+    /// display error and never a relay movement — sdroxide writes the byte only
+    /// on a click, and every write carries the value last read back.
     fn refresh_rx_antenna(&mut self) {
         let now = self.source.rx_antenna();
         let mut state_changed = false;
