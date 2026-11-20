@@ -94,8 +94,11 @@ impl SbsServer {
 
     /// Take in whoever has connected since last time. Never blocks.
     pub fn accept(&mut self) {
+        const MAX_CLIENTS: usize = 16;
         loop {
             match self.listener.accept() {
+                // Capped, as with LAN on anyone on the network can connect.
+                Ok((s, _)) if self.clients.len() >= MAX_CLIENTS => drop(s),
                 Ok((s, _)) => {
                     if s.set_nonblocking(true).is_ok() {
                         let _ = s.set_nodelay(true);

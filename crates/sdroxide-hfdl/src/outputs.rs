@@ -259,8 +259,12 @@ impl Outputs {
         if self.json.is_empty() {
             self.status.json_error = None;
         }
-        // The BaseStation server: (re)opened when its port or reach changes.
-        if cfg.sbs_port != self.cfg.sbs_port || cfg.sbs_lan != self.cfg.sbs_lan {
+        // The BaseStation server: (re)opened when its port or reach changes,
+        // and tried again on a re-apply after a port that was taken.
+        if cfg.sbs_port != self.cfg.sbs_port
+            || cfg.sbs_lan != self.cfg.sbs_lan
+            || (self.sbs.is_none() && cfg.sbs_port != 0)
+        {
             self.sbs = None;
             self.status.sbs_error = None;
             if cfg.sbs_port != 0 {
