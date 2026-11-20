@@ -1732,7 +1732,10 @@ use sdroxide_types::{
 /// v214: Mode-S Beast in and out. `Command::SetBeastConfig`,
 /// `ServerMsg::BeastStatus` appended; `StationConfig` gains `beast` and
 /// `AdsbStatus` gains `feed` and `feed_state` at their tails.
-pub const PROTO_VERSION: u16 = 214;
+///
+/// v215: ELAD transverter port. `DeviceCaps` gains `rx_antenna_is_xvtr` and
+/// `Transverter` gains `elad_rf_out`, which changes every `RadioConfig`.
+pub const PROTO_VERSION: u16 = 215;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

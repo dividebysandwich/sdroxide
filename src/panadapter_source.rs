@@ -274,6 +274,7 @@ impl PanadapterSource {
             agc_off_unavailable: false,
             // The transceiver's tuner, for the same reason.
             has_atu: ctrl.has_atu,
+            rx_antenna_is_xvtr: ctrl.rx_antenna_is_xvtr,
         }
     }
 

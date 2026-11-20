@@ -2872,6 +2872,13 @@ struct Engine {
     /// (`EladConfig::hear_own_tx`, the DIG A chip under TX power). Taken at each
     /// key-down rather than at open, so it too needs no reopen.
     elad_hear_own_tx: bool,
+    /// What [`Self::follow_transverter_port`] last asked of the radio's
+    /// transverter port, so it acts only when the dial crosses into or out of
+    /// a row that wants it — never on a port the operator set by hand.
+    xvtr_port_applied: bool,
+    /// The receive socket the transverter port moved off, put back when the
+    /// dial leaves the row.
+    xvtr_prev_ant: Option<String>,
     /// The transmit frequency the source has already been told, so
     /// [`Self::push_tx_freq`] only speaks when it moves.
     tx_freq_told: Option<f64>,
@@ -4634,6 +4641,8 @@ fn engine_thread(
         rig_tx: false,
         elad_mute_rig_tx: radio_cfg.cat.elad_mute_on_radio_ptt,
         elad_hear_own_tx: radio_cfg.elad.hear_own_tx,
+        xvtr_port_applied: false,
+        xvtr_prev_ant: None,
         tx_freq_told: None,
         drive_trim_db: 0.0,
         drive_trim: radio_cfg.tx_drive_trim.clone(),
@@ -5193,6 +5202,7 @@ fn engine_thread(
         // answers once its control link has been open a round trip.
         engine.refresh_antennas();
         engine.refresh_rx_antenna();
+        engine.follow_transverter_port();
         // …and its tuner, which a FLEX reports in the status burst after it
         // has connected rather than in anything the open waits for.
         engine.refresh_atu();
@@ -9630,6 +9640,14 @@ impl Engine {
             // would fight that on every band change.
             SetRxAntenna(on) => {
                 if !self.caps.has_rx_antenna {
+                    return;
+                }
+                // On an ELAD this flag is the transmit output (`TT`, the XVTR
+                // chip), and moving the PA's path mid-over is the one thing it
+                // must never do. The rig refuses it too; this says why.
+                if self.caps.rx_antenna_is_xvtr && (self.tx_active || self.rig_tx) {
+                    self.notice("The transverter port can't be switched while transmitting.");
+                    let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
                     return;
                 }
                 if let Err(e) = self.source.set_rx_antenna(on) {
@@ -16472,6 +16490,47 @@ impl Engine {
     /// polled, so the chip is stale until the next band change. That is a
     /// display error and never a relay movement — sdroxide writes the byte only
     /// on a click, and every write carries the value last read back.
+    /// Switch an ELAD FDM-DUO's transmit to its 0 dBm RF OUT port when the
+    /// dial enters a Transverters row that asks for it, and back to the PA when
+    /// it leaves — see [`IqSource::transverter_port`].
+    ///
+    /// Receive goes with it to the RX-only socket, where the transverter's I.F.
+    /// comes back, and returns to the socket it was on. Only on a change, so a
+    /// port the operator set with the XVTR chip on a band no row covers is left
+    /// as they set it; and never during an over, ours or the radio's own — a
+    /// change waits here until the over has ended.
+    fn follow_transverter_port(&mut self) {
+        if !self.caps.rx_antenna_is_xvtr || !self.caps.has_rx_antenna {
+            return;
+        }
+        let want = self.source.transverter_port();
+        if want == self.xvtr_port_applied || self.tx_active || self.rig_tx {
+            return;
+        }
+        self.xvtr_port_applied = want;
+        const RX_SOCKET: &str = "RX only";
+        if want {
+            if self.state.antenna_rx != RX_SOCKET
+                && self.caps.antennas_rx.iter().any(|a| a == RX_SOCKET)
+            {
+                self.xvtr_prev_ant = Some(self.state.antenna_rx.clone());
+                self.apply(Command::SetAntenna { dir: Direction::Rx, name: RX_SOCKET.into() });
+            }
+            if !self.state.rx_antenna {
+                self.apply(Command::SetRxAntenna(true));
+            }
+        } else {
+            if self.state.rx_antenna {
+                self.apply(Command::SetRxAntenna(false));
+            }
+            if let Some(prev) = self.xvtr_prev_ant.take()
+                && self.caps.antennas_rx.contains(&prev)
+            {
+                self.apply(Command::SetAntenna { dir: Direction::Rx, name: prev });
+            }
+        }
+    }
+
     fn refresh_rx_antenna(&mut self) {
         let now = self.source.rx_antenna();
         let mut state_changed = false;

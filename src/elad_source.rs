@@ -767,6 +767,34 @@ impl IqSource for EladSource {
         self.antenna.label().to_string()
     }
 
+    /// The transverter port (menu 33 `TX OUT`): `Some(true)` while the rig
+    /// sends its transmit out of the 0 dBm RF OUT SMA instead of the PA.
+    ///
+    /// Carried as the receiving-antenna flag because it is one more port, in
+    /// or out, beside the socket selector — the panel shows it as the XVTR
+    /// chip. Only with a CAT serial port: the gateway path cannot read the
+    /// setting back, and a chip that cannot say where the power is going is
+    /// worse than none. `None` until the rig has answered `TT;`.
+    fn rx_antenna(&self) -> Option<bool> {
+        match &self.control {
+            Control::Serial(cat) => cat.rx_antenna(),
+            _ => None,
+        }
+    }
+
+    fn set_rx_antenna(&mut self, on: bool) -> Result<()> {
+        if let Control::Serial(cat) = &self.control {
+            cat.set_rx_antenna(on);
+        }
+        Ok(())
+    }
+
+    fn reread_rx_antenna(&mut self) {
+        if let Control::Serial(cat) = &self.control {
+            cat.reread_antenna();
+        }
+    }
+
     // ── Rig control ──────────────────────────────────────────────────────────
 
     /// Take up the radio's own VFO B when the operator takes up sdroxide's,
@@ -857,19 +885,19 @@ impl IqSource for EladSource {
                     sdroxide_elad::set_transmitting(on || self.keyed);
                     out.push(ControlUpdate::RigTx(on))
                 }
+                // Where the transmit goes — the PA, or the 0 dBm RF OUT port
+                // for a transverter. See `rx_antenna` for why it travels as
+                // this flag.
+                sdroxide_cat::CatUpdate::RxAntenna(on) => out.push(ControlUpdate::RxAntenna(on)),
                 // The meters arrive on their own telemetry channels, not here;
                 // and the ELAD dialect has no squelch command, so that read is
                 // never asked for either.
-                //
-                // Nor has an FDM-DUO a separate receiving antenna: its two
-                // sockets are a choice between them, which is `Antenna` above.
                 sdroxide_cat::CatUpdate::Swr(_)
                 | sdroxide_cat::CatUpdate::Alc(_)
                 | sdroxide_cat::CatUpdate::Po(_)
                 | sdroxide_cat::CatUpdate::FwdW(_)
                 | sdroxide_cat::CatUpdate::RflW(_)
                 | sdroxide_cat::CatUpdate::Squelch(_)
-                | sdroxide_cat::CatUpdate::RxAntenna(_)
                 | sdroxide_cat::CatUpdate::Signal(_) => {}
             }
         }

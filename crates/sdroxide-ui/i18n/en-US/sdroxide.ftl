@@ -207,6 +207,9 @@ settings-band-low = Band low
 settings-band-high = Band high
 settings-offset = Offset
 settings-transmit = Transmit
+settings-xvtr-rf-out = RF OUT
+settings-xvtr-rf-out-hover =
+    On an ELAD FDM-DUO: while the dial is in this row's band, send transmit out of the 0 dBm RF OUT SMA instead of the PA, and receive on the RX-only socket. Both go back when the dial leaves the band. The XVTR chip in the ANT row lights while it is in use.
 settings-max-drive = Max drive
 settings-off-takes-transverter-out-line = Off takes this transverter out of the line without losing the row — the band goes back to whatever the radio reaches on its own.
 settings-t-2-m = 2 m
@@ -2250,6 +2253,10 @@ topbar-radio-s-separate-receiving-antenna =
     The radio's separate receiving antenna, switched into the receive path or out of it — its own RX ANT setting. The aerial on the main socket stays on transmit either way.
 
     The radio remembers this per band itself, so sdroxide reads it back after every band change rather than putting back what it last saw: clicking here is the only thing that moves it.
+topbar-elad-xvtr =
+    The FDM-DUO's transverter port (menu 33 TX OUT). Lit, the radio sends its transmit out of the 0 dBm RF OUT SMA instead of the PA, and receive moves to the RX-only socket where the transverter's IF comes back. Out, transmit returns to the PA on RTX and receive to the socket it was on.
+
+    Connect RF OUT to the transverter's IF input and its IF output to the RX socket. It can't be switched while transmitting.
 topbar-radio-s-own-power-switch =
     The radio's own power switch, over the control link, and the one true on/off in the program — not sdroxide's LINK switch, which closes sdroxide's end and leaves the radio running.
 

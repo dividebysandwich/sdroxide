@@ -6526,6 +6526,12 @@ pub struct Transverter {
     /// their built-in attenuator.
     #[serde(default = "default_xvtr_drive")]
     pub tx_drive: f32,
+    /// Send transmit out of the radio's low-power transverter port while this
+    /// row is selected, and back to the PA when the dial leaves its band. Only
+    /// an ELAD FDM-DUO has one sdroxide can switch (its 0 dBm RF OUT, menu 33
+    /// `TX OUT`); ignored on every other radio.
+    #[serde(default)]
+    pub elad_rf_out: bool,
 }
 
 fn default_xvtr_enabled() -> bool {
@@ -6546,6 +6552,7 @@ impl Default for Transverter {
             offset_hz: 0.0,
             tx: ConverterTx::Off,
             tx_drive: default_xvtr_drive(),
+            elad_rf_out: false,
         }
     }
 }

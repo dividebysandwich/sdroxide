@@ -9072,6 +9072,12 @@ selecting the transverter's antenna once on the band leaves it there
 HL2IOBoard that means its **IO board RX input** — offered on the ANT control
 once the setting is moved off *Radio's own input* ([6.2.3](#623-hpsdr-network-radios)).
 
+The one exception is an **ELAD FDM-DUO**, whose 0 dBm RF OUT port is made for a
+transverter: there the table has an extra **RF OUT** column, and a ticked row
+sends transmit out of that port, and receive to the RX-only socket, while the
+dial is in its band. See the FDM-DUO's transverter port in
+[6.2.16](#6216-elad-fdm-duo--fdm-s-usb).
+
 **RX range** and **TX range**, below the offset, are where you tell sdroxide
 which frequencies this radio actually covers. They are **in megahertz**, written
 low-high and separated by commas — `144-146, 430-440`, which is
@@ -12656,6 +12662,47 @@ with sdroxide not running is adopted rather than overridden. On an FDM-DUO
 reached through its receive cable alone the command still goes out, but nothing
 can be read back, so the setting shown is the one you last picked rather than one
 the radio confirmed.
+
+**Transverter port (FDM-DUO only).** The radio's third RF connector is the
+**RF OUT** SMA on the back: a 0 dBm (1 mW) transmit output for driving a
+transverter, selected at the front panel with menu 33 `TX OUT` and over CAT
+with `TT`. The two are either/or — on **PWR** transmit goes to the PA and the
+RTX socket and RF OUT is idle; on **0 dBm** transmit leaves by RF OUT and the
+RTX socket gets none. Receive is unaffected by it.
+
+sdroxide shows this as the **XVTR** chip in the main window's ANT row, beside
+the socket chip, read from the radio when the CAT port opens:
+
+- **Lit (yellow)**: transmit is going out of RF OUT. Lighting it also moves
+  receive to the **RX only** socket, which is where the transverter's I.F.
+  comes back, so the 5 W path is never connected to the transverter.
+- **Out**: transmit is back on the PA, and receive is back on the socket it was
+  on before.
+
+Wire it as RF OUT → the transverter's I.F. transmit input, and the
+transverter's I.F. receive output → the DUO's RX socket; the antenna for the
+higher band goes on the transverter, and the HF antenna stays on RTX for when
+the chip is out. A transverter with a single shared I.F. connector needs its
+own T/R switching. One that wants more than a milliwatt of drive is better
+driven from RTX at low power through an attenuator, with the chip out and the
+**max drive** of its Transverters row keeping the level down.
+
+The level at RF OUT follows **Drive** (or the TUNE %), up to about 0 dBm at
+full scale — measured on an FDM-DUO at 234 mV RMS into 50 Ω, about +0.4 dBm.
+The TX PWR buttons (menu 34) do **not** change it: they set the PA's ceiling
+only, so with XVTR lit, Drive and the Transverters row's **max drive** are the
+controls.
+
+The port is never switched during an over: sdroxide refuses the click while
+transmitting and says so, and the radio itself ignores `TT` then. It needs the
+CAT serial port — the receive cable alone cannot read the setting back, so the
+chip is not shown there.
+
+To have it follow the dial, tick **RF OUT** on the transverter's row in
+**Transverters** (an FDM-DUO adds that column, [6.2](#62-radio-choosing-and-configuring-the-rig)):
+entering that row's band lights XVTR, and leaving it puts it out, each waiting
+for the over to end. A chip you light by hand on a band no row covers is left as
+you set it.
 
 The same control is on the **CAT radios** tab for an FDM-DUO driven over CAT
 alone ([6.2.2](#622-cat-radios-serial-control--usb-audio)) — it is a rig
