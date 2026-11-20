@@ -1760,7 +1760,12 @@ use sdroxide_types::{
 /// `picture_folders` (`PictureFolders`) on its tail and `Command` gains
 /// `SetPictureFolders` last. `StationConfig` rides whole, so a v211 peer fails
 /// to decode it.
-pub const PROTO_VERSION: u16 = 220;
+///
+/// v221: TUNE can send a two-tone test signal (issue #525). `TxState` gains
+/// `two_tone` on its tail and `Command` gains a trailing `SetTuneTwoTone`;
+/// `TxState` rides whole inside `RadioState`, so a v211 peer reads the extra
+/// byte as the start of the next field and fails to decode every state.
+pub const PROTO_VERSION: u16 = 221;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
