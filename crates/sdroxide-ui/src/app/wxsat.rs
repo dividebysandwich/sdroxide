@@ -20,9 +20,11 @@ use sdroxide_types::{
 const APT_SATELLITES: [(&str, f64); 3] =
     [("NOAA-15", 137_620_000.0), ("NOAA-18", 137_912_500.0), ("NOAA-19", 137_100_000.0)];
 
-/// The Meteor satellites sending LRPT.
+/// The Meteor LRPT channels. M2-3 and M2-4 both send on 137.900; 137.100 is
+/// the second transmitter either of them switches to now and then. It used to
+/// be listed as M2-4's only channel, which is silent most of the time (#890).
 const LRPT_SATELLITES: [(&str, f64); 2] =
-    [("METEOR-M2-3", 137_900_000.0), ("METEOR-M2-4", 137_100_000.0)];
+    [("METEOR-M2-3 / M2-4", 137_900_000.0), ("METEOR (alternate)", 137_100_000.0)];
 
 /// The satellites of a signal.
 fn satellites(kind: WxsatKind) -> &'static [(&'static str, f64)] {
@@ -546,9 +548,9 @@ mod tests {
     #[test]
     fn channel_names_know_the_satellites() {
         assert!(channel_name(137_100_000.0, WxsatKind::Apt).starts_with("NOAA-19"));
-        assert!(channel_name(137_900_000.0, WxsatKind::Lrpt).starts_with("METEOR-M2-3"));
+        assert!(channel_name(137_900_000.0, WxsatKind::Lrpt).starts_with("METEOR-M2-3 / M2-4"));
         // The same frequency is a different satellite in another signal.
-        assert!(channel_name(137_100_000.0, WxsatKind::Lrpt).starts_with("METEOR-M2-4"));
+        assert!(channel_name(137_100_000.0, WxsatKind::Lrpt).starts_with("METEOR (alternate)"));
         assert_eq!(channel_name(137_500_000.0, WxsatKind::Apt), "137.5000 MHz");
     }
 }

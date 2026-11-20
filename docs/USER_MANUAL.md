@@ -2871,8 +2871,9 @@ over audio.
 The *Signal* choice picks the kind. **APT** is the analogue signal of NOAA-15
 (137.620 MHz), NOAA-18 (137.9125 MHz) and NOAA-19 (137.100 MHz): channel A on
 the left and channel B on the right, line by line, two lines a second. **LRPT**
-is the digital signal of Meteor-M2-3 (137.900 MHz) and Meteor-M2-4
-(137.100 MHz): QPSK at 72 ksym/s, picture rows of 1568 pixels, and one separate
+is the digital signal of Meteor-M2-3 and Meteor-M2-4, both on 137.900 MHz
+(either sometimes switches to its second transmitter on 137.100 MHz, the
+*alternate* channel): QPSK at 72 ksym/s, picture rows of 1568 pixels, and one separate
 picture for each channel the satellite sends (*Channel 1* to *Channel 6*, the
 visible and infrared bands), shown one at a time.
 
