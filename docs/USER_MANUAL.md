@@ -6287,6 +6287,14 @@ worldwide. Selecting the mode tunes to 1090.000 MHz unless the receiver is
 already looking at it, and the **1090.000** button in the panel header puts it
 back if you wander off.
 
+**The 1090.000 button also keeps your gains.** The gain settings that are right
+for 1090 MHz are rarely the ones you use on HF, so they can be stored with the
+button, one preset per receiver. **Right-click** it and choose **Save current
+gains as the ADS-B preset**; from then on a **click** tunes to 1090 MHz *and*
+sets those gains, the stages first and any AGC switch last. The tooltip shows
+the saved gains next to the current ones, and the right-click menu has
+**Forget preset**. Without a preset a click only tunes, as before.
+
 #### What you need
 
 **An antenna for 1090 MHz, on the right socket.** This matters more than
@@ -6331,9 +6339,13 @@ when it was registered, unique worldwide and unchanging.
 | Column | What it is |
 | --- | --- |
 | CALL | The flight identification it is broadcasting. Empty for the first few seconds: an aircraft sends its position twice a second and its callsign every five, so the address arrives first. The row shows the address until the callsign does. |
-| ICAO | The address, in hex, once there is a callsign to distinguish it from. |
+| ICAO | The address, in hex, once there is a callsign to distinguish it from, after the flag of the country whose address block it falls in. That is the country of registration, not the airline's: an Irish-registered Ryanair aircraft flies the Irish flag. |
 | ALT | Altitude. Flight level above 18 000 feet (`F350`), hundreds of feet below it (`045`), and `GND` on the ground. |
 | GS | Ground speed in knots. |
+| ROUTE | The callsign's usual route, departure and destination airport by ICAO code (`EDDK›GCLP`, `EDDL›…›GCLP` with stops). Shown where the panel is wide enough; see *Routes* below. |
+| FROM › TO | The same route by the places the airports serve (`London › Budapest`, `Köln › … › Las Palmas`), which is what a reader recognises. An airport whose file has not arrived yet stands as its code. |
+| AIRLINE | The airline's name, from the first three letters of the callsign (`RYR95MB` → Ryanair). Empty for private flights, whose callsign is a registration. |
+| TYPE | The aircraft type as an ICAO type designator (`B38M`, `A20N`), where the airframe is known. Otherwise a guess from the sighting log with a question mark (`A320?`), see *The sighting log* below; otherwise, faint, the class the aircraft sends about itself (`large`, `rotorcraft`). |
 | TRK | Track over ground, degrees true. |
 | V/S | Rate of climb or descent, feet per minute. |
 | SQK | The squawk — the four-digit code the crew set for air traffic control. Only some frames carry it; see below. |
@@ -6346,20 +6358,56 @@ room for, including geometric altitude, turn rate, signal level and the last
 frame as hex — and selects the aircraft on the map. **CENTER** in the card puts
 it in the middle of the picture.
 
+The card also shows what the aircraft reports from its own systems, each line
+once a message carrying it has arrived: **heading** (where the nose points;
+the track differs from it by the wind), **airspeed** (IAS or TAS), and from
+ADS-B version 2 transponders what the crew has set — **selected altitude**
+(from the MCP/FCU or the FMS), **selected heading**, **QNH**, and the
+**autopilot** with its modes (VNAV, ALT, APP, LNAV) and TCAS. The **ADS-B** line
+gives the transponder's version and the accuracy (NACp, 0–11) and integrity
+(SIL, 0–3) of its position. Many aircraft send only part of this: the
+airspeed message only when they have no velocity over the ground to send, the
+target state only from version 2 on.
+
+Above all that, the card says what the aircraft *is*, where it is known:
+**Registration**, **Model**, **Operator**, the year it was **Built**, and the
+**Country** of its address block (marked *military* where the block is). These
+come from the same standing data as the routes; see *Where the extra data comes
+from* below.
+
+When the panel is narrow, columns drop out rather than overprint each other.
+Among the ones after the speed, FROM › TO goes first, then AIRLINE; TYPE is
+short and stays longest. On the right, the signal column goes first, then
+V/S, SQK and KM together.
+
+**Right-click a row** for what you would otherwise type somewhere else: copy
+the callsign or the ICAO address; open the aircraft on planespotters.net,
+ADS-B Exchange, adsb.lol or the OpenSky map, or the flight on Flightradar24;
+**Show on map**; and **Add to the VRS database**, which copies the address and
+opens the public form where anyone can add an aircraft the panel does not know.
+These are links only — nothing from those sites is fetched or kept.
+
+![A row's card: what the aircraft is, what it reports, and the table above it with flags, routes and types](images/adsb-card.jpg)
+
 A **greyed row** is an aircraft that is still being heard but has not reported a
 position for ten seconds. It stays on the list and comes off the map; see below.
 
 #### The radar picture
 
-![The ADS-B panel: the aircraft list and the radar picture](images/adsb-panel.jpg)
+![The ADS-B panel: the aircraft list with flags, routes and types, and the radar picture with airports, the coverage diagram and aircraft symbols by weight class](images/adsb-panel.jpg)
 
 Standard surveillance-display symbology, and each part of it is telling you
 something:
 
-- **A white square** is an aircraft. Everything up there is an aeroplane, so a
-  symbol that said which kind would be saying nothing; the square stays the same
-  size at every zoom, so a glance across a busy sector reads as one class of
-  thing. A dot inside it means the aircraft is on the ground.
+- **An aeroplane seen from above** is an aircraft, nose along its track. Its
+  size is the weight class the aircraft sends (light under 7 t, small to 34 t,
+  large to 136 t, heavy above), so a heavy stands out from the commuter
+  traffic at a glance; an aircraft that has not sent its class yet is drawn as
+  a large one, the commonest. The size does not change with zoom. A
+  helicopter is a hub with a crossed rotor; anything else that transmits — a
+  ground vehicle, a balloon, an obstacle — is a plain square. **Filled** means
+  airborne, **outline only** means on the ground, so a taxiing aircraft is
+  told apart from one a thousand feet above the same runway.
 - **History dots** behind it are where it has been. Their spacing is its speed
   and their curve is its turn, which is how a controller reads both before
   reading any number on the screen.
@@ -6377,9 +6425,131 @@ something:
 Drag to pan, scroll to zoom, double-click to reframe. Your own position is
 marked once **My grid** is set.
 
+**The selected aircraft's route** is drawn as dashed great circles from the
+departure airport through the aircraft to the destination — the whole route,
+with the airports marked by their ICAO codes. A route with stops is drawn
+airport to airport.
+
+#### Map layers
+
+The chips above the map switch what lies under the traffic. Each is remembered.
+
+| Chip | What it shows |
+| --- | --- |
+| **CITIES** | City names. |
+| **AIRPORTS** | Airports as the chart sign, a ringed circle, with their IATA code — the one on tickets and departure boards (`HAJ`). Fields without one, many military ones among them, keep their ICAO code. Large airports show from a continent's width, medium ones with scheduled service at a few countries, the rest at a region. The ICAO code and the name are in the pointer readout. |
+| **NIGHT** | The day–night boundary, as on the other maps. |
+| **CURSOR** | A readout beside the pointer: bearing and distance from your station, with a faint line and range ring through the pointer, the airport under it, and with RANGE on what the coverage diagram holds there. It is painted rather than a tooltip because it is read while moving. Off, there is no readout at all. |
+| **RANGE** | The coverage diagram, see below, with **1 H**, **24 H** and **7 D** to choose how far back it reaches. Needs your position (**My grid**). |
+
+The last button puts the map into a window of its own, which can be as large
+as the screen. Closing that window brings the map back into the panel.
+
+#### The coverage diagram
+
+**RANGE** answers the question every new antenna raises: how far, and in which
+directions, does this station hear? The sky around you is cut into slices of
+5° of bearing and rings of 10 km, out to 400 km, and every position an aircraft
+reports lands in one cell — but only if the same aircraft reported a position no
+more than 20 seconds before. A single frame from far away is a lucky decode; a
+track that keeps coming is reception, and the diagram is meant to show
+reception.
+
+Each cell is drawn yellow: **brighter** for a stronger signal, **more opaque**
+for more positions. The **line** joins the outer edge of the last cell in each
+direction that holds at least three positions — your steady range, which is
+rarely round: hills, buildings and the antenna's own pattern cut it per
+direction, and on some days the troposphere carries it far. With an aircraft
+selected, the slice from you to it is marked, so its bearing and distance read
+against the diagram.
+
+![The coverage diagram after seven hours: steady range per direction, with the selected aircraft's route and its slice from the station](images/adsb-coverage.jpg)
+
+The diagram is kept by the hour, a file an hour in the `adsb-coverage` folder
+of the configuration directory, for seven days — so the last hour (today's
+conditions) can be set against the last week (what the antenna usually does).
+Moving **My grid** starts a new diagram. After changing the antenna, clear it
+with **Reset…** in **SETUP**. The browser version keeps the current session
+only.
+
+#### The sighting log
+
+The list forgets an aircraft a minute after its last frame. The **LOG** chip
+beside the filter opens the sighting log, which does not: every aircraft heard
+today, one line each — when it came and went, callsign, type, route, and how far
+from you it was heard — with a summary at the top (how many, the farthest, the
+commonest destinations and types). Click a column heading to sort by it, again
+to reverse; it opens on the last heard first. It is written once a minute to
+one CSV file per day, `adsb-log/<date>.csv` in the configuration directory, and
+kept for 30 days. An aircraft heard several times in a day keeps one line, with
+its first and last contact and its nearest and farthest distance. The times are
+in the file twice: as epoch seconds (`first`, `last`) for programs, and as local
+date and time (`first_local`, `last_local`, `2026-11-17 13:24:05`) for a
+spreadsheet.
+
+**Right-click a line** for what still answers once the flight is over: copy
+the callsign or the address; the aircraft's **track of that day** on ADS-B
+Exchange (the UTC day it was logged); the **flight's history** by callsign on
+FlightAware; and the airframe on planespotters.net. These are links only.
+
+Beside the log, the **flight tracks** are kept: where each aircraft went, one
+line per point in `adsb-tracks/<date>.csv` — address, callsign, time (epoch and
+local), latitude, longitude, altitude, ground speed and track. Not every
+position is written: a point is kept when fifteen seconds have passed since the
+last one, or the track has turned more than 5°, or the altitude has changed by
+more than 500 ft. A straight cruise costs four lines a minute and a turn keeps
+its shape; a busy day is one to three megabytes. Kept for 30 days, like the log.
+The browser version keeps no tracks.
+
+![The sighting log: today's aircraft with times, flags, types, routes, distance and level, and the summary at the top](images/adsb-log.jpg)
+
+The log also learns types. Whenever the standing data knows the airframe behind
+a callsign, the callsign remembers the type, and the airline counts it. An
+aircraft the standing data does not know then gets the type its flight number
+last flew with, or else its airline's usual type — if at least five of that
+airline's aircraft have been seen and four in five of them were that type —
+shown with a question mark. Airlines put the same flight on the same type most
+days and many fly one family; the guess is sometimes wrong, and the question
+mark says so.
+
+#### Where the extra data comes from
+
+Only sources whose terms allow them to be shipped with or fetched by GPL
+software are built in. Everything else is a link.
+
+| What | Source | Terms |
+| --- | --- | --- |
+| Routes, airline names, aircraft (registration, type, operator, year), country by address block | Virtual Radar Server standing data, `github.com/vradarserver/standing-data` | public domain (CC0) |
+| Airports on the map and the places in FROM › TO | OurAirports, `ourairports.com/data` | public domain |
+| Country flags | packaged with SDRoxide | public domain |
+| planespotters.net, ADS-B Exchange, adsb.lol, OpenSky, Flightradar24 | right-click links only | — |
+
+The standing data is built from user submissions and knows a share of what
+flies, not all of it: many rows will have a route and an airline but no type.
+**Add to the VRS database** in the right-click menu is the way to change that
+for everyone.
+
+#### Routes
+
+ADS-B carries no flight plan: who, where, how high and how fast, nothing about
+where the flight is going. The ROUTE column, the route line in the card and the
+line on the map come from the callsign instead, looked up in the *standing data*
+of Virtual Radar Server (`github.com/vradarserver/standing-data`, public domain,
+CC0). It is the route the callsign usually flies, not the plan filed today; a
+charter, a diversion or a callsign reused for another flight will show the
+wrong airports or none. An aircraft far off its dashed line is the sign.
+
+The data is fetched as aircraft are heard: one small file per airline and one
+per group of airports, from `raw.githubusercontent.com`, and kept for a week in
+the `adsb-routes` folder of the configuration directory. Only the file name is
+asked for — nothing about your station or the aircraft is sent. A callsign that
+is a registration (private flights) has no route. Without a network connection
+the column stays empty and the rest of the panel works as before. The browser
+version shows no routes.
+
 **A target with a stale position is not drawn at all.** Past the timeout it
-comes off the map — square, dots and block together — while staying on the list,
-greyed. It is deliberately not faded instead: a dim square at a half-minute-old
+comes off the map — symbol, dots and block together — while staying on the list,
+greyed. It is deliberately not faded instead: a dim symbol at a half-minute-old
 position is still a claim about where an aeroplane is, made in the same ink as
 the true ones, and the map is the one place with no room for a hedge.
 
@@ -6394,6 +6564,10 @@ the true ones, and the map is the one place with no room for a hedge.
 | Trail length | 40 points | How many past positions are kept and drawn. |
 | Speed vector | 1 min | How far ahead the leader line reaches. Zero switches leaders off. |
 | Track at most | 300 aircraft | A ceiling, so a busy sector cannot grow without bound. The longest-silent go first. |
+
+Below the table, **Coverage map: N hours gathered** says how much the coverage
+diagram holds, and **Reset…** clears it, on disk too, once confirmed with **Really delete** — for
+after an antenna change or a move.
 
 #### What is decoded, and what is believed
 
@@ -16630,6 +16804,10 @@ and not the station's.
 | `renderer-fallback.txt` | text | Written only when a panic came from the graphics driver: the next start renders through OpenGL and says so. Delete it to go back to the default renderer ([14](#14-troubleshooting)). |
 | `skimmer.json` | JSON | Skimmers: which of CW / PSK / RTTY run, and each one's spot squelch in dB. Restored at startup; a narrowband (audio-mode) radio still forces them off without disturbing what you picked. |
 | `adsb.json` | JSON | ADS-B decoder ([§3.13](#313-ads-b-aircraft-on-1090-mhz)): the two timeouts, how many history dots to keep, how far ahead the speed vectors reach, and the ceiling on the aircraft table. Restored at startup, and — like `ism.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
+| `adsb-routes/` | directory | ADS-B standing data ([§3.13](#313-ads-b-aircraft-on-1090-mhz)): the route, airline, aircraft and address-block files fetched from Virtual Radar Server, and `map-airports.csv` cut from OurAirports. Refetched after a week; safe to delete. |
+| `adsb-coverage/` | directory | The ADS-B coverage diagram, one file an hour, seven days. **Reset…** in the ADS-B setup empties it. |
+| `adsb-log/` | directory | The ADS-B sighting log, one CSV file a day (`<date>.csv`), thirty days. |
+| `adsb-tracks/` | directory | ADS-B flight tracks, thinned to a point every 15 s or on a turn or climb, one CSV file a day, thirty days. |
 | `vdl2.json` | JSON | VDL2 decoder ([§3.15](#315-vdl2-what-the-aircraft-are-saying)): which of the fourteen channels to listen on, the burst threshold in dB, how much log and how many stations to keep, and how long a silent station stays on the list. Restored at startup, and — like `adsb.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
 | `ais.json` | JSON | AIS decoder ([§3.16](#316-ais-ships-on-162-mhz)): which of the two channels to listen on, the slot threshold in dB, the two timeouts, how many minutes of trail to keep, how far ahead the vectors reach, and the ceiling on the vessel table. Restored at startup, and — like `adsb.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
 | `wxsat.json` | JSON | Weather-satellite decoder ([§2.16.2](#2162-weather-satellites-noaa-apt-and-meteor-lrpt)): whether it runs, which signal (APT or LRPT) and which channel. Restored at startup; a receiver that only hands over audio forces it off without disturbing what you picked. |

@@ -4162,7 +4162,6 @@ scanner-move-don-t-stop-channel = Weitergehen und auf diesem Kanal nicht wieder 
 adsb-starting-ads-b-decoder = ADS-B-Decoder wird gestartet…
 adsb-ads-b = ADS-B
 adsb-t-1090-mhz-mode-s = 1090 MHz Mode S
-adsb-tune-receiver-1090-000-mhz = Den Empfänger auf 1090,000 MHz abstimmen, den weltweiten ADS-B-Downlink. Es gibt nur einen Kanal.
 adsb-setup = EINRICHTUNG
 adsb-timeouts-trail-length-how-far = Zeitüberschreitungen, Spurlänge und wie weit die Geschwindigkeitsvektoren reichen
 adsb-aircraft = FLUGZEUGE
@@ -4179,7 +4178,7 @@ adsb-last-frame-accepted-aircraft = Der letzte Rahmen, der von diesem Flugzeug a
 adsb-ads-b-setup = ADS-B-Einrichtung
 adsb-drop-map-after = Von der Karte nehmen nach
 adsb-without-position-report = ohne Positionsmeldung
-adsb-past-aircraft-comes-off-map = Danach verschwindet das Flugzeug von der Karte und seine Zeile wird grau. Es wird nicht verblasst: Ein blasses Quadrat an einer veralteten Position ist immer noch eine Aussage darüber, wo ein Flugzeug ist, in derselben Farbe wie die echten.
+adsb-past-aircraft-comes-off-map = Danach verschwindet das Flugzeug von der Karte und seine Zeile wird grau. Es wird nicht verblasst: Ein blasses Symbol an einer veralteten Position ist immer noch eine Aussage darüber, wo ein Flugzeug ist, in derselben Farbe wie die echten.
 adsb-drop-list-after = Von der Liste nehmen nach
 adsb-nothing-heard-all = ohne dass überhaupt etwas gehört wurde
 adsb-trail-length = Spurlänge
@@ -4194,6 +4193,73 @@ adsb-aircraft-ground-are-placed-against = Flugzeuge am Boden werden gegen die ei
 adsb-call = RUFZEICHEN
 adsb-icao = ICAO
 adsb-v-s = V/S
+adsb-route-col = STRECKE
+adsb-places-col = VON › NACH
+adsb-airline-col = AIRLINE
+adsb-type-col = TYP
+adsb-military = Militär
+adsb-row-registration = Kennzeichen
+adsb-row-type = Muster
+adsb-row-operator = Betreiber
+adsb-row-built = Baujahr
+adsb-row-country = Land (Adressblock)
+adsb-map-window = ADS-B-Karte
+adsb-chip-cities = STÄDTE
+adsb-chip-cities-tip = Städtenamen auf dieser Karte
+adsb-source-open = Quelle und Lizenz öffnen
+adsb-tune-gains-tip = Klick: auf 1090 MHz abstimmen und Verstärker setzen: { $gains }
+  jetzt: { $now } · Rechtsklick: speichern oder vergessen
+adsb-tune-gains-none-tip = Klick: auf 1090 MHz abstimmen (noch kein Verstärker-Preset)
+  Rechtsklick → speichern: { $now }
+adsb-gains-save = Aktuelle Verstärker als ADS-B-Preset speichern
+adsb-gains-now = jetzt:       { $gains }
+adsb-gains-stored = gespeichert: { $gains }
+adsb-gains-saved = ✓ Preset gespeichert
+adsb-gains-recalled = ✓ Preset gesetzt
+adsb-gains-none = Gerät meldet keine Verstärkerwerte
+adsb-gains-forget = Preset vergessen
+adsb-coverage-kept = Reichweitenkarte: { $hours } Stunden gesammelt
+adsb-coverage-reset = Zurücksetzen…
+adsb-coverage-reset-tip = Reichweitenkarte leeren, auch auf der Platte
+  nach Antennenwechsel oder Umzug
+adsb-coverage-reset-sure = Wirklich löschen
+adsb-coverage-reset-keep = Behalten
+adsb-chip-log = BUCH
+adsb-chip-log-tip = Sichtungsbuch: heute gehörte Flugzeuge, eine Zeile je Flugzeug
+  Tagesdatei adsb-log/<Datum>.csv im Konfig-Ordner, 30 Tage
+adsb-log-today = heute { $n } Flugzeuge
+adsb-log-farthest = weiteste { $km } km ({ $call })
+adsb-log-dests = Ziele
+adsb-log-types = Typen
+adsb-log-empty = Heute noch nichts gehört.
+adsb-log-time = ZEIT
+adsb-chip-airports = FLUGHÄFEN
+adsb-chip-airports-tip = Flughäfen mit Code, mehr beim Hineinzoomen
+  OurAirports, gemeinfrei · Rechtsklick: Quelle
+adsb-chip-range = REICHWEITE
+adsb-chip-range-tip = Empfang je 5° und 10 km, nur durchgehende Spuren (Lücke ≤ 20 s).
+    Helligkeit = Signal, Linie = äußerster sicherer Empfang
+adsb-chip-range-no-home = Braucht Standort: Locator in der Digimode-Einrichtung
+adsb-chip-pointer = CURSOR
+adsb-chip-pointer-tip = Mauszeiger-Details: Kurs, Entfernung, Reichweitenzelle
+  und Flughafen unter dem Zeiger
+adsb-range-1h = 1 H
+adsb-range-24h = 24 H
+adsb-range-7d = 7 T
+adsb-map-out-tip = Karte in eigenes Fenster
+adsb-copy-callsign = Rufzeichen { $call } kopieren
+adsb-copy-icao = ICAO { $icao } kopieren
+adsb-link-planespotters = Auf planespotters.net ansehen …
+adsb-link-adsbx-trace = Verlauf vom { $day } bei ADS-B Exchange
+adsb-link-flightaware = Flughistorie bei FlightAware ({ $call })
+adsb-link-adsbx = Auf adsbexchange.com ansehen …
+adsb-link-adsblol = Auf adsb.lol ansehen …
+adsb-link-opensky = Auf opensky-network.org ansehen …
+adsb-link-fr24 = Flug auf flightradar24.com ansehen …
+adsb-link-vrs-edit = In VRS-Datenbank eintragen …
+adsb-link-vrs-edit-tip = Quelle von Strecke, Airline, Typ (CC0).
+    ICAO wird in Zwischenablage kopiert
+adsb-show-on-map = Auf Karte zeigen
 
 ## drm (src/app/drm.rs)
 
@@ -4849,6 +4915,11 @@ solarstate-dwarf-planets = ZWERGPLANETEN
 ## adsbmap (src/adsb_map.rs)
 
 adsbmap-double-click-reframe = Doppelklick zum Neurahmen
+adsbmap-cell = Zelle: { $n } Positionen, Ø { $rssi } dBFS
+adsbmap-cell-empty = Zelle: kein Empfang
+adsbmap-cell-outside = jenseits { $km } km Diagramm
+adsbmap-reach = Reichweite hier: { $km } km
+adsbmap-reach-none = Reichweite hier: offen
 
 ## aprsmap (src/aprs_map.rs)
 
@@ -4929,6 +5000,14 @@ morse-playback-available-desktop-build = Die Wiedergabe ist im Desktop-Build ver
 
 adsb-row-altitude = Höhe
 adsb-row-track = Kurs
+adsb-row-heading = Steuerkurs
+adsb-row-airspeed = Fahrt
+adsb-row-selected-alt = gewählte Höhe
+adsb-row-selected-heading = gewählter Kurs
+adsb-row-autopilot = Autopilot
+adsb-on = an
+adsb-off = aus
+adsb-row-route = Strecke
 adsb-row-turning = Kurvenflug
 adsb-row-squawk = Squawk
 adsb-row-range = Entfernung

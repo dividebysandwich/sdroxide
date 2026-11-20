@@ -2006,7 +2006,29 @@ impl SdroxideApp {
                 RadioEvent::Recordings(listing) => self.playback.accept(listing),
                 RadioEvent::WxsatStatus(st) => self.wxsat.accept(st),
                 RadioEvent::SondeStatus(st) => self.sonde.accept(st),
-                RadioEvent::AdsbStatus(st) => self.adsb_status = Some(st),
+                RadioEvent::AdsbStatus(st) => {
+                    // Counted as the table arrives, not as the panel draws, so
+                    // the diagram keeps filling while another pane is up.
+                    let home = self.adsb_home();
+                    self.adsb_coverage.note(home, &st.aircraft, crate::time::now_unix());
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.adsb_tracks.note(&st.aircraft, crate::time::now_unix());
+                    let routes = &mut self.adsb_routes;
+                    self.adsb_log.note(
+                        home,
+                        &st.aircraft,
+                        |a| crate::adsb_log::Known {
+                            kind: routes.aircraft(a.icao).map(|x| x.type_code).unwrap_or_default(),
+                            route: routes
+                                .route(&a.callsign)
+                                .map(|r| crate::adsb_route::short(&r))
+                                .unwrap_or_default(),
+                            country: routes.country(a.icao).map(|c| c.0).unwrap_or_default(),
+                        },
+                        crate::time::now_unix(),
+                    );
+                    self.adsb_status = Some(st);
+                }
                 RadioEvent::Vdl2Status(st) => self.vdl2_status = Some(st),
                 RadioEvent::AisStatus(st) => self.ais_status = Some(st),
                 RadioEvent::Qo100Status(st) => self.qo100_status = Some(st),

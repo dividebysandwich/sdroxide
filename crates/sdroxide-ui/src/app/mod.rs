@@ -840,12 +840,30 @@ pub struct SdroxideApp {
     adsb_status: Option<Box<sdroxide_types::AdsbStatus>>,
     /// ADS-B: the radar picture's pan/zoom and which target is selected.
     adsb_map: crate::adsb_map::AdsbMapState,
+    /// Routes by callsign and airport places, fetched as aircraft are heard
+    /// (see [`crate::adsb_route`]).
+    adsb_routes: crate::adsb_route::RouteBook,
+    /// Where this station hears aircraft, by bearing and distance, by the
+    /// hour (see [`crate::adsb_coverage`]). Fed as each table arrives.
+    adsb_coverage: crate::adsb_coverage::CoverageBook,
+    /// Every aircraft heard, a line a day, and the types learnt from them
+    /// (see [`crate::adsb_log`]). Fed as each table arrives.
+    adsb_log: crate::adsb_log::SightingBook,
+    /// Where each aircraft went, thinned, a file a day
+    /// (see [`crate::adsb_tracks`]). Fed as each table arrives.
+    #[cfg(not(target_arch = "wasm32"))]
+    adsb_tracks: crate::adsb_tracks::TrackBook,
+    /// The note beside the 1090.000 chip after a gain save or recall, and
+    /// when it was set.
+    adsb_gain_note: Option<(String, i64)>,
     /// ADS-B: filter for the aircraft list; matches a callsign or an address.
     adsb_filter: String,
     /// ADS-B: the decoder's own settings window is open.
     show_adsb_setup: bool,
     adsb_sort: panels::adsb::AdsbSort,
     adsb_sort_desc: bool,
+    adsb_log_sort: panels::adsb::LogSort,
+    adsb_log_desc: bool,
     /// AIS: the vessel table and everything the decoder is seeing, as the
     /// engine last sent it. Boxed for the reason the ADS-B one is — a busy
     /// estuary's table, each row carrying a trail, is far larger than anything
@@ -1814,10 +1832,18 @@ impl SdroxideApp {
             aprs_map: crate::aprs_map::AprsMapState::default(),
             adsb_status: None,
             adsb_map: crate::adsb_map::AdsbMapState::default(),
+            adsb_routes: crate::adsb_route::RouteBook::default(),
+            adsb_coverage: Default::default(),
+            adsb_log: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            adsb_tracks: Default::default(),
+            adsb_gain_note: None,
             adsb_filter: String::new(),
             show_adsb_setup: false,
             adsb_sort: panels::adsb::AdsbSort::default(),
             adsb_sort_desc: true,
+            adsb_log_sort: panels::adsb::LogSort::default(),
+            adsb_log_desc: true,
             ais_status: None,
             ais_map: crate::ais_map::AisMapState::default(),
             ais_filter: String::new(),

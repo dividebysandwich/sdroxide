@@ -43,6 +43,75 @@ pub(in crate::app) enum AdsbSort {
     Signal,
 }
 
+/// How the sighting log is ordered.
+/// Why: HDZ 2026-11-17: „das Buch muss sortierbare Header bekommen“.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(in crate::app) enum LogSort {
+    /// Last heard first, as the log opens.
+    #[default]
+    Seen,
+    Callsign,
+    Address,
+    Type,
+    Route,
+    /// Farthest first.
+    Range,
+    /// Highest first.
+    Altitude,
+}
+
+/// Column offsets of the sighting log, heading and rows alike.
+const LOG_X: [f32; 8] = [4.0, 84.0, 152.0, 168.0, 220.0, 262.0, 360.0, 420.0];
+
+/// Order the sighting log. Text sorts A–Z ascending; an empty field or a
+/// missing number goes last both ways round, as in the aircraft table.
+fn sort_log(rows: &mut [&crate::adsb_log::Sighting], by: LogSort, desc: bool) {
+    use crate::adsb_log::Sighting;
+    use std::cmp::Ordering;
+    let text = |x: &Sighting| -> String {
+        match by {
+            LogSort::Callsign => x.call.clone(),
+            LogSort::Address => format!("{:06X}", x.icao),
+            LogSort::Type => x.kind.clone(),
+            LogSort::Route => x.route.clone(),
+            _ => String::new(),
+        }
+    };
+    let num = |x: &Sighting| -> Option<f64> {
+        match by {
+            LogSort::Seen => Some(x.last as f64),
+            LogSort::Range => (!x.max_km.is_nan()).then_some(f64::from(x.max_km)),
+            LogSort::Altitude => x.max_alt_ft.map(f64::from),
+            _ => None,
+        }
+    };
+    let textual =
+        matches!(by, LogSort::Callsign | LogSort::Address | LogSort::Type | LogSort::Route);
+    rows.sort_by(|a, b| {
+        if textual {
+            let (ta, tb) = (text(a), text(b));
+            return match (ta.is_empty(), tb.is_empty()) {
+                (false, true) => Ordering::Less,
+                (true, false) => Ordering::Greater,
+                (true, true) => Ordering::Equal,
+                (false, false) => {
+                    let o = ta.cmp(&tb);
+                    if desc { o.reverse() } else { o }
+                }
+            };
+        }
+        match (num(a), num(b)) {
+            (Some(x), Some(y)) => {
+                let o = x.partial_cmp(&y).unwrap_or(Ordering::Equal);
+                if desc { o.reverse() } else { o }
+            }
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => Ordering::Equal,
+        }
+    });
+}
+
 /// Below this the two signal columns come off the table. A row that has run out
 /// of room prints its columns on top of each other, which is worse than not
 /// printing them.
@@ -75,6 +144,7 @@ impl SdroxideApp {
 
         self.adsb_header(ui, cmds, &st);
         ui.add_space(3.0);
+        self.adsb_routes.poll(ui.ctx());
 
         let avail_h = (content_bottom - ui.cursor().top()).max(80.0);
         let pane = self.phone_pane(ui, self.state.rx[0].mode);
@@ -84,16 +154,21 @@ impl SdroxideApp {
         // narrow table (callsign, altitude and age); the ceiling leaves the map
         // enough to still be a radar picture rather than a strip.
         const HANDLE_W: f32 = 7.0;
+        // The map in a window of its own leaves the panel to the list.
+        let map_out = self.view.adsb_map_out && cfg!(not(target_arch = "wasm32"));
         let list_w = (full_w * self.view.adsb_split_fraction)
             .clamp(240.0, (full_w - HANDLE_W - 200.0).max(240.0));
 
         ui.horizontal_top(|ui| {
-            if pane.is_none_or(|p| p == 0) {
+            if map_out || pane.is_none_or(|p| p == 0) {
                 ui.allocate_ui_with_layout(
-                    egui::vec2(if pane.is_some() { full_w } else { list_w }, avail_h),
+                    egui::vec2(if pane.is_some() || map_out { full_w } else { list_w }, avail_h),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| self.adsb_list(ui, &st, now, avail_h),
                 );
+            }
+            if map_out {
+                return;
             }
             if pane.is_none() {
                 let h = crate::chrome::split_handle(ui, egui::vec2(HANDLE_W, avail_h), None);
@@ -103,8 +178,116 @@ impl SdroxideApp {
                 }
             }
             if pane.is_none_or(|p| p == 1) {
-                ui.vertical(|ui| self.adsb_map_pane(ui, &st, now, avail_h));
+                ui.vertical(|ui| self.adsb_map_pane(ui, &st, now, avail_h, false));
             }
+        });
+        #[cfg(not(target_arch = "wasm32"))]
+        if map_out {
+            self.adsb_map_window(ui.ctx(), &st, now);
+        }
+    }
+
+    /// The map in an OS window of its own. Closing the window, or its dock
+    /// chip, brings the map back into the panel.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn adsb_map_window(&mut self, ctx: &egui::Context, st: &AdsbStatus, now: i64) {
+        const ID: &str = "ADSB-MAP";
+        let mut open = true;
+        let mut tool_st = self.take_tool_state(ID);
+        tool_st.undocked = true;
+        let child = crate::app::undocked::ChildWindow::own(self);
+        let title = tr!("adsb-map-window");
+        crate::app::undocked::tool_window(
+            ctx,
+            crate::app::undocked::ToolWindow::new(ID, &title, [960.0, 680.0]),
+            &mut tool_st,
+            child,
+            &mut open,
+            |ui| {
+                let h = ui.available_height();
+                self.adsb_map_pane(ui, st, now, h, true);
+            },
+        );
+        let docked = !tool_st.undocked;
+        tool_st.undocked = true;
+        self.put_tool_state(ID, tool_st);
+        if !open || docked {
+            self.view.adsb_map_out = false;
+        }
+    }
+
+    /// The switches over the map: cities, night, the coverage diagram with
+    /// its window, and the way out into a window of its own.
+    fn adsb_map_chips(&mut self, ui: &mut egui::Ui, in_window: bool) {
+        let have_home = self.adsb_home().is_some();
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
+            let small = |t: String| RichText::new(t).size(9.5);
+            if crate::chrome::chip(ui, self.view.adsb_map_cities, small(tr!("adsb-chip-cities")))
+                .on_hover_text(tr!("adsb-chip-cities-tip"))
+                .clicked()
+            {
+                self.view.adsb_map_cities = !self.view.adsb_map_cities;
+            }
+            if crate::chrome::chip(
+                ui,
+                self.view.adsb_map_airports,
+                small(tr!("adsb-chip-airports")),
+            )
+            .on_hover_text(tr!("adsb-chip-airports-tip"))
+            .context_menu_link("https://ourairports.com/data/")
+            .clicked()
+            {
+                self.view.adsb_map_airports = !self.view.adsb_map_airports;
+            }
+            if crate::chrome::chip(ui, self.view.map_night, small(tr!("panels-night")))
+                .on_hover_text(tr!("panels-shade-where-sun-down-twilight"))
+                .clicked()
+            {
+                self.view.map_night = !self.view.map_night;
+            }
+            if crate::chrome::chip(ui, self.view.adsb_map_pointer, small(tr!("adsb-chip-pointer")))
+                .on_hover_text(if have_home {
+                    tr!("adsb-chip-pointer-tip")
+                } else {
+                    tr!("adsb-chip-range-no-home")
+                })
+                .clicked()
+            {
+                self.view.adsb_map_pointer = !self.view.adsb_map_pointer;
+            }
+            let range = self.view.adsb_map_range;
+            let tip =
+                if have_home { tr!("adsb-chip-range-tip") } else { tr!("adsb-chip-range-no-home") };
+            if crate::chrome::chip(ui, range, small(tr!("adsb-chip-range")))
+                .on_hover_text(tip)
+                .clicked()
+            {
+                self.view.adsb_map_range = !range;
+            }
+            if range {
+                for (i, label) in
+                    [tr!("adsb-range-1h"), tr!("adsb-range-24h"), tr!("adsb-range-7d")]
+                        .into_iter()
+                        .enumerate()
+                {
+                    if crate::chrome::chip(ui, self.view.adsb_range_window == i as u8, small(label))
+                        .clicked()
+                    {
+                        self.view.adsb_range_window = i as u8;
+                    }
+                }
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            if !in_window
+                && crate::chrome::chip_window_icon(ui, crate::chrome::WindowIcon::Out)
+                    .on_hover_text(tr!("adsb-map-out-tip"))
+                    .clicked()
+            {
+                self.view.adsb_map_out = true;
+            }
+            #[cfg(target_arch = "wasm32")]
+            let _ = in_window;
         });
     }
 
@@ -126,15 +309,87 @@ impl SdroxideApp {
             ui.label(RichText::new(tr!("adsb-t-1090-mhz-mode-s")).weak().size(10.5));
 
             // The one preset there is. A chip rather than a note, because the
-            // fix for "nothing is decoding" is nearly always this.
-            if crate::chrome::chip(ui, on_channel, "1090.000")
-                .on_hover_text(tr!("adsb-tune-receiver-1090-000-mhz"))
-                .clicked()
-            {
+            // fix for "nothing is decoding" is nearly always this. A left
+            // click tunes and sets the gains saved for ADS-B on this device;
+            // saving is the right click's menu, so a quick click can never
+            // overwrite a good setting with whatever happens to be on.
+            // Why: HDZ 2026-11-17: „links store LNA settings (alle Verstärker),
+            //      rechts recall … mach so wie du vorgeschlagen hast“.
+            let key = self.adsb_gain_key();
+            let saved = key.as_ref().and_then(|k| self.view.adsb_gain_presets.get(k)).cloned();
+            let now_gains = self.adsb_gain_snapshot();
+            let now = crate::time::now_unix();
+            // The tooltip says what a click will set and what is on now, so a
+            // recall that changes nothing reads as such (HDZ 2026-11-17: „wenn
+            // gespeichert muss der Tooltip zeigen, was im Speicher ist … ich
+            // sehe keinen Effekt beim Recall“).
+            let tip = match &saved {
+                Some(g) => {
+                    tr!("adsb-tune-gains-tip", gains = fmt_gains(g), now = fmt_gains(&now_gains))
+                }
+                None => tr!("adsb-tune-gains-none-tip", now = fmt_gains(&now_gains)),
+            };
+            let resp = crate::chrome::chip(ui, on_channel, "1090.000").on_hover_text(tip);
+            if resp.clicked() {
                 cmds.push(Command::SetVfo {
                     vfo: self.state.active_vfo,
                     hz: sdroxide_types::ADSB_FREQ_HZ,
                 });
+                if let Some(g) = &saved {
+                    tracing::info!("ADS-B gain preset recalled for {key:?}: {}", fmt_gains(g));
+                    self.apply_gains(g, cmds);
+                    self.adsb_gain_note = Some((tr!("adsb-gains-recalled"), now));
+                }
+            }
+            resp.context_menu(|ui| {
+                ui.label(
+                    RichText::new(tr!("adsb-gains-now", gains = fmt_gains(&now_gains)))
+                        .monospace()
+                        .size(9.5),
+                );
+                if ui.button(tr!("adsb-gains-save")).clicked() {
+                    match (&key, now_gains.is_empty()) {
+                        (Some(k), false) => {
+                            tracing::info!(
+                                "ADS-B gain preset saved for {k}: {}",
+                                fmt_gains(&now_gains)
+                            );
+                            self.view.adsb_gain_presets.insert(k.clone(), now_gains.clone());
+                            self.adsb_gain_note = Some((tr!("adsb-gains-saved"), now));
+                        }
+                        _ => {
+                            tracing::warn!(
+                                "ADS-B gain preset: nothing to save (device {key:?}, gains {:?})",
+                                self.state.gains
+                            );
+                            self.adsb_gain_note = Some((tr!("adsb-gains-none"), now));
+                        }
+                    }
+                    ui.close();
+                }
+                if let Some(g) = &saved {
+                    ui.label(
+                        RichText::new(tr!("adsb-gains-stored", gains = fmt_gains(g)))
+                            .monospace()
+                            .size(9.5)
+                            .weak(),
+                    );
+                    if ui.button(tr!("adsb-gains-forget")).clicked()
+                        && let Some(k) = &key
+                    {
+                        self.view.adsb_gain_presets.remove(k);
+                        ui.close();
+                    }
+                }
+            });
+            // A short note beside the chip after a save or a recall.
+            if let Some((msg, at)) = &self.adsb_gain_note {
+                if now - at < 4 {
+                    ui.label(RichText::new(msg).size(10.0).color(theme::GREEN()));
+                    crate::repaint::after_ms(ui.ctx(), 500);
+                } else {
+                    self.adsb_gain_note = None;
+                }
             }
 
             ui.separator();
@@ -214,7 +469,21 @@ impl SdroxideApp {
                     .hint_text("filter")
                     .desired_width(70.0),
             );
+            if crate::chrome::chip(
+                ui,
+                self.view.adsb_show_log,
+                RichText::new(tr!("adsb-chip-log")).size(9.5),
+            )
+            .on_hover_text(tr!("adsb-chip-log-tip"))
+            .clicked()
+            {
+                self.view.adsb_show_log = !self.view.adsb_show_log;
+            }
         });
+        if self.view.adsb_show_log {
+            self.adsb_log_list(ui, st, avail_h - 26.0);
+            return;
+        }
 
         let filter = self.adsb_filter.trim().to_ascii_uppercase();
         let mut rows: Vec<&AdsbAircraft> = st
@@ -227,6 +496,49 @@ impl SdroxideApp {
             })
             .collect();
         sort_rows(&mut rows, self.adsb_sort, self.adsb_sort_desc, home);
+        // Asked for here, row by row, so only the airlines actually heard are
+        // fetched; a row shows its route once the airline's file is in.
+        let routes: Vec<Option<Vec<String>>> =
+            rows.iter().map(|a| self.adsb_routes.route(&a.callsign)).collect();
+        // The same route by place. Asking for the end airports here fetches
+        // their files for every row with a route, not only the selected one.
+        let mut places: Vec<String> = routes
+            .iter()
+            .map(|r| match r {
+                Some(r) => crate::adsb_route::short_places(r, |c| {
+                    self.adsb_routes.airport(c).map(|ap| ap.place)
+                }),
+                None => String::new(),
+            })
+            .collect();
+        // The airline by name, from the callsign alone, so a row without a
+        // known route still says whose aircraft it is; the country from the
+        // address block; the type from the standing data, else the class the
+        // aircraft sends about itself.
+        let extras: Vec<RowExtra> = rows
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                let info = self.adsb_routes.aircraft(a.icao);
+                let known = info.as_ref().is_some_and(|x| !x.type_code.is_empty());
+                RowExtra {
+                    places: std::mem::take(&mut places[i]),
+                    airline: self.adsb_routes.airline(&a.callsign).unwrap_or_default(),
+                    // Unknown airframe: the type the sighting book has seen
+                    // on this flight or airline, with a question mark; else
+                    // the class the aircraft sends.
+                    kind: match info {
+                        Some(x) if known => x.type_code,
+                        _ => match self.adsb_log.guess(&a.callsign) {
+                            Some(g) => format!("{g}?"),
+                            None => a.category.clone().unwrap_or_default(),
+                        },
+                    },
+                    kind_known: known,
+                    country: self.adsb_routes.country(a.icao),
+                }
+            })
+            .collect();
 
         let selected = self.adsb_map.selected;
         let card = selected.and_then(|i| st.aircraft.iter().find(|a| a.icao == i));
@@ -258,8 +570,18 @@ impl SdroxideApp {
                     ui.label(RichText::new(tr!("adsb-nothing-heard-yet")).weak());
                 }
                 for (i, a) in rows.iter().enumerate() {
-                    if adsb_row(ui, a, now, selected, home, drop_map_s, i) {
-                        pick = Some(a.icao);
+                    let route = routes[i].as_deref();
+                    let extra = &extras[i];
+                    let flags = &mut self.flags;
+                    match adsb_row(ui, a, route, extra, flags, now, selected, home, drop_map_s, i) {
+                        Some(RowAction::Select) => pick = Some(a.icao),
+                        Some(RowAction::Centre) => {
+                            if let Some((lat, lon)) = a.lat.zip(a.lon) {
+                                self.adsb_map.selected = Some(a.icao);
+                                self.adsb_map.view.centre_on(lat, lon);
+                            }
+                        }
+                        None => {}
                     }
                 }
             });
@@ -277,6 +599,148 @@ impl SdroxideApp {
                     ((card_h - h.drag_delta().y) / avail_h.max(1.0)).clamp(0.12, 0.8);
             }
             self.adsb_card(ui, a, now, card_h, home);
+        }
+    }
+
+    /// Today's sightings: a summary line, then one row an aircraft, latest
+    /// first. A click on one still in the air selects it on the map.
+    fn adsb_log_list(&mut self, ui: &mut egui::Ui, st: &AdsbStatus, h: f32) {
+        let mut rows = self.adsb_log.today();
+        sort_log(&mut rows, self.adsb_log_sort, self.adsb_log_desc);
+        // The summary: how many, the farthest, and the commonest
+        // destinations and types.
+        let top = |keys: Vec<&str>| -> String {
+            let mut n: std::collections::HashMap<&str, u32> = Default::default();
+            for k in keys.into_iter().filter(|k| !k.is_empty()) {
+                *n.entry(k).or_default() += 1;
+            }
+            let mut v: Vec<_> = n.into_iter().collect();
+            v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+            v.iter().take(5).map(|(k, n)| format!("{k} {n}")).collect::<Vec<_>>().join(" · ")
+        };
+        let dests = top(rows.iter().map(|s| s.route.rsplit('›').next().unwrap_or("")).collect());
+        let kinds = top(rows.iter().map(|s| s.kind.as_str()).collect());
+        let far =
+            rows.iter().filter(|s| !s.max_km.is_nan()).max_by(|a, b| a.max_km.total_cmp(&b.max_km));
+        let mut head = tr!("adsb-log-today", n = rows.len().to_string());
+        if let Some(f) = far {
+            let who = if f.call.is_empty() { format!("{:06X}", f.icao) } else { f.call.clone() };
+            head.push_str(&format!(
+                "   {}",
+                tr!("adsb-log-farthest", km = format!("{:.0}", f.max_km), call = who)
+            ));
+        }
+        ui.label(RichText::new(head).monospace().size(10.0).color(theme::CYAN()));
+        if !dests.is_empty() {
+            ui.label(
+                RichText::new(format!("{}  {dests}", tr!("adsb-log-dests")))
+                    .monospace()
+                    .size(9.5)
+                    .weak(),
+            );
+        }
+        if !kinds.is_empty() {
+            ui.label(
+                RichText::new(format!("{}  {kinds}", tr!("adsb-log-types")))
+                    .monospace()
+                    .size(9.5)
+                    .weak(),
+            );
+        }
+        {
+            const L: egui::Align2 = egui::Align2::LEFT_CENTER;
+            crate::app::panels::widgets::sort_head_row(
+                ui,
+                &[
+                    (LOG_X[0], L, &tr!("adsb-log-time"), Some(LogSort::Seen)),
+                    (LOG_X[1], L, &tr!("adsb-call"), Some(LogSort::Callsign)),
+                    (LOG_X[3], L, &tr!("adsb-icao"), Some(LogSort::Address)),
+                    (LOG_X[4], L, &tr!("adsb-type-col"), Some(LogSort::Type)),
+                    (LOG_X[5], L, &tr!("adsb-route-col"), Some(LogSort::Route)),
+                    (LOG_X[6], L, "KM", Some(LogSort::Range)),
+                    (LOG_X[7], L, "ALT", Some(LogSort::Altitude)),
+                ],
+                &mut self.adsb_log_sort,
+                &mut self.adsb_log_desc,
+            );
+        }
+        let live: std::collections::HashSet<u32> = st.aircraft.iter().map(|a| a.icao).collect();
+        let selected = self.adsb_map.selected;
+        let mut pick = None;
+        egui::ScrollArea::vertical()
+            .id_salt("adsb-log")
+            .max_height((h - 64.0).max(60.0))
+            .auto_shrink([false, false])
+            .show_themed(ui, |ui| {
+                if rows.is_empty() {
+                    ui.label(RichText::new(tr!("adsb-log-empty")).weak());
+                }
+                for s in &rows {
+                    let w = ui.available_width();
+                    let (rect, resp) =
+                        ui.allocate_exact_size(egui::vec2(w, 16.0), egui::Sense::click());
+                    if !ui.is_rect_visible(rect) {
+                        continue;
+                    }
+                    let p = ui.painter_at(rect);
+                    let on = live.contains(&s.icao);
+                    if selected == Some(s.icao) {
+                        p.rect_filled(rect, 0.0, theme::gray(34));
+                    } else if resp.hovered() {
+                        p.rect_filled(rect, 0.0, theme::gray(26));
+                    }
+                    let ink = if on { theme::CYAN() } else { theme::gray(150) };
+                    let dim = theme::gray(120);
+                    let font = egui::FontId::monospace(10.0);
+                    let y = rect.center().y;
+                    let put = |x: f32, t: String, c| {
+                        p.text(
+                            egui::pos2(rect.left() + x, y),
+                            egui::Align2::LEFT_CENTER,
+                            t,
+                            font.clone(),
+                            c,
+                        );
+                    };
+                    put(
+                        LOG_X[0],
+                        format!(
+                            "{}–{}",
+                            crate::adsb_log::local_hm(s.first),
+                            crate::adsb_log::local_hm(s.last)
+                        ),
+                        dim,
+                    );
+                    put(LOG_X[1], s.call.clone(), ink);
+                    if !s.country.is_empty() {
+                        self.flags.paint(
+                            ui.ctx(),
+                            &p,
+                            &s.country,
+                            egui::pos2(rect.left() + LOG_X[2], y),
+                            8.0,
+                        );
+                    }
+                    put(LOG_X[3], format!("{:06X}", s.icao), dim);
+                    put(LOG_X[4], s.kind.clone(), ink);
+                    put(LOG_X[5], s.route.clone(), dim);
+                    let km = if s.max_km.is_nan() {
+                        String::new()
+                    } else {
+                        format!("{:>4.0} km", s.max_km)
+                    };
+                    put(LOG_X[6], km, dim);
+                    let fl =
+                        s.max_alt_ft.map(|a| format!("F{:03}", (a + 50) / 100)).unwrap_or_default();
+                    put(LOG_X[7], fl, dim);
+                    if resp.clicked() && on {
+                        pick = Some(s.icao);
+                    }
+                    resp.context_menu(|ui| log_row_menu(ui, s));
+                }
+            });
+        if let Some(icao) = pick {
+            self.adsb_map.selected = (selected != Some(icao)).then_some(icao);
         }
     }
 
@@ -321,6 +785,35 @@ impl SdroxideApp {
                 }
 
                 let mut rows: Vec<(String, String)> = Vec::new();
+                // The usual route of the callsign, airports named where their
+                // file is in. Typical, not filed: see `adsb_route`.
+                if let Some(route) = self.adsb_routes.route(&a.callsign) {
+                    let names: Vec<String> = route
+                        .iter()
+                        .map(|c| match self.adsb_routes.airport(c) {
+                            Some(ap) if !ap.name.is_empty() => format!("{c} {}", ap.name),
+                            _ => c.clone(),
+                        })
+                        .collect();
+                    rows.push((tr!("adsb-row-route"), names.join(" → ")));
+                }
+                // What the standing data knows of the airframe, where it does.
+                if let Some(info) = self.adsb_routes.aircraft(a.icao) {
+                    for (key, v) in [
+                        (tr!("adsb-row-registration"), info.registration),
+                        (tr!("adsb-row-type"), info.manufacturer_model),
+                        (tr!("adsb-row-operator"), info.operator),
+                        (tr!("adsb-row-built"), info.year),
+                    ] {
+                        if !v.is_empty() {
+                            rows.push((key, v));
+                        }
+                    }
+                }
+                if let Some((cc, mil)) = self.adsb_routes.country(a.icao) {
+                    let v = if mil { format!("{cc} · {}", tr!("adsb-military")) } else { cc };
+                    rows.push((tr!("adsb-row-country"), v));
+                }
                 if let Some(ft) = a.altitude_ft {
                     rows.push((tr!("adsb-row-altitude"), tr!("adsb-ft-barometric", ft = ft)));
                 }
@@ -338,6 +831,54 @@ impl SdroxideApp {
                 }
                 if let Some(v) = a.vertical_rate_fpm {
                     rows.push((tr!("adsb-vertical-rate"), format!("{value:+} ft/min", value = v)));
+                }
+                // What the aircraft reports from its own systems; each row only
+                // once a message carrying it has arrived.
+                let av = &a.avionics;
+                if let Some(h) = av.heading_deg {
+                    rows.push((tr!("adsb-row-heading"), format!("{h:03.0}°")));
+                }
+                let speeds: Vec<String> = [("IAS", av.ias_kt), ("TAS", av.tas_kt)]
+                    .iter()
+                    .filter_map(|(k, v)| v.map(|v| format!("{k} {v:.0} kt")))
+                    .collect();
+                if !speeds.is_empty() {
+                    rows.push((tr!("adsb-row-airspeed"), speeds.join(" · ")));
+                }
+                if let Some(ft) = av.selected_alt_ft {
+                    // The field counts in 32 ft steps, so FL350 arrives as
+                    // 35 008; what the crew set is the nearest hundred.
+                    let ft = (ft as f32 / 100.0).round() as i32 * 100;
+                    let src = if av.selected_alt_fms { "FMS" } else { "MCP" };
+                    rows.push((tr!("adsb-row-selected-alt"), format!("{ft} ft ({src})")));
+                }
+                if let Some(h) = av.selected_heading_deg {
+                    rows.push((tr!("adsb-row-selected-heading"), format!("{h:03.0}°")));
+                }
+                if let Some(q) = av.qnh_hpa {
+                    // 0.8 hPa steps: 1012.8 is the code nearest the standard
+                    // 1013.25, so it reads as STD, the setting above the
+                    // transition altitude.
+                    let std = if (q - 1013.25).abs() < 0.41 { " (STD)" } else { "" };
+                    rows.push(("QNH".to_string(), format!("{q:.1} hPa{std}")));
+                }
+                if let Some(ap) = av.autopilot {
+                    let mut parts = vec![if ap { tr!("adsb-on") } else { tr!("adsb-off") }];
+                    parts.extend(av.modes.iter().cloned());
+                    if av.tcas == Some(true) {
+                        parts.push("TCAS".to_string());
+                    }
+                    rows.push((tr!("adsb-row-autopilot"), parts.join(" · ")));
+                }
+                if let Some(v) = av.version {
+                    let mut parts = vec![format!("v{v}")];
+                    if let Some(n) = av.nac_p {
+                        parts.push(format!("NACp {n}"));
+                    }
+                    if let Some(n) = av.sil {
+                        parts.push(format!("SIL {n}"));
+                    }
+                    rows.push(("ADS-B".to_string(), parts.join(" · ")));
                 }
                 if a.squawk.is_some() {
                     rows.push((tr!("adsb-row-squawk"), a.fmt_squawk()));
@@ -402,11 +943,112 @@ impl SdroxideApp {
             });
     }
 
-    fn adsb_map_pane(&mut self, ui: &mut egui::Ui, st: &AdsbStatus, now: i64, h: f32) {
+    fn adsb_map_pane(
+        &mut self,
+        ui: &mut egui::Ui,
+        st: &AdsbStatus,
+        now: i64,
+        h: f32,
+        in_window: bool,
+    ) {
+        let top = ui.cursor().top();
+        self.adsb_map_chips(ui, in_window);
+        let h = (h - (ui.cursor().top() - top)).max(60.0);
         let home = self.adsb_home();
         let cfg = self.state.adsb;
+        // The selected aircraft's route, with every airport whose place is in.
+        let route: Vec<crate::adsb_route::Airport> = self
+            .adsb_map
+            .selected
+            .and_then(|i| st.aircraft.iter().find(|a| a.icao == i))
+            .and_then(|a| self.adsb_routes.route(&a.callsign))
+            .map(|r| r.iter().filter_map(|c| self.adsb_routes.airport(c)).collect())
+            .unwrap_or_default();
+        let night = self.night_texture(ui.ctx());
+        let hours = match self.view.adsb_range_window {
+            0 => 1,
+            1 => 24,
+            _ => crate::adsb_coverage::KEEP_H,
+        };
+        let coverage =
+            if self.view.adsb_map_range { self.adsb_coverage.view(hours, now) } else { None };
+        let airports =
+            if self.view.adsb_map_airports { self.adsb_routes.map_airports() } else { None };
+        let layers = crate::adsb_map::Layers {
+            night,
+            cities: self.view.adsb_map_cities,
+            coverage: coverage.as_ref(),
+            pointer: self.view.adsb_map_pointer,
+            airports,
+        };
         let state = &mut self.adsb_map;
-        crate::adsb_map::show(ui, state, &st.aircraft, home, now, cfg, h);
+        crate::adsb_map::show(ui, state, &st.aircraft, &route, home, now, cfg, h, layers);
+    }
+
+    /// Which device a gain preset belongs to: driver and label, so an RSP1a
+    /// and an RTL-SDR keep their own.
+    fn adsb_gain_key(&self) -> Option<String> {
+        self.caps.as_ref().map(|c| format!("{}:{}", c.driver, c.label))
+    }
+
+    /// The receive gains to keep: every gain stage the device offers, its
+    /// hardware AGC and its amplifier and range switches, as the engine last
+    /// echoed them. Settings that ride the same command but are not gain
+    /// (ppm, bias tee, sampling mode) stay out.
+    fn adsb_gain_snapshot(&self) -> Vec<(String, f64)> {
+        let stages: Vec<&str> = self
+            .caps
+            .as_ref()
+            .map(|c| {
+                c.gains
+                    .iter()
+                    .filter(|g| g.direction == sdroxide_types::Direction::Rx)
+                    .map(|g| g.name.as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let picked: Vec<(String, f64)> = self
+            .state
+            .gains
+            .iter()
+            .filter(|(n, _)| {
+                stages.contains(&n.as_str())
+                    || n.contains("AGC")
+                    || ["AMP", "VGARANGE", "RSPLNA", "SPYAUTOG"].contains(&n.as_str())
+            })
+            .cloned()
+            .collect();
+        // A device whose gain names match none of the above still gets its
+        // gains kept, less the settings that are not gain.
+        if picked.is_empty() {
+            const NOT_GAIN: [&str; 6] = ["PPM", "BIAS", "BIAST", "DIRECT", "OFFSET", "DECIM"];
+            return self
+                .state
+                .gains
+                .iter()
+                .filter(|(n, _)| !NOT_GAIN.iter().any(|x| n.to_ascii_uppercase().contains(x)))
+                .cloned()
+                .collect();
+        }
+        picked
+    }
+
+    /// Set saved gains: the stages first, the AGC switches last, since a
+    /// manual stage write switches some tuners' AGC off.
+    fn apply_gains(&mut self, gains: &[(String, f64)], cmds: &mut Vec<Command>) {
+        let mut order: Vec<&(String, f64)> = gains.iter().collect();
+        order.sort_by_key(|(n, _)| n.contains("AGC"));
+        for (name, db) in order {
+            match self.state.gains.iter_mut().find(|(n, _)| n == name) {
+                Some((_, d)) => *d = *db,
+                None => self.state.gains.push((name.clone(), *db)),
+            }
+            cmds.push(Command::SetGain {
+                dir: sdroxide_types::Direction::Rx,
+                element: name.clone(),
+                db: *db,
+            });
+        }
     }
 
     /// The operator's own position, from the grid in the digital-mode setup.
@@ -414,7 +1056,7 @@ impl SdroxideApp {
     /// The same source the FT8 and APRS maps use, so the three never disagree
     /// about where the station is. `None` until it has been filled in, which is
     /// why the range column and the RANGE sort are conditional.
-    fn adsb_home(&self) -> Option<(f64, f64)> {
+    pub(in crate::app) fn adsb_home(&self) -> Option<(f64, f64)> {
         let grid = self.digi_cfg_edit.my_grid.trim();
         (!grid.is_empty()).then(|| sdroxide_types::grid_to_latlon(grid)).flatten()
     }
@@ -441,6 +1083,7 @@ impl SdroxideApp {
         // the engine persists whatever arrives and echoes it back in the state,
         // so there is no apply step and no way for the two copies to drift.
         let mut cfg = self.state.adsb;
+        let coverage = &mut self.adsb_coverage;
         let resp = egui::Window::new(tr!("adsb-ads-b-setup"))
             .id(crate::layout::salted_id(ctx, "AdsbSetup"))
             .open(&mut open)
@@ -525,6 +1168,36 @@ impl SdroxideApp {
                 ui.label(
                     RichText::new(tr!("adsb-aircraft-ground-are-placed-against")).size(10.0).weak(),
                 );
+                ui.separator();
+                // Reset in two clicks, as it throws away up to a week.
+                let arm = ui.id().with("adsb-coverage-reset");
+                let armed = ui.data(|d| d.get_temp::<bool>(arm)).unwrap_or(false);
+                ui.horizontal(|ui| {
+                    ui.label(tr!("adsb-coverage-kept", hours = coverage.hours_kept().to_string()));
+                    if !armed {
+                        if ui
+                            .button(tr!("adsb-coverage-reset"))
+                            .on_hover_text(tr!("adsb-coverage-reset-tip"))
+                            .clicked()
+                        {
+                            ui.data_mut(|d| d.insert_temp(arm, true));
+                        }
+                    } else {
+                        if ui
+                            .button(
+                                RichText::new(tr!("adsb-coverage-reset-sure"))
+                                    .color(theme::HAZARD()),
+                            )
+                            .clicked()
+                        {
+                            coverage.reset();
+                            ui.data_mut(|d| d.insert_temp(arm, false));
+                        }
+                        if ui.button(tr!("adsb-coverage-reset-keep")).clicked() {
+                            ui.data_mut(|d| d.insert_temp(arm, false));
+                        }
+                    }
+                });
             });
         if let Some(r) = &resp {
             crate::chrome::paint_window_border(ctx, &r.response);
@@ -535,6 +1208,26 @@ impl SdroxideApp {
         }
         self.show_adsb_setup = open;
     }
+}
+
+/// A right-click on a data chip offers the source's page, where its licence
+/// is written down; a tooltip cannot hold a link that can be clicked.
+trait ContextMenuLink: Sized {
+    fn context_menu_link(self, url: &str) -> Self;
+}
+
+impl ContextMenuLink for egui::Response {
+    fn context_menu_link(self, url: &str) -> Self {
+        self.context_menu(|ui| {
+            ui.hyperlink_to(tr!("adsb-source-open"), url).on_hover_text(url);
+        });
+        self
+    }
+}
+
+/// Gains as one line: `LNA 30 · MIX 10 · AGC 0`.
+fn fmt_gains(g: &[(String, f64)]) -> String {
+    g.iter().map(|(n, v)| format!("{n} {v:.0}")).collect::<Vec<_>>().join(" · ")
 }
 
 /// The column headings, drawn with the same offsets the rows use.
@@ -551,6 +1244,10 @@ fn adsb_head_row(ui: &mut egui::Ui, have_home: bool, sort: &mut AdsbSort, desc: 
             (cols.icao, L, &tr!("adsb-icao"), None),
             (cols.alt, R, "ALT", Some(AdsbSort::Altitude)),
             (cols.spd, R, "GS", Some(AdsbSort::Speed)),
+            (cols.route, L, &tr!("adsb-route-col"), None),
+            (cols.places, L, &tr!("adsb-places-col"), None),
+            (cols.airline, L, &tr!("adsb-airline-col"), None),
+            (cols.kind, L, &tr!("adsb-type-col"), None),
             (cols.sig, R, "SIG", Some(AdsbSort::Signal)),
             (cols.trk, R, "TRK", None),
             (cols.vs, R, &tr!("adsb-v-s"), None),
@@ -563,12 +1260,35 @@ fn adsb_head_row(ui: &mut egui::Ui, have_home: bool, sort: &mut AdsbSort, desc: 
     );
 }
 
+/// Where the route column starts, and the room it needs.
+const ROUTE_X: f32 = 206.0;
+const ROUTE_W: f32 = 66.0;
+/// Where the route by place starts, and the least room worth drawing it in.
+const PLACES_X: f32 = ROUTE_X + ROUTE_W + 10.0;
+const PLACES_MIN_W: f32 = 90.0;
+const PLACES_MAX_W: f32 = 200.0;
+/// The room the type gets: `B38M`, or the class it sends, `rotorcraft`.
+const KIND_W: f32 = 62.0;
+/// Room before the address for its country's flag.
+const FLAG_W: f32 = 15.0;
+/// The room the airline gets, right of the places: `TUI fly Netherlands`.
+const AIRLINE_W: f32 = 116.0;
+
 /// Column x offsets, in points from the left of a row.
 struct Cols {
     call: f32,
     icao: f32,
     alt: f32,
     spd: f32,
+    route: f32,
+    /// Left edge of the route by place, and the room up to the next column.
+    places: f32,
+    places_w: f32,
+    /// Left edge of the airline, and its room.
+    airline: f32,
+    airline_w: f32,
+    /// Left edge of the aircraft type.
+    kind: f32,
     sig: f32,
     trk: f32,
     vs: f32,
@@ -594,26 +1314,193 @@ fn columns(w: f32, have_home: bool) -> Cols {
     // heading has to clear the fixed left-hand group, and at [`WIDE_W`] it
     // just does — with or without a range column between it and the edge.
     let sig = if w < WIDE_W { f32::NAN } else { trk - 34.0 };
-    Cols { call: 5.0, icao: 62.0, alt: 158.0, spd: 196.0, sig, trk, vs, sqk, range, age }
+    // The route sits after the speed, left-aligned, only where the first of the
+    // right-hand columns leaves it room for `EDDK›…›GCLP`.
+    let first_right = if sig.is_nan() { trk } else { sig };
+    let route = if first_right - 28.0 - ROUTE_X >= ROUTE_W { ROUTE_X } else { f32::NAN };
+    // Right of the codes: the places, the airline and the type, in whatever
+    // is left before the first right-hand column. The places give way first,
+    // then the airline; the type is short and stays longest.
+    let free = first_right - 34.0 - PLACES_X;
+    let none = (f32::NAN, 0.0);
+    let (places, airline, kind) = if route.is_nan() {
+        (none, none, f32::NAN)
+    } else if free >= PLACES_MIN_W + AIRLINE_W + KIND_W + 20.0 {
+        // Capped, so airline and type stay beside the places on a wide table
+        // instead of drifting over to the right-hand columns.
+        let pw = (free - 20.0 - AIRLINE_W - KIND_W).min(PLACES_MAX_W);
+        let ax = PLACES_X + pw + 10.0;
+        ((PLACES_X, pw), (ax, AIRLINE_W), ax + AIRLINE_W + 10.0)
+    } else if free >= AIRLINE_W + KIND_W + 10.0 {
+        (none, (PLACES_X, AIRLINE_W), PLACES_X + AIRLINE_W + 10.0)
+    } else if free >= KIND_W {
+        (none, none, PLACES_X)
+    } else {
+        (none, none, f32::NAN)
+    };
+    let ((places, places_w), (airline, airline_w)) = (places, airline);
+    Cols {
+        call: 5.0,
+        icao: 62.0,
+        alt: 158.0,
+        spd: 196.0,
+        route,
+        places,
+        places_w,
+        airline,
+        airline_w,
+        kind,
+        sig,
+        trk,
+        vs,
+        sqk,
+        range,
+        age,
+    }
 }
 
-/// One row of the aircraft table. Returns true if it was clicked.
+/// What a row shows beyond the aircraft's own messages, looked up by the
+/// panel before the rows are drawn.
+struct RowExtra {
+    /// The route by place, `London › Budapest`.
+    places: String,
+    airline: String,
+    /// The ICAO type code, or the class the aircraft sends when the type is
+    /// not known.
+    kind: String,
+    /// `kind` is a type code rather than a class.
+    kind_known: bool,
+    /// Country of the address block, ISO 3166 (`DE`), and whether the block
+    /// is military.
+    country: Option<(String, bool)>,
+}
+
+/// What a row asks of the panel.
+enum RowAction {
+    /// Clicked: select it, or let go of it.
+    Select,
+    /// "Show on map" from its menu.
+    Centre,
+}
+
+/// The pages that know an aircraft by its address or callsign, as SDRangel
+/// offers them. Links only: nothing of theirs is fetched or kept.
+fn aircraft_links(a: &AdsbAircraft) -> Vec<(String, String)> {
+    let hex = a.hex();
+    let low = hex.to_ascii_lowercase();
+    let mut v = vec![
+        (tr!("adsb-link-planespotters"), format!("https://www.planespotters.net/hex/{hex}")),
+        (tr!("adsb-link-adsbx"), format!("https://globe.adsbexchange.com/?icao={low}")),
+        (tr!("adsb-link-adsblol"), format!("https://adsb.lol/?icao={low}")),
+        (tr!("adsb-link-opensky"), format!("https://map.opensky-network.org/?icao={low}")),
+    ];
+    let call = a.callsign.trim();
+    if !call.is_empty() {
+        v.push((tr!("adsb-link-fr24"), format!("https://www.flightradar24.com/{call}")));
+    }
+    v
+}
+
+/// Pages that still have a flight after it has landed: its track on the day
+/// it was logged, and the flight's history by callsign. Unlike the live map
+/// links of [`aircraft_links`], each of these answers for a past sighting.
+/// Links only: nothing of theirs is fetched or kept.
+fn sighting_links(s: &crate::adsb_log::Sighting) -> Vec<(String, String)> {
+    let hex = format!("{:06X}", s.icao);
+    let low = hex.to_ascii_lowercase();
+    let day = crate::adsb_log::utc_day(s.first);
+    let mut v = vec![(
+        tr!("adsb-link-adsbx-trace", day = day.clone()),
+        format!("https://globe.adsbexchange.com/?icao={low}&showTrace={day}"),
+    )];
+    let call = s.call.trim();
+    if !call.is_empty() {
+        v.push((
+            tr!("adsb-link-flightaware", call = call),
+            format!("https://www.flightaware.com/live/flight/{call}"),
+        ));
+    }
+    v.push((tr!("adsb-link-planespotters"), format!("https://www.planespotters.net/hex/{hex}")));
+    v
+}
+
+/// The right-click menu of a sighting-log row.
+fn log_row_menu(ui: &mut egui::Ui, s: &crate::adsb_log::Sighting) {
+    let call = s.call.trim();
+    if !call.is_empty() && ui.button(tr!("adsb-copy-callsign", call = call)).clicked() {
+        ui.ctx().copy_text(call.to_string());
+        ui.close();
+    }
+    let hex = format!("{:06X}", s.icao);
+    if ui.button(tr!("adsb-copy-icao", icao = hex.clone())).clicked() {
+        ui.ctx().copy_text(hex);
+        ui.close();
+    }
+    ui.separator();
+    for (label, url) in sighting_links(s) {
+        if ui.button(label).clicked() {
+            ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+            ui.close();
+        }
+    }
+}
+
+/// The right-click menu of a row.
+fn row_menu(ui: &mut egui::Ui, a: &AdsbAircraft) -> Option<RowAction> {
+    let mut out = None;
+    let call = a.callsign.trim();
+    if !call.is_empty() && ui.button(tr!("adsb-copy-callsign", call = call)).clicked() {
+        ui.ctx().copy_text(call.to_string());
+        ui.close();
+    }
+    if ui.button(tr!("adsb-copy-icao", icao = a.hex())).clicked() {
+        ui.ctx().copy_text(a.hex());
+        ui.close();
+    }
+    ui.separator();
+    for (label, url) in aircraft_links(a) {
+        if ui.button(label).clicked() {
+            ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+            ui.close();
+        }
+    }
+    ui.separator();
+    // Where the type and registration this panel shows come from; an aircraft
+    // missing there can be added by anyone.
+    if ui.button(tr!("adsb-link-vrs-edit")).on_hover_text(tr!("adsb-link-vrs-edit-tip")).clicked() {
+        ui.ctx().copy_text(a.hex());
+        ui.ctx()
+            .open_url(egui::OpenUrl::new_tab("https://sdm.virtualradarserver.co.uk/Edit/Aircraft"));
+        ui.close();
+    }
+    if a.lat.is_some() && ui.button(tr!("adsb-show-on-map")).clicked() {
+        out = Some(RowAction::Centre);
+        ui.close();
+    }
+    out
+}
+
+/// One row of the aircraft table. Returns what it asks of the panel.
+#[allow(clippy::too_many_arguments)]
 fn adsb_row(
     ui: &mut egui::Ui,
     a: &AdsbAircraft,
+    route: Option<&[String]>,
+    extra: &RowExtra,
+    flags: &mut crate::flags::Flags,
     now: i64,
     selected: Option<u32>,
     home: Option<(f64, f64)>,
     drop_map_s: u16,
     i: usize,
-) -> bool {
+) -> Option<RowAction> {
     const ROW_H: f32 = 17.0;
     const ACCENT_W: f32 = 2.5;
 
     let w = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, ROW_H), egui::Sense::hover());
     if !ui.is_rect_visible(rect) {
-        return false;
+        return None;
     }
     let is_sel = selected == Some(a.icao);
     let stale = a.pos_stale(now, drop_map_s);
@@ -660,11 +1547,35 @@ fn adsb_row(
     put(cols.call, egui::Align2::LEFT_CENTER, a.label(), mono.clone(), ink);
     // The address, but only where it is not already the label — repeating it
     // would take a column and say nothing.
+    if let Some((cc, _)) = &extra.country {
+        flags.paint(ui.ctx(), &p, cc, egui::pos2(rect.left() + cols.icao, y), 8.0);
+    }
     if !a.callsign.is_empty() {
-        put(cols.icao, egui::Align2::LEFT_CENTER, a.hex(), small.clone(), dim);
+        put(cols.icao + FLAG_W, egui::Align2::LEFT_CENTER, a.hex(), small.clone(), dim);
     }
     put(cols.alt, egui::Align2::RIGHT_CENTER, a.fmt_altitude(), mono.clone(), ink);
     put(cols.spd, egui::Align2::RIGHT_CENTER, a.fmt_speed(), mono.clone(), ink);
+    put(
+        cols.route,
+        egui::Align2::LEFT_CENTER,
+        route.map(crate::adsb_route::short).unwrap_or_default(),
+        small.clone(),
+        dim,
+    );
+    if !cols.places.is_nan() {
+        let t = fit(&p, &extra.places, &small, cols.places_w);
+        put(cols.places, egui::Align2::LEFT_CENTER, t, small.clone(), dim);
+    }
+    if !cols.airline.is_nan() {
+        let t = fit(&p, &extra.airline, &small, cols.airline_w);
+        put(cols.airline, egui::Align2::LEFT_CENTER, t, small.clone(), dim);
+    }
+    if !cols.kind.is_nan() {
+        let t = fit(&p, &extra.kind, &small, KIND_W);
+        // A class is a guess at the size, not a type: drawn fainter.
+        let c = if extra.kind_known { ink } else { theme::gray(95) };
+        put(cols.kind, egui::Align2::LEFT_CENTER, t, small.clone(), c);
+    }
     put(cols.sig, egui::Align2::RIGHT_CENTER, format!("{:.0}", a.rssi_dbfs), small.clone(), dim);
     put(
         cols.trk,
@@ -695,11 +1606,42 @@ fn adsb_row(
     // One click target, the whole row wide, registered after everything above
     // it — which is what makes the callsign as clickable as the empty space.
     let hit = ui.interact(rect, ui.id().with(("adsb-row", i)), egui::Sense::click());
-    hit.on_hover_text(match &a.category {
-        Some(c) => format!("{} — {c}", a.hex()),
-        None => a.hex(),
-    })
-    .clicked()
+    let mut tip = a.hex();
+    if let Some((cc, mil)) = &extra.country {
+        tip.push_str(&format!(" · {cc}"));
+        if *mil {
+            tip.push_str(&format!(" · {}", tr!("adsb-military")));
+        }
+    }
+    if let Some(c) = &a.category {
+        tip.push_str(&format!(" — {c}"));
+    }
+    let hit = hit.on_hover_text(tip);
+    let mut out = hit.clicked().then_some(RowAction::Select);
+    hit.context_menu(|ui| {
+        if let Some(act) = row_menu(ui, a) {
+            out = Some(act);
+        }
+    });
+    out
+}
+
+/// `text` cut to `max_w` points in `font`, with `…` where it was cut.
+fn fit(p: &egui::Painter, text: &str, font: &egui::FontId, max_w: f32) -> String {
+    let width =
+        |t: &str| p.layout_no_wrap(t.to_string(), font.clone(), egui::Color32::WHITE).size().x;
+    if text.is_empty() || width(text) <= max_w {
+        return text.to_string();
+    }
+    let mut chars: Vec<char> = text.chars().collect();
+    while !chars.is_empty() {
+        chars.pop();
+        let cut: String = chars.iter().collect::<String>().trim_end().to_string() + "…";
+        if width(&cut) <= max_w {
+            return cut;
+        }
+    }
+    String::new()
 }
 
 /// Order the table. A missing value always sorts last, whichever way the arrow
@@ -832,6 +1774,96 @@ mod tests {
 
     /// The columns must not overlap at any width the panel can be dragged to,
     /// and the trailing ones drop out rather than printing on top of each other.
+    #[test]
+    fn the_log_sorts_by_any_column_and_puts_the_unknown_last() {
+        use crate::adsb_log::Sighting;
+        let mk = |icao: u32, call: &str, km: f32, last: i64| Sighting {
+            icao,
+            call: call.into(),
+            kind: String::new(),
+            route: String::new(),
+            country: String::new(),
+            first: last - 60,
+            last,
+            min_km: km,
+            max_km: km,
+            max_alt_ft: None,
+        };
+        let (a, b, c) =
+            (mk(1, "KLM1", 48.0, 300), mk(2, "", f32::NAN, 200), mk(3, "BAW8", 22.0, 100));
+        let calls = |v: &[&Sighting]| v.iter().map(|s| s.icao).collect::<Vec<_>>();
+        let mut v = vec![&a, &b, &c];
+        sort_log(&mut v, LogSort::Range, true);
+        assert_eq!(calls(&v), [1, 3, 2]);
+        sort_log(&mut v, LogSort::Range, false);
+        assert_eq!(calls(&v), [3, 1, 2]);
+        sort_log(&mut v, LogSort::Callsign, false);
+        assert_eq!(calls(&v), [3, 1, 2]);
+        sort_log(&mut v, LogSort::Callsign, true);
+        assert_eq!(calls(&v), [1, 3, 2]);
+        sort_log(&mut v, LogSort::Seen, true);
+        assert_eq!(calls(&v), [1, 2, 3]);
+    }
+
+    /// A logged flight's links answer for the day it was logged — the trace
+    /// on that UTC day — and the callsign's history only where there is a
+    /// callsign.
+    #[test]
+    fn a_sighting_links_to_its_own_day_and_its_flight() {
+        let s = crate::adsb_log::Sighting {
+            icao: 0x3C_6444,
+            call: "DLH400".into(),
+            kind: String::new(),
+            route: String::new(),
+            country: String::new(),
+            // 2026-11-16 23:30 UTC: the local day may already be the 17th.
+            first: 1_794_871_800,
+            last: 1_794_872_400,
+            min_km: f32::NAN,
+            max_km: f32::NAN,
+            max_alt_ft: None,
+        };
+        let urls: Vec<String> = sighting_links(&s).into_iter().map(|(_, u)| u).collect();
+        assert_eq!(urls[0], "https://globe.adsbexchange.com/?icao=3c6444&showTrace=2026-11-16");
+        assert_eq!(urls[1], "https://www.flightaware.com/live/flight/DLH400");
+        assert!(urls[2].ends_with("/hex/3C6444"));
+        let anon = crate::adsb_log::Sighting { call: String::new(), ..s };
+        assert!(sighting_links(&anon).iter().all(|(_, u)| !u.contains("flightaware")));
+    }
+
+    #[test]
+    fn places_airline_and_type_end_before_the_right_hand_columns() {
+        let mut w = 200.0f32;
+        while w < 1600.0 {
+            for have_home in [true, false] {
+                let c = columns(w, have_home);
+                let first_right = if c.sig.is_nan() { c.trk } else { c.sig };
+                // The right-hand columns are right-aligned: their text starts
+                // up to about 28 points left of their x.
+                let limit = first_right - 28.0;
+                for (x, cw) in [(c.places, c.places_w), (c.airline, c.airline_w), (c.kind, KIND_W)]
+                {
+                    if !x.is_nan() {
+                        assert!(
+                            x + cw <= limit,
+                            "column at {x} (+{cw}) runs into {first_right} at width {w}"
+                        );
+                    }
+                }
+                if !c.places.is_nan() && !c.airline.is_nan() {
+                    assert!(
+                        c.places + c.places_w < c.airline,
+                        "places run into the airline at {w}"
+                    );
+                }
+                if !c.airline.is_nan() && !c.kind.is_nan() {
+                    assert!(c.airline + c.airline_w < c.kind, "airline runs into the type at {w}");
+                }
+            }
+            w += 7.0;
+        }
+    }
+
     #[test]
     fn the_columns_never_overprint_however_narrow_the_panel_gets() {
         let mut w = 200.0f32;

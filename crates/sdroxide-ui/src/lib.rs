@@ -7,7 +7,13 @@
 //! its own, so the shared egui pass never sees them and the module runs on both
 //! targets.
 
+mod adsb_coverage;
+mod adsb_log;
 mod adsb_map;
+mod adsb_route;
+// The browser build has no disk to keep tracks on.
+#[cfg(not(target_arch = "wasm32"))]
+mod adsb_tracks;
 mod ais_map;
 mod app;
 mod aprs_icons;

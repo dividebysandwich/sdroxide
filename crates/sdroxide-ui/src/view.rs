@@ -415,6 +415,41 @@ pub struct ViewState {
     /// anything while a target is selected.
     #[serde(default = "adsb_card_default")]
     pub adsb_card_fraction: f32,
+    /// Cities on the ADS-B map, this map alone. On by default: they are what
+    /// a position is read against.
+    // Why: HDZ 2026-11-17: „bei der Karte dann die Chips, City an aus, Nacht an
+    //      aus und … die Range, bis wohin empfangen wurde“.
+    #[serde(default = "adsb_map_cities_default")]
+    pub adsb_map_cities: bool,
+    /// Bearing and distance from home under the pointer on the ADS-B map,
+    /// with the coverage cell there. A chip, as it is not always wanted.
+    // Why: HDZ 2026-11-17: „für den Mauscursor mach einen Chip, der ist ok,
+    //      aber nicht immer gewünscht“.
+    #[serde(default = "adsb_map_cities_default")]
+    pub adsb_map_pointer: bool,
+    /// Airports with their ICAO code on the ADS-B map (OurAirports, public
+    /// domain). On by default, beside the cities.
+    // Why: HDZ 2026-11-17: „die Airports könnten in die Karte eingeblendet
+    //      sein, das ist sinnvoll neben den Städten“.
+    #[serde(default = "adsb_map_cities_default")]
+    pub adsb_map_airports: bool,
+    /// The coverage diagram on the ADS-B map (see `adsb_coverage`).
+    #[serde(default = "adsb_map_cities_default")]
+    pub adsb_map_range: bool,
+    /// The window the coverage diagram sums: 0 = last hour, 1 = last 24 h,
+    /// 2 = last 7 days.
+    #[serde(default = "adsb_range_window_default")]
+    pub adsb_range_window: u8,
+    /// Receive gains saved for ADS-B, per device (`driver:label`): set by a
+    /// left click on the 1090.000 chip, saved from its right-click menu.
+    #[serde(default)]
+    pub adsb_gain_presets: std::collections::BTreeMap<String, Vec<(String, f64)>>,
+    /// The ADS-B list shows today's sightings instead of the live table.
+    #[serde(default)]
+    pub adsb_show_log: bool,
+    /// The ADS-B map in a window of its own; the list then has the panel.
+    #[serde(default)]
+    pub adsb_map_out: bool,
     /// Fraction of the AIS panel's width given to the vessel list; the rest is
     /// the chart.
     #[serde(default = "ais_split_default")]
@@ -853,6 +888,14 @@ impl Default for ViewState {
             js8_split_fraction: js8_split_default(),
             adsb_split_fraction: adsb_split_default(),
             adsb_card_fraction: adsb_card_default(),
+            adsb_map_cities: adsb_map_cities_default(),
+            adsb_map_range: adsb_map_cities_default(),
+            adsb_map_airports: adsb_map_cities_default(),
+            adsb_show_log: false,
+            adsb_gain_presets: Default::default(),
+            adsb_map_pointer: adsb_map_cities_default(),
+            adsb_range_window: adsb_range_window_default(),
+            adsb_map_out: false,
             ais_split_fraction: ais_split_default(),
             ais_card_fraction: ais_card_default(),
             hfdl_split_fraction: hfdl_split_default(),
@@ -1198,6 +1241,16 @@ fn prop_map_band_default() -> u8 {
 /// map — which is the pane that gains most from whatever is left.
 fn adsb_split_default() -> f32 {
     0.42
+}
+
+/// Default for [`ViewState::adsb_map_cities`] and [`ViewState::adsb_map_range`].
+fn adsb_map_cities_default() -> bool {
+    true
+}
+
+/// Default for [`ViewState::adsb_range_window`]: the last 24 hours.
+fn adsb_range_window_default() -> u8 {
+    1
 }
 
 /// Default for [`ViewState::adsb_card_fraction`].
