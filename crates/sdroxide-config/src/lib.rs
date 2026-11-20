@@ -887,8 +887,25 @@ impl Store {
         self.save("scanner.json", cfg)
     }
 
+    /// This scope's `tciserver.json`, or — when there is none to read — what
+    /// [`sdroxide_types::TciServerConfig::for_radio`] gives this radio's place
+    /// in the roster.
+    ///
+    /// Not the type's own default: that is the station radio's (on, port
+    /// 50001), and a further radio without a file — a scope made by hand, or
+    /// one whose file was quarantined — came up on the station's port too, and
+    /// one of the two failed to bind.
     pub fn load_tci_server_config(&self) -> sdroxide_types::TciServerConfig {
-        self.load("tciserver.json")
+        self.load_if_present("tciserver.json")
+            .unwrap_or_else(|| sdroxide_types::TciServerConfig::for_radio(self.roster_index()))
+    }
+
+    /// Where this scope's radio stands in the roster (`radios.json`), the
+    /// station radio being 0. A radio the roster does not list counts by its
+    /// id, which no listed radio shares.
+    fn roster_index(&self) -> usize {
+        let id = self.radio_id();
+        load_radios().radios.iter().position(|r| r.id == id).unwrap_or(id as usize)
     }
 
     pub fn save_tci_server_config(
@@ -1134,7 +1151,9 @@ impl RadiosFile {
 /// The scope is seeded with a default `radio.json` and — deliberately — a
 /// `tciserver.json` with the server disabled: [`TciServerConfig`]'s default is
 /// *enabled* on a fixed port, which is right for the station's first radio and
-/// a guaranteed bind collision for every additional one.
+/// a guaranteed bind collision for every additional one. The seeded port is
+/// the radio's own ([`sdroxide_types::TciServerConfig::default_port`] of its
+/// place in the roster), so switching the server on needs no port found.
 pub fn create_radio(name: &str) -> Result<RadioSlot, ConfigError> {
     let mut roster = load_radios();
     let id = roster.next_id;
@@ -1150,7 +1169,8 @@ pub fn create_radio(name: &str) -> Result<RadioSlot, ConfigError> {
         ..Default::default()
     };
     store.save_radio_config(&cfg)?;
-    let tci = sdroxide_types::TciServerConfig { enabled: false, ..Default::default() };
+    // Never index 0, which is the station's (on) — this radio goes after it.
+    let tci = sdroxide_types::TciServerConfig::for_radio(roster.radios.len().max(1));
     store.save_tci_server_config(&tci)?;
     roster.radios.push(slot.clone());
     roster.next_id = id + 1;
@@ -3388,6 +3408,19 @@ mod tests {
             "a new radio's TCI server must come up disabled"
         );
         assert!(sdroxide_types::TciServerConfig::default().enabled, "or this seeding is moot");
+        assert_eq!(
+            Store::radio(slot.id).load_tci_server_config().port,
+            50002,
+            "the second radio's TCI server is seeded one port above the station's"
+        );
+        // A further radio with no file at all: off, on the port its place in
+        // the roster gives it, not on the station's.
+        fs::remove_file(root.join("radio-1/tciserver.json")).unwrap();
+        let bare = Store::radio(slot.id).load_tci_server_config();
+        assert!(!bare.enabled, "only the station's server is on without a file");
+        assert_eq!(bare.port, 50002);
+        // The station radio without a file keeps the plain default.
+        assert_eq!(Store::radio(0).load_tci_server_config(), Default::default());
 
         // The on/off switch. A radio is on until somebody says otherwise, the
         // answer survives a reload, and switching it off is nothing but that

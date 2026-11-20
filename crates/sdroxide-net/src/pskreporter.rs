@@ -52,6 +52,7 @@ fn parse(body: &str, now: i64) -> Result<Vec<Spot>, String> {
             loc: None,
             when_utc: now,
             snr_db,
+            color: None,
         };
         // Keep the strongest report per (call, freq bucket).
         if let Some(existing) = out.iter_mut().find(|s| s.id == spot.id) {

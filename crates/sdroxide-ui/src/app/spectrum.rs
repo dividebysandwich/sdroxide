@@ -1050,13 +1050,24 @@ impl SdroxideApp {
         // per twin.
         for s in one_label_each(self.all_spots().filter(|s| self.spot_visible(s))) {
             let carrier = ["AM", "CW"].iter().any(|m| s.mode.eq_ignore_ascii_case(m));
-            let snr_alpha = self.snr_label_alpha(s.id, s.freq_hz, carrier, recheck, step);
+            // A TCI label is placed by a program that has already decided it
+            // matters — a decoder's result for a burst long gone, or a note to
+            // the operator with no signal under it at all. Judging it by the S/N
+            // at its frequency would hide nearly every one of them.
+            let snr_alpha = if s.kind == SpotKind::Tci {
+                1.0
+            } else {
+                self.snr_label_alpha(s.id, s.freq_hz, carrier, recheck, step)
+            };
             if snr_alpha < 0.15 {
                 continue;
             }
             // A scheduled broadcast station has no age: the fade and the
             // max-age cut are both about how stale a *report* is, and a
             // transmitter that is on the air now is not a stale report.
+            // A kind with a lifetime of its own (TCI's ten minutes) fades over
+            // the last quarter of that instead of the feeds' max age.
+            let max_age = s.kind.lifetime_secs().unwrap_or(max_age);
             let a = if s.kind == SpotKind::Broadcast {
                 1.0
             } else {

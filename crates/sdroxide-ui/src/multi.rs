@@ -496,6 +496,7 @@ impl MultiApp {
                 } else {
                     first_local == Some(t.id)
                 },
+                tci: t.app.tci_brief(),
             })
             .collect()
     }
@@ -786,7 +787,7 @@ impl MultiApp {
     fn handle_requests(&mut self, reqs: Vec<RadioTabRequest>, ctx: &egui::Context) {
         for req in reqs {
             match req {
-                RadioTabRequest::Focus(id) => {
+                RadioTabRequest::Focus(id) | RadioTabRequest::FocusServers(id) => {
                     if let Some(i) = self.tabs.iter().position(|t| t.id == id)
                         && i != self.focused
                     {
@@ -796,7 +797,12 @@ impl MultiApp {
                         // takes over the active pane rather than adding one.
                         self.tabs[self.focused].app.close_settings();
                         self.show_in_pane(self.active_pane(), id, ctx);
-                        self.tabs[i].app.open_radio_settings();
+                        // On the page the switch was asked from.
+                        if matches!(req, RadioTabRequest::FocusServers(_)) {
+                            self.tabs[i].app.open_servers_settings();
+                        } else {
+                            self.tabs[i].app.open_radio_settings();
+                        }
                     }
                 }
                 // Added exactly as before, then named: the radio that was not

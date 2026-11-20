@@ -501,6 +501,7 @@ impl BroadcastStation {
             },
             when_utc: now_utc,
             snr_db: None,
+            color: None,
         }
     }
 }

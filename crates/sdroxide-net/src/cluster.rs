@@ -252,6 +252,7 @@ pub(crate) fn parse_dx_line(line: &str, now: i64) -> Option<Spot> {
         loc: None,
         when_utc: now,
         snr_db: None,
+        color: None,
     })
 }
 

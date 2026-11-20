@@ -133,6 +133,14 @@ pub enum RadioEvent {
     /// A human-readable status line for the spot feeds (cluster connection
     /// state, feed errors). `None` clears it.
     NetStatus(Option<String>),
+    /// Every label TCI clients have placed on this radio with `SPOT:`, in
+    /// frequency order; empty when there are none or the TCI server stopped.
+    ///
+    /// Apart from [`RadioEvent::Spots`] because the two have different owners:
+    /// the feeds are the station's and only its first radio runs them, so the
+    /// other tabs borrow that radio's list — whereas TCI spots belong to the
+    /// radio whose server took them, and must not be lent to every tab.
+    TciSpots(Vec<Spot>),
     /// Result of a [`Command::LookupCallsign`].
     CallsignResult(CallsignInfo),
     /// Result of one QSO/target upload from a [`Command::UploadQso`].

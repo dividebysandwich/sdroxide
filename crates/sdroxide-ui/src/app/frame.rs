@@ -2098,6 +2098,7 @@ impl SdroxideApp {
                     self.spots_gen += 1;
                     self.adopted_spots_gen = None;
                 }
+                RadioEvent::TciSpots(s) => self.tci_spots = s,
                 RadioEvent::NetStatus(s) => {
                     self.net_status = s;
                     self.spots_gen += 1;
@@ -2178,6 +2179,8 @@ impl SdroxideApp {
                         self.tci_srv_edit = c.tci_server.clone();
                         self.tci_srv_seeded = true;
                     }
+                    // The applied truth, every time — see `tci_srv_cfg`.
+                    self.tci_srv_cfg = Some(c.tci_server.clone());
                     if !self.wsjtx_seeded {
                         self.wsjtx_edit = c.wsjtx.clone();
                         self.wsjtx_seeded = true;

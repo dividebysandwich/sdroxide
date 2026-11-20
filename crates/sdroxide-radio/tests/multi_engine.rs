@@ -1,7 +1,7 @@
 //! Two engines in one process — the multi-radio arrangement. What these hold:
-//! the station's transmit interlock lets exactly one radio key at a time, and
-//! a shared-store write by one engine reaches the other without either UI
-//! doing anything.
+//! the station's transmit interlock lets exactly one radio key at a time, a
+//! shared-store write by one engine reaches the other without either UI
+//! doing anything, and each radio's TCI server is its own.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -189,6 +189,37 @@ fn two_engines_share_one_transmitter_and_one_set_of_stores() {
         RadioEvent::Memories(m) if m.iter().any(|m| m.name == "interlock test") => Some(()),
         _ => None,
     });
+
+    // ── Each radio's own TCI server ──────────────────────────────────────
+    // Settings → Servers sends `SetTciServerConfig` down the edited radio's own
+    // controller. It has to land in that radio's scope and bind there, leaving
+    // the other radio's server and file alone; a second radio set to the same
+    // port has to report the failed bind rather than say nothing.
+    let port = {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("free port");
+        probe.local_addr().unwrap().port()
+    };
+    let on = sdroxide_types::TciServerConfig { enabled: true, port, ..Default::default() };
+    b.send(Command::SetTciServerConfig(on.clone()));
+    let at = format!(":{port}");
+    b.wait_for("radio B's TCI server listening", |ev| match ev {
+        RadioEvent::TciServerStatus { running: true, addr, .. } if addr.ends_with(&at) => Some(()),
+        _ => None,
+    });
+    assert_eq!(sdroxide_config::Store::radio(1).load_tci_server_config(), on);
+    assert_eq!(
+        sdroxide_config::Store::radio(0).load_tci_server_config(),
+        tci_off,
+        "radio B's server is configured in radio B's scope only"
+    );
+    a.send(Command::SetTciServerConfig(on));
+    let refused = a.wait_for("radio A's bind refused", |ev| match ev {
+        RadioEvent::TciServerStatus { running: false, error: Some(e), .. } => Some(e.clone()),
+        _ => None,
+    });
+    assert!(refused.contains(&port.to_string()), "the failure names the port: {refused}");
+    a.send(Command::SetTciServerConfig(tci_off.clone()));
+    b.send(Command::SetTciServerConfig(tci_off));
 
     a.stop();
     b.stop();

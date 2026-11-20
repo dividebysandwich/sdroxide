@@ -923,6 +923,9 @@ impl SdroxideApp {
             self.converter_edit_hz = None;
             self.range_edit = None;
             self.rx_site_edit = None;
+            // Likewise the TCI server form: the next open shows the server
+            // this radio runs.
+            self.reseed_tci_form();
             // The next open starts at the tab bar, not wherever the window was
             // last scrolled to — the offset is one shared egui memory for all
             // the tabs, and it outlives the process.
@@ -2027,6 +2030,7 @@ impl SdroxideApp {
                 // hidden until there is more than one — where the second radio
                 // is added in the first place.
                 self.settings_radio_roster(ui, io.radio_tabs, io.radio_name_edit);
+                self.settings_tci_line(ui, io.tab);
                 let Some(cfg) = io.radio_edit.as_mut() else {
                     // A remote client cannot choose the server's interface or
                     // edit its config — that file lives on the other machine.
@@ -3419,8 +3423,11 @@ impl SdroxideApp {
                     ui,
                     io.tci_srv_edit,
                     self.tci_srv_seeded,
+                    self.tci_srv_cfg.as_ref(),
                     &self.tci_srv_status,
+                    &self.tci_radios(),
                     io.tci_srv_apply,
+                    io.radio_tabs,
                 );
                 ui.add_space(12.0);
                 ui.separator();
@@ -3837,6 +3844,69 @@ impl SdroxideApp {
             out.push(AddTarget { key: chip.station.clone() });
         }
         out
+    }
+
+    /// The radios of this tab's station for the TCI server section's picker
+    /// ([`servers::TciRadio`]), in the roster's order. Empty outside a
+    /// multi-radio session, which hides the picker.
+    fn tci_radios(&self) -> Vec<servers::TciRadio> {
+        let here = self.radio_roster.iter().find(|c| c.id == self.radio_id);
+        let station = here.map_or_else(String::new, |c| c.station.clone());
+        self.radio_roster
+            .iter()
+            .filter(|c| c.station == station)
+            .map(|c| {
+                let own = c.id == self.radio_id;
+                servers::TciRadio {
+                    id: c.id,
+                    name: c.display_name().to_string(),
+                    // This radio's own from this tab, current this frame; the
+                    // others as the shell last published them.
+                    tci: if own { self.tci_brief() } else { c.tci },
+                    own,
+                }
+            })
+            .collect()
+    }
+
+    /// One read-only line on the Radio page: this radio's TCI server, and the
+    /// way to the page that sets it.
+    ///
+    /// The server is configured under Servers, beside rigctld and WSJT-X, and
+    /// stays there; this line is so the radio's own page answers "which port
+    /// is this radio on" without the operator having to know where to look.
+    // Why: HDZ 2026-11-15: "sorge dafür, dass am Ort der Server aus
+    //      'Server'-Settings geschrieben wird mit Hinweis 'set server in
+    //      Servers'".
+    fn settings_tci_line(&self, ui: &mut egui::Ui, tab: &mut SettingsTab) {
+        let Some(b) = self.tci_brief() else { return };
+        let port = b.port.to_string();
+        let (text, color) = match (b.enabled, b.failed) {
+            (false, _) => (tr!("settings-tci-server-line-off"), None),
+            (true, true) => (
+                tr!("settings-tci-server-line-failed", port = port),
+                Some(Color32::from_rgb(230, 90, 80)),
+            ),
+            (true, false) => (tr!("settings-tci-server-line-on", port = port), None),
+        };
+        ui.horizontal_wrapped(|ui| {
+            let text = RichText::new(text).size(12.0);
+            ui.label(match color {
+                Some(c) => text.color(c),
+                None => text.weak(),
+            });
+            if crate::chrome::chip(
+                ui,
+                false,
+                RichText::new(tr!("settings-tci-server-line-set")).size(11.0),
+            )
+            .on_hover_text(tr!("settings-tci-server-line-set-tip"))
+            .clicked()
+            {
+                *tab = SettingsTab::Servers;
+            }
+        });
+        ui.add_space(6.0);
     }
 
     fn settings_radio_roster(

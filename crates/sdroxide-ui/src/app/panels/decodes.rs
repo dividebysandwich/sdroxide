@@ -1000,7 +1000,7 @@ impl SdroxideApp {
             .all_spots()
             .filter(|s| is_ft8_or_ft4(&s.mode))
             .filter(|s| self.spot_visible(s))
-            .filter_map(|s| s.loc.map(|(lat, lon)| (lat, lon, crate::theme::spot_color(s.kind))))
+            .filter_map(|s| s.loc.map(|(lat, lon)| (lat, lon, crate::theme::spot_rgb(s))))
             .collect();
         let heat = self.prop_texture(ui.ctx(), self.state.rx_freq_hz());
         let night = self.night_texture(ui.ctx());

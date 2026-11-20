@@ -27,6 +27,31 @@ pub(crate) enum ClientReq {
     /// Understood but deliberately not acted on. The caller re-broadcasts the
     /// current truth so the client isn't left believing it took effect.
     Ignored,
+    /// `spot:<call>,<mode>,<hz>,<argb>,<text>` — put a label on the panorama.
+    Spot(TciSpot),
+    /// `spot_delete:<call>` — take that callsign's label down.
+    SpotDelete(String),
+    /// `spot_clear` — take every label down.
+    SpotClear,
+}
+
+/// One `SPOT:` as a client sent it, checked and normalised.
+///
+/// TCI Protocol 2.1 §4.3: `SPOT:arg1,arg2,arg3,arg4,arg5;` — callsign, mode,
+/// frequency in Hz, ARGB colour, additional text. "The callsign, the frequency
+/// and the colour are mandatory, otherwise the command is ignored."
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct TciSpot {
+    /// Upper case, so `SPOT_DELETE` finds it however either was typed — the
+    /// spec's own `CLICKED_ON_SPOT` reports the callsign in upper case.
+    pub call: String,
+    /// Upper case, as the network spots carry it; may be empty.
+    pub mode: String,
+    pub freq_hz: f64,
+    /// RGB, or `None` for the kind's tint — see [`spot_color`].
+    pub color: Option<[u8; 3]>,
+    /// May be empty.
+    pub text: String,
 }
 
 /// Receiver index we serve. sdroxide has a single tunable VFO pair, so we
@@ -72,6 +97,56 @@ fn indexed_flag(args: &[&str]) -> Option<bool> {
         [_rx, v, ..] => flag(v),
         _ => None,
     }
+}
+
+/// `SPOT:`'s colour argument: `None` when it is missing, which the spec makes
+/// a reason to ignore the whole spot; `Some(None)` when it is there but gives
+/// no usable colour, so the label wears the kind's tint; `Some(Some(rgb))`
+/// otherwise.
+///
+/// The alpha byte is not used. The specification's own example,
+/// `SPOT:RN6LHF,CW,7100000,16711680,ANY_TEXT;`, sends 16711680 = 0x00FF0000:
+/// red with alpha 0. Read as alpha, that example would be an invisible label,
+/// so clients that copy it send alpha 0 meaning "opaque", and honouring alpha
+/// would hide their spots. Black (RGB 0) is taken as no colour: it is what a
+/// client with nothing to choose sends, and a black callsign on the dark label
+/// box could not be read.
+///
+/// The value is decimal, as in the example. A negative one is accepted too:
+/// a 32-bit ARGB held in a signed integer — what C#'s `Color.ToArgb()` and
+/// Qt's `QColor::rgba()` stored in an `int` give — prints negative whenever
+/// alpha is 0x80 or more, so an opaque colour from such a client arrives as
+/// e.g. `-65536` (0xFFFF0000, red).
+fn spot_color(arg: Option<&&str>) -> Option<Option<[u8; 3]>> {
+    let raw = arg.filter(|a| !a.is_empty())?;
+    let Ok(v) = raw.parse::<i64>() else { return Some(None) };
+    if !(i64::from(i32::MIN)..=i64::from(u32::MAX)).contains(&v) {
+        return Some(None);
+    }
+    let argb = v as u32; // two's complement keeps the low 32 bits
+    let rgb = [(argb >> 16) as u8, (argb >> 8) as u8, argb as u8];
+    Some((rgb != [0, 0, 0]).then_some(rgb))
+}
+
+/// Parse `SPOT:`'s arguments; `None` when a mandatory one is missing or the
+/// frequency is not a positive number of hertz.
+///
+/// The text is everything after the fourth comma. The spec reserves `,` and
+/// does not allow it inside an argument, but a client that puts one in its
+/// comment anyway gets the comment back whole rather than cut at the comma.
+fn parse_spot(args: &str) -> Option<TciSpot> {
+    // Split at most four times, so commas past the fourth stay in the text.
+    let a: Vec<&str> = args.splitn(5, ',').map(str::trim).collect();
+    let call = a.first().filter(|c| !c.is_empty())?.to_uppercase();
+    let freq_hz: f64 = a.get(2)?.parse().ok().filter(|f: &f64| f.is_finite() && *f > 0.0)?;
+    let color = spot_color(a.get(3))?;
+    Some(TciSpot {
+        call,
+        mode: a.get(1).map(|m| m.to_uppercase()).unwrap_or_default(),
+        freq_hz,
+        color,
+        text: a.get(4).map(|t| t.to_string()).unwrap_or_default(),
+    })
 }
 
 /// Translate one `(command, args)` pair from [`crate::protocol::parse_status`].
@@ -153,6 +228,14 @@ pub(crate) fn translate(cmd: &str, args: &str, state: &TciStateSnapshot) -> Opti
         "rx_enable" => ClientReq::Ignored,
         // Global stream gate; our streams follow the per-stream commands above.
         "start" | "stop" => ClientReq::Ignored,
+
+        // --- Spots --------------------------------------------------------
+        "spot" => ClientReq::Spot(parse_spot(args)?),
+        "spot_delete" => match a.first() {
+            Some(c) if !c.is_empty() => ClientReq::SpotDelete(c.to_uppercase()),
+            _ => return None,
+        },
+        "spot_clear" => ClientReq::SpotClear,
 
         _ => return None,
     })
@@ -326,6 +409,88 @@ mod tests {
         assert_eq!(tr("trx:0,maybe;"), None);
         assert_eq!(tr("drive:0,abc;"), None);
         assert!(p::parse_status("").is_empty());
+    }
+
+    fn spot(line: &str) -> Option<TciSpot> {
+        match tr(line)? {
+            ClientReq::Spot(s) => Some(s),
+            other => panic!("{line} parsed as {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_spec_example_spot_parses() {
+        // TCI Protocol 2.1, `SPOT`, word for word.
+        assert_eq!(
+            spot("SPOT:RN6LHF,CW,7100000,16711680,ANY_TEXT;"),
+            Some(TciSpot {
+                call: "RN6LHF".into(),
+                mode: "CW".into(),
+                freq_hz: 7_100_000.0,
+                // 0x00FF0000: red, although its alpha byte is 0.
+                color: Some([255, 0, 0]),
+                text: "ANY_TEXT".into(),
+            })
+        );
+        // Case of the command and of the call does not matter.
+        let s = spot("spot:rn6lhf,cw,7100000,16711680,any text;").unwrap();
+        assert_eq!((s.call.as_str(), s.mode.as_str()), ("RN6LHF", "CW"));
+        assert_eq!(s.text, "any text", "the text keeps the case it was sent in");
+    }
+
+    #[test]
+    fn spot_colours() {
+        let col = |c: &str| spot(&format!("spot:DL1ABC,SSB,14200000,{c},x;")).unwrap().color;
+        assert_eq!(col("4294901760"), Some([255, 0, 0]), "0xFFFF0000 opaque red");
+        assert_eq!(col("-65536"), Some([255, 0, 0]), "the same red from a signed int");
+        assert_eq!(col("65280"), Some([0, 255, 0]));
+        // Present but unusable: the label wears the kind's tint.
+        assert_eq!(col("0"), None, "black is no colour");
+        assert_eq!(col("-16777216"), None, "opaque black likewise");
+        assert_eq!(col("red"), None);
+        assert_eq!(col("#FF0000"), None);
+        assert_eq!(col("4294967296"), None, "wider than 32 bits");
+    }
+
+    #[test]
+    fn spot_text_and_optional_fields() {
+        // Mode and text may be empty, and the text may be left off.
+        let s = spot("spot:DL1ABC,,14200000,65280;").unwrap();
+        assert_eq!((s.mode.as_str(), s.text.as_str()), ("", ""));
+        let s = spot("spot:DL1ABC,FT8,14074000,65280,;").unwrap();
+        assert_eq!(s.text, "");
+        // A comma in the text is outside the spec, but the comment comes back
+        // whole rather than cut.
+        let s = spot("spot:DL1ABC,FT8,14074000,65280,new one, CQ DX;").unwrap();
+        assert_eq!(s.text, "new one, CQ DX");
+        // A fractional frequency is still hertz.
+        assert_eq!(spot("spot:DL1ABC,CW,7012345.5,65280;").unwrap().freq_hz, 7_012_345.5);
+    }
+
+    #[test]
+    fn spots_missing_a_mandatory_field_are_ignored() {
+        assert_eq!(tr("spot:;"), None);
+        assert_eq!(tr("spot;"), None);
+        assert_eq!(tr("spot:,CW,7100000,16711680,x;"), None, "no callsign");
+        assert_eq!(tr("spot:RN6LHF,CW,,16711680,x;"), None, "no frequency");
+        assert_eq!(tr("spot:RN6LHF,CW;"), None, "no frequency");
+        assert_eq!(tr("spot:RN6LHF,CW,7100000;"), None, "no colour");
+        assert_eq!(tr("spot:RN6LHF,CW,7100000,,x;"), None, "empty colour");
+        // A frequency that is not a positive number of hertz.
+        assert_eq!(tr("spot:RN6LHF,CW,7.1MHz,16711680;"), None);
+        assert_eq!(tr("spot:RN6LHF,CW,-7100000,16711680;"), None);
+        assert_eq!(tr("spot:RN6LHF,CW,0,16711680;"), None);
+        assert_eq!(tr("spot:RN6LHF,CW,NaN,16711680;"), None);
+        assert_eq!(tr("spot:RN6LHF,CW,inf,16711680;"), None);
+    }
+
+    #[test]
+    fn spot_delete_and_clear() {
+        assert_eq!(tr("SPOT_DELETE:RN6LHF;"), Some(ClientReq::SpotDelete("RN6LHF".into())));
+        assert_eq!(tr("spot_delete: rn6lhf ;"), Some(ClientReq::SpotDelete("RN6LHF".into())));
+        assert_eq!(tr("spot_delete:;"), None);
+        assert_eq!(tr("spot_delete;"), None);
+        assert_eq!(tr("SPOT_CLEAR;"), Some(ClientReq::SpotClear));
     }
 
     #[test]

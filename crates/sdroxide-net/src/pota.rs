@@ -62,6 +62,7 @@ fn parse(body: &str, now: i64) -> Result<Vec<Spot>, String> {
             loc,
             when_utc: now,
             snr_db: None,
+            color: None,
         });
     }
     Ok(out)

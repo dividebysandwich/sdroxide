@@ -67,7 +67,7 @@ fn spot_row(
     needed: bool,
     tuned: bool,
 ) -> egui::Response {
-    let kind_col = crate::theme::data_ink(crate::theme::spot_color(s.kind));
+    let kind_col = crate::theme::data_ink(crate::theme::spot_rgb(s));
     let gray = crate::theme::gray(150);
     let inner = egui::Frame::new()
         .fill(if tuned { crate::theme::TOME_BG() } else { crate::theme::ROW_BG() })
@@ -403,14 +403,15 @@ impl SdroxideApp {
         self.broadcast_minute = -1;
     }
 
-    /// Live network spots and the on-air broadcast stations, unfiltered.
+    /// Live network spots, the on-air broadcast stations and the labels TCI
+    /// clients placed on this radio, unfiltered.
     pub(in crate::app) fn all_spots(&self) -> impl Iterator<Item = &Spot> {
-        self.spots.iter().chain(self.broadcast_spots.iter())
+        self.spots.iter().chain(self.broadcast_spots.iter()).chain(self.tci_spots.iter())
     }
 
-    /// The same two sets as one owned list in frequency order, for the SPOTS
-    /// window. `self.spots` arrives sorted from the feed manager, but the
-    /// broadcast stations have to be merged into that order.
+    /// The same three sets as one owned list in frequency order, for the SPOTS
+    /// window. `self.spots` and `self.tci_spots` each arrive sorted, but the
+    /// three have to be merged into one order.
     fn merged_spots(&self) -> Vec<Spot> {
         let mut all: Vec<Spot> = self.all_spots().cloned().collect();
         all.sort_by(|a, b| a.freq_hz.total_cmp(&b.freq_hz));
@@ -424,7 +425,7 @@ impl SdroxideApp {
     /// log or look up on QRZ, so clicking one only tunes. Guarding here rather
     /// than at each call site covers both the SPOTS list and the panadapter.
     pub(in crate::app) fn prefill_from_spot(&mut self, spot: &Spot) {
-        if spot.kind == SpotKind::Broadcast {
+        if spot.kind == SpotKind::Broadcast || is_tci_note(spot) {
             return;
         }
         let mut form = LogEditForm::new_entry(now_unix(), spot.freq_hz, &spot.mode);
@@ -484,6 +485,7 @@ impl SdroxideApp {
             (SpotKind::PskReporter, "PSK"),
             (SpotKind::FreeDv, &tr!("spots-freedv")),
             (SpotKind::Broadcast, "BC"),
+            (SpotKind::Tci, "TCI"),
         ];
         // The pick to bring into view, once LIST is shown.
         let focus_id = (self.spots_list_focus && !self.view.spots_map)
@@ -536,12 +538,12 @@ impl SdroxideApp {
                     ui.separator();
                     for (i, (kind, label)) in labels.iter().enumerate() {
                         let chip = crate::chrome::chip(ui, self.view.spot_kinds_shown[i], *label);
-                        let chip = if *kind == SpotKind::Broadcast {
-                            chip.on_hover_text(tr!(
+                        let chip = match kind {
+                            SpotKind::Broadcast => chip.on_hover_text(tr!(
                                 "spots-longwave-shortwave-broadcast-stations-air"
-                            ))
-                        } else {
-                            chip
+                            )),
+                            SpotKind::Tci => chip.on_hover_text(tr!("spots-tci-tip")),
+                            _ => chip,
                         };
                         if chip.clicked() {
                             self.view.spot_kinds_shown[i] = !self.view.spot_kinds_shown[i];
@@ -890,7 +892,7 @@ impl SdroxideApp {
             .iter()
             .filter_map(|s| {
                 let (lat, lon) = s.loc?;
-                let ink = crate::theme::data_ink(crate::theme::spot_color(s.kind));
+                let ink = crate::theme::data_ink(crate::theme::spot_rgb(s));
                 Some((
                     project(lat, lon),
                     spot_dot_radius(spot_power_kw(s)),
@@ -1303,6 +1305,7 @@ mod spots_map_tests {
             loc: Some((52.6, 12.9)),
             when_utc: 0,
             snr_db: None,
+            color: None,
         };
         assert_eq!(spot_power_kw(&s), Some(500.0));
         s.comment = "G · Eu".into();
@@ -1352,6 +1355,7 @@ mod spots_map_tests {
             loc: None,
             when_utc: 0,
             snr_db: None,
+            color: None,
         };
         let (ll, a) = approx_loc(&mk("Radio Tunis Chaine Int.", "TUN")).expect("Tunis");
         assert_eq!(a, Approx::City("Tunis"));
@@ -1400,6 +1404,7 @@ mod spot_tuned_tests {
             loc: None,
             when_utc: 0,
             snr_db: None,
+            color: None,
         };
         assert!(spot_tuned(&s, 9_650_000.0));
         assert!(spot_tuned(&s, 9_650_200.0));
@@ -1497,6 +1502,7 @@ mod tests {
             loc,
             when_utc: 0,
             snr_db: None,
+            color: None,
         };
         let sited = mk(1, "Radio Somewhere", "AUT", Some((48.0, 16.0)));
         let tunis = mk(2, "Radio Tunis", "TUN", None);
@@ -1514,5 +1520,45 @@ mod tests {
         c.refresh(&[&sited]);
         assert_eq!(c.placed.len(), 1);
         assert!(c.approx_ids.is_empty());
+    }
+}
+
+/// A TCI label whose callsign starts with `TCI-` is a program's note — a
+/// decoder's reading, a status line — not a station to log. Clicking it tunes
+/// and leaves the log alone. The prefix needs the hyphen: `:` is reserved in
+/// TCI arguments, and no amateur callsign contains a hyphen.
+// Why: HDZ 2026-11-15: „alles was mit TCI anfängt wird halt nicht ins Logbuch angeboten“.
+fn is_tci_note(spot: &Spot) -> bool {
+    spot.kind == SpotKind::Tci && spot.call.to_ascii_uppercase().starts_with("TCI-")
+}
+
+#[cfg(test)]
+mod tci_note_tests {
+    use super::*;
+
+    fn tci(call: &str) -> Spot {
+        Spot {
+            id: 1,
+            kind: SpotKind::Tci,
+            freq_hz: 433_920_000.0,
+            call: call.into(),
+            spotter: String::new(),
+            mode: "INFO".into(),
+            comment: String::new(),
+            reference: None,
+            grid: None,
+            loc: None,
+            when_utc: 0,
+            snr_db: None,
+            color: None,
+        }
+    }
+
+    #[test]
+    fn tci_prefix_is_a_note_and_a_callsign_is_not() {
+        assert!(is_tci_note(&tci("TCI-DIAG")));
+        assert!(is_tci_note(&tci("tci-rtl433")));
+        assert!(!is_tci_note(&tci("DL1ABC")));
+        assert!(!is_tci_note(&tci("TCIDIAG")));
     }
 }
