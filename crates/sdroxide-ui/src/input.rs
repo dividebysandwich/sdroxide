@@ -71,6 +71,9 @@ pub(crate) enum HeldSource {
     Mouse(usize),
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     Midi(usize),
+    /// A row of `cfg.tmate2.bindings`.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    Tmate2(usize),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -164,6 +167,7 @@ pub(crate) fn apply_action(
         }
         let rx = RxId::Main;
         match act {
+            Tune if ui.view.tune_locked => {}
             Tune => {
                 // Land on the step grid, not one step from wherever the dial
                 // happened to sit. Panadapter dragging tunes continuously and
@@ -388,7 +392,9 @@ pub(crate) fn apply_action(
         SwapVfos => cmds.push(Command::SwapVfos),
         CopyAtoB => cmds.push(Command::CopyAtoB),
         BandUp | BandDown => {
-            if let Some(b) = step_band(state.band, act == BandUp) {
+            let b = step_band(state.band, act == BandUp)
+                .or_else(|| band_beside(state.active_freq_hz(), act == BandUp));
+            if let Some(b) = b {
                 cmds.push(Command::SetBand(b));
             }
         }
@@ -404,6 +410,25 @@ pub(crate) fn apply_action(
             let n = all.len();
             let i = if act == ModeNext { (i + 1) % n } else { (i + n - 1) % n };
             cmds.push(Command::SetMode { rx, mode: all[i] });
+        }
+        ModeNextEveryday | ModePrevEveryday => {
+            let cur = state.rx[0].mode;
+            let all: Vec<_> = sdroxide_types::Mode::EVERYDAY
+                .into_iter()
+                .filter(|m| state.mode_unavailable(*m).is_none())
+                .collect();
+            if !all.is_empty() {
+                let n = all.len();
+                // From a mode outside the list, the first press lands on its
+                // first (next) or last (previous) entry.
+                let i = match all.iter().position(|m| *m == cur) {
+                    Some(i) if act == ModeNextEveryday => (i + 1) % n,
+                    Some(i) => (i + n - 1) % n,
+                    None if act == ModeNextEveryday => 0,
+                    None => n - 1,
+                };
+                cmds.push(Command::SetMode { rx, mode: all[i] });
+            }
         }
         ModeSelect(mode) => cmds.push(Command::SetMode { rx, mode }),
         MemoryRecall(n) => cmds.push(Command::RecallMemory(n)),
@@ -453,7 +478,11 @@ pub(crate) fn apply_action(
         ToggleSpots => *ui.spots = !*ui.spots,
         ToggleMemories => *ui.memories = !*ui.memories,
         ToggleVoice => *ui.voice = !*ui.voice,
-        SpeakStatus | SpeakRepeat | SpeechSilence | SpeechToggle => ui.speech.push(act),
+        TuneLock => ui.view.tune_locked = !ui.view.tune_locked,
+        // Collected for the caller, like speech: they change the TMate 2's
+        // own settings, which this function has no hold of.
+        SpeakStatus | SpeakRepeat | SpeechSilence | SpeechToggle | Tmate2TxReadoutCycle
+        | Tmate2StepCycle | Tmate2StepCycleDown => ui.speech.push(act),
         _ => {}
     }
 }
@@ -467,6 +496,21 @@ fn step_band(cur: sdroxide_types::Band, up: bool) -> Option<sdroxide_types::Band
     let i = ham.iter().position(|b| *b == cur)?;
     let n = ham.len();
     Some(if up { ham[(i + 1) % n] } else { ham[(i + n - 1) % n] })
+}
+
+/// From outside every ham band (general coverage, e.g. 6 MHz after a big
+/// tuning step), the next ham band above `hz` (`up`) or below it, wrapping
+/// round at the ends as [`step_band`] does.
+fn band_beside(hz: f64, up: bool) -> Option<sdroxide_types::Band> {
+    use sdroxide_types::Band;
+    let ham: Vec<(Band, (f64, f64))> =
+        Band::ALL.iter().filter_map(|b| b.edges().map(|e| (*b, e))).collect();
+    let pick = if up {
+        ham.iter().find(|(_, (lo, _))| *lo > hz).or_else(|| ham.first())
+    } else {
+        ham.iter().rev().find(|(_, (_, hi))| *hi < hz).or_else(|| ham.last())
+    };
+    pick.map(|(b, _)| *b)
 }
 
 /// Does this chord's modifier set match what is physically held?
@@ -517,6 +561,19 @@ pub struct InputRuntime {
     /// (a step change, say) doesn't tear the connection down.
     #[cfg(not(target_arch = "wasm32"))]
     midi_sent: sdroxide_midi::MidiConfig,
+    /// Last TMate 2 control that moved, shown in the settings dialog.
+    pub last_tmate2: Option<String>,
+    #[cfg(not(target_arch = "wasm32"))]
+    tmate2: Option<sdroxide_tmate2::Tmate2Handle>,
+    /// The enable flag the TMate 2 worker was last told about.
+    #[cfg(not(target_arch = "wasm32"))]
+    tmate2_sent: bool,
+    /// What the TMate 2's LCD was last told to show.
+    #[cfg(not(target_arch = "wasm32"))]
+    tmate2_shown: Option<sdroxide_tmate2::Display>,
+    /// Highest forward power seen this session, for the TX bargraph's scale.
+    #[cfg(not(target_arch = "wasm32"))]
+    tmate2_peak_w: f32,
 }
 
 impl InputRuntime {
@@ -538,6 +595,13 @@ impl InputRuntime {
             let ctx = ctx.clone();
             (Some(sdroxide_midi::spawn(want.clone(), move || crate::repaint::animate(&ctx))), want)
         };
+        #[cfg(not(target_arch = "wasm32"))]
+        let tmate2 = {
+            let ctx = ctx.clone();
+            sdroxide_tmate2::spawn(cfg.tmate2.enabled, move || crate::repaint::animate(&ctx))
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let tmate2_sent = cfg.tmate2.enabled;
         #[cfg(target_arch = "wasm32")]
         let _ = ctx;
         InputRuntime {
@@ -552,11 +616,38 @@ impl InputRuntime {
             midi,
             #[cfg(not(target_arch = "wasm32"))]
             midi_sent,
+            last_tmate2: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            tmate2: Some(tmate2),
+            #[cfg(not(target_arch = "wasm32"))]
+            tmate2_sent,
+            #[cfg(not(target_arch = "wasm32"))]
+            tmate2_shown: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            tmate2_peak_w: 0.0,
         }
     }
 
     pub fn persist(&self) {
         persist_input_settings(&self.cfg);
+    }
+
+    /// The next TMate 2 transmit readout (power, reflected, SWR), saved.
+    pub(crate) fn tmate2_next_readout(&mut self) {
+        self.cfg.tmate2.tx_readout = self.cfg.tmate2.tx_readout.next();
+        self.persist();
+    }
+
+    /// The next main-dial tuning step from [`sdroxide_types::TMATE2_TUNE_STEPS`]
+    /// for every TMate 2 dial bound to Tune, saved. From a step not on the
+    /// list it goes to the first one above.
+    pub(crate) fn tmate2_next_step(&mut self, up: bool) {
+        for b in &mut self.cfg.tmate2.bindings {
+            if b.action == Action::Tune && b.control.is_dial() {
+                b.tuning.step = next_tune_step(b.tuning.step, up);
+            }
+        }
+        self.persist();
     }
 
     /// The chords bound to the CW straight key, in binding order. The CW panel
@@ -587,6 +678,9 @@ impl InputRuntime {
     pub fn discard_midi(&mut self) {
         if let Some(midi) = self.midi.as_mut() {
             let _ = midi.poll();
+        }
+        if let Some(t) = self.tmate2.as_mut() {
+            let _ = t.poll();
         }
     }
 
@@ -701,7 +795,7 @@ impl InputRuntime {
                                 .unwrap_or(true),
                             // MIDI releases arrive as messages, not as polled
                             // state; only the global conditions above end them.
-                            HeldSource::Midi(_) => false,
+                            HeldSource::Midi(_) | HeldSource::Tmate2(_) => false,
                         }
                     })
                     .map(|h| h.src)
@@ -1006,6 +1100,208 @@ impl InputRuntime {
         }
     }
 
+    /// Drain the TMate 2 worker and apply what it produced: dial counts summed
+    /// per binding, so a fast spin is one command per frame, and keys in the
+    /// order they arrived.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn poll_tmate2(
+        &mut self,
+        ctx: &eframe::egui::Context,
+        state: &mut RadioState,
+        ui: &mut UiSink<'_>,
+        cmds: &mut Vec<Command>,
+    ) {
+        use sdroxide_tmate2::Tmate2Event;
+
+        let want = self.cfg.tmate2.enabled;
+        if want != self.tmate2_sent {
+            if let Some(t) = self.tmate2.as_ref() {
+                t.set_enabled(want);
+            }
+            self.tmate2_sent = want;
+        }
+        let Some(t) = self.tmate2.as_mut() else { return };
+        let events = t.poll();
+        if events.is_empty() {
+            return;
+        }
+        let now = ctx.input(|i| i.time);
+
+        let mut deltas: Vec<(usize, f32)> = Vec::new();
+        let mut buttons: Vec<(usize, bool)> = Vec::new();
+        for ev in events {
+            match ev {
+                Tmate2Event::Connected(_) => {}
+                Tmate2Event::Disconnected => self.release_tmate2_holds(state, ui, cmds),
+                Tmate2Event::Dial { control, delta } => {
+                    self.last_tmate2 = Some(format!("{}  {delta:+}", control.label()));
+                    for (ix, b) in self.cfg.tmate2.bindings.iter().enumerate() {
+                        if !b.enabled || b.control != control {
+                            continue;
+                        }
+                        match b.action.kind() {
+                            ActionKind::Continuous => {
+                                match deltas.iter_mut().find(|(i, _)| *i == ix) {
+                                    Some(e) => e.1 += delta as f32,
+                                    None => deltas.push((ix, delta as f32)),
+                                }
+                            }
+                            // A dial bound to a button action fires once per
+                            // report it moves in.
+                            ActionKind::Momentary => buttons.push((ix, true)),
+                        }
+                    }
+                }
+                Tmate2Event::Key { control, down } => {
+                    self.last_tmate2 =
+                        Some(format!("{}  {}", control.label(), if down { "down" } else { "up" }));
+                    for (ix, b) in self.cfg.tmate2.bindings.iter().enumerate() {
+                        if b.enabled
+                            && b.control == control
+                            && b.action.kind() == ActionKind::Momentary
+                        {
+                            buttons.push((ix, down));
+                        }
+                    }
+                }
+            }
+        }
+
+        for (ix, down) in buttons {
+            self.tmate2_button(ix, down, now, state, ui, cmds);
+        }
+        for (ix, counts) in deltas {
+            let Some(b) = self.cfg.tmate2.bindings.get(ix).cloned() else { continue };
+            let d = self.scaled(b.action, &b.tuning, now, counts);
+            let input = ActionInput::Delta { d, step: b.tuning.step };
+            apply_action(b.action, input, b.button_mode, state, ui, cmds);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn tmate2_button(
+        &mut self,
+        ix: usize,
+        down: bool,
+        now: f64,
+        state: &mut RadioState,
+        ui: &mut UiSink<'_>,
+        cmds: &mut Vec<Command>,
+    ) {
+        let Some(b) = self.cfg.tmate2.bindings.get(ix) else { return };
+        let mode =
+            if b.action == Action::CwStraight { ButtonMode::Momentary } else { b.button_mode };
+        let action = b.action;
+        let src = HeldSource::Tmate2(ix);
+        if down {
+            self.press(src, action, mode, now);
+        } else if self.release(src).is_none()
+            && mode == ButtonMode::Momentary
+            && !matches!(action, Action::Ptt | Action::TuneCarrier)
+        {
+            // Nothing was held: a hold whose press was already undone (focus
+            // loss, timeout). Except for PTT and TUNE, whose key-up is sent
+            // regardless, as MIDI's is: unkeying twice costs nothing.
+            return;
+        }
+        if action == Action::Ptt {
+            tracing::info!(binding = ix, down, ?mode, "TMate 2 PTT");
+        }
+        let sample = if down { ActionInput::Press } else { ActionInput::Release };
+        apply_action(action, sample, mode, state, ui, cmds);
+    }
+
+    /// Release everything the TMate 2 was holding — it was unplugged, or
+    /// turned off, and can no longer send the key-up itself.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn release_tmate2_holds(
+        &mut self,
+        state: &mut RadioState,
+        ui: &mut UiSink<'_>,
+        cmds: &mut Vec<Command>,
+    ) {
+        let stale: Vec<HeldSource> = self
+            .held
+            .iter()
+            .filter(|h| matches!(h.src, HeldSource::Tmate2(_)))
+            .map(|h| h.src)
+            .collect();
+        for src in stale {
+            if let Some(action) = self.release(src) {
+                apply_action(action, ActionInput::Release, ButtonMode::Momentary, state, ui, cmds);
+            }
+        }
+    }
+
+    /// Tell the TMate 2 what its LCD should show, when that has changed.
+    /// Called once a frame with the radio's state and the latest meters.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn tmate2_display(
+        &mut self,
+        state: &RadioState,
+        meters: Option<&sdroxide_types::Meters>,
+        amp: Option<&sdroxide_types::AmpReadings>,
+        tune_locked: bool,
+    ) {
+        if !self.cfg.tmate2.enabled {
+            return;
+        }
+        // The highest forward power seen, which picks the bargraph's full
+        // scale. Kept across overs so the scale does not jump about.
+        if let Some(w) = meters.and_then(|m| m.tx.as_ref()).and_then(|t| t.fwd_w)
+            && w.is_finite()
+        {
+            self.tmate2_peak_w = self.tmate2_peak_w.max(w);
+        }
+        let mut d = tmate2_display_for(state, meters, self.tmate2_peak_w);
+        d.tx_readout = match self.cfg.tmate2.tx_readout {
+            sdroxide_types::Tmate2TxReadout::Power => sdroxide_tmate2::TxReadout::Power,
+            sdroxide_types::Tmate2TxReadout::Reflected => sdroxide_tmate2::TxReadout::Reflected,
+            sdroxide_types::Tmate2TxReadout::Swr => sdroxide_tmate2::TxReadout::Swr,
+        };
+        d.lock_led = tune_locked;
+        d.look = tmate2_look(&self.cfg.tmate2.backlight, d.tx, d.mode);
+        // Underline the digit the main dial steps by, when its step is a
+        // whole decade (1 Hz, 10 Hz, ... ) that names one digit.
+        d.step_digit = self
+            .cfg
+            .tmate2
+            .bindings
+            .iter()
+            .find(|b| b.enabled && b.action == Action::Tune && b.control.is_dial())
+            .and_then(|b| step_digit(b.tuning.step));
+        // With a Hardrock keyed, the power figure is the amplifier's (the
+        // engine's `amp_tx_meter`), but the engine does not carry the
+        // amplifier's reflected power into the meters. Take it from the
+        // amplifier too, rather than the radio's reflection into the amp's
+        // input, which is a different and much smaller number.
+        if let Some(r) = amp.filter(|r| r.ptt && d.tx && r.rfl_w.is_finite()) {
+            d.tx_rfl_mw = Some((r.rfl_w.max(0.0) * 1_000.0).round() as u32);
+        }
+        if self.tmate2_shown.as_ref() != Some(&d) {
+            if let Some(t) = self.tmate2.as_ref() {
+                t.set_display(d.clone());
+            }
+            self.tmate2_shown = Some(d);
+        }
+    }
+
+    /// Live TMate 2 connection state, for the settings dialog.
+    pub fn tmate2_status(&self) -> Tmate2StatusView {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let s = self.tmate2.as_ref().map(|t| t.status()).unwrap_or_default();
+            Tmate2StatusView {
+                supported: sdroxide_tmate2::SUPPORTED,
+                connected: s.connected,
+                device: s.device,
+                error: s.error,
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        Tmate2StatusView::default()
+    }
+
     /// Live MIDI connection state, for the settings dialog.
     pub fn midi_status(&self) -> MidiStatusView {
         #[cfg(not(target_arch = "wasm32"))]
@@ -1049,8 +1345,127 @@ impl InputRuntime {
             HeldSource::Midi(ix) => {
                 self.cfg.midi.bindings.get(ix).map(|b| (b.action, b.button_mode))
             }
+            HeldSource::Tmate2(ix) => {
+                self.cfg.tmate2.bindings.get(ix).map(|b| (b.action, b.button_mode))
+            }
         }
     }
+}
+
+/// The display digit a tuning step of `step` Hz moves (1 = units), where
+/// it is a whole power of ten from 1 Hz to 100 MHz.
+#[cfg(not(target_arch = "wasm32"))]
+fn step_digit(step: f32) -> Option<u8> {
+    let s = step.abs().round();
+    (0..9u8).find(|&i| (10f32.powi(i32::from(i)) - s).abs() < 0.5).map(|i| i + 1)
+}
+
+/// The step after `step` in [`sdroxide_types::TMATE2_TUNE_STEPS`] (or before
+/// it, `up` false), wrapping, keeping its sign (a reversed dial stays
+/// reversed). From a step not on the list it goes to the nearest one that way.
+fn next_tune_step(step: f32, up: bool) -> f32 {
+    use sdroxide_types::TMATE2_TUNE_STEPS as STEPS;
+    let now = step.abs();
+    let next = if up {
+        STEPS.iter().copied().find(|s| *s > now + 0.001).unwrap_or(STEPS[0])
+    } else {
+        STEPS.iter().rev().copied().find(|s| *s < now - 0.001).unwrap_or(STEPS[STEPS.len() - 1])
+    };
+    if step < 0.0 { -next } else { next }
+}
+
+/// The backlight and contrast the settings give for transmit or the mode.
+#[cfg(not(target_arch = "wasm32"))]
+fn tmate2_look(
+    b: &sdroxide_types::Tmate2Backlight,
+    tx: bool,
+    mode: Option<sdroxide_tmate2::ModeIcon>,
+) -> sdroxide_tmate2::Look {
+    use sdroxide_tmate2::ModeIcon;
+    use sdroxide_types::Tmate2ModeKind as K;
+    let kind = mode.map(|m| match m {
+        ModeIcon::Lsb | ModeIcon::Usb => K::Ssb,
+        ModeIcon::Cw => K::Cw,
+        ModeIcon::Am | ModeIcon::Sam | ModeIcon::Fm | ModeIcon::Dsb => K::AmFm,
+        ModeIcon::Drm | ModeIcon::Dig => K::Data,
+    });
+    let [red, green, blue] = b.pick(tx, kind);
+    sdroxide_tmate2::Look { red, green, blue, contrast: b.contrast }
+}
+
+/// What the TMate 2's LCD shows for this radio state: the frequency of the
+/// VFO in use, its mode, the receive meter (or forward power on transmit), and
+/// the legends for the toggles the panel has a word for.
+#[cfg(not(target_arch = "wasm32"))]
+fn tmate2_display_for(
+    state: &RadioState,
+    meters: Option<&sdroxide_types::Meters>,
+    peak_w: f32,
+) -> sdroxide_tmate2::Display {
+    use sdroxide_tmate2::ModeIcon;
+    use sdroxide_types::{Mode, NrLevel};
+
+    let hz = match state.active_vfo {
+        Vfo::A => state.vfo_a_hz,
+        Vfo::B => state.vfo_b_hz,
+    };
+    let rx = &state.rx[0];
+    let mode = match rx.mode {
+        Mode::Lsb => Some(ModeIcon::Lsb),
+        Mode::Usb => Some(ModeIcon::Usb),
+        Mode::Cw => Some(ModeIcon::Cw),
+        Mode::Am => Some(ModeIcon::Am),
+        Mode::Sam => Some(ModeIcon::Sam),
+        Mode::Nfm | Mode::Wfm | Mode::SstvFm | Mode::RttyFm | Mode::Aprs => Some(ModeIcon::Fm),
+        Mode::Dsb | Mode::Isb => Some(ModeIcon::Dsb),
+        Mode::Drm => Some(ModeIcon::Drm),
+        Mode::Spec => None,
+        _ => Some(ModeIcon::Dig),
+    };
+    // TUNE keys the carrier without PTT, and is transmitting all the same.
+    let tx = state.tx.ptt || state.tx.tune;
+    let tx_meters = meters.and_then(|m| m.tx.as_ref());
+    let fwd_w = tx_meters.and_then(|t| t.fwd_w).filter(|w| w.is_finite() && *w >= 0.0);
+    let po = tx_meters.and_then(|t| t.po).filter(|p| p.is_finite());
+    let rfl_w = tx_meters.and_then(|t| t.rfl_w).filter(|w| w.is_finite() && *w >= 0.0);
+    let swr = tx_meters.and_then(|t| t.swr).filter(|s| s.is_finite() && *s >= 1.0);
+    sdroxide_tmate2::Display {
+        freq_hz: (hz.is_finite() && hz > 0.0).then_some(hz.round() as u64),
+        mode,
+        vfo_b: state.active_vfo == Vfo::B,
+        tx,
+        nb: state.noise_blanker,
+        nr: rx.noise_reduction != NrLevel::Off,
+        an: rx.auto_notch,
+        rit: state.rit.enabled,
+        xit: state.xit.enabled,
+        signal_dbm: meters.and_then(|m| m.s_dbm.is_finite().then_some(m.s_dbm.round() as i32)),
+        tx_mw: fwd_w.map(|w| (w * 1_000.0).round() as u32),
+        // The rig's own power-output meter where it has one; otherwise forward
+        // watts against the smallest usual rating they fit under.
+        tx_po_pct: po.map(|p| (p.clamp(0.0, 1.0) * 100.0).round() as u8).or_else(|| {
+            fwd_w.map(|w| {
+                let full = sdroxide_tmate2::protocol::power_scale_w(peak_w.max(w));
+                ((w / full).clamp(0.0, 1.0) * 100.0).round() as u8
+            })
+        }),
+        tx_rfl_mw: rfl_w.map(|w| (w * 1_000.0).round() as u32),
+        tx_swr_x10: swr.map(|s| (s * 10.0).round() as u32),
+        tx_readout: sdroxide_tmate2::TxReadout::Power,
+        step_digit: None,
+        lock_led: false,
+        look: sdroxide_tmate2::Look::default(),
+    }
+}
+
+/// TMate 2 connection state as the settings dialog needs it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Tmate2StatusView {
+    /// False on wasm and on platforms without a HID backend for it.
+    pub supported: bool,
+    pub connected: bool,
+    pub device: String,
+    pub error: Option<String>,
 }
 
 /// A MIDI port as the settings dialog lists it: the stable id it reconnects
@@ -1409,6 +1824,11 @@ mod tests {
             last_midi: None,
             midi: None,
             midi_sent: Default::default(),
+            last_tmate2: None,
+            tmate2: None,
+            tmate2_sent: false,
+            tmate2_shown: None,
+            tmate2_peak_w: 0.0,
         };
         runtime.cfg.midi.bindings.push(sdroxide_types::MidiBinding {
             action: Action::Ptt,
@@ -1427,6 +1847,97 @@ mod tests {
         state.tx.ptt = true;
         runtime.midi_button(0, false, 1.0, &mut state, &mut ui, &mut cmds);
         assert_eq!(cmds, vec![Command::SetPtt(false)]);
+    }
+
+    /// A TMate 2 key held for PTT keys and unkeys the rig, and pulling the
+    /// controller out while it is held unkeys it too.
+    #[test]
+    fn tuning_lock_holds_the_frequency() {
+        let mut state = RadioState { vfo_a_hz: 7_100_000.0, ..RadioState::default() };
+        let mut view = ViewState::default();
+        let mut flags = [false; 6];
+        let mut speech_acts = Vec::new();
+        let mut ui = sink(&mut view, &mut flags, &mut speech_acts);
+        let mut cmds = Vec::new();
+        let turn = ActionInput::Delta { d: 10.0, step: 10.0 };
+        apply_action(
+            Action::TuneLock,
+            ActionInput::Press,
+            ButtonMode::Toggle,
+            &mut state,
+            &mut ui,
+            &mut cmds,
+        );
+        assert!(ui.view.tune_locked);
+        apply_action(Action::Tune, turn, ButtonMode::Toggle, &mut state, &mut ui, &mut cmds);
+        assert_eq!(state.vfo_a_hz, 7_100_000.0);
+        assert!(cmds.is_empty());
+        apply_action(
+            Action::TuneLock,
+            ActionInput::Press,
+            ButtonMode::Toggle,
+            &mut state,
+            &mut ui,
+            &mut cmds,
+        );
+        apply_action(Action::Tune, turn, ButtonMode::Toggle, &mut state, &mut ui, &mut cmds);
+        assert_eq!(state.vfo_a_hz, 7_100_010.0);
+    }
+
+    #[test]
+    fn tmate2_step_cycles_and_keeps_direction() {
+        assert_eq!(next_tune_step(1.0, true), 10.0);
+        assert_eq!(next_tune_step(1_000.0, true), 10_000.0);
+        assert_eq!(next_tune_step(1_000_000.0, true), 1.0);
+        assert_eq!(next_tune_step(-100.0, true), -1_000.0);
+        assert_eq!(next_tune_step(50.0, true), 100.0);
+        assert_eq!(next_tune_step(1.0, false), 1_000_000.0);
+        assert_eq!(next_tune_step(50.0, false), 10.0);
+        assert_eq!(step_digit(1_000_000.0), Some(7));
+        assert_eq!(step_digit(1.0), Some(1));
+        assert_eq!(step_digit(-1_000.0), Some(4));
+        assert_eq!(step_digit(50.0), None);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn tmate2_ptt_is_released_when_the_controller_goes_away() {
+        let mut runtime = InputRuntime {
+            cfg: InputSettings::default(),
+            held: Vec::new(),
+            accum: HashMap::new(),
+            key_capture: None,
+            midi_learn: None,
+            learn_values: Vec::new(),
+            last_midi: None,
+            midi: None,
+            midi_sent: Default::default(),
+            last_tmate2: None,
+            tmate2: None,
+            tmate2_sent: false,
+            tmate2_shown: None,
+            tmate2_peak_w: 0.0,
+        };
+        runtime.cfg.tmate2.bindings = vec![sdroxide_types::Tmate2Binding {
+            control: sdroxide_types::Tmate2Control::F6,
+            action: Action::Ptt,
+            button_mode: ButtonMode::Momentary,
+            ..Default::default()
+        }];
+        let mut state = RadioState::default();
+        let mut view = ViewState::default();
+        let mut flags = [false; 6];
+        let mut speech_acts = Vec::new();
+        let mut ui = sink(&mut view, &mut flags, &mut speech_acts);
+        let mut cmds = Vec::new();
+        runtime.tmate2_button(0, true, 0.0, &mut state, &mut ui, &mut cmds);
+        assert_eq!(cmds, vec![Command::SetPtt(true)]);
+        assert!(runtime.any_held());
+        cmds.clear();
+        state.tx.ptt = true;
+        runtime.release_tmate2_holds(&mut state, &mut ui, &mut cmds);
+        assert_eq!(cmds, vec![Command::SetPtt(false)]);
+        assert!(!runtime.any_held());
     }
 
     /// One-shots must not fire twice for one physical press.
@@ -1522,6 +2033,30 @@ mod tests {
             );
         }
         assert!(state.rx[0].filter_hi - state.rx[0].filter_lo >= MIN_FILTER_HZ - 0.001);
+    }
+
+    #[test]
+    fn band_stepping_from_between_bands_goes_to_the_nearest() {
+        // 6 MHz: between 60 m and 40 m.
+        assert_eq!(band_beside(6_000_000.0, true), Some(Band::M40));
+        assert_eq!(band_beside(6_000_000.0, false), Some(Band::M60));
+        // Below 160 m going down wraps to the top, as band stepping does.
+        assert_eq!(band_beside(500_000.0, true), Some(Band::M160));
+        let mut state = RadioState { vfo_a_hz: 6_000_000.0, band: Band::Gen, ..Default::default() };
+        let mut view = ViewState::default();
+        let mut flags = [false; 6];
+        let mut speech_acts = Vec::new();
+        let mut ui = sink(&mut view, &mut flags, &mut speech_acts);
+        let mut cmds = Vec::new();
+        apply_action(
+            Action::BandUp,
+            ActionInput::Press,
+            ButtonMode::Toggle,
+            &mut state,
+            &mut ui,
+            &mut cmds,
+        );
+        assert_eq!(cmds, vec![Command::SetBand(Band::M40)]);
     }
 
     #[test]

@@ -617,6 +617,23 @@ settings-controls-add-midi-control = + Add MIDI control
 settings-controls-clear-all = Clear all
 settings-controls-endless-jog-encoders-send-relative = Endless (jog) encoders send a relative step rather than a position, in one of three encodings that look alike from small movements. LEARN guesses from a clockwise turn; if the knob then tunes the wrong way, tick “rev”.
 settings-controls-none = — none —
+settings-controls-tmate2 = ELAD TMate 2
+settings-controls-tmate2-unsupported = The TMate 2 needs the native app on Windows or Linux.
+settings-controls-tmate2-intro = The ELAD / WoodBoxRadio TMate 2 USB controller: the main dial, the E1 and E2 dials with their push switches, and keys F1 to F6. It is found by itself when plugged in.
+settings-controls-tmate2-tx-readout = Small display while transmitting
+settings-controls-tmate2-backlight = Backlight
+settings-controls-tmate2-rx-colour = Receive
+settings-controls-tmate2-tx-colour = Transmit
+settings-controls-tmate2-by-mode = Receive colour by mode
+settings-controls-tmate2-ssb-colour = SSB
+settings-controls-tmate2-cw-colour = CW
+settings-controls-tmate2-am-fm-colour = AM and FM
+settings-controls-tmate2-data-colour = Data modes
+settings-controls-tmate2-contrast = Contrast
+settings-controls-tmate2-default-colours = Default colours
+settings-controls-tmate2-add = + Add TMate 2 control
+settings-controls-tmate2-defaults = Restore TMate 2 defaults
+settings-controls-tmate2-help = The TMate 2 speeds its dials up by itself on a fast turn, so the main dial's step can stay small. Close other programs that use the TMate 2 (SDR Console, ELAD's software) first. On Linux, install the udev rule for it so it can be opened without root.
 
 ## Settings window, General (src/app/settings/general.rs)
 

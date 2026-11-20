@@ -71,6 +71,11 @@ pub enum Action {
     BandSelect(Band),
     ModeNext,
     ModePrev,
+    /// Step through the everyday modes only — [`Mode::EVERYDAY`] — rather
+    /// than every decoder the program has. What a hardware mode key wants:
+    /// [`Action::ModeNext`] reaches ADS-B, HFDL and the rest a few presses on.
+    ModeNextEveryday,
+    ModePrevEveryday,
     ModeSelect(Mode),
     MemoryRecall(u32),
     RecordToggle,
@@ -119,7 +124,23 @@ pub enum Action {
     SpeechSilence,
     /// Announcements on/off, with a spoken confirmation either way.
     SpeechToggle,
+    /// What the TMate 2's small display shows while transmitting: steps
+    /// through [`Tmate2TxReadout`] (output power, reflected power, SWR).
+    Tmate2TxReadoutCycle,
+    /// Tuning lock on/off: while on, bound tuning controls (dials, keys, the
+    /// panadapter mouse wheel) leave the frequency alone, and the TMate 2's
+    /// LOCK LED is lit. Clicking the panadapter or a spot still tunes.
+    TuneLock,
+    /// Step the TMate 2 main dial's tuning step through
+    /// [`TMATE2_TUNE_STEPS`].
+    Tmate2StepCycle,
+    /// [`Action::Tmate2StepCycle`] the other way: the next finer step.
+    Tmate2StepCycleDown,
 }
+
+/// The steps [`Action::Tmate2StepCycle`] walks, in Hz.
+pub const TMATE2_TUNE_STEPS: [f32; 7] =
+    [1.0, 10.0, 100.0, 1_000.0, 10_000.0, 100_000.0, 1_000_000.0];
 
 /// Whether an action is driven by a value or by a button.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,12 +168,16 @@ impl Action {
         match self {
             Tune | RitOffset | XitOffset | RitEnable | XitEnable | RitClear | XitClear
             | VfoSelect(_) | VfoToggle | SwapVfos | CopyAtoB | Split | BandUp | BandDown
-            | BandSelect(_) | MemoryRecall(_) => "Tuning",
+            | BandSelect(_) | MemoryRecall(_) | TuneLock | Tmate2StepCycle
+            | Tmate2StepCycleDown => "Tuning",
             Volume | SubVolume | Squelch | FilterWidth | FilterShift | AgcMaxGain | ManualGain
             | Mute | NoiseBlanker | NoiseReductionCycle | AutoNotch | Binaural | AgcCycle
-            | SubRx | ModeNext | ModePrev | ModeSelect(_) | RecordToggle => "Receive",
+            | SubRx | ModeNext | ModePrev | ModeNextEveryday | ModePrevEveryday | ModeSelect(_)
+            | RecordToggle => "Receive",
             Ptt | TuneCarrier | TxDrive | TuneDrive | MicGain | DigiAudioFreq | AbortTx
-            | CwStraight | VoicePlay(_) | VoiceStop | ToneBurst => "Transmit",
+            | CwStraight | VoicePlay(_) | VoiceStop | ToneBurst | Tmate2TxReadoutCycle => {
+                "Transmit"
+            }
             SpectrumZoom | SpectrumPan | SpectrumFloorDb | SpectrumCeilDb | FitSpan | ZoomIn
             | ZoomOut | PeakHold | SpectrumCollapse | WaterfallCollapse | WaterfallFlip => {
                 "Display"
@@ -205,6 +230,8 @@ impl Action {
             BandDown => "Band down",
             ModeNext => "Mode next",
             ModePrev => "Mode previous",
+            ModeNextEveryday => "Mode next (everyday modes)",
+            ModePrevEveryday => "Mode previous (everyday modes)",
             RecordToggle => "Record on/off",
             AbortTx => "Abort transmit",
             CwStraight => "CW straight key",
@@ -227,6 +254,10 @@ impl Action {
             SpeakRepeat => "Repeat last announcement",
             SpeechSilence => "Stop speaking",
             SpeechToggle => "Announcements on/off",
+            Tmate2TxReadoutCycle => "TMate 2 TX readout (PO / REFL / SWR)",
+            TuneLock => "Tuning lock on/off",
+            Tmate2StepCycle => "TMate 2 tuning step up (1 Hz to 1 MHz)",
+            Tmate2StepCycleDown => "TMate 2 tuning step down",
             VfoSelect(v) => return format!("Select VFO {}", if v == Vfo::A { "A" } else { "B" }),
             BandSelect(b) => return format!("Band {}", b.label()),
             ModeSelect(m) => return format!("Mode {}", m.label()),
@@ -298,7 +329,7 @@ impl Action {
             BandDown,
         ];
         v.extend(Band::ALL.iter().map(|b| BandSelect(*b)));
-        v.extend([ModeNext, ModePrev]);
+        v.extend([ModeNext, ModePrev, ModeNextEveryday, ModePrevEveryday]);
         v.extend(Mode::ALL.iter().map(|m| ModeSelect(*m)));
         v.extend([RecordToggle, AbortTx, CwStraight, VoiceStop, ToneBurst]);
         v.extend((0..crate::VOICE_SLOTS as u8).map(VoicePlay));
@@ -320,6 +351,10 @@ impl Action {
             SpeakRepeat,
             SpeechSilence,
             SpeechToggle,
+            Tmate2TxReadoutCycle,
+            TuneLock,
+            Tmate2StepCycle,
+            Tmate2StepCycleDown,
         ]);
         v
     }
@@ -870,6 +905,253 @@ pub struct MidiSettings {
     pub bindings: Vec<MidiBinding>,
 }
 
+/// One physical control on an ELAD / WoodBoxRadio TMate 2.
+///
+/// The three dials are endless encoders with a push switch each; F1–F6 are the
+/// six keys under the display. Names follow the panel: the big knob is the
+/// main dial, the two small ones are printed E1 (left) and E2 (right).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Tmate2Control {
+    MainDial,
+    E1Dial,
+    E2Dial,
+    MainPush,
+    E1Push,
+    E2Push,
+    F1,
+    F2,
+    F3,
+    F4,
+    F5,
+    F6,
+}
+
+impl Tmate2Control {
+    pub const ALL: [Tmate2Control; 12] = [
+        Tmate2Control::MainDial,
+        Tmate2Control::E1Dial,
+        Tmate2Control::E2Dial,
+        Tmate2Control::MainPush,
+        Tmate2Control::E1Push,
+        Tmate2Control::E2Push,
+        Tmate2Control::F1,
+        Tmate2Control::F2,
+        Tmate2Control::F3,
+        Tmate2Control::F4,
+        Tmate2Control::F5,
+        Tmate2Control::F6,
+    ];
+
+    /// Whether this control turns (and so sends a step count) rather than
+    /// being pressed.
+    pub fn is_dial(self) -> bool {
+        matches!(self, Tmate2Control::MainDial | Tmate2Control::E1Dial | Tmate2Control::E2Dial)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Tmate2Control::MainDial => "Main dial",
+            Tmate2Control::E1Dial => "E1 dial",
+            Tmate2Control::E2Dial => "E2 dial",
+            Tmate2Control::MainPush => "Main dial push",
+            Tmate2Control::E1Push => "E1 push",
+            Tmate2Control::E2Push => "E2 push",
+            Tmate2Control::F1 => "F1",
+            Tmate2Control::F2 => "F2",
+            Tmate2Control::F3 => "F3",
+            Tmate2Control::F4 => "F4",
+            Tmate2Control::F5 => "F5",
+            Tmate2Control::F6 => "F6",
+        }
+    }
+}
+
+/// What one TMate 2 control does. Several rows may name the same control.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Tmate2Binding {
+    pub control: Tmate2Control,
+    pub action: Action,
+    pub tuning: BindingTuning,
+    pub button_mode: ButtonMode,
+    pub enabled: bool,
+}
+
+impl Default for Tmate2Binding {
+    fn default() -> Self {
+        Tmate2Binding {
+            control: Tmate2Control::MainDial,
+            action: Action::Tune,
+            tuning: BindingTuning::with_step(Action::Tune.default_step()),
+            button_mode: ButtonMode::Toggle,
+            enabled: true,
+        }
+    }
+}
+
+impl Tmate2Binding {
+    fn dial(control: Tmate2Control, action: Action, step: f32) -> Self {
+        Tmate2Binding {
+            control,
+            action,
+            tuning: BindingTuning::with_step(step),
+            ..Tmate2Binding::default()
+        }
+    }
+
+    fn button(control: Tmate2Control, action: Action) -> Self {
+        Tmate2Binding {
+            control,
+            action,
+            tuning: BindingTuning::with_step(action.default_step()),
+            button_mode: ButtonMode::Toggle,
+            enabled: true,
+        }
+    }
+
+    /// What a TMate 2 does out of the box: tune on the main dial, volume and
+    /// filter width on the small ones, and band, mode and receiver toggles on
+    /// the keys. Push-to-talk is left unbound, as it is for every other input.
+    ///
+    /// The main dial's step is small because the TMate 2 accelerates in
+    /// hardware: a slow turn counts 1 per detent and a fast spin 5 or 10, so a
+    /// 10 Hz step still covers a band quickly.
+    pub fn defaults() -> Vec<Tmate2Binding> {
+        use Tmate2Control::*;
+        vec![
+            Tmate2Binding::dial(MainDial, Action::Tune, 10.0),
+            Tmate2Binding::dial(E1Dial, Action::Volume, Action::Volume.default_step()),
+            Tmate2Binding::dial(E2Dial, Action::FilterWidth, Action::FilterWidth.default_step()),
+            Tmate2Binding::button(MainPush, Action::VfoToggle),
+            Tmate2Binding::button(E1Push, Action::Mute),
+            Tmate2Binding::button(E2Push, Action::NoiseReductionCycle),
+            Tmate2Binding::button(F1, Action::BandDown),
+            Tmate2Binding::button(F2, Action::BandUp),
+            Tmate2Binding::button(F3, Action::ModePrevEveryday),
+            Tmate2Binding::button(F4, Action::ModeNextEveryday),
+            Tmate2Binding::button(F5, Action::AgcCycle),
+            Tmate2Binding::button(F6, Action::NoiseBlanker),
+        ]
+    }
+}
+
+/// What the TMate 2's small display shows while transmitting. The bargraph
+/// is output power whichever is picked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Tmate2TxReadout {
+    /// Forward power, in watts (milliwatts below 1 W).
+    #[default]
+    Power,
+    /// Reflected power, in watts (milliwatts below 1 W).
+    Reflected,
+    /// SWR × 10 (the panel has no decimal point there): `15` is 1.5:1.
+    Swr,
+}
+
+impl Tmate2TxReadout {
+    pub const ALL: [Tmate2TxReadout; 3] =
+        [Tmate2TxReadout::Power, Tmate2TxReadout::Reflected, Tmate2TxReadout::Swr];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Tmate2TxReadout::Power => "Output power (PO)",
+            Tmate2TxReadout::Reflected => "Reflected power (REFL)",
+            Tmate2TxReadout::Swr => "SWR (×10, 15 = 1.5:1)",
+        }
+    }
+
+    /// The next one round, for [`Action::Tmate2TxReadoutCycle`].
+    pub fn next(self) -> Self {
+        match self {
+            Tmate2TxReadout::Power => Tmate2TxReadout::Reflected,
+            Tmate2TxReadout::Reflected => Tmate2TxReadout::Swr,
+            Tmate2TxReadout::Swr => Tmate2TxReadout::Power,
+        }
+    }
+}
+
+/// The kinds of mode the TMate 2's backlight can be coloured by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tmate2ModeKind {
+    Ssb,
+    Cw,
+    AmFm,
+    Data,
+}
+
+/// The TMate 2's backlight colours (red, green, blue, 0-255 each) and LCD
+/// contrast: one colour in receive and one in transmit and, if `by_mode`,
+/// a receive colour for each kind of mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Tmate2Backlight {
+    pub rx: [u8; 3],
+    pub tx: [u8; 3],
+    pub by_mode: bool,
+    pub ssb: [u8; 3],
+    pub cw: [u8; 3],
+    pub am_fm: [u8; 3],
+    pub data: [u8; 3],
+    pub contrast: u8,
+}
+
+impl Default for Tmate2Backlight {
+    /// The receive colour and contrast are what ELAD's own software sends.
+    fn default() -> Self {
+        let blue = [0x00, 0x32, 0xFF];
+        Tmate2Backlight {
+            rx: blue,
+            tx: [0xFF, 0x20, 0x00],
+            by_mode: false,
+            ssb: blue,
+            cw: [0x00, 0xC0, 0x40],
+            am_fm: [0xFF, 0xA0, 0x00],
+            data: [0xA0, 0x00, 0xFF],
+            contrast: 0x28,
+        }
+    }
+}
+
+impl Tmate2Backlight {
+    /// The colour now: transmit's while transmitting, else the mode's (when
+    /// coloured by mode) or receive's.
+    pub fn pick(&self, tx: bool, mode: Option<Tmate2ModeKind>) -> [u8; 3] {
+        if tx {
+            return self.tx;
+        }
+        match (self.by_mode, mode) {
+            (true, Some(Tmate2ModeKind::Ssb)) => self.ssb,
+            (true, Some(Tmate2ModeKind::Cw)) => self.cw,
+            (true, Some(Tmate2ModeKind::AmFm)) => self.am_fm,
+            (true, Some(Tmate2ModeKind::Data)) => self.data,
+            _ => self.rx,
+        }
+    }
+}
+
+/// The ELAD / WoodBoxRadio TMate 2 USB controller.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Tmate2Settings {
+    pub enabled: bool,
+    pub bindings: Vec<Tmate2Binding>,
+    /// What the small display shows while transmitting.
+    pub tx_readout: Tmate2TxReadout,
+    /// Backlight colours and contrast.
+    pub backlight: Tmate2Backlight,
+}
+
+impl Default for Tmate2Settings {
+    fn default() -> Self {
+        Tmate2Settings {
+            enabled: false,
+            bindings: Tmate2Binding::defaults(),
+            tx_readout: Tmate2TxReadout::default(),
+            backlight: Tmate2Backlight::default(),
+        }
+    }
+}
+
 /// Everything client-local input control needs.
 ///
 /// Persisted as `input.json` on native and in eframe storage on wasm. It lives
@@ -885,6 +1167,9 @@ pub struct InputSettings {
     /// stuck-controller backstop. 0 disables the timeout.
     pub ptt_hold_timeout_s: f32,
     pub midi: MidiSettings,
+    /// The TMate 2 controller. Absent from files written before it existed,
+    /// which then read as disabled with the shipped bindings.
+    pub tmate2: Tmate2Settings,
     /// Which set of shipped defaults this file has already seen. See
     /// [`InputSettings::SCHEMA`] and [`InputSettings::migrate`].
     ///
@@ -911,6 +1196,7 @@ impl Default for InputSettings {
             mouse_buttons: Vec::new(),
             ptt_hold_timeout_s: 300.0,
             midi: MidiSettings::default(),
+            tmate2: Tmate2Settings::default(),
             schema: InputSettings::SCHEMA,
         }
     }
@@ -958,6 +1244,21 @@ impl InputSettings {
         }
         self.schema = Self::SCHEMA;
         true
+    }
+}
+
+#[cfg(test)]
+mod tmate2_backlight_tests {
+    use super::*;
+
+    #[test]
+    fn transmit_then_mode_then_receive() {
+        let b = Tmate2Backlight { by_mode: true, ..Tmate2Backlight::default() };
+        assert_eq!(b.pick(true, Some(Tmate2ModeKind::Cw)), b.tx);
+        assert_eq!(b.pick(false, Some(Tmate2ModeKind::Cw)), b.cw);
+        assert_eq!(b.pick(false, None), b.rx);
+        let plain = Tmate2Backlight::default();
+        assert_eq!(plain.pick(false, Some(Tmate2ModeKind::Cw)), plain.rx);
     }
 }
 

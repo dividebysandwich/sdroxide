@@ -1,0 +1,14 @@
+# The ELAD / WoodBoxRadio TMate 2 USB controller (1721:0614).
+#
+# sdroxide reads and writes it through /dev/hidraw*, which is root-owned by
+# default. TAG+="uaccess" hands it to whoever is logged in at the seat; the
+# plugdev line is the fallback where there is no seat (ssh, WSL2, a service),
+# on its own line for the reason 60-sdroxide-relay.rules gives: a group that
+# does not exist discards the whole line it is on.
+#
+# Install:
+#   sudo cp 60-sdroxide-tmate2.rules /usr/lib/udev/rules.d/
+#   sudo udevadm control --reload
+# then unplug and replug the TMate 2.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1721", ATTRS{idProduct}=="0614", MODE="0660", TAG+="uaccess", ENV{SDROXIDE_TMATE2}="1"
+SUBSYSTEM=="hidraw", ENV{SDROXIDE_TMATE2}=="1", GROUP="plugdev"
