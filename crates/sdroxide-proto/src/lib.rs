@@ -3341,11 +3341,6 @@ mod tests {
         }
     }
 
-    /// The sign-in exchange, both ways.
-    ///
-    /// These three are the only messages that cross before the handshake has
-    /// finished, so a client and server that disagree about their encoding
-    /// cannot recover — there is no established session to report the fault on.
     /// A TCI spot with its own colour, and a feed spot without one, both
     /// survive the wire — `color` sits at `Spot`'s tail, where a field-order
     /// slip would show.
@@ -3373,6 +3368,11 @@ mod tests {
         assert_eq!(decode::<ServerMsg>(&encode(&m).unwrap()).unwrap(), m);
     }
 
+    /// The sign-in exchange, both ways.
+    ///
+    /// These three are the only messages that cross before the handshake has
+    /// finished, so a client and server that disagree about their encoding
+    /// cannot recover — there is no established session to report the fault on.
     #[test]
     fn roundtrip_sign_in() {
         let ask = ServerMsg::AuthRequired;

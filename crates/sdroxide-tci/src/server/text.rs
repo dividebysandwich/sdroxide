@@ -137,15 +137,20 @@ fn spot_color(arg: Option<&&str>) -> Option<Option<[u8; 3]>> {
 fn parse_spot(args: &str) -> Option<TciSpot> {
     // Split at most four times, so commas past the fourth stay in the text.
     let a: Vec<&str> = args.splitn(5, ',').map(str::trim).collect();
-    let call = a.first().filter(|c| !c.is_empty())?.to_uppercase();
+    // Capped: the whole book goes to every client on each change.
+    let call: String = a.first().filter(|c| !c.is_empty())?.chars().take(32).collect();
+    let call = call.to_uppercase();
     let freq_hz: f64 = a.get(2)?.parse().ok().filter(|f: &f64| f.is_finite() && *f > 0.0)?;
     let color = spot_color(a.get(3))?;
     Some(TciSpot {
         call,
-        mode: a.get(1).map(|m| m.to_uppercase()).unwrap_or_default(),
+        mode: a
+            .get(1)
+            .map(|m| m.chars().take(16).collect::<String>().to_uppercase())
+            .unwrap_or_default(),
         freq_hz,
         color,
-        text: a.get(4).map(|t| t.to_string()).unwrap_or_default(),
+        text: a.get(4).map(|t| t.chars().take(256).collect()).unwrap_or_default(),
     })
 }
 
