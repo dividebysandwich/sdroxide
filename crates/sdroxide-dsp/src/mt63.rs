@@ -305,6 +305,8 @@ const TX_PEAK: f32 = 0.5;
 pub struct Mt63Tx {
     variant: Mt63Variant,
     centre: f64,
+    /// The rate the caller asked for, kept so a retune can rebuild for it.
+    out_rate: f64,
     /// `rate` → the rate the caller wants.
     rate_out: Option<MonoResampler>,
     out: VecDeque<f32>,
@@ -315,13 +317,12 @@ pub struct Mt63Tx {
     phase: Vec<f64>,
     /// Per-sample phase increment of each carrier.
     step: Vec<f64>,
-    /// The rate the carriers are synthesised at, and the symbol length there.
+    /// The symbol length at the rate the carriers are synthesised at.
     ///
     /// **Not the variant's own rate.** A bank whose audio sits at 1500 Hz cannot
     /// be built at 1000 or 2000 samples per second — everything above Nyquist
     /// folds — and that is what made our own MT63-1K and MT63-500 transmissions
     /// unreadable while 2K's worked by luck of the fold.
-    synth_rate: f64,
     hop: usize,
     q: VecDeque<(u8, Option<usize>)>,
     total: usize,
@@ -363,8 +364,8 @@ impl Mt63Tx {
         Mt63Tx {
             variant,
             centre,
+            out_rate,
             rate_out,
-            synth_rate: rate,
             hop,
             out: VecDeque::new(),
             sym: Vec::new(),
@@ -392,8 +393,10 @@ impl Mt63Tx {
         if variant != self.variant || (centre - self.centre).abs() > 0.5 {
             let q = std::mem::take(&mut self.q);
             let (total, sent) = (self.total, self.sent);
-            let out_rate = if self.rate_out.is_some() { 0.0 } else { self.synth_rate };
-            *self = Mt63Tx::new(variant, out_rate, centre);
+            // Rebuilt for the rate the caller asked for in the first place. This
+            // used to pass 0 when a resampler was in use, and a resampler to
+            // 0 Hz panics: any retune of MT63 killed the engine (#884).
+            *self = Mt63Tx::new(variant, self.out_rate, centre);
             self.q = q;
             self.total = total;
             self.sent = sent;
@@ -1332,6 +1335,32 @@ mod tests {
 
     /// Noise must not lock: a receiver that prints characters out of a quiet
     /// band makes the mode look alive when it is not.
+    /// A retune keeps the caller's output rate. It used to rebuild the
+    /// resampler for 0 Hz, which panicked on the first retune (#884).
+    #[test]
+    fn a_retune_keeps_the_output_rate() {
+        let variant = Mt63Variant::named("MT63-2KL").unwrap();
+        let mut fresh = Mt63Tx::new(variant, 8000.0, 1800.0);
+        let mut retuned = Mt63Tx::new(variant, 8000.0, 1500.0);
+        retuned.set_params(1800.0, variant);
+        for tx in [&mut fresh, &mut retuned] {
+            tx.push_text("CQ");
+        }
+        // `next_block` pads with silence once the over is out, so a fixed
+        // stretch covers the whole of it. A retune rebuilds the transmitter, so
+        // it has to come out sample for sample like one built there.
+        let render = |tx: &mut Mt63Tx| {
+            let mut all = vec![0.0f32; 800 * 60];
+            for block in all.chunks_mut(800) {
+                tx.next_block(block);
+            }
+            all
+        };
+        let (a, b) = (render(&mut fresh), render(&mut retuned));
+        assert!(a.iter().any(|s| s.abs() > 1e-3), "nothing was transmitted");
+        assert_eq!(a, b, "a retuned transmitter does not match a fresh one");
+    }
+
     #[test]
     fn noise_does_not_lock_the_live_receiver() {
         let variant = Mt63Variant::named("MT63-2KS").unwrap();
