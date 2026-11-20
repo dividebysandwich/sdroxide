@@ -3304,6 +3304,22 @@ impl Rx888Config {
     pub const TUNER_GAIN_ELEMENT: &'static str = "TUNER";
     pub const TUNER_AGC_ELEMENT: &'static str = "TUNERAGC";
     pub const BIAS_TEE_VHF_ELEMENT: &'static str = "BIASTEEVHF";
+    /// Which front end the receiver is on, reported beside the gains and never
+    /// set: 1 while the R828D tuner feeds the ADC (VHF), 0 on the direct HF
+    /// path. The two front ends answer to different gain stages — ATT and VGA
+    /// are held on VHF, the tuner gain does nothing on HF — so a control panel
+    /// that shows the stages has to know which set is in force, and the
+    /// automatic crossover moves it with the dial.
+    // Why: HDZ 2026-11-15: „wenn der Modus umschaltet, dann muss ein anderer
+    //      Regler ins Bedienpanel“
+    pub const VHF_ELEMENT: &'static str = "VHF";
+
+    /// The front end a source's reported gains say it is on: `Some(true)` on
+    /// VHF, `Some(false)` on HF, `None` where nothing says (a receiver that
+    /// has not reported yet, or a server too old to report it).
+    pub fn on_vhf(gains: &[(String, f64)]) -> Option<bool> {
+        gains.iter().find(|(n, _)| n == Self::VHF_ELEMENT).map(|(_, v)| *v >= 0.5)
+    }
 
     /// Top of the R828D's 29-step gain ladder — the same figure the RTL-SDR
     /// publishes, because it is the same table in the same chip family.
@@ -8961,6 +8977,22 @@ mod tests {
         // below the tuner's own floor.
         assert_eq!(Rx888Config::vhf_crossover_hz(CLOCK), 64_800_000.0);
         assert_eq!(Rx888Config::vhf_crossover_hz(32_400_000.0), 24_000_000.0);
+    }
+
+    /// The band an RX-888 reports rides its gains, and only a report says it:
+    /// a list without the element is "unknown", which the top bar treats as
+    /// today's HF controls rather than guessing from the dial.
+    #[test]
+    fn the_rx888s_band_is_read_from_its_reported_gains() {
+        let g = |v: Option<f64>| {
+            let mut g = vec![(Rx888Config::ATT_ELEMENT.to_string(), -10.0)];
+            g.extend(v.map(|v| (Rx888Config::VHF_ELEMENT.to_string(), v)));
+            g
+        };
+        assert_eq!(Rx888Config::on_vhf(&g(Some(1.0))), Some(true));
+        assert_eq!(Rx888Config::on_vhf(&g(Some(0.0))), Some(false));
+        assert_eq!(Rx888Config::on_vhf(&g(None)), None);
+        assert_eq!(Rx888Config::on_vhf(&[]), None);
     }
 
     #[test]

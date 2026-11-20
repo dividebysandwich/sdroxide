@@ -2548,8 +2548,9 @@ impl SdroxideApp {
     /// [`rx_rows`] against this radio: what the front end offers, what the
     /// AGC is set to, and what mode the receiver is in.
     fn rx_rows(&self, ui: &egui::Ui) -> RxRows {
+        let stages = self.rx_gains().len();
         let rails: Vec<String> =
-            self.bar_gains().iter().map(|g| gain_label(&g.name, self.bar_gains().len())).collect();
+            self.bar_gains().iter().map(|g| gain_label(&g.name, stages)).collect();
         let mut front: Vec<&[&str]> = self.front_chips().iter().map(|c| c.labels).collect();
         // The ELAD SPAN chip rides the same row, priced at its widest label.
         if self.elad_bw_applies() {
@@ -2615,12 +2616,16 @@ impl SdroxideApp {
     //      the first stage; "bringen wir drei unter?".
     fn bar_gains(&self) -> Vec<GainElement> {
         let mut g = self.rx_gains();
-        // An RX-888's VHF tuner gain does nothing on HF, where the bar is
-        // used; it stays in Settings → Radio with the rest of the VHF path.
+        // An RX-888 answers to different stages on its two inputs: ATT and
+        // VGA act on HF and are held on VHF, the tuner gain acts on VHF and
+        // does nothing on HF. The bar carries the set for the band the
+        // receiver reports — see [`Rx888Panel`].
         // Why: HDZ 2026-11-09: "RF hat gar keine Möglichkeit was zu setzen
         //      für RX888, kann der weg?"
-        if self.caps.as_ref().is_some_and(|c| c.driver == "rx888") {
-            g.retain(|e| e.name != sdroxide_types::Rx888Config::TUNER_GAIN_ELEMENT);
+        //      HDZ 2026-11-15: „wenn der Modus umschaltet, dann muss ein
+        //      anderer Regler ins Bedienpanel“
+        if let Some(panel) = self.rx888_panel() {
+            g.retain(|e| panel.carries(&e.name));
         }
         g.sort_by_key(|e| e.max_db > 0.0);
         g.truncate(BAR_GAIN_STAGES);
@@ -2632,24 +2637,85 @@ impl SdroxideApp {
     // Why: HDZ 2026-11-09: "rx gain als chip mit toggle und die drei Regler,
     //      mit Amp".
     fn front_chips(&self) -> Vec<FrontChip> {
+        if let Some(panel) = self.rx888_panel() {
+            return vec![panel.chip()];
+        }
         match self.caps.as_ref().map(|c| c.driver.as_str()) {
             Some("hackrf") => vec![FrontChip::HACKRF_AMP],
-            Some("rx888") => vec![FrontChip::RX888_VGA_RANGE],
             _ => Vec::new(),
         }
+    }
+
+    /// Which of an RX-888's two control sets the receive row carries, from the
+    /// band the receiver reports beside its gains; `None` on any other front
+    /// end.
+    fn rx888_panel(&self) -> Option<Rx888Panel> {
+        self.caps
+            .as_ref()
+            .is_some_and(|c| c.driver == "rx888")
+            .then(|| Rx888Panel::for_band(sdroxide_types::Rx888Config::on_vhf(&self.state.gains)))
+    }
+
+    /// Whether `element` is an RX-888 tuner setting, which the bar reads from
+    /// and writes to the radio's config rather than the reported gains — see
+    /// [`Self::rx888_tuner_value`].
+    fn is_rx888_tuner(&self, element: &str) -> bool {
+        use sdroxide_types::Rx888Config as R;
+        self.rx888_panel().is_some()
+            && (element == R::TUNER_GAIN_ELEMENT || element == R::TUNER_AGC_ELEMENT)
+    }
+
+    /// The RX-888 tuner's gain or AGC switch as Settings → Radio holds it.
+    ///
+    /// The tuner's two settings live in the radio's config, where the
+    /// Settings page edits them, and the receiver does not report them back.
+    /// The bar reads and writes the same fields, so both places show one
+    /// number whichever of them moved it last.
+    fn rx888_tuner_value(&mut self, element: &str) -> Option<f64> {
+        if self.radio_cfg.is_none() {
+            self.radio_cfg = self.ctrl.radio_config();
+        }
+        let t = &self.radio_cfg.as_ref()?.rx888;
+        Some(match element {
+            sdroxide_types::Rx888Config::TUNER_AGC_ELEMENT => f64::from(u8::from(t.tuner_agc)),
+            _ => t.tuner_gain_db,
+        })
+    }
+
+    /// Set an RX-888 tuner setting the way Settings → Radio does: into the
+    /// radio's config, which is saved, and to the receiver as `SetGain`.
+    fn set_rx888_tuner(&mut self, cmds: &mut Vec<Command>, element: &str, db: f64) {
+        if let Some(cfg) = self.radio_cfg.as_mut() {
+            match element {
+                sdroxide_types::Rx888Config::TUNER_AGC_ELEMENT => cfg.rx888.tuner_agc = db >= 0.5,
+                _ => cfg.rx888.tuner_gain_db = db,
+            }
+            self.ctrl.set_radio_config(cfg.clone());
+        }
+        cmds.push(Command::SetGain { dir: Direction::Rx, element: element.into(), db });
     }
 
     /// One [`FrontChip`]: lit while it is anything but its first setting
     /// (the amplifier on, a VGA range forced), a click steps it on.
     fn front_chip(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, c: &FrontChip) {
-        let v = self.state.gains.iter().find(|(n, _)| n == c.element).map_or(0.0, |(_, v)| *v);
+        let tuner = self.is_rx888_tuner(c.element);
+        let v = if tuner {
+            self.rx888_tuner_value(c.element).unwrap_or(0.0)
+        } else {
+            self.state.gains.iter().find(|(n, _)| n == c.element).map_or(0.0, |(_, v)| *v)
+        };
         let i = (v.round().max(0.0) as usize).min(c.labels.len() - 1);
         let hint = match c.element {
             sdroxide_types::Rx888Config::VGA_RANGE_ELEMENT => tr!("topbar-rx888-vga-range-hint"),
+            sdroxide_types::Rx888Config::TUNER_AGC_ELEMENT => tr!("topbar-rx888-tuner-agc-hint"),
             _ => tr!("topbar-hackrf-amp-hint"),
         };
         if crate::chrome::chip(ui, i != 0, c.labels[i]).on_hover_text(hint).clicked() {
             let next = ((i + 1) % c.labels.len()) as f64;
+            if tuner {
+                self.set_rx888_tuner(cmds, c.element, next);
+                return;
+            }
             match self.state.gains.iter_mut().find(|(n, _)| n == c.element) {
                 Some((_, d)) => *d = next,
                 None => self.state.gains.push((c.element.to_string(), next)),
@@ -2664,6 +2730,7 @@ impl SdroxideApp {
     fn hardware_agc_owns(&self, element: &str) -> bool {
         use sdroxide_types::{RtlSdrAgc, RtlSdrConfig as R};
         self.pluto_agc_owns_gain(element)
+            || self.rx888_tuner_agc_owns(element)
             || (self.caps.as_ref().is_some_and(|c| c.driver == "rtlsdr")
                 && [
                     R::TUNER_GAIN_ELEMENT,
@@ -2675,6 +2742,15 @@ impl SdroxideApp {
                 && self.state.gains.iter().any(|(n, v)| {
                     n == R::AGC_ELEMENT && RtlSdrAgc::from_code(*v as u8).tuner_auto()
                 }))
+    }
+
+    /// Whether `element` is an RX-888's tuner gain while the R828D runs its own
+    /// LNA and mixer loops, which overwrite a manual gain. Read from the
+    /// radio's config, like the rail itself ([`Self::rx888_tuner_value`]).
+    fn rx888_tuner_agc_owns(&self, element: &str) -> bool {
+        element == sdroxide_types::Rx888Config::TUNER_GAIN_ELEMENT
+            && self.rx888_panel().is_some()
+            && self.radio_cfg.as_ref().is_some_and(|r| r.rx888.tuner_agc)
     }
 
     /// Whether `element` is a PlutoSDR's receive gain while the AD9361's own
@@ -2880,6 +2956,34 @@ impl SdroxideApp {
                 cmds.push(Command::SetVolume { rx: RxId::Main, v: vol });
             }
             for g in &bar_gains {
+                // An RX-888's tuner gain is read from and written to where
+                // Settings → Radio keeps it ([`Self::rx888_tuner_value`]), and
+                // carries a hint of its own.
+                let tuner = self.is_rx888_tuner(&g.name);
+                let mut db = tuner
+                    .then(|| self.rx888_tuner_value(&g.name))
+                    .flatten()
+                    .or_else(|| {
+                        self.state.gains.iter().find(|(n, _)| *n == g.name).map(|(_, d)| *d)
+                    })
+                    .unwrap_or(g.min_db);
+                // A PlutoSDR in one of its attack modes owns its own gain
+                // register: the AD9361 ignores a gain written while its AGC
+                // runs, so the rail is drawn inert and says why rather than
+                // looking broken (issue #417).
+                let hardware_agc = self.hardware_agc_owns(&g.name);
+                if tuner {
+                    let hint = if hardware_agc {
+                        tr!("topbar-rx888-tuner-auto-hint")
+                    } else {
+                        tr!("topbar-rx888-tuner-hint")
+                    };
+                    let label = gain_label(&g.name, rx_gains.len());
+                    if gain_rail(ui, narrow, g, &label, &hint, hardware_agc, &mut db) {
+                        self.set_rx888_tuner(cmds, &g.name, db);
+                    }
+                    continue;
+                }
                 let mut hint = tr!("topbar-rx-gain-hint", stage = g.name.to_string());
                 // A stage counted in steps rather than decibels — an RSP's
                 // LNA state, an Airspy's place on its gain curve, a
@@ -2894,20 +2998,6 @@ impl SdroxideApp {
                 if rx_gains.len() > bar_gains.len() {
                     hint.push_str(&tr!("topbar-rx-gain-stages", n = rx_gains.len()));
                 }
-                ui.label(gain_label(&g.name, bar_gains.len())).on_hover_text(&hint);
-                let mut db = self
-                    .state
-                    .gains
-                    .iter()
-                    .find(|(n, _)| *n == g.name)
-                    .map(|(_, d)| *d)
-                    .unwrap_or(g.min_db);
-                let step = if g.step_db > 0.0 { g.step_db } else { 1.0 };
-                // A PlutoSDR in one of its attack modes owns its own gain
-                // register: the AD9361 ignores a gain written while its AGC
-                // runs, so the rail is drawn inert and says why rather than
-                // looking broken (issue #417).
-                let hardware_agc = self.hardware_agc_owns(&g.name);
                 if hardware_agc {
                     hint.push('\n');
                     hint.push_str(&if self.pluto_agc_owns_gain(&g.name) {
@@ -2916,41 +3006,8 @@ impl SdroxideApp {
                         tr!("topbar-tuner-agc-owns-gain")
                     });
                 }
-                // Every gain rail at one pinned length, a little shorter than
-                // volume and squelch, which take the box's stretch (HDZ
-                // 2026-11-09: "Länge … gleich", then "Lautstärke und Squelch
-                // müssen etwas länger"); in a menu `control_row` sizes them.
-                // The readout is a bare number — the unit is in the hint — so
-                // the field stays small.
-                let resp = ui
-                    .scope(|ui| {
-                        if !narrow {
-                            ui.spacing_mut().slider_width = STRIP_RAIL_W;
-                        }
-                        ui.add_enabled_ui(!hardware_agc, |ui| {
-                            crate::chrome::slider_wheel(
-                                crate::chrome::slider_readout(
-                                    ui,
-                                    value_field_w(ui, RAIL_READOUT),
-                                    // A bare number: three rails fit the strip only
-                                    // without a unit on each readout. The unit is in
-                                    // the hint — and a stage counted in steps says so
-                                    // there — so no step index reads as "dB".
-                                    Slider::new(&mut db, g.min_db..=g.max_db)
-                                        .step_by(step)
-                                        .fixed_decimals(usize::from(step.fract() != 0.0)),
-                                ),
-                                &mut db,
-                                g.min_db..=g.max_db,
-                                step,
-                            )
-                        })
-                        .inner
-                    })
-                    .inner
-                    .on_hover_text(&hint)
-                    .on_disabled_hover_text(&hint);
-                if resp.changed() {
+                let label = gain_label(&g.name, rx_gains.len());
+                if gain_rail(ui, narrow, g, &label, &hint, hardware_agc, &mut db) {
                     // Optimistic echo so the knob tracks the drag instead
                     // of snapping back until the engine answers.
                     match self.state.gains.iter_mut().find(|(n, _)| *n == g.name) {
@@ -7620,6 +7677,56 @@ fn readout_rail_w(ui: &egui::Ui) -> f32 {
     STRIP_RAIL_W + MODULE_ROW_SPACING + value_field_w(ui, RAIL_READOUT)
 }
 
+/// One front-end gain stage on the receive row: its label and its rail,
+/// inert while a hardware AGC owns the stage. Returns whether the
+/// operator moved it this frame, with the new figure in `db`.
+fn gain_rail(
+    ui: &mut egui::Ui,
+    narrow: bool,
+    g: &GainElement,
+    label: &str,
+    hint: &str,
+    hardware_agc: bool,
+    db: &mut f64,
+) -> bool {
+    ui.label(label).on_hover_text(hint);
+    let step = if g.step_db > 0.0 { g.step_db } else { 1.0 };
+    // Every gain rail at one pinned length, a little shorter than
+    // volume and squelch, which take the box's stretch (HDZ
+    // 2026-11-09: "Länge … gleich", then "Lautstärke und Squelch
+    // müssen etwas länger"); in a menu `control_row` sizes them.
+    // The readout is a bare number — the unit is in the hint — so
+    // the field stays small.
+    ui.scope(|ui| {
+        if !narrow {
+            ui.spacing_mut().slider_width = STRIP_RAIL_W;
+        }
+        ui.add_enabled_ui(!hardware_agc, |ui| {
+            crate::chrome::slider_wheel(
+                crate::chrome::slider_readout(
+                    ui,
+                    value_field_w(ui, RAIL_READOUT),
+                    // A bare number: three rails fit the strip only
+                    // without a unit on each readout. The unit is in
+                    // the hint — and a stage counted in steps says so
+                    // there — so no step index reads as "dB".
+                    Slider::new(&mut *db, g.min_db..=g.max_db)
+                        .step_by(step)
+                        .fixed_decimals(usize::from(step.fract() != 0.0)),
+                ),
+                db,
+                g.min_db..=g.max_db,
+                step,
+            )
+        })
+        .inner
+    })
+    .inner
+    .on_hover_text(hint)
+    .on_disabled_hover_text(hint)
+    .changed()
+}
+
 /// The widest figure a rail's readout shows: a gain or attenuation to a
 /// tenth, without the unit.
 const RAIL_READOUT: &str = "-88.8";
@@ -7697,6 +7804,56 @@ impl FrontChip {
         element: sdroxide_types::Rx888Config::VGA_RANGE_ELEMENT,
         labels: &["AUTO", "LOW", "HIGH"],
     };
+    /// The R828D's own gain loops, lit while they run. AUTO, the word
+    /// Settings → Radio uses for the same switch.
+    const RX888_TUNER_AGC: FrontChip = FrontChip {
+        element: sdroxide_types::Rx888Config::TUNER_AGC_ELEMENT,
+        labels: &["AUTO", "AUTO"],
+    };
+}
+
+/// Which of an RX-888's two control sets the receive row carries.
+///
+/// The receiver has two inputs on one ADC, and each answers to its own
+/// stages: on HF the step attenuator and the VGA, which the driver holds at a
+/// fixed setting while the R828D tuner feeds the ADC; on VHF the tuner's gain,
+/// which does nothing on HF. A bar showing one set on both bands leaves a dead
+/// control on the other, so the set follows the band the receiver reports —
+/// and the automatic crossover moves that with the dial.
+// Why: HDZ 2026-11-15: „wenn der Modus umschaltet, dann muss ein anderer
+//      Regler ins Bedienpanel“
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::app) enum Rx888Panel {
+    /// ATT and VGA rails, the VGA range chip.
+    Hf,
+    /// The tuner gain rail and its AUTO chip.
+    Vhf,
+}
+
+impl Rx888Panel {
+    /// The set for the band the receiver reports. HF while it reports none —
+    /// before its first state, or from a server that predates the report —
+    /// which is what the bar always showed.
+    pub(in crate::app) fn for_band(on_vhf: Option<bool>) -> Rx888Panel {
+        if on_vhf == Some(true) { Rx888Panel::Vhf } else { Rx888Panel::Hf }
+    }
+
+    /// Whether the gain stage `name` is drawn as a rail in this set.
+    pub(in crate::app) fn carries(self, name: &str) -> bool {
+        let tuner = name == sdroxide_types::Rx888Config::TUNER_GAIN_ELEMENT;
+        match self {
+            Rx888Panel::Hf => !tuner,
+            Rx888Panel::Vhf => tuner,
+        }
+    }
+
+    /// The switch drawn as a chip beside the rails.
+    pub(in crate::app) fn chip(self) -> FrontChip {
+        match self {
+            Rx888Panel::Hf => FrontChip::RX888_VGA_RANGE,
+            Rx888Panel::Vhf => FrontChip::RX888_TUNER_AGC,
+        }
+    }
 }
 
 /// A chip on the RX box's chip run: everything that follows the SQL rail, in
@@ -8974,6 +9131,33 @@ mod tests {
     }
 
     use super::*;
+
+    /// An RX-888's bar carries the stages that act on the band it reports: ATT
+    /// and VGA with the range chip on HF, the tuner gain with its AUTO on VHF,
+    /// and HF's set while no band has been reported.
+    // Why: HDZ 2026-11-15: „wenn der Modus umschaltet, dann muss ein anderer
+    //      Regler ins Bedienpanel“
+    #[test]
+    fn an_rx888s_bar_carries_the_stages_of_its_band() {
+        use sdroxide_types::Rx888Config as R;
+        let stages = [R::VGA_ELEMENT, R::ATT_ELEMENT, R::TUNER_GAIN_ELEMENT];
+        let carried =
+            |p: Rx888Panel| stages.into_iter().filter(|n| p.carries(n)).collect::<Vec<_>>();
+
+        let hf = Rx888Panel::for_band(Some(false));
+        assert_eq!(carried(hf), [R::VGA_ELEMENT, R::ATT_ELEMENT]);
+        assert_eq!(hf.chip(), FrontChip::RX888_VGA_RANGE);
+
+        let vhf = Rx888Panel::for_band(Some(true));
+        assert_eq!(carried(vhf), [R::TUNER_GAIN_ELEMENT]);
+        assert_eq!(vhf.chip().element, R::TUNER_AGC_ELEMENT);
+
+        assert_eq!(Rx888Panel::for_band(None), hf, "no band reported: today's HF controls");
+
+        // The one rail VHF leaves is named as a stage of a three-stage front
+        // end, not as the generic "Gain" of a receiver that has only one.
+        assert_eq!(gain_label(R::TUNER_GAIN_ELEMENT, 3), "RF");
+    }
 
     /// The real-world bug this exists to catch: minutes and seconds computed
     /// from two different roundings of the same elapsed time disagreed —
@@ -10959,10 +11143,11 @@ mod tests {
     fn the_condensed_rx_box_fits_its_rows() {
         // No front-end gain, the one stage, and the multi-stage shapes with
         // the chips that ride beside them (RX-888, HackRF, RTL-SDR).
-        let shapes: [(&[&str], &[&[&str]]); 5] = [
+        let shapes: [(&[&str], &[&[&str]]); 6] = [
             (&[], &[]),
             (&["Gain"], &[]),
             (&["ATT", "VGA"], &[FrontChip::RX888_VGA_RANGE.labels]),
+            (&["RF"], &[FrontChip::RX888_TUNER_AGC.labels]),
             (&["LNA", "VGA"], &[FrontChip::HACKRF_AMP.labels]),
             (&["LNA", "MIX", "IF"], &[]),
         ];
