@@ -52,7 +52,7 @@ const FULL_SCALE: f32 = 0.98;
 /// blanker and before decimation: a blanker replaces the impulse that clipping
 /// looks like, and a decimating filter averages a rail down into something with
 /// headroom to spare. By the time either has run, the evidence is gone.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct AdcMeter {
     /// What a converter sample at full scale arrives as, after whatever scale
     /// the backend puts on its samples. 1.0 unless told otherwise.
@@ -62,6 +62,12 @@ pub struct AdcMeter {
     seen: u64,
     /// The last reading with samples behind it, repeated while none arrive.
     last: (f32, f32),
+}
+
+impl Default for AdcMeter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AdcMeter {

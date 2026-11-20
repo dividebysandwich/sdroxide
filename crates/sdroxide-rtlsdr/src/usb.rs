@@ -287,7 +287,9 @@ impl UsbDev {
         // direct sampling, which that board does not implement — the operator
         // gets a spectrum full of noise and no signals at all.
         let board = strings_name_board(&manufacturer, &product);
-        let product_known = !product.is_empty();
+        // WinUSB under Zadig reports "Bulk-In, Interface (Interface 0)", which
+        // names nothing; the EEPROM has to be asked as for an empty string.
+        let product_known = !product.is_empty() && !product.starts_with("Bulk-In");
 
         let label = if product.is_empty() {
             table.to_string()

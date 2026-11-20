@@ -269,7 +269,11 @@ fn snr_label_off_db(on: f32) -> f32 {
 //      Frequenz und textuell gleichem Inhalt".
 fn one_label_each<'a>(spots: impl Iterator<Item = &'a Spot>) -> impl Iterator<Item = &'a Spot> {
     let mut seen = std::collections::HashSet::new();
-    spots.filter(move |s| seen.insert((s.call.as_str(), (s.freq_hz / 100.0).round() as i64)))
+    // Per kind: a cluster and a POTA spot of one call on one frequency are
+    // two reports, and each kind has its own age cut and colour.
+    spots.filter(move |s| {
+        seen.insert((s.kind, s.call.as_str(), (s.freq_hz / 100.0).round() as i64))
+    })
 }
 
 /// How often the labels are decided anew, seconds.

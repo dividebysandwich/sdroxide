@@ -483,8 +483,7 @@ fn dispatch(
                 out.finish(OK, true)
             }
             // The sampled span: the device rate over the decimation. Read back
-            // after a set, which is how a client learns the width it got
-            //.
+            // after a set, which is how a client learns the width it got.
             Some(l) if l == "SPECTRUM_SPAN" => match st.can_decimate {
                 true => {
                     out.value("Level Value", format!("{:.0}", st.span_hz));
