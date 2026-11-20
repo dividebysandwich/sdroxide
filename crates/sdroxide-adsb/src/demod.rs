@@ -170,12 +170,9 @@ pub struct Candidate {
     pub confidence: f32,
     /// Peak envelope of the preamble, dBFS. Negative on any real signal.
     pub rssi_dbfs: f32,
-    /// Where the transmitter's carrier sits, Hz from the centre of the window
-    /// the I/Q came in — see [`Demod::carrier_offset`]. `None` until the
-    /// demodulator has measured it.
-    pub carrier_hz: Option<f32>,
     /// Start of the burst (the first preamble pulse), in samples of the
-    /// buffer it was read from. Only meaningful inside [`Demod::push`].
+    /// buffer it was read from. Only meaningful until the next
+    /// [`Demod::push`] (see [`Demod::carrier_of`]).
     start: f64,
 }
 
@@ -312,7 +309,7 @@ impl Demod {
             if origin + (i as u64) < skip_to {
                 continue;
             }
-            let Some(mut c) = self.try_at(i) else { continue };
+            let Some(c) = self.try_at(i) else { continue };
             self.preambles += 1;
             // One sample at a time, never skipping a message length on a hit.
             //
@@ -346,7 +343,6 @@ impl Demod {
             let df = c.bytes[0] >> 3;
             let done = matches!(df, 11 | 17 | 18) && crate::crc::syndrome(&c.bytes) == 0;
             self.last_out = Some((c.bytes.clone(), at));
-            c.carrier_hz = self.carrier_offset(c.start, c.bytes.len() * 8);
             out.push(c);
             if done {
                 skip_to = at + span as u64;
@@ -559,11 +555,17 @@ impl Demod {
             bytes: msg.to_vec(),
             confidence: conf_sum / nbits as f32,
             rssi_dbfs: rssi_dbfs.min(0.0),
-            carrier_hz: None,
             start: base,
         })
     }
 
+    /// Where `c`'s transmitter's carrier sits, Hz from the centre of the
+    /// window, for a candidate from the last [`Demod::push`]. Asked only for
+    /// frames that were accepted: the FFT is too dear for every correlator
+    /// trip on a busy band, most of which are noise or bad CRCs.
+    pub fn carrier_of(&mut self, c: &Candidate) -> Option<f32> {
+        self.carrier_offset(c.start, c.bytes.len() * 8)
+    }
     /// Where the burst's carrier is, Hz from the window centre.
     ///
     /// A Mode S reply is on-off keying of an unmodulated carrier, so about
@@ -1008,7 +1010,7 @@ mod tests {
                         assert!(snr_db.is_some(), "{off} Hz, phase {k}: clean burst lost");
                         continue;
                     };
-                    let got = c.carrier_hz.expect("measured");
+                    let got = d.carrier_of(c).expect("measured");
                     assert!(
                         (got - off as f32).abs() <= tol,
                         "{off} Hz, phase {k}, {snr_db:?} dB: measured {got:.0} Hz"
