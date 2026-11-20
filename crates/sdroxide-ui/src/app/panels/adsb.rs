@@ -2149,11 +2149,6 @@ fn sort_rows(rows: &mut [&AdsbAircraft], by: AdsbSort, desc: bool, home: Option<
     });
 }
 
-/// A counter, short enough that it cannot outgrow its slot.
-///
-/// The frame and preamble counts run for as long as the decoder does — an
-/// afternoon on a busy sector is millions — and a header readout that grew a
-/// digit an hour would eventually push everything beside it off the row.
 /// One line on this station's own Beast output, for the tooltip over the
 /// frequency chip, so whether the frames are going out can be seen from the
 /// panel (HDZ 2026-11-18: „über dem frequenz knopf … own server running on
@@ -2175,6 +2170,11 @@ fn beast_out_line(status: &Option<crate::app::TciServerStatus>) -> String {
     }
 }
 
+/// A counter, short enough that it cannot outgrow its slot.
+///
+/// The frame and preamble counts run for as long as the decoder does — an
+/// afternoon on a busy sector is millions — and a header readout that grew a
+/// digit an hour would eventually push everything beside it off the row.
 fn count(n: u64) -> String {
     let m = n as f64;
     if n < 10_000 {

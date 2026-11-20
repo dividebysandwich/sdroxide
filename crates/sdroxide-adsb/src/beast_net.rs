@@ -106,10 +106,11 @@ impl BeastServer {
 
 impl Drop for BeastServer {
     fn drop(&mut self) {
+        // Not joined: the thread may sit in a DNS lookup or a connect
+        // timeout, and this drop runs on the engine thread when the ADS-B
+        // lane stops. It sees `stop`, or its send failing, and ends itself.
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(h) = self.worker.take() {
-            let _ = h.join();
-        }
+        drop(self.worker.take());
         info!(addr = %self.addr, "Beast output stopped");
     }
 }

@@ -10460,8 +10460,6 @@ impl Engine {
                 return;
             }
 
-            // Built-in rigctld server (no RadioState change → return before
-            // the State emit below).
             // Mode-S Beast in and out (no RadioState change → return before
             // the State emit below).
             SetBeastConfig(cfg) => {
@@ -10481,6 +10479,8 @@ impl Engine {
                 self.emit_station_config();
                 return;
             }
+            // Built-in rigctld server (no RadioState change → return before
+            // the State emit below).
             SetRigctldConfig(cfg) => {
                 if let Err(e) = self.store.save_rigctld_config(&cfg) {
                     warn!("saving rigctld config: {e}");
