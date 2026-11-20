@@ -25,5 +25,6 @@ license.workspace = true
 sdroxide-types.workspace = true
 sdroxide-dsp.workspace = true
 num-complex.workspace = true
+rustfft.workspace = true
 crossbeam-channel.workspace = true
 tracing.workspace = true

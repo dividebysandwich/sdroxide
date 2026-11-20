@@ -936,6 +936,12 @@ impl SdroxideApp {
                     tr!("adsb-row-signal"),
                     format!("{rssi_dbfs:.0} dBFS", rssi_dbfs = a.rssi_dbfs),
                 ));
+                if let Some(hz) = a.carrier_hz {
+                    rows.push((
+                        tr!("adsb-row-carrier"),
+                        format!("{:.3} MHz ({:+.0} kHz)", hz / 1e6, (hz - MODE_S_HZ) / 1e3),
+                    ));
+                }
                 rows.push((tr!("adsb-row-frames"), format!("{} ({})", a.frames, a.source.label())));
                 rows.push((tr!("adsb-first-heard"), fmt_age(now - a.first_at)));
 
@@ -1354,6 +1360,7 @@ fn adsb_head_row(ui: &mut egui::Ui, have_home: bool, sort: &mut AdsbSort, desc: 
             (cols.places, L, &tr!("adsb-places-col"), None),
             (cols.airline, L, &tr!("adsb-airline-col"), None),
             (cols.kind, L, &tr!("adsb-type-col"), None),
+            (cols.df, R, "Δf", None),
             (cols.sig, R, "SIG", Some(AdsbSort::Signal)),
             (cols.trk, R, "TRK", None),
             (cols.vs, R, &tr!("adsb-v-s"), None),
@@ -1379,6 +1386,10 @@ const KIND_W: f32 = 62.0;
 const FLAG_W: f32 = 15.0;
 /// The room the airline gets, right of the places: `TUI fly Netherlands`.
 const AIRLINE_W: f32 = 116.0;
+/// The carrier offset column, `+175` (kHz from 1090 MHz), left of SIG.
+const DF_W: f32 = 40.0;
+/// The nominal Mode S reply frequency the carrier offset is counted from.
+const MODE_S_HZ: f64 = 1_090_000_000.0;
 
 /// Column x offsets, in points from the left of a row.
 struct Cols {
@@ -1395,6 +1406,8 @@ struct Cols {
     airline_w: f32,
     /// Left edge of the aircraft type.
     kind: f32,
+    /// Carrier offset, kHz from 1090 MHz.
+    df: f32,
     sig: f32,
     trk: f32,
     vs: f32,
@@ -1420,9 +1433,18 @@ fn columns(w: f32, have_home: bool) -> Cols {
     // heading has to clear the fixed left-hand group, and at [`WIDE_W`] it
     // just does — with or without a range column between it and the edge.
     let sig = if w < WIDE_W { f32::NAN } else { trk - 34.0 };
+    // The carrier offset comes in after the signal and goes before it: it is
+    // what tells two traces in the waterfall apart, and nothing else needs it.
+    let df = if sig.is_nan() || w < WIDE_W + 2.0 * DF_W { f32::NAN } else { sig - DF_W };
     // The route sits after the speed, left-aligned, only where the first of the
     // right-hand columns leaves it room for `EDDK›…›GCLP`.
-    let first_right = if sig.is_nan() { trk } else { sig };
+    let first_right = if !df.is_nan() {
+        df
+    } else if sig.is_nan() {
+        trk
+    } else {
+        sig
+    };
     let route = if first_right - 28.0 - ROUTE_X >= ROUTE_W { ROUTE_X } else { f32::NAN };
     // Right of the codes: the places, the airline and the type, in whatever
     // is left before the first right-hand column. The places give way first,
@@ -1456,6 +1478,7 @@ fn columns(w: f32, have_home: bool) -> Cols {
         airline,
         airline_w,
         kind,
+        df,
         sig,
         trk,
         vs,
@@ -1682,6 +1705,13 @@ fn adsb_row(
         let c = if extra.kind_known { ink } else { theme::gray(95) };
         put(cols.kind, egui::Align2::LEFT_CENTER, t, small.clone(), c);
     }
+    put(
+        cols.df,
+        egui::Align2::RIGHT_CENTER,
+        a.carrier_hz.map(|hz| format!("{:+.0}", (hz - MODE_S_HZ) / 1e3)).unwrap_or_default(),
+        small.clone(),
+        dim,
+    );
     put(cols.sig, egui::Align2::RIGHT_CENTER, format!("{:.0}", a.rssi_dbfs), small.clone(), dim);
     put(
         cols.trk,
@@ -1941,7 +1971,7 @@ mod tests {
         while w < 1600.0 {
             for have_home in [true, false] {
                 let c = columns(w, have_home);
-                let first_right = if c.sig.is_nan() { c.trk } else { c.sig };
+                let first_right = [c.df, c.sig, c.trk].into_iter().find(|x| !x.is_nan()).unwrap();
                 // The right-hand columns are right-aligned: their text starts
                 // up to about 28 points left of their x.
                 let limit = first_right - 28.0;
@@ -1976,7 +2006,7 @@ mod tests {
         while w < 900.0 {
             for have_home in [true, false] {
                 let c = columns(w, have_home);
-                let mut xs: Vec<f32> = [c.trk, c.vs, c.sqk, c.range, c.age]
+                let mut xs: Vec<f32> = [c.df, c.sig, c.trk, c.vs, c.sqk, c.range, c.age]
                     .into_iter()
                     .filter(|x| !x.is_nan())
                     .collect();

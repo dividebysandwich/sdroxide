@@ -88,7 +88,7 @@ fn main() {
                         c.rssi_dbfs,
                         c.confidence,
                     );
-                    tracker.absorb(&a, &c.bytes, c.rssi_dbfs, now, mono);
+                    tracker.absorb(&a, &c.bytes, c.rssi_dbfs, None, now, mono);
                 }
                 Err(Rejected::BadCrc | Rejected::Malformed) => bad += 1,
                 Err(Rejected::Unmatched) => unmatched += 1,

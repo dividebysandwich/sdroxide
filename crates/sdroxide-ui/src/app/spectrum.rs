@@ -87,6 +87,9 @@ const FIT_DRIFT_DB: f32 = 3.0;
 /// so a stalled decoder (dead band, band change) doesn't leave labels pinned to
 /// the waterfall for good.
 const FT8_LABEL_MAX_AGE_SECS: i64 = 45;
+/// How long an aircraft's label stays on its carrier trace after its last
+/// frame, fading from five seconds on.
+const ADSB_LABEL_FADE_SECS: i64 = 30;
 
 /// Stable per-callsign id for the FT8 overlay boxes (keeps a station's box in
 /// place across slots).
@@ -778,6 +781,47 @@ impl SdroxideApp {
             }
             spots.push(s.clone());
             alpha.push(a);
+        }
+        (spots, alpha)
+    }
+
+    /// In ADS-B, one box per aircraft on its carrier trace: the callsign (or
+    /// the address until one has arrived) where the transponder's carrier
+    /// sits, solid while it is being heard and fading over half a minute
+    /// after. Off with the LABELS switch, like every other label.
+    pub(in crate::app) fn adsb_overlay(&self) -> (Vec<SkimmerSpot>, Vec<f32>) {
+        let mut spots = Vec::new();
+        let mut alpha = Vec::new();
+        if !self.view.spot_labels {
+            return (spots, alpha);
+        }
+        let Some(st) = self.adsb_status.as_ref() else {
+            return (spots, alpha);
+        };
+        let now = now_unix();
+        for a in &st.aircraft {
+            let Some(hz) = a.carrier_hz else { continue };
+            let age = (now - a.last_at).max(0);
+            if age > ADSB_LABEL_FADE_SECS {
+                continue;
+            }
+            let call = a.callsign.trim();
+            let label = if call.is_empty() { format!("{:06X}", a.icao) } else { call.to_string() };
+            spots.push(SkimmerSpot {
+                id: u64::from(a.icao),
+                kind: SkimmerKind::Cw,
+                freq_hz: hz,
+                callsign: Some(label),
+                text: String::new(),
+                snr_db: a.rssi_dbfs.round() as i16,
+                wpm: 0,
+                active: age <= 5,
+            });
+            alpha.push(if age <= 5 {
+                1.0
+            } else {
+                (1.0 - (age - 5) as f32 / (ADSB_LABEL_FADE_SECS - 5) as f32).max(0.15)
+            });
         }
         (spots, alpha)
     }

@@ -1417,8 +1417,13 @@ impl SdroxideApp {
         };
         // FT8 station callsign boxes. Only the slotted modes have them — SSTV /
         // RF Paint share the digi path but must not inherit FT8's overlay.
-        let (skimmer, alpha) =
-            if mode.is_slotted() { self.ft8_overlay() } else { (Vec::new(), Vec::new()) };
+        let (skimmer, alpha) = if mode.is_slotted() {
+            self.ft8_overlay()
+        } else if mode == Mode::Adsb {
+            self.adsb_overlay()
+        } else {
+            (Vec::new(), Vec::new())
+        };
         PanadapterInputs {
             // A click sets the tone offset in the modes that park on an agreed
             // dial and pick a signal inside the sub-band. Not in RTTY: its tone

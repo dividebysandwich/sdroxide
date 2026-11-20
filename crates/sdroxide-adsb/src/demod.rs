@@ -170,6 +170,13 @@ pub struct Candidate {
     pub confidence: f32,
     /// Peak envelope of the preamble, dBFS. Negative on any real signal.
     pub rssi_dbfs: f32,
+    /// Where the transmitter's carrier sits, Hz from the centre of the window
+    /// the I/Q came in — see [`Demod::carrier_offset`]. `None` until the
+    /// demodulator has measured it.
+    pub carrier_hz: Option<f32>,
+    /// Start of the burst (the first preamble pulse), in samples of the
+    /// buffer it was read from. Only meaningful inside [`Demod::push`].
+    start: f64,
 }
 
 /// Rolling demodulator over one receiver window.
@@ -179,6 +186,13 @@ pub struct Demod {
     sps_us: f64,
     /// Envelope power, with [`TAIL_US`] of the previous block still in front.
     power: Vec<f32>,
+    /// The I/Q `power` was taken from, kept alongside it and trimmed with it,
+    /// for the carrier measurement — the envelope has thrown the phase away.
+    iq: Vec<Complex32>,
+    /// FFT for [`Demod::carrier_offset`], planned once for this rate.
+    fft: std::sync::Arc<dyn rustfft::Fft<f32>>,
+    /// Its buffer, kept so a message does not allocate.
+    spectrum: Vec<Complex32>,
     /// Running sum of `power`, one longer: `psum[j]` is the total before sample
     /// `j`.
     ///
@@ -226,6 +240,9 @@ impl Demod {
             rate_hz,
             sps_us: rate_hz / 1e6,
             power: Vec::new(),
+            iq: Vec::new(),
+            fft: rustfft::FftPlanner::new().plan_fft_forward(carrier_fft_len(rate_hz)),
+            spectrum: Vec::new(),
             psum: vec![0.0],
             carried: 0,
             // Starts pessimistic and tracks down: a floor that begins at zero
@@ -263,12 +280,14 @@ impl Demod {
         let tail = (TAIL_US * self.sps_us).ceil() as usize;
         if self.power.len() > tail {
             self.power.drain(..self.power.len() - tail);
+            self.iq.drain(..self.iq.len() - tail);
         }
         self.carried = self.power.len();
         self.power.reserve(iq.len());
         for z in iq {
             self.power.push(z.re * z.re + z.im * z.im);
         }
+        self.iq.extend_from_slice(iq);
         self.seen += iq.len() as u64;
         self.psum.clear();
         self.psum.reserve(self.power.len() + 1);
@@ -293,7 +312,7 @@ impl Demod {
             if origin + (i as u64) < skip_to {
                 continue;
             }
-            let Some(c) = self.try_at(i) else { continue };
+            let Some(mut c) = self.try_at(i) else { continue };
             self.preambles += 1;
             // One sample at a time, never skipping a message length on a hit.
             //
@@ -327,6 +346,7 @@ impl Demod {
             let df = c.bytes[0] >> 3;
             let done = matches!(df, 11 | 17 | 18) && crate::crc::syndrome(&c.bytes) == 0;
             self.last_out = Some((c.bytes.clone(), at));
+            c.carrier_hz = self.carrier_offset(c.start, c.bytes.len() * 8);
             out.push(c);
             if done {
                 skip_to = at + span as u64;
@@ -539,7 +559,49 @@ impl Demod {
             bytes: msg.to_vec(),
             confidence: conf_sum / nbits as f32,
             rssi_dbfs: rssi_dbfs.min(0.0),
+            carrier_hz: None,
+            start: base,
         })
+    }
+
+    /// Where the burst's carrier is, Hz from the window centre.
+    ///
+    /// A Mode S reply is on-off keying of an unmodulated carrier, so about
+    /// half its power is a spectral line at the transmitter's own frequency —
+    /// the rest is the pulse envelope's sidebands, spread over a megahertz or
+    /// two either side. The line is what shows as a trace in a waterfall
+    /// zoomed in on 1090 MHz, one per aircraft: a transponder may sit anywhere
+    /// within ±1 MHz of 1090 (ICAO Annex 10), and each sits at its own
+    /// oscillator's offset, steady over a flight. Doppler is under a
+    /// kilohertz.
+    ///
+    /// Measured as the peak of the burst's spectrum: the samples from the
+    /// first preamble pulse to the last bit, zero-padded into
+    /// [`carrier_fft_len`], with a parabola through the peak and its two
+    /// neighbours. Unambiguous across the whole window, which a phase
+    /// difference between samples is not — at 2.4 Msps a pulse is barely more
+    /// than one sample long.
+    fn carrier_offset(&mut self, start: f64, bits: usize) -> Option<f32> {
+        let n = self.fft.len();
+        let first = start.floor().max(0.0) as usize;
+        let len = ((PREAMBLE_US + bits as f64 * BIT_US) * self.sps_us).ceil() as usize;
+        let last = (first + len.min(n)).min(self.iq.len());
+        if last <= first + 8 {
+            return None;
+        }
+        self.spectrum.clear();
+        self.spectrum.extend_from_slice(&self.iq[first..last]);
+        self.spectrum.resize(n, Complex32::new(0.0, 0.0));
+        self.fft.process(&mut self.spectrum);
+        let p = |k: usize| self.spectrum[k % n].norm_sqr();
+        let k = (0..n).max_by(|&a, &b| p(a).total_cmp(&p(b)))?;
+        // Parabola through the log-power of the peak and its neighbours.
+        let (l, c, r) =
+            (p(k + n - 1).max(1e-30).ln(), p(k).max(1e-30).ln(), p(k + 1).max(1e-30).ln());
+        let den = l - 2.0 * c + r;
+        let frac = if den.abs() > 1e-12 { (0.5 * (l - r) / den).clamp(-0.5, 0.5) } else { 0.0 };
+        let bin = if k > n / 2 { k as f64 - n as f64 } else { k as f64 } + f64::from(frac);
+        Some((bin * self.rate_hz / n as f64) as f32)
     }
 
     /// Track the channel's noise floor from the block just pushed.
@@ -580,6 +642,14 @@ impl Demod {
 ///
 /// Starts the burst 10 µs in. See [`modulate_at`] for why that is a parameter
 /// worth having.
+/// The carrier FFT's length for a rate: a power of two at least four times a
+/// long message, so the bins are a quarter of the line's own width
+/// (1/120 µs ≈ 8 kHz) before the parabola refines them — 2048 at 2.4 Msps,
+/// about 1.2 kHz a bin.
+fn carrier_fft_len(rate_hz: f64) -> usize {
+    ((MSG_US * rate_hz / 1e6 * 4.0).ceil() as usize).next_power_of_two().max(256)
+}
+
 pub fn modulate(msg: &[u8], rate_hz: f64, amp: f32, nf: f32, seed: u64) -> Vec<Complex32> {
     modulate_at(msg, rate_hz, 10.0, amp, nf, seed)
 }
@@ -892,6 +962,59 @@ mod tests {
                 }
             }
             assert!(hits >= floor, "only {hits}/{N} at {snr_db} dB and {rate:.0} sps");
+        }
+    }
+
+    /// The carrier comes back where the transmitter put it, across the
+    /// ±1 MHz a transponder is allowed and at every arrival phase — clean to
+    /// within a kilohertz, and at 15 dB in Gaussian noise to within three.
+    #[test]
+    fn the_carrier_offset_is_measured_where_the_transponder_sits() {
+        let rate = 2_400_000.0f64;
+        let np = 1e-4f64;
+        for (snr_db, tol) in [(None, 1_000.0f32), (Some(15.0f64), 3_000.0)] {
+            for (j, off) in [-950_000.0f64, -175_000.0, 0.0, 37_000.0, 215_000.0, 600_000.0]
+                .into_iter()
+                .enumerate()
+            {
+                for k in 0..8 {
+                    let t0 = 10.0 + (k as f64 / 8.0) * (1e6 / rate);
+                    let amp = snr_db.map_or(0.5, |s| (np * 10f64.powf(s / 10.0)).sqrt()) as f32;
+                    let mut g = Gauss(0x9999_0000 + (j * 8 + k) as u64);
+                    let iq: Vec<Complex32> = modulate_at(&DF17, rate, t0, amp, 0.0, 1)
+                        .iter()
+                        .enumerate()
+                        .map(|(n, z)| {
+                            let ph = std::f64::consts::TAU * off * n as f64 / rate;
+                            let z = z * Complex32::new(ph.cos() as f32, ph.sin() as f32);
+                            if snr_db.is_some() { z + g.next(np as f32) } else { z }
+                        })
+                        .collect();
+                    let warm: Vec<Complex32> = (0..32_768)
+                        .map(|_| {
+                            if snr_db.is_some() {
+                                g.next(np as f32)
+                            } else {
+                                Complex32::new(0.0, 0.0)
+                            }
+                        })
+                        .collect();
+                    let mut d = Demod::new(rate);
+                    let mut out = Vec::new();
+                    d.push(&warm, &mut out);
+                    out.clear();
+                    d.push(&iq, &mut out);
+                    let Some(c) = out.iter().find(|c| c.bytes == DF17) else {
+                        assert!(snr_db.is_some(), "{off} Hz, phase {k}: clean burst lost");
+                        continue;
+                    };
+                    let got = c.carrier_hz.expect("measured");
+                    assert!(
+                        (got - off as f32).abs() <= tol,
+                        "{off} Hz, phase {k}, {snr_db:?} dB: measured {got:.0} Hz"
+                    );
+                }
+            }
         }
     }
 

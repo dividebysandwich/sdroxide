@@ -171,6 +171,12 @@ pub struct AdsbAircraft {
     /// velocity: airspeed, heading, what the crew has selected, the ADS-B
     /// version. Each field stays `None` until a message carrying it arrives.
     pub avionics: AdsbAvionics,
+    /// Where this transponder's carrier is, absolute Hz: the median of the
+    /// last frames' measurements. A transponder may sit anywhere within
+    /// ±1 MHz of 1090 MHz and each sits at its own oscillator's offset, which
+    /// is what draws one trace per aircraft in a waterfall zoomed in on
+    /// 1090. `None` until a frame has been measured.
+    pub carrier_hz: Option<f64>,
 }
 
 /// What an aircraft reports from its own systems (TC 19 subtypes 3/4, TC 29,
@@ -235,6 +241,7 @@ impl AdsbAircraft {
             last_pos_at: 0,
             raw_hex: String::new(),
             avionics: AdsbAvionics::default(),
+            carrier_hz: None,
         }
     }
 

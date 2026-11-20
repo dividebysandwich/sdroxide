@@ -68,6 +68,20 @@ struct Entry {
     verified: bool,
     /// Track angle and the stream time it was sampled, for the turn rate.
     turn_ref: Option<(f32, f64)>,
+    /// The last frames' carrier measurements, absolute Hz, newest last.
+    carriers: std::collections::VecDeque<f64>,
+}
+
+/// How many carrier measurements the median is taken over. A median rather
+/// than a mean: a weak frame's spectrum can peak on noise far from the line,
+/// and one such frame must not drag the aircraft off its trace.
+const CARRIER_FRAMES: usize = 9;
+
+/// The median of the measurements held, for [`AdsbAircraft::carrier_hz`].
+fn carrier_median(c: &std::collections::VecDeque<f64>) -> Option<f64> {
+    let mut v: Vec<f64> = c.iter().copied().collect();
+    v.sort_by(f64::total_cmp);
+    v.get(v.len() / 2).copied()
 }
 
 /// The table.
@@ -114,7 +128,15 @@ impl Tracker {
     /// `now` is unix seconds, for the ages the panel shows; `mono_s` is the
     /// stream clock, for the arithmetic that has to be monotonic and finer than
     /// a second.
-    pub fn absorb(&mut self, acc: &Accepted, bytes: &[u8], rssi_dbfs: f32, now: i64, mono_s: f64) {
+    pub fn absorb(
+        &mut self,
+        acc: &Accepted,
+        bytes: &[u8],
+        rssi_dbfs: f32,
+        carrier_hz: Option<f64>,
+        now: i64,
+        mono_s: f64,
+    ) {
         let icao = acc.icao();
         let verified = acc.is_verified();
         let home = self.home;
@@ -127,7 +149,15 @@ impl Tracker {
             fix_at: f64::NEG_INFINITY,
             verified: false,
             turn_ref: None,
+            carriers: std::collections::VecDeque::new(),
         });
+        if let Some(hz) = carrier_hz {
+            if e.carriers.len() == CARRIER_FRAMES {
+                e.carriers.pop_front();
+            }
+            e.carriers.push_back(hz);
+            e.ac.carrier_hz = carrier_median(&e.carriers);
+        }
         e.verified |= verified;
         e.ac.last_at = now;
         e.ac.frames = e.ac.frames.saturating_add(1);
@@ -406,7 +436,24 @@ mod tests {
     fn feed(t: &mut Tracker, s: &str, now: i64, mono: f64) {
         let b = hex(s);
         let a = accept(&b, |i| t.knows(i, now)).expect("the test vectors are all valid");
-        t.absorb(&a, &b, -20.0, now, mono);
+        t.absorb(&a, &b, -20.0, None, now, mono);
+    }
+
+    /// The carrier is the median of the last frames: one frame measured far
+    /// off — a weak one whose spectrum peaked on noise — does not move the
+    /// aircraft off its trace, and a frame with no measurement leaves it.
+    #[test]
+    fn the_carrier_is_the_median_of_the_last_frames() {
+        let mut t = Tracker::new(AdsbSettings::default());
+        let b = hex("8D40621D58C382D690C8AC2863A7");
+        let a = accept(&b, |_| false).unwrap();
+        for hz in
+            [1_090_175_200.0, 1_090_174_800.0, 1_090_640_000.0, 1_090_175_000.0, 1_090_175_100.0]
+        {
+            t.absorb(&a, &b, -20.0, Some(hz), 1_000, 0.0);
+        }
+        t.absorb(&a, &b, -20.0, None, 1_000, 0.0);
+        assert_eq!(t.snapshot()[0].carrier_hz, Some(1_090_175_100.0));
     }
 
     /// The published even/odd pair resolves to the published position, and the
