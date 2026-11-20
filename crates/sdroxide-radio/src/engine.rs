@@ -20685,11 +20685,28 @@ fn save_image_rx(kind: &str, png: &[u8]) -> Option<String> {
         .map(|d| d.as_millis())
         .unwrap_or(0);
     let name = format!("{kind}-{ts}.png");
-    let path = dir.join(&name);
+    write_picture(kind, &dir, &name, png)
+}
+
+/// Write a received picture to `dir`, or, when that fails (a chosen folder
+/// that is read-only or full), to the built-in folder, so the picture is not
+/// lost.
+fn write_picture(kind: &str, dir: &std::path::Path, name: &str, png: &[u8]) -> Option<String> {
+    let path = dir.join(name);
+    let Err(e) = std::fs::write(&path, png) else { return Some(name.to_string()) };
+    warn!("saving {kind} picture {}: {e}", path.display());
+    let fallback = sdroxide_config::default_picture_dir(kind).ok()?;
+    if fallback == dir {
+        return None;
+    }
+    let path = fallback.join(name);
     match std::fs::write(&path, png) {
-        Ok(()) => Some(name),
+        Ok(()) => {
+            warn!("saved {kind} picture to {} instead", path.display());
+            Some(name.to_string())
+        }
         Err(e) => {
-            warn!("saving {kind} image {}: {e}", path.display());
+            warn!("saving {kind} picture {}: {e}", path.display());
             None
         }
     }
@@ -20722,14 +20739,7 @@ fn save_wefax_rx(png: &[u8], dial_hz: f64) -> Option<String> {
         dial_hz: (dial_hz > 0.0).then_some(dial_hz),
     };
     let name = meta.file_name();
-    let path = dir.join(&name);
-    match std::fs::write(&path, png) {
-        Ok(()) => Some(name),
-        Err(e) => {
-            warn!("saving wefax chart {}: {e}", path.display());
-            None
-        }
-    }
+    write_picture(sdroxide_types::ImageKind::Wefax.key(), &dir, &name, png)
 }
 
 /// Encode a single-channel raster as a grayscale PNG.

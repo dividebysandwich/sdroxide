@@ -1332,6 +1332,18 @@ pub fn wefax_rx_dir() -> Result<PathBuf, ConfigError> {
     Ok(dir)
 }
 
+/// The built-in folder for a mode's received pictures, ignoring the one the
+/// operator chose: where a picture goes when the chosen folder exists but
+/// cannot be written to. Created on demand.
+pub fn default_picture_dir(kind: &str) -> Result<PathBuf, ConfigError> {
+    if kind == sdroxide_types::ImageKind::Wefax.key() {
+        let dir = wefax_default_rx_dir_path()?;
+        fs::create_dir_all(&dir)?;
+        return Ok(dir);
+    }
+    default_image_rx_dir(kind)
+}
+
 fn wefax_default_rx_dir_path() -> Result<PathBuf, ConfigError> {
     Ok(
         match directories::UserDirs::new()
