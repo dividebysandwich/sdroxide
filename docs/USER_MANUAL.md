@@ -6550,7 +6550,7 @@ only.
 
 The list forgets an aircraft a minute after its last frame. The **LOG** chip
 beside the filter opens the sighting log, which does not: every aircraft heard
-today, one line each — when it came and went, callsign, type, route, and how far
+in a day, one line each — when it came and went, callsign, type, route, and how far
 from you it was heard — with a summary at the top (how many, the farthest, the
 commonest destinations and types). Click a column heading to sort by it, again
 to reverse; it opens on the last heard first. It is written once a minute to
@@ -6560,6 +6560,32 @@ its first and last contact and its nearest and farthest distance. The times are
 in the file twice: as epoch seconds (`first`, `last`) for programs, and as local
 date and time (`first_local`, `last_local`, `2026-11-17 13:24:05`) for a
 spreadsheet.
+
+A row of filters sits above the summary, and the summary counts what they let
+through (`today 212 aircraft · 18 shown`):
+
+| Filter | What it keeps |
+|---|---|
+| Day slider | One day of the 30 kept: drag left for earlier days, the right end is today and follows midnight. Shown only once there is more than one day file. |
+| **1 D** / **7 D** | The span: the chosen day, or the seven days ending with it. Over a week an aircraft heard on several days has a line for each. |
+| Text | The filter field beside **LOG** also filters the log: a part of the callsign, the address, the type, the route (`EDDL`) or the country (`DE`). |
+| **LIVE** | Today only: just the aircraft in the table now. |
+
+With the log open, **MAP** and **PLOTS** over the right side swap the map for a
+bar chart of the lines the log shows, after its filters. **X axis** picks what
+the bars count by — each line is one aircraft on one day:
+
+| X axis | Bars |
+|---|---|
+| Daytime (h) | Aircraft heard in each hour of the day, local time. An aircraft counts in every hour it was heard in, so this is how busy the sky was. |
+| Height (FL) | Aircraft by their highest altitude, in 2,000 ft steps, the last open above FL440. |
+| Distance (km) | Aircraft by their farthest position, in the coverage diagram's 10 km rings. The diagnostic one: where the bars stop, reception stops, and a change of antenna shows as bars moving out. |
+| Airline | Aircraft by the airline code in the callsign, commonest first, as many as fit; how many more there are is written over the chart. |
+| Plane type | Aircraft by type, commonest first, guessed types counted as their type; the rest as for airlines. |
+
+Lines with nothing to count by — no altitude, no position, a callsign without an
+airline code, no type — get no bar; their share is written over the chart
+(`20 % missing data`). Hover a bar for its count.
 
 **Right-click a line** for what still answers once the flight is over: copy
 the callsign or the address; the aircraft's **track of that day** on ADS-B

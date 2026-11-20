@@ -11,6 +11,8 @@ mod adsb_clouds;
 mod adsb_coverage;
 mod adsb_log;
 mod adsb_map;
+/// The sighting log as a bar chart, the x axis picked from a list.
+mod adsb_plots;
 mod adsb_route;
 // The browser build has no disk to keep tracks on.
 #[cfg(not(target_arch = "wasm32"))]
