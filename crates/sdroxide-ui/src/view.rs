@@ -463,6 +463,18 @@ pub struct ViewState {
     /// (see `adsb_wx::Source::pick`).
     #[serde(default)]
     pub adsb_wx_source: u8,
+    /// The box in the map's bottom right corner: source, aircraft on the map,
+    /// UTC time, for screenshots. On by default; off under ADS-B SETUP.
+    #[serde(default = "adsb_map_stamp_default")]
+    pub adsb_map_stamp: bool,
+    /// Trails coloured by altitude, with the legend (chip ALT); off, the
+    /// trail is the engine's dots in one colour.
+    #[serde(default)]
+    pub adsb_map_alt: bool,
+    /// With ALT on, the aircraft symbols in the colour of their altitude;
+    /// off, white. Set under ADS-B SETUP.
+    #[serde(default = "adsb_alt_planes_default")]
+    pub adsb_alt_planes: bool,
     /// The ADS-B list shows today's sightings instead of the live table.
     #[serde(default)]
     pub adsb_show_log: bool,
@@ -916,6 +928,9 @@ impl Default for ViewState {
             adsb_map_clouds: false,
             adsb_map_storms: false,
             adsb_wx_source: 0,
+            adsb_map_stamp: true,
+            adsb_map_alt: false,
+            adsb_alt_planes: true,
             adsb_gain_presets: Default::default(),
             adsb_map_pointer: adsb_map_cities_default(),
             adsb_range_window: adsb_range_window_default(),
@@ -1104,6 +1119,16 @@ impl ViewState {
 /// makes a slotted mode's waterfall readable, and an operator who finds them
 /// busy switches them off.
 fn decode_labels_default() -> bool {
+    true
+}
+
+/// Default for [`ViewState::adsb_map_stamp`]: on, the corner box is small.
+fn adsb_map_stamp_default() -> bool {
+    true
+}
+
+/// Default for [`ViewState::adsb_alt_planes`]: altitude colour, as asked first.
+fn adsb_alt_planes_default() -> bool {
     true
 }
 

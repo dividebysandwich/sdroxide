@@ -6445,6 +6445,11 @@ something:
 Drag to pan, scroll to zoom, double-click to reframe. Your own position is
 marked once **My grid** is set.
 
+The bottom right corner shows the source, how many aircraft the map is drawing
+in its frame and the time in UTC with the date (`SDR Oxide · 27 planes ·
+2026-11-18 09:41:07 UTC`), so a screenshot says what it is, what it holds and
+when it was taken. Switch it off under **SETUP** → *Map stamp, bottom right*.
+
 **The selected aircraft's route** is drawn as dashed great circles from the
 departure airport through the aircraft to the destination — the whole route,
 with the airports marked by their ICAO codes. A route with stops is drawn
@@ -6460,6 +6465,7 @@ The chips above the map switch what lies under the traffic. Each is remembered.
 | **AIRPORTS** | Airports as the chart sign, a ringed circle, with their IATA code — the one on tickets and departure boards (`HAJ`). Fields without one, many military ones among them, keep their ICAO code. Large airports show from a continent's width, medium ones with scheduled service at a few countries, the rest at a region. The ICAO code and the name are in the pointer readout. |
 | **NIGHT** | The day–night boundary, as on the other maps. |
 | **CURSOR** | A readout beside the pointer: bearing and distance from your station, with a faint line and range ring through the pointer, the airport under it, and with RANGE on what the coverage diagram holds there. It is painted rather than a tooltip because it is read while moving. Off, there is no readout at all. |
+| **ALT** | Each aircraft's trail as a line coloured by altitude — orange on the ground, yellow and green below 10 000 ft, cyan at 20 000, blue at 30 000, purple from 40 000 — with the scale along the bottom of the map. The line runs through the points the flight tracks keep (every 15 s, and at every turn or climb) over the last ten minutes, up to where the aircraft is now; the aircraft symbols take the colour of their altitude now, or white if *With ALT: aircraft in altitude colour* is off under **SETUP** (the selected one, the one under the pointer and an emergency keep their highlight). Off, the trail is the engine's dots in one colour. Not in the browser version, which keeps no tracks. |
 | **RANGE** | The coverage diagram, see below, with **1 H**, **24 H** and **7 D** to choose how far back it reaches. Needs your position (**My grid**). |
 | **CLOUDS** | Cloud cover from geostationary satellites, worldwide, a new picture every hour. Drawn under the night shading, so day and night still read through it. |
 | **STORMS** | Thunderstorm cells: a ring in the hazard colour with a lightning stroke, thicker for a harder-working storm. With CURSOR on, the readout over a cell gives its cloud-top height and an estimated flash rate. |

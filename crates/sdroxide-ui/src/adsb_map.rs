@@ -550,6 +550,117 @@ pub struct Layers<'a> {
     pub clouds_credit: Option<String>,
     /// The AIRPORTS layer, when on and its file is in.
     pub airports: Option<&'a [crate::adsb_route::MapAirport]>,
+    /// The bottom right box: source, aircraft on the map, UTC time.
+    pub stamp: bool,
+    /// Trails coloured by altitude (chip ALT): the kept points of the
+    /// flight tracks, drawn as lines instead of the engine's dots.
+    pub alt_trails: Option<&'a Recent>,
+    /// With ALT on, the aircraft in the colour of their altitude; else white.
+    pub alt_planes: bool,
+}
+
+/// A kept point of a flight track as the map draws it: where, when, how high.
+/// Filled by [`crate::adsb_tracks`] (native only; the browser has no tracks).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TrailPoint {
+    pub t: i64,
+    pub lat: f32,
+    pub lon: f32,
+    pub alt_ft: Option<i32>,
+}
+
+/// Kept points per aircraft, oldest first.
+pub type Recent = std::collections::HashMap<u32, std::collections::VecDeque<TrailPoint>>;
+
+/// The altitude scale, feet → colour, as the legend shows it: orange on the
+/// ground, through yellow and green, cyan at 20 000 ft, blue at 30 000,
+/// purple from 40 000. Colours read off the legend of the common web flight
+/// maps HDZ uses, so a screenshot reads the same; between two stops the
+/// colour is mixed linearly.
+/// Why: HDZ 2026-11-18: „mach an die map noch einen Chip mit höhe an der spur
+///      eingefärbt … hier die legende von adsb“ (picture of the scale).
+const ALT_STOPS: [(i32, [u8; 3]); 11] = [
+    (0, [0xDB, 0x72, 0x31]),
+    (500, [0xDB, 0x73, 0x31]),
+    (1_000, [0xDD, 0x81, 0x37]),
+    (2_000, [0xE1, 0x9E, 0x40]),
+    (4_000, [0xDD, 0xB9, 0x42]),
+    (6_000, [0xBE, 0xC6, 0x42]),
+    (8_000, [0x7F, 0xC4, 0x3C]),
+    (10_000, [0x62, 0xBF, 0x5A]),
+    (20_000, [0x5B, 0xB2, 0xC4]),
+    (30_000, [0x47, 0x3C, 0xE7]),
+    (40_000, [0xB9, 0x2E, 0xC7]),
+];
+
+/// Where each stop sits on the legend bar, 0–1: the scale is stretched at the
+/// bottom, where climbs and descents happen, as on the legend it copies.
+const ALT_BAR_AT: [f32; 11] =
+    [0.0, 0.034, 0.071, 0.140, 0.211, 0.282, 0.352, 0.421, 0.571, 0.776, 1.0];
+
+/// The colour of an altitude in feet; below 0 as 0, above 40 000 as 40 000.
+pub fn alt_color(ft: i32) -> Color32 {
+    let (mut lo, mut hi) = (ALT_STOPS[0], ALT_STOPS[ALT_STOPS.len() - 1]);
+    if ft <= lo.0 {
+        hi = lo;
+    } else if ft < hi.0 {
+        let k = ALT_STOPS.iter().position(|s| s.0 > ft).unwrap_or(ALT_STOPS.len() - 1);
+        (lo, hi) = (ALT_STOPS[k - 1], ALT_STOPS[k]);
+    } else {
+        lo = hi;
+    }
+    let f = if hi.0 > lo.0 { (ft - lo.0) as f32 / (hi.0 - lo.0) as f32 } else { 0.0 };
+    let mix = |i: usize| {
+        (f32::from(lo.1[i]) + (f32::from(hi.1[i]) - f32::from(lo.1[i])) * f).round() as u8
+    };
+    Color32::from_rgb(mix(0), mix(1), mix(2))
+}
+
+/// The altitude legend along the bottom of the map, centred: the bar with its
+/// stops and labels in thousands of feet.
+fn draw_alt_legend(p: &eframe::egui::Painter, rect: Rect, sea: Color32) {
+    let w = (rect.width() * 0.45).clamp(160.0, 420.0);
+    let bar =
+        Rect::from_min_size(pos2(rect.center().x - w / 2.0, rect.bottom() - 26.0), vec2(w, 7.0));
+    p.rect_filled(
+        bar.expand2(vec2(6.0, 4.0)).with_max_y(rect.bottom() - 4.0),
+        3.0,
+        alpha(sea, 200.0),
+    );
+    // The bar in slices, each its own colour, fine enough to read as a ramp.
+    let n = 120;
+    for i in 0..n {
+        let u = (i as f32 + 0.5) / n as f32;
+        let k = ALT_BAR_AT.iter().position(|&a| a >= u).unwrap_or(ALT_BAR_AT.len() - 1).max(1);
+        let f = (u - ALT_BAR_AT[k - 1]) / (ALT_BAR_AT[k] - ALT_BAR_AT[k - 1]);
+        let ft = ALT_STOPS[k - 1].0 as f32 + f * (ALT_STOPS[k].0 - ALT_STOPS[k - 1].0) as f32;
+        let x0 = bar.left() + w * i as f32 / n as f32;
+        let x1 = bar.left() + w * (i + 1) as f32 / n as f32 + 0.5;
+        p.rect_filled(Rect::from_x_y_ranges(x0..=x1, bar.y_range()), 0.0, alt_color(ft as i32));
+    }
+    let font = FontId::monospace(8.0);
+    for (k, &at) in ALT_BAR_AT.iter().enumerate() {
+        let x = bar.left() + w * at;
+        p.line_segment([pos2(x, bar.top()), pos2(x, bar.bottom())], (1.0, Color32::BLACK));
+        // Every stop but 500 ft, which would crowd 0 and 1 000.
+        if ALT_STOPS[k].0 == 500 {
+            continue;
+        }
+        let ft = ALT_STOPS[k].0;
+        let label = match ft {
+            0 => "0".to_string(),
+            40_000 => "40k+ ft".to_string(),
+            _ => format!("{}k", ft / 1000),
+        };
+        let align = if k + 1 == ALT_BAR_AT.len() { Align2::RIGHT_TOP } else { Align2::CENTER_TOP };
+        p.text(
+            pos2(x, bar.bottom() + 1.0),
+            align,
+            label,
+            font.clone(),
+            alpha(Color32::WHITE, 200.0),
+        );
+    }
 }
 
 /// Draw the map. Returns the aircraft clicked this frame, if any.
@@ -680,7 +791,29 @@ pub fn show(
     }
 
     // ── history, under everything ──
-    for a in &live {
+    // With ALT, the kept points of the flight tracks as a line coloured by
+    // altitude, up to where the aircraft is now; else the engine's dots.
+    if let Some(trails) = layers.alt_trails {
+        for a in &live {
+            let Some(pts) = trails.get(&a.icao) else { continue };
+            let here = a.lat.zip(a.lon).map(|(la, lo)| (project(la, lo), a.altitude_ft));
+            let mut prev: Option<(Pos2, Option<i32>)> = None;
+            for (c, alt) in pts
+                .iter()
+                .map(|q| (project(f64::from(q.lat), f64::from(q.lon)), q.alt_ft))
+                .chain(here)
+            {
+                if let Some((pc, palt)) = prev {
+                    // A segment takes the altitude it ends at; on the ground
+                    // (no altitude) the ground's colour.
+                    let col = alt_color(alt.or(palt).unwrap_or(0));
+                    p.line_segment([pc, c], (2.0, alpha(col, 230.0)));
+                }
+                prev = Some((c, alt));
+            }
+        }
+    }
+    for a in live.iter().filter(|_| layers.alt_trails.is_none()) {
         let n = a.track.len();
         for (k, &(plat, plon)) in a.track.iter().enumerate() {
             let c = project(f64::from(plat), f64::from(plon));
@@ -740,11 +873,23 @@ pub fn show(
             p.text(c + vec2(5.0, -1.0), Align2::LEFT_BOTTOM, &ap.icao, font.clone(), ink);
         }
     }
+    // With ALT, a target wears the colour of its altitude now, as its trail
+    // does, or white, as set under SETUP; an emergency, the selected one and
+    // the hovered one keep theirs.
+    // Why: HDZ 2026-11-18: „wenn alt an ist die flugzeuge auch in der
+    //      aktuellen höhenfarbe machen“; „in den prefs wählbar. use height
+    //      color for plane or white“.
+    let alt_mode = layers.alt_trails.is_some();
+    let alt_planes = layers.alt_planes;
     let tint_for = |a: &AdsbAircraft, top: bool| -> Color32 {
         if a.emergency.is_some() || selected_icao == Some(a.icao) {
             map.dx
         } else if top {
             map.hover
+        } else if alt_mode && alt_planes {
+            alt_color(if a.on_ground { 0 } else { a.altitude_ft.unwrap_or(0) })
+        } else if alt_mode {
+            Color32::WHITE
         } else {
             map.station
         }
@@ -999,9 +1144,33 @@ pub fn show(
         );
     }
 
+    // Bottom right: the source, how many aircraft the map shows and the time
+    // in UTC, so a screenshot says what it is, what it holds and when it was
+    // taken. Counted as drawn: a fresh position inside the frame.
+    // Why: HDZ 2026-11-18: „mach mir auf der map, rechts unten eine kleine
+    //      Anzeige mit UTC und wieviele plains on the map sind. für
+    //      screenshots“; text „Sdr Oxide . xy planes 5345324 UTC“; switchable.
+    if layers.alt_trails.is_some() {
+        draw_alt_legend(&p, rect, map.sea);
+    }
+    let mut hint_bottom = rect.bottom() - 4.0;
+    if layers.stamp {
+        let on_map = live
+            .iter()
+            .filter(|a| a.lat.zip(a.lon).is_some_and(|(la, lo)| rect.contains(project(la, lo))))
+            .count();
+        let stamp = tr!("adsbmap-stamp", time = utc_stamp(now), n = on_map.to_string());
+        let galley = p.layout_no_wrap(stamp, FontId::monospace(10.0), alpha(Color32::WHITE, 210.0));
+        let size = galley.size() + vec2(8.0, 6.0);
+        let stamp_box = Rect::from_min_size(rect.right_bottom() - size - vec2(6.0, 4.0), size);
+        p.rect_filled(stamp_box, 3.0, alpha(map.sea, 210.0));
+        p.galley(stamp_box.min + vec2(4.0, 3.0), galley, Color32::WHITE);
+        hint_bottom = stamp_box.top() - 3.0;
+    }
+
     if manual && resp.hovered() {
         p.text(
-            rect.right_bottom() + vec2(-6.0, -4.0),
+            pos2(rect.right() - 6.0, hint_bottom),
             Align2::RIGHT_BOTTOM,
             tr!("adsbmap-double-click-reframe"),
             FontId::proportional(9.0),
@@ -1011,9 +1180,41 @@ pub fn show(
     clicked
 }
 
+/// `2026-11-18 09:41:07`, UTC, for the map's corner.
+fn utc_stamp(now: i64) -> String {
+    let s = now.rem_euclid(86_400);
+    format!("{} {:02}:{:02}:{:02}", crate::adsb_log::utc_day(now), s / 3600, s % 3600 / 60, s % 60)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The altitude colours: the stops as read off the legend, mixed between
+    /// them, and held at both ends.
+    #[test]
+    fn altitude_colours_follow_the_legend() {
+        assert_eq!(alt_color(0), Color32::from_rgb(0xDB, 0x72, 0x31));
+        assert_eq!(alt_color(-200), alt_color(0), "below the ground is the ground");
+        assert_eq!(alt_color(10_000), Color32::from_rgb(0x62, 0xBF, 0x5A));
+        assert_eq!(alt_color(30_000), Color32::from_rgb(0x47, 0x3C, 0xE7));
+        assert_eq!(alt_color(45_000), Color32::from_rgb(0xB9, 0x2E, 0xC7), "40 000+");
+        // Half way from 20 000 (5B B2 C4) to 30 000 (47 3C E7).
+        assert_eq!(alt_color(25_000), Color32::from_rgb(0x51, 0x77, 0xD6));
+        assert_eq!(ALT_STOPS.len(), ALT_BAR_AT.len());
+        assert!(ALT_BAR_AT.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn the_corner_shows_utc_with_the_date() {
+        assert_eq!(utc_stamp(1_794_993_667), "2026-11-18 09:21:07");
+        assert_eq!(utc_stamp(0), "1970-01-01 00:00:00");
+        assert_eq!(
+            utc_stamp(1_794_959_999),
+            "2026-11-17 23:59:59",
+            "the day turns at UTC midnight"
+        );
+    }
 
     fn flying(kt: f32, track: f32, turn: f32) -> AdsbAircraft {
         let mut a = AdsbAircraft::new(0x3C_6444, 0);
