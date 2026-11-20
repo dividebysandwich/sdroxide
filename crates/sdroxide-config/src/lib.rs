@@ -512,6 +512,31 @@ pub fn save_hfdl_channels(khz: &[u32]) -> Result<(), ConfigError> {
     save_json("hfdl_channels.json", &khz)
 }
 
+/// The HFDL system table (`hfdl_stations.json`): every ground station's
+/// position and channels, as the network last broadcast them. The stations send
+/// the table only now and then, and without it a squitter's channel bitmap
+/// cannot be read as frequencies, so the engine keeps the last one received and
+/// starts the next run from it. Entries carry only the table's own fields; what
+/// was heard is per run.
+pub fn load_hfdl_stations() -> Vec<sdroxide_types::HfdlStation> {
+    load_json_list("hfdl_stations.json")
+}
+
+pub fn save_hfdl_stations(stations: &[sdroxide_types::HfdlStation]) -> Result<(), ConfigError> {
+    save_json("hfdl_stations.json", &stations)
+}
+
+/// Where decoded HFDL is fed besides the panel (`hfdl_outputs.json`): the
+/// station id and which feeds are on. Per machine, like the other lanes'
+/// settings.
+pub fn load_hfdl_outputs() -> sdroxide_types::HfdlOutputs {
+    load_json("hfdl_outputs.json")
+}
+
+pub fn save_hfdl_outputs(o: &sdroxide_types::HfdlOutputs) -> Result<(), ConfigError> {
+    save_json("hfdl_outputs.json", o)
+}
+
 /// The operator's own receive filter presets (`filter_presets.json`), each
 /// standing in for one of a mode's built-in chips. A missing file is none.
 pub fn load_filter_presets() -> Vec<sdroxide_types::CustomFilterPreset> {
@@ -3645,6 +3670,25 @@ mod tests {
         save_hfdl_channels(&[5_451, 8_843, 11_184]).unwrap();
         assert!(root.join("hfdl_channels.json").exists());
         assert_eq!(load_hfdl_channels(), vec![5_451, 8_843, 11_184]);
+
+        // The HFDL system table round-trips too.
+        assert!(load_hfdl_stations().is_empty(), "no file, no saved table");
+        let mut gs = sdroxide_types::HfdlStation::new(4, Some("Riverhead, New York"));
+        gs.freqs =
+            vec![sdroxide_types::HfdlStationFreq { freq_hz: 21_931_000, slot: 2, active: false }];
+        save_hfdl_stations(std::slice::from_ref(&gs)).unwrap();
+        assert!(root.join("hfdl_stations.json").exists());
+        assert_eq!(load_hfdl_stations(), vec![gs]);
+
+        // The HFDL feeds too; nothing on by default.
+        assert_eq!(load_hfdl_outputs(), sdroxide_types::HfdlOutputs::default());
+        let feeds = sdroxide_types::HfdlOutputs {
+            station_id: "XX-TEST-HFDL".into(),
+            airframes: true,
+            ..Default::default()
+        };
+        save_hfdl_outputs(&feeds).unwrap();
+        assert_eq!(load_hfdl_outputs(), feeds);
 
         // Custom filter presets round-trip the same way.
         assert!(load_filter_presets().is_empty(), "no file, no custom presets");

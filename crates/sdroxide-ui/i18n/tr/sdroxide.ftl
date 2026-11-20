@@ -6033,3 +6033,104 @@ textmodem-psk-coded-hint =
 topbar-sk-filter-after-nr-hint = SK, RNN/DFNR'den sonra — dolayısıyla AGC'den de sonra: filtrenin aldığı geri gelmez (yanındaki güçlendirmeye bak); kapalı: seviyeyi geri getiren AGC'den önce
 topbar-sk-filter-boost-hint = SK filtresinden sonra güçlendirme, 0–18 dB (5 dB), tam ölçeğin altında yumuşak sınırlı: NR'den sonra filtrenin aldığı seviyeyi kimse geri getirmez
 topbar-sk-filter-boost-before-nr = NR'den önce AGC seviyeyi geri getirir; güçlendirme yalnızca NR'den sonra çalışır
+
+## hfdl: yer istasyonları (src/app/hfdl.rs)
+
+hfdl-stations = İSTASYONLAR
+hfdl-no-station-heard-yet = Henüz hiçbir yer istasyonu duyulmadı. Bir istasyonun squitter'ı, kullandığı kanallarda yaklaşık 32 sn'de bir tekrarlanır; liste, ağın sistem tablosu alındığında da dolar.
+hfdl-station-heard = { $mhz } MHz'de { $age } önce duyuldu
+hfdl-station-squitters = { $n } squitter
+hfdl-station-not-heard = henüz duyulmadı
+hfdl-station-channel-hint = { $mhz } MHz'e ayarlayın. Yeşil: istasyon şu anda bu kanalda çalışıyor.
+hfdl-station-channels-unknown = Ağ sistem tablosunu yayınlayana kadar kanallar bilinmiyor.
+hfdl-chip-stations = Kullanan: { $stations }
+hfdl-chip-working = { $station } bu kanalda çalışıyor — { $age } önce duyuldu
+
+## hfdl: ACARS iletileri (src/app/hfdl.rs)
+
+hfdl-messages = İLETİLER
+hfdl-no-acars-yet = Henüz ACARS iletisi yok. Havayolu iletileri squitter'lar arasındaki veri bağlantısının içinde taşınır; bu, VHF'dekine göre çok daha seyrektir. Duyulanlar, çözüm günlüğü onları geride bıraktıktan sonra burada saklanır.
+hfdl-save-hfdl-acars-messages-csv = ACARS iletilerini bir CSV dosyasına kaydedin
+hfdl-acars-downlink = Uçaktan yere
+hfdl-acars-uplink = Yerden uçağa
+hfdl-acars-crc-bad = CRC
+hfdl-acars-crc-bad-hint = İletinin kendi denetim dizisi eşleşmedi, bu yüzden metnin bir kısmı yanlış olabilir. İletinin taşındığı veri bağlantısı çerçevesi ise kendi denetimini geçti.
+hfdl-acars-more = devamı…
+hfdl-acars-more-hint = Daha uzun bir iletinin bir parçası — devam eden bloklar var.
+
+## hfdl: uçak listesi (src/app/hfdl.rs)
+
+hfdl-aircraft-list = UÇAKLAR
+hfdl-no-aircraft-heard-yet = Henüz hiçbir uçak duyulmadı. Bir uçak, ilk aşağı bağlantısından — bir oturum açma, bir konum raporu, bir ACARS iletisi — itibaren burada görünür; haritaya hiç konum göndermese de.
+hfdl-aircraft-position = { $lat }, { $lon } konumunda · { $age } önce
+hfdl-aircraft-from-you = { $km } km, sizden { $bearing }°
+hfdl-aircraft-logged-off = oturumu kapatıldı
+hfdl-aircraft-no-position-hint = Henüz konum bildirilmedi, bu yüzden haritada yanıp sönecek bir şey yok
+hfdl-aircraft-filter-hint = Yalnızca bu uçağın çözümlerini gösterir: filtreyi ayarlar ve ÇÖZÜMLER'i açar
+hfdl-col-reg = TESCİL
+hfdl-col-flight = UÇUŞ
+hfdl-col-heard = DUYULDU
+hfdl-col-station = İSTASYON
+hfdl-col-mhz = MHz
+hfdl-col-snr = dB
+hfdl-col-msgs = İLT.
+hfdl-col-dist = KM
+hfdl-col-last = SON İLETİ
+hfdl-aircraft-sort-hint = Bu sütuna göre sırala; tersine çevirmek için yeniden tıklayın
+hfdl-aircraft-blink-hint = Bu uçağı haritada yanıp söndür
+
+## hfdl: aynı anda birden çok kanal (src/app/hfdl.rs)
+
+hfdl-chip-multi-hint = Yalnızca bu kanalı dinlemek için tıklayın; diğerleriyle birlikte çözmek için Ctrl-tıklama (Mac'te ⌘-tıklama) yapın.
+hfdl-left-out-hint = İstendi ama çözülmedi: diğer kanallarla şeridi paylaşamayacak kadar uzak (en fazla 200 kHz) ya da alıcının penceresinin dışında.
+hfdl-nearby = + YAKIN
+hfdl-nearby-hint = Geçerli kanalla bir şeridi paylaşacak kadar yakın olan her kanalı da çözün — birbirlerinden 200 kHz'den az uzakta ve alıcının penceresi içinde, en fazla sekiz tane.
+hfdl-nearby-none-hint = Hiçbir başka kanal şeridi paylaşamaz: hiçbiri yeterince yakın değil, sekiz yerin hepsi dolu ya da alıcının penceresi çok dar.
+hfdl-single-hint = Kadranın üzerinde olduğu tek kanala geri dön
+hfdl-lane-label = KANALLAR
+
+## hfdl: otomatik izleme (src/app/hfdl.rs)
+
+hfdl-auto = AUTO
+hfdl-auto-hint = Açık bir bandı kendi kendine bulun: üzerinde yer istasyonları duyulduğu sürece orada kalır; yaklaşık bir buçuk dakikadır hiçbiri duyulmadığında, bir sonraki banda geçer — gündüz daha yüksek, gece daha alçak olanlara, kareniz esas alınarak; bir istasyonun çalıştığını bildirdiği bant ise diğerlerinden önce gelir — ve o bandın tüm kanallarını birden alır. Elle bir kanal seçmek bunu kapatır.
+hfdl-follow-starting = AUTO · çözücü bekleniyor…
+hfdl-follow-parked = AUTO · { $mhz } MHz açık — { $station } { $age } önce duyuldu
+hfdl-follow-listening = AUTO · { $mhz } MHz'de dinleniyor; hiçbir şey duyulmazsa { $secs } sn sonra sonraki bant
+
+## hfdlmap: yer istasyonları (src/hfdl_map.rs)
+
+hfdlmap-gs-heard = { $age } önce duyuldu
+hfdlmap-gs-not-heard = son zamanlarda duyulmadı — sistem tablosundan biliniyor
+
+## hfdl: banda göre kanallar (src/app/hfdl.rs)
+
+hfdl-band-label = MHz
+hfdl-band-hint = { $mhz } MHz kanallarını göster. Yeşil: bunlardan birinde şu anda bir istasyon çalışıyor; altı çizili: bunlardan biri çözülüyor.
+
+## hfdl: hesaplanan rota ve hız (src/app/hfdl.rs)
+
+hfdl-col-calc-trk = HES. ROTA
+hfdl-col-calc-kt = HES. KT
+hfdl-col-calc-hint = Uçağın son iki konum raporundan hesaplanır — yer üzerindeki rota ve ikisi arasındaki ortalama yer hızı. Uçak tarafından bildirilmez: HFDL konum raporları ikisini de içermez.
+
+## hfdl: akışlar (src/app/hfdl.rs)
+
+hfdl-feeds = AKIŞLAR
+hfdl-feeds-hint = Çözülenleri bu panel dışında başka bir yere gönderin — Airframes'e ya da kendi programlarınıza. Siz açana kadar hepsi kapalıdır.
+hfdl-station-id = İstasyon kimliği
+hfdl-station-id-hint = Gönderilen her çerçeveye eklenir. Airframes akışınızı bu kimliğe atfeder ve XX-YYYY-HFDL biçiminde bir kimlik ister: baş harfleriniz, bir havalimanı kodu ya da yer belirteci ve mod. Harfler, rakamlar, - ve _, en fazla 32.
+hfdl-station-id-bad = Yalnızca harfler, rakamlar, - ve _, en fazla 32 karakter.
+hfdl-feed-airframes = Airframes'e gönder (feed.airframes.io)
+hfdl-feed-airframes-hint = Çözülen her çerçeveyi — squitter'ları, konumları, ACARS iletilerini — istasyon kimliğinizle birlikte Airframes'in HFDL girişine (TCP, 5556 numaralı bağlantı noktası) dumphfdl'in okuduğu biçimde, dumphfdl'in JSON'u olarak gönderir. Akışınız bu kimlikle airframes.io'da görünür. Bu kapalıyken hiçbir şey gönderilmez.
+hfdl-feed-needs-id = Gönderilmedi: önce bir istasyon kimliği girin.
+hfdl-feed-sent = { $n } çerçeve gönderildi
+hfdl-feed-json = Aynı JSON'u şuraya gönder (UDP host:port, virgülle ayrılmış)
+hfdl-feed-json-hint = dumphfdl'in JSON'unu okuyan kendi programlarınız — acarshub (HFDL girişi genellikle 5556 numaralı UDP bağlantı noktasıdır), bir kayıt aracı, bir betik. Her birine çerçeve başına bir datagram, dumphfdl'in decoded:json UDP çıktısının gönderdiği gibi. İstasyon kimliği gerekmez. Alanı terk ettiğinizde uygulanır.
+hfdl-feed-json-bad = Bir host:port değil: { $targets }
+hfdl-feed-sbs = BaseStation bağlantı noktası (SBS)
+hfdl-feed-sbs-hint = Uçak konumlarını bu TCP bağlantı noktasında BaseStation satırları olarak sunar; Virtual Radar Server, PlanePlotter ve benzerleri için — dumphfdl'in basestation çıktısının yazdığı satırların aynısı. 0 kapalıdır. 30003, her zamanki BaseStation bağlantı noktasıdır; bu bilgisayardaki bir ADS-B çözücü onu zaten sunuyorsa başka bir tane seçin. Alanı terk ettiğinizde uygulanır.
+hfdl-feed-sbs-lan = Diğer bilgisayarların bağlanmasına izin ver
+hfdl-feed-sbs-lan-hint = Kapalı: yalnızca bu bilgisayardaki programlar bağlanabilir. Açık: bu bilgisayara ağ üzerinden ulaşabilen herhangi bir bilgisayar bağlanabilir.
+hfdl-feed-sbs-status = { $clients ->
+       *[other] { $clients } istemci bağlı
+    } · { $n } konum gönderildi

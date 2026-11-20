@@ -5585,10 +5585,13 @@ name = "sdroxide-hfdl"
 version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
+ "num-complex",
  "sdroxide-dsp",
  "sdroxide-types",
  "serde_json",
  "tracing",
+ "xng-acars",
+ "xng-dsp",
  "xng-mode-hfdl",
 ]
 

@@ -6522,3 +6522,105 @@ settings-servers-beast-about = Sendet jede ADS-B-Meldung, die dieser Empfänger 
 adsb-beast-out-on = Eigener Beast-Server läuft auf Port { $port } · { $clients }
 adsb-beast-out-off = Eigener Beast-Server aus
 adsb-beast-out-failed = Eigener Beast-Server gescheitert: { $error }
+
+## hfdl: ground stations (src/app/hfdl.rs)
+
+hfdl-stations = STATIONEN
+hfdl-no-station-heard-yet = Noch keine Bodenstation gehört. Das Squitter einer Station wiederholt sich etwa alle 32 s auf den Kanälen, die sie nutzt; die Liste füllt sich außerdem aus der Systemtabelle des Netzes, sobald diese empfangen wurde.
+hfdl-station-heard = zuletzt vor { $age } auf { $mhz } MHz gehört
+hfdl-station-squitters = { $n } Squitter
+hfdl-station-not-heard = noch nicht gehört
+hfdl-station-channel-hint = Auf { $mhz } MHz abstimmen. Grün: Die Station arbeitet jetzt auf diesem Kanal.
+hfdl-station-channels-unknown = Kanäle unbekannt, bis das Netz seine Systemtabelle sendet.
+hfdl-chip-stations = Genutzt von { $stations }
+hfdl-chip-working = { $station } arbeitet auf diesem Kanal — zuletzt vor { $age } gehört
+
+## hfdl: ACARS messages (src/app/hfdl.rs)
+
+hfdl-messages = NACHRICHTEN
+hfdl-no-acars-yet = Noch keine ACARS-Nachricht. Airline-Nachrichten laufen zwischen den Squittern innerhalb der Datenverbindung, viel seltener als auf UKW; die empfangenen werden hier aufbewahrt, nachdem das Dekodierprotokoll sie weitergeschoben hat.
+hfdl-save-hfdl-acars-messages-csv = Die ACARS-Nachrichten in eine CSV-Datei speichern
+hfdl-acars-downlink = Flugzeug an Boden
+hfdl-acars-uplink = Boden an Flugzeug
+hfdl-acars-crc-bad = CRC
+hfdl-acars-crc-bad-hint = Die eigene Prüfsequenz der Nachricht stimmte nicht überein, daher ist ein Teil des Texts möglicherweise falsch. Der Datenverbindungsrahmen, in dem sie übertragen wurde, hat seine eigene Prüfung bestanden.
+hfdl-acars-more = mehr…
+hfdl-acars-more-hint = Ein Teil einer längeren Nachricht — weitere Blöcke folgen.
+
+## hfdl: aircraft list (src/app/hfdl.rs)
+
+hfdl-aircraft-list = FLUGZEUGE
+hfdl-no-aircraft-heard-yet = Noch kein Flugzeug gehört. Ein Flugzeug erscheint hier mit seiner ersten Meldung — einer Anmeldung, einem Positionsbericht, einer ACARS-Nachricht —, ganz gleich, ob es je eine Position für die Karte sendet.
+hfdl-aircraft-position = bei { $lat }, { $lon } · vor { $age }
+hfdl-aircraft-from-you = { $km } km, { $bearing }° von Ihnen
+hfdl-aircraft-logged-off = abgemeldet
+hfdl-aircraft-no-position-hint = Noch keine Position gemeldet, daher gibt es auf der Karte nichts, das blinkt
+hfdl-aircraft-filter-hint = Nur die Dekodierungen dieses Flugzeugs anzeigen: setzt den Filter und öffnet DEKODIERUNGEN
+hfdl-col-reg = KENNZ.
+hfdl-col-flight = FLUG
+hfdl-col-heard = GEHÖRT
+hfdl-col-station = STATION
+hfdl-col-mhz = MHz
+hfdl-col-snr = dB
+hfdl-col-msgs = NACHR.
+hfdl-col-dist = KM
+hfdl-col-last = LETZTE NACHR.
+hfdl-aircraft-sort-hint = Nach dieser Spalte sortieren; erneut klicken kehrt die Reihenfolge um
+hfdl-aircraft-blink-hint = Dieses Flugzeug auf der Karte blinken lassen
+
+## hfdl: several channels at once (src/app/hfdl.rs)
+
+hfdl-chip-multi-hint = Anklicken, um nur diesen Kanal zu hören; Strg-Klick (⌘-Klick am Mac), um ihn zusammen mit den anderen zu dekodieren.
+hfdl-left-out-hint = Angefordert, aber nicht dekodiert: zu weit von den anderen Kanälen entfernt, um deren Spur zu teilen (höchstens 200 kHz), oder außerhalb des Empfangsfensters.
+hfdl-nearby = + NAHE
+hfdl-nearby-hint = Auch jeden Kanal dekodieren, der nahe genug liegt, um sich mit dem aktuellen eine Spur zu teilen — höchstens 200 kHz voneinander entfernt und innerhalb des Empfangsfensters, höchstens acht.
+hfdl-nearby-none-hint = Kein anderer Kanal kann sich die Spur teilen: keiner liegt nahe genug, alle acht Plätze sind belegt, oder das Empfangsfenster ist zu schmal.
+hfdl-single-hint = Zurück zu dem einen Kanal, auf den der Abstimmregler eingestellt ist
+hfdl-lane-label = KANÄLE
+
+## hfdl: auto-follow (src/app/hfdl.rs)
+
+hfdl-auto = AUTO
+hfdl-auto-hint = Ein offenes Band selbst finden: Es bleibt aktiv, solange auf ihm Bodenstationen gehört werden. Wenn seit etwa anderthalb Minuten keine mehr zu hören war, wechselt es zum nächsten Band — tagsüber zu den höheren, nachts zu den niedrigeren, jeweils bezogen auf Ihr Gitterfeld; ein Band, auf dem eine Station laut eigener Angabe gerade arbeitet, kommt vor allen anderen — und übernimmt alle Kanäle dieses Bandes auf einmal. Einen Kanal von Hand zu wählen schaltet es aus.
+hfdl-follow-starting = AUTO · wartet auf den Decoder…
+hfdl-follow-parked = AUTO · { $mhz } MHz ist offen — { $station } vor { $age } gehört
+hfdl-follow-listening = AUTO · hört auf { $mhz } MHz; das nächste Band in { $secs } s, falls nichts gehört wird
+
+## hfdlmap: ground stations (src/hfdl_map.rs)
+
+hfdlmap-gs-heard = vor { $age } gehört
+hfdlmap-gs-not-heard = in letzter Zeit nicht gehört — bekannt aus der Systemtabelle
+
+## hfdl: channels by band (src/app/hfdl.rs)
+
+hfdl-band-label = MHz
+hfdl-band-hint = Die Kanäle von { $mhz } MHz zeigen. Grün: Eine Station arbeitet jetzt auf einem davon; unterstrichen: einer davon wird dekodiert.
+
+## hfdl: calculated course and speed (src/app/hfdl.rs)
+
+hfdl-col-calc-trk = BER. KURS
+hfdl-col-calc-kt = BER. KT
+hfdl-col-calc-hint = Berechnet aus den letzten beiden Positionsberichten des Flugzeugs — Kurs über Grund und mittlere Bodengeschwindigkeit zwischen ihnen. Nicht vom Flugzeug gemeldet: Die Positionsberichte von HFDL enthalten keines von beiden.
+
+## hfdl: feeds (src/app/hfdl.rs)
+
+hfdl-feeds = FEEDS
+hfdl-feeds-hint = Dekodiertes an andere Stellen als dieses Panel senden — an Airframes oder an eigene Programme. Alles ist aus, bis Sie es einschalten.
+hfdl-station-id = Stations-ID
+hfdl-station-id-hint = Wird jedem gesendeten Frame beigefügt. Airframes ordnet Ihren Feed dieser ID zu und verlangt eine Form wie XX-YYYY-HFDL: Ihre Initialen, ein Flughafenkürzel oder Locator und den Modus. Buchstaben, Ziffern, - und _, bis zu 32.
+hfdl-station-id-bad = Nur Buchstaben, Ziffern, - und _, bis zu 32 Zeichen.
+hfdl-feed-airframes = Airframes speisen (feed.airframes.io)
+hfdl-feed-airframes-hint = Jeden dekodierten Frame — Squitter, Positionen, ACARS-Nachrichten — mit Ihrer Stations-ID an den HFDL-Eingang von Airframes senden (TCP, Port 5556), im JSON-Format von dumphfdl, das dieser liest. Ihr Feed erscheint dann unter dieser ID auf airframes.io. Solange dies aus ist, wird nichts gesendet.
+hfdl-feed-needs-id = Nicht gesendet: Geben Sie zuerst eine Stations-ID an.
+hfdl-feed-sent = { $n } Frames gesendet
+hfdl-feed-json = Dasselbe JSON senden an (UDP host:port, durch Kommas getrennt)
+hfdl-feed-json-hint = Eigene Programme, die das JSON von dumphfdl lesen — acarshub (dessen HFDL-Eingang meist UDP-Port 5556 ist), ein Logger, ein Skript. Ein Datagramm pro Frame an jedes, wie es die UDP-Ausgabe decoded:json von dumphfdl sendet. Keine Stations-ID nötig. Wird übernommen, sobald Sie das Feld verlassen.
+hfdl-feed-json-bad = Kein host:port: { $targets }
+hfdl-feed-sbs = BaseStation-Port (SBS)
+hfdl-feed-sbs-hint = Flugzeugpositionen als BaseStation-Zeilen auf diesem TCP-Port bereitstellen, für Virtual Radar Server, PlanePlotter und ähnliche Programme — dieselben Zeilen, die die basestation-Ausgabe von dumphfdl schreibt. 0 bedeutet aus. 30003 ist der übliche BaseStation-Port; wählen Sie einen anderen, falls ein ADS-B-Dekoder auf diesem Computer ihn bereits bedient. Wird übernommen, sobald Sie das Feld verlassen.
+hfdl-feed-sbs-lan = Anderen Computern die Verbindung erlauben
+hfdl-feed-sbs-lan-hint = Aus: Nur Programme auf diesem Computer können sich verbinden. Ein: Jeder Computer, der diesen über das Netzwerk erreichen kann, kann sich verbinden.
+hfdl-feed-sbs-status = { $clients ->
+        [one] { $clients } Client verbunden
+       *[other] { $clients } Clients verbunden
+    } · { $n } Positionen gesendet

@@ -6042,3 +6042,105 @@ textmodem-psk-coded-hint =
 topbar-sk-filter-after-nr-hint = SK após RNN/DFNR — e após o AGC: o que o filtro tira não volta (veja o reforço ao lado); desligado: antes do AGC, que repõe o nível
 topbar-sk-filter-boost-hint = Reforço após o filtro SK, 0–18 dB (5 dB), limitado suavemente abaixo do fundo de escala: após o NR nada repõe o nível que o filtro tira
 topbar-sk-filter-boost-before-nr = Antes do NR o AGC repõe o nível; o reforço só age após o NR
+
+## hfdl: estações de solo (src/app/hfdl.rs)
+
+hfdl-stations = ESTAÇÕES
+hfdl-no-station-heard-yet = Nenhuma estação de solo ouvida ainda. O squitter de uma estação se repete a cada ~32 s nos canais que ela usa; a lista também se preenche com a tabela de sistema da rede, assim que ela for recebida.
+hfdl-station-heard = ouvida há { $age } em { $mhz } MHz
+hfdl-station-squitters = { $n } squitters
+hfdl-station-not-heard = ainda não ouvida
+hfdl-station-channel-hint = Sintonize em { $mhz } MHz. Verde: a estação está operando neste canal agora.
+hfdl-station-channels-unknown = Canais desconhecidos até a rede transmitir a sua tabela de sistema.
+hfdl-chip-stations = Usada por { $stations }
+hfdl-chip-working = { $station } está operando neste canal — ouvida há { $age }
+
+## hfdl: mensagens ACARS (src/app/hfdl.rs)
+
+hfdl-messages = MENSAGENS
+hfdl-no-acars-yet = Nenhuma mensagem ACARS ainda. Mensagens de companhias aéreas viajam dentro do enlace de dados entre os squitters, bem menos vezes do que em VHF; as que forem ouvidas são guardadas aqui depois que o log de decodificação as tiver deixado para trás.
+hfdl-save-hfdl-acars-messages-csv = Salvar as mensagens ACARS em um arquivo CSV
+hfdl-acars-downlink = Da aeronave para o solo
+hfdl-acars-uplink = Do solo para a aeronave
+hfdl-acars-crc-bad = CRC
+hfdl-acars-crc-bad-hint = A própria sequência de verificação da mensagem não coincidiu, então parte do texto pode estar errada. O quadro do enlace de dados em que ela viajava passou na sua própria verificação.
+hfdl-acars-more = mais…
+hfdl-acars-more-hint = Uma parte de uma mensagem mais longa — mais blocos virão.
+
+## hfdl: lista de aeronaves (src/app/hfdl.rs)
+
+hfdl-aircraft-list = AERONAVES
+hfdl-no-aircraft-heard-yet = Nenhuma aeronave ouvida ainda. Uma aeronave aparece aqui a partir do primeiro downlink dela — um logon, um relatório de posição, uma mensagem ACARS —, tenha ela ou não enviado uma posição para o mapa.
+hfdl-aircraft-position = em { $lat }, { $lon } · há { $age }
+hfdl-aircraft-from-you = { $km } km, { $bearing }° de você
+hfdl-aircraft-logged-off = desconectada
+hfdl-aircraft-no-position-hint = Nenhuma posição informada ainda, então não há nada para piscar no mapa
+hfdl-aircraft-filter-hint = Mostrar só as decodificações desta aeronave: define o filtro e abre DECODIFICAÇÕES
+hfdl-col-reg = MATR.
+hfdl-col-flight = VOO
+hfdl-col-heard = OUVIDO
+hfdl-col-station = ESTAÇÃO
+hfdl-col-mhz = MHz
+hfdl-col-snr = dB
+hfdl-col-msgs = MSGS
+hfdl-col-dist = KM
+hfdl-col-last = ÚLT. MENSAGEM
+hfdl-aircraft-sort-hint = Ordenar por esta coluna; clique de novo para inverter
+hfdl-aircraft-blink-hint = Fazer esta aeronave piscar no mapa
+
+## hfdl: vários canais ao mesmo tempo (src/app/hfdl.rs)
+
+hfdl-chip-multi-hint = Clique para ouvir só este canal; Ctrl-clique (⌘-clique no Mac) para decodificá-lo junto com os outros.
+hfdl-left-out-hint = Solicitado, mas não decodificado: longe demais dos outros canais para dividir a faixa deles (no máximo 200 kHz), ou fora da janela do receptor.
+hfdl-nearby = + PRÓXIMOS
+hfdl-nearby-hint = Decodificar também todos os canais próximos o bastante para dividir uma faixa com o que está em uso — a no máximo 200 kHz uns dos outros e dentro da janela do receptor, oito no máximo.
+hfdl-nearby-none-hint = Nenhum outro canal pode dividir a faixa: nenhum está perto o bastante, as oito vagas estão ocupadas, ou a janela do receptor é estreita demais.
+hfdl-single-hint = Voltar ao único canal em que o seletor está
+hfdl-lane-label = CANAIS
+
+## hfdl: acompanhamento automático (src/app/hfdl.rs)
+
+hfdl-auto = AUTO
+hfdl-auto-hint = Encontrar sozinho uma banda aberta: permanece nela enquanto estações de solo forem ouvidas e, quando nenhuma tiver sido ouvida por cerca de um minuto e meio, passa para a banda seguinte — as mais altas de dia e as mais baixas de noite, na sua quadrícula, e primeiro uma banda em que alguma estação diga estar operando — assumindo de uma vez todos os canais dessa banda. Escolher um canal manualmente desliga o modo.
+hfdl-follow-starting = AUTO · aguardando o decodificador…
+hfdl-follow-parked = AUTO · { $mhz } MHz está aberta — { $station } ouvida há { $age }
+hfdl-follow-listening = AUTO · ouvindo em { $mhz } MHz; a próxima banda em { $secs } s se nada for ouvido
+
+## hfdlmap: estações de solo (src/hfdl_map.rs)
+
+hfdlmap-gs-heard = ouvida há { $age }
+hfdlmap-gs-not-heard = não ouvida recentemente — conhecida pela tabela de sistema
+
+## hfdl: canais por banda (src/app/hfdl.rs)
+
+hfdl-band-label = MHz
+hfdl-band-hint = Mostrar os canais de { $mhz } MHz. Verde: uma estação está operando em um deles agora; sublinhado: um deles está sendo decodificado.
+
+## hfdl: curso e velocidade calculados (src/app/hfdl.rs)
+
+hfdl-col-calc-trk = RUMO CALC.
+hfdl-col-calc-kt = KT CALC.
+hfdl-col-calc-hint = Calculados a partir dos dois últimos relatórios de posição da aeronave — rumo sobre o solo e velocidade média sobre o solo entre eles. Não informados pela aeronave: os relatórios de posição do HFDL não trazem nenhum dos dois.
+
+## hfdl: feeds (src/app/hfdl.rs)
+
+hfdl-feeds = FLUXOS
+hfdl-feeds-hint = Enviar o que é decodificado para outro lugar além deste painel — para a Airframes ou para programas seus. Tudo fica desligado até você ativar.
+hfdl-station-id = ID da estação
+hfdl-station-id-hint = Gravado em cada quadro enviado. A Airframes credita o seu feed a este ID e pede um no formato XX-YYYY-HFDL: suas iniciais, um código de aeroporto ou localizador, e o modo. Letras, dígitos, - e _, até 32.
+hfdl-station-id-bad = Somente letras, dígitos, - e _, até 32 caracteres.
+hfdl-feed-airframes = Enviar para a Airframes (feed.airframes.io)
+hfdl-feed-airframes-hint = Enviar cada quadro decodificado — squitters, posições, mensagens ACARS — com o seu ID de estação para a entrada HFDL da Airframes (TCP, porta 5556), no JSON do dumphfdl, o formato que ela lê. Seu feed então aparece em airframes.io com esse ID. Nada é enviado enquanto isto estiver desligado.
+hfdl-feed-needs-id = Não enviado: informe primeiro um ID de estação.
+hfdl-feed-sent = { $n } quadros enviados
+hfdl-feed-json = Enviar o mesmo JSON para (UDP host:port, separados por vírgula)
+hfdl-feed-json-hint = Programas seus que leem o JSON do dumphfdl — acarshub (cuja entrada HFDL costuma ser a porta UDP 5556), um registrador, um script. Um datagrama por quadro para cada um, como envia a saída UDP decoded:json do dumphfdl. Não é preciso ID de estação. Aplicado quando você sai do campo.
+hfdl-feed-json-bad = Não é um host:port: { $targets }
+hfdl-feed-sbs = Porta BaseStation (SBS)
+hfdl-feed-sbs-hint = Servir as posições das aeronaves como linhas BaseStation nesta porta TCP, para Virtual Radar Server, PlanePlotter e similares — as mesmas linhas que a saída basestation do dumphfdl grava. 0 desliga. 30003 é a porta BaseStation usual; escolha outra se um decodificador ADS-B neste computador já a usar. Aplicado quando você sai do campo.
+hfdl-feed-sbs-lan = Permitir que outros computadores se conectem
+hfdl-feed-sbs-lan-hint = Desligado: só programas deste computador podem se conectar. Ligado: qualquer computador que alcance este pela rede pode se conectar.
+hfdl-feed-sbs-status = { $clients ->
+        [one] { $clients } cliente conectado
+       *[other] { $clients } clientes conectados
+    } · { $n } posições enviadas

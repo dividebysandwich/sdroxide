@@ -31,6 +31,7 @@ use sdroxide_dsp::{
     channel_target_at, hd_radio_is_am, make_demod, make_modulator,
 };
 use sdroxide_hfdl::HfdlController;
+use sdroxide_hfdl::controller::LaneChannel;
 use sdroxide_ism::{IsmAction, IsmController};
 use sdroxide_nrsc5::{HdDemod, Mode as HdMode};
 use sdroxide_qo100::Qo100Controller;
@@ -3247,10 +3248,19 @@ struct Engine {
     /// The stream rate `hfdl_ddc` was built to decimate — the same reason
     /// `qo100_in_rate` exists.
     hfdl_in_rate: f64,
+    /// The lane the HFDL worker was last given — its centre and channels — so a
+    /// retune that leaves them as they were only re-seats the mixer.
+    hfdl_lane: (f64, Vec<u32>),
+    /// HFDL auto-follow, while `state.hfdl.auto_follow` is on.
+    hfdl_follow: Option<sdroxide_hfdl::follow::Follow>,
     /// The last HFDL setting the operator chose, held in step with
     /// `state.hfdl` for symmetry with `qo100_cfg`. Nothing reads it back yet,
     /// and it is not persisted — the same convention `qo100_cfg` follows.
     hfdl_cfg: sdroxide_types::HfdlSettings,
+    /// The version of the HFDL system table last written to disk, so a table
+    /// the network keeps rebroadcasting is saved once rather than on every
+    /// status.
+    hfdl_saved_table: Option<u16>,
     /// Weather-satellite (NOAA APT / Meteor LRPT) decoder lane: one channel
     /// mixed from the wide window, only while the operator has it enabled. See
     /// `sdroxide_wxsat::WxsatLane`.
@@ -4375,6 +4385,8 @@ fn engine_thread(
     } else {
         adsb_cfg
     };
+    // Where decoded HFDL is fed: off unless the operator switched a feed on.
+    state.hfdl_outputs = sdroxide_config::load_hfdl_outputs();
     let ais_cfg = sdroxide_config::load_ais_config();
     state.ais = if audio_mode {
         sdroxide_types::AisSettings::OFF // wideband-only, like the rest of the lanes
@@ -4782,8 +4794,11 @@ fn engine_thread(
         hfdl: None,
         hfdl_buf: Vec::new(),
         hfdl_in_rate: 0.0,
+        hfdl_lane: (0.0, Vec::new()),
+        hfdl_follow: None,
         // Session-scoped only, for the same reason as `qo100_cfg`.
         hfdl_cfg: sdroxide_types::HfdlSettings::default(),
+        hfdl_saved_table: None,
         wxsat: None,
         wxsat_pass: 0,
         wxsat_cfg,
@@ -10415,6 +10430,16 @@ impl Engine {
                 }
             }
 
+            SetHfdlOutputs(o) => {
+                if let Err(e) = sdroxide_config::save_hfdl_outputs(&o) {
+                    warn!("saving HFDL outputs: {e}");
+                }
+                if let Some(c) = self.hfdl.as_ref() {
+                    c.set_outputs(o.clone());
+                }
+                self.state.hfdl_outputs = o;
+            }
+
             SetSondeConfig(cfg) => {
                 let cfg = cfg.sane();
                 self.state.sonde = cfg;
@@ -12076,18 +12101,27 @@ impl Engine {
         }
         match (self.hfdl_wanted(), self.hfdl.is_some()) {
             (true, false) => {
-                let mut ddc = Ddc::new(self.state.sample_rate, sdroxide_types::HFDL_LANE_RATE_HZ);
-                ddc.set_offset_hz(self.state.hfdl.frequency_hz - self.state.center_hz);
+                let (plan, target) = self.hfdl_lane_plan();
+                let mut ddc = Ddc::new(self.state.sample_rate, target);
+                ddc.set_offset_hz(plan.center_hz - self.state.center_hz);
                 let out_rate = ddc.out_rate();
-                self.hfdl = Some(HfdlController::new(out_rate, self.state.hfdl));
+                let lane = Self::hfdl_lane_channels(&plan);
+                self.hfdl = Some(Self::new_hfdl_controller(
+                    out_rate,
+                    lane,
+                    self.state.hfdl,
+                    self.state.hfdl_outputs.clone(),
+                ));
                 self.hfdl_ddc = Some(ddc);
                 self.hfdl_in_rate = self.state.sample_rate;
-                info!(rate = out_rate, "HFDL decoder started");
+                self.hfdl_lane = (plan.center_hz, plan.channels.clone());
+                info!(rate = out_rate, channels = ?plan.channels, "HFDL decoder started");
             }
             (false, true) => {
                 self.hfdl = None;
                 self.hfdl_ddc = None;
                 self.hfdl_buf.clear();
+                self.hfdl_lane = (0.0, Vec::new());
                 info!("HFDL decoder stopped");
             }
             (true, true) => self.sync_hfdl_window(),
@@ -12095,34 +12129,130 @@ impl Engine {
         }
     }
 
-    /// Re-seat the HFDL downconverter's mixer after a retune, and rebuild it
-    /// outright if the sample rate feeding it has changed — a `Ddc` bakes its
-    /// input rate and its decimation chain in at construction. The target rate
-    /// is fixed, so a retune never resizes the lane; it only moves the mixer.
+    /// The lane the HFDL settings ask for, inside the receiver's window, and
+    /// the rate to ask the downconverter for. One channel is the 24 kS/s lane
+    /// HFDL has always had; several share a lane wide enough for all of them.
+    fn hfdl_lane_plan(&self) -> (sdroxide_types::HfdlLanePlan, f64) {
+        let window = Some((self.state.center_hz, self.state.sample_rate / 2.0));
+        let plan = sdroxide_types::hfdl_lane_plan(&self.state.hfdl, window);
+        if plan.channels.len() == 1 {
+            return (plan, sdroxide_types::HFDL_LANE_RATE_HZ);
+        }
+        // The DDC rounds to a rate its halfband chain can reach, which can land
+        // a little under what was asked; ask for more until it is enough, never
+        // past the stream itself.
+        let mut target = plan.min_rate_hz;
+        while Ddc::rate_for(self.state.sample_rate, target) < plan.min_rate_hz
+            && target < self.state.sample_rate
+        {
+            target *= 1.15;
+        }
+        (plan, target.min(self.state.sample_rate))
+    }
+
+    /// Each planned channel at its offset from the lane's centre.
+    fn hfdl_lane_channels(plan: &sdroxide_types::HfdlLanePlan) -> Vec<LaneChannel> {
+        plan.channels
+            .iter()
+            .map(|&khz| LaneChannel { khz, offset_hz: f64::from(khz) * 1000.0 - plan.center_hz })
+            .collect()
+    }
+
+    /// Re-seat the HFDL downconverter's mixer after a retune, and re-plan the
+    /// lane when the channels asked for, or the window they must fit, change.
+    /// The worker keeps its log and its station and aircraft books through a
+    /// new lane: only the channel decoders are rebuilt.
     fn sync_hfdl_window(&mut self) {
         if self.hfdl_ddc.is_none() {
             return;
         }
-        let rebuild = (self.state.sample_rate - self.hfdl_in_rate).abs() >= 1.0;
-        if rebuild {
-            let mut ddc = Ddc::new(self.state.sample_rate, sdroxide_types::HFDL_LANE_RATE_HZ);
-            ddc.set_offset_hz(self.state.hfdl.frequency_hz - self.state.center_hz);
-            let out_rate = ddc.out_rate();
-            self.hfdl_ddc = Some(ddc);
+        let (plan, target) = self.hfdl_lane_plan();
+        let want_rate = Ddc::rate_for(self.state.sample_rate, target);
+        let rate_changed = (self.state.sample_rate - self.hfdl_in_rate).abs() >= 1.0
+            || self.hfdl_ddc.as_ref().is_some_and(|d| (d.out_rate() - want_rate).abs() >= 1.0);
+        if rate_changed {
+            self.hfdl_ddc = Some(Ddc::new(self.state.sample_rate, target));
             self.hfdl_in_rate = self.state.sample_rate;
-            self.hfdl = Some(HfdlController::new(out_rate, self.state.hfdl));
-            info!(rate = out_rate, "HFDL window rebuilt");
-            return;
         }
         let Some(ddc) = self.hfdl_ddc.as_mut() else { return };
-        ddc.set_offset_hz(self.state.hfdl.frequency_hz - self.state.center_hz);
+        ddc.set_offset_hz(plan.center_hz - self.state.center_hz);
+        let out_rate = ddc.out_rate();
+        let moved =
+            (plan.center_hz - self.hfdl_lane.0).abs() >= 0.5 || plan.channels != self.hfdl_lane.1;
+        if rate_changed || moved {
+            if let Some(c) = self.hfdl.as_ref() {
+                c.set_lane(out_rate, Self::hfdl_lane_channels(&plan));
+            }
+            self.hfdl_lane = (plan.center_hz, plan.channels.clone());
+            info!(rate = out_rate, channels = ?plan.channels, "HFDL lane re-planned");
+        }
     }
 
-    /// Drain the HFDL decoder's latest status and forward it.
+    /// A fresh HFDL worker, seeded with the system table saved from the last
+    /// time the network broadcast one (or the built-in copy before that) — so a squitter's channel bitmap can be
+    /// read as frequencies from the first burst rather than after the stations
+    /// next send the table, which they do only now and then.
+    fn new_hfdl_controller(
+        rate_hz: f64,
+        lane: Vec<LaneChannel>,
+        cfg: sdroxide_types::HfdlSettings,
+        outputs: sdroxide_types::HfdlOutputs,
+    ) -> HfdlController {
+        let c = HfdlController::with_lane(rate_hz, lane, cfg);
+        c.set_outputs(outputs);
+        // The table saved from the air when there is one, the built-in copy
+        // (version 52) on a first run — so stations can be placed on the map and
+        // squitters read as frequencies from the start.
+        let saved = sdroxide_config::load_hfdl_stations();
+        c.seed_stations(if saved.is_empty() {
+            sdroxide_types::hfdl_builtin_stations()
+        } else {
+            saved
+        });
+        c
+    }
+
+    /// Drain the HFDL decoder's latest status and forward it, keeping the
+    /// system table on disk up to date as new versions arrive.
     fn poll_hfdl(&mut self) {
-        let Some(c) = self.hfdl.as_ref() else { return };
-        let Some(status) = c.poll() else { return };
+        let Some(mut status) = self.hfdl.as_ref().and_then(|c| c.poll()) else { return };
+        if status.table_version.is_some() && status.table_version != self.hfdl_saved_table {
+            let entries: Vec<_> =
+                status.stations.iter().filter(|s| s.has_table()).map(|s| s.table_entry()).collect();
+            match sdroxide_config::save_hfdl_stations(&entries) {
+                Ok(()) => self.hfdl_saved_table = status.table_version,
+                Err(e) => warn!(%e, "could not save the HFDL system table"),
+            }
+        }
+        self.step_hfdl_follow(&mut status);
         let _ = self.event_tx.send(RadioEvent::HfdlStatus(status));
+    }
+
+    /// Auto-follow: report what it is doing on the status, and when the band in
+    /// use has been silent for its dwell, move to the next — through the same
+    /// commands the panel sends, so the dial and the lane move together exactly
+    /// as they would for a click.
+    fn step_hfdl_follow(&mut self, status: &mut sdroxide_types::HfdlStatus) {
+        if !(self.state.hfdl.auto_follow && self.state.hfdl.enabled) {
+            self.hfdl_follow = None;
+            return;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        let decoding: Vec<u32> = status.channels.iter().map(|c| c.khz).collect();
+        let lon = sdroxide_types::grid_to_latlon(&self.digi_config.my_grid).map(|p| p.1);
+        let follow = self.hfdl_follow.get_or_insert_with(sdroxide_hfdl::follow::Follow::new);
+        let (report, hop) = follow.step(now, &decoding, &status.stations, lon);
+        status.follow = Some(report);
+        if let Some(lane) = hop {
+            let mut cfg = self.state.hfdl;
+            cfg.frequency_hz = f64::from(lane.primary_khz) * 1000.0;
+            cfg.set_also(&lane.also_khz);
+            info!(band = lane.band_mhz, channels = ?lane.also_khz, primary = lane.primary_khz, "HFDL auto-follow: moving on");
+            self.apply(Command::SetHfdlConfig(cfg));
+            self.apply(Command::SetVfo { vfo: self.state.active_vfo, hz: cfg.frequency_hz });
+        }
     }
 
     /// Construct or tear down the weather-satellite lane: one fixed-frequency

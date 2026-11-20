@@ -20,7 +20,7 @@
 use crate::i18n::tr;
 use std::collections::BTreeMap;
 
-use eframe::egui::{Align2, FontId, Rect, Sense, Ui, pos2, vec2};
+use eframe::egui::{Align2, FontId, Pos2, Rect, Sense, Ui, pos2, vec2};
 use sdroxide_types::HfdlDecode;
 
 use crate::theme;
@@ -52,6 +52,90 @@ const EASE: f64 = 0.06;
 /// and a marker that old would be a stale claim about where it is.
 pub const PLOT_STALE_S: i64 = 30 * 60;
 
+/// How many past positions a plot keeps and draws behind it. HFDL fixes are
+/// minutes apart, so five is most of an hour of flight — enough to show which
+/// way the aircraft is going and how fast, not so many that a busy ocean turns
+/// to dots.
+pub const TRAIL_MAX: usize = 5;
+
+/// A past position nearer than this to the one after it is dropped: the same
+/// fix reported twice (a performance-data and a frequency-data record from the
+/// same minute) would otherwise stack two dots on one spot.
+const TRAIL_MIN_STEP_KM: f64 = 2.0;
+
+/// A past position older than this is dropped however few there are, so a
+/// trail never reaches back across a gap in which the aircraft could have gone
+/// anywhere.
+pub const TRAIL_STALE_S: i64 = 60 * 60;
+
+/// How long a plot blinks after the list asks for it, in seconds. Long enough
+/// to find it by eye across a world map, short enough not to be left running.
+pub const BLINK_S: f64 = 3.0;
+
+/// Blinks per second: a plot lit for a quarter of a second, dark for a quarter.
+const BLINK_HZ: f64 = 2.0;
+
+/// Where a blink is at `now` seconds when it began at `start`: `None` once it
+/// is over, else `(lit, ring)` — whether the square is in its lit half of the
+/// cycle, and how far (0..1) the ring that spreads from it has got. Pure, so
+/// the timing is testable without a frame.
+pub(crate) fn blink_phase(start: f64, now: f64) -> Option<(bool, f32)> {
+    let t = now - start;
+    if !(0.0..BLINK_S).contains(&t) {
+        return None;
+    }
+    let cycle = t * BLINK_HZ;
+    Some((cycle.fract() < 0.5, cycle.fract() as f32))
+}
+
+/// An HFDL ground station, as the map draws it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MapStation {
+    pub id: u8,
+    pub name: String,
+    pub lat: f64,
+    pub lon: f64,
+    /// How long ago it was heard, while that is recent enough to count; `None`
+    /// for a station known only from the table.
+    pub heard_age: Option<i64>,
+}
+
+/// The town of a station's name, for a label: `Shannon, Ireland` → `Shannon`.
+fn town(name: &str) -> &str {
+    name.split(',').next().unwrap_or(name).trim()
+}
+
+/// Projected points of a path, split wherever it crosses the map's edge — a
+/// step longer than half the map's width is the path leaving one side and
+/// coming back on the other, and joining it would draw a line across the whole
+/// map.
+pub(crate) fn split_on_wrap(pts: &[Pos2], width: f32) -> Vec<Vec<Pos2>> {
+    let mut out: Vec<Vec<Pos2>> = Vec::new();
+    let mut cur: Vec<Pos2> = Vec::new();
+    for &q in pts {
+        if let Some(last) = cur.last()
+            && (q.x - last.x).abs() > width / 2.0
+        {
+            out.push(std::mem::take(&mut cur));
+        }
+        cur.push(q);
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out.retain(|seg| seg.len() >= 2);
+    out
+}
+
+/// A position an aircraft reported before its latest.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TrailPoint {
+    pub lat: f64,
+    pub lon: f64,
+    /// Unix second the fix was decoded.
+    pub at: i64,
+}
+
 /// One aircraft's latest known position, as the map holds it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HfdlPlot {
@@ -68,6 +152,39 @@ pub struct HfdlPlot {
     /// How many fixes this aircraft has contributed — a lone fix is a plot, a
     /// dozen is a track.
     pub fixes: u32,
+    /// Where it was before [`Self::lat`]/[`Self::lon`]: at most [`TRAIL_MAX`]
+    /// positions, oldest first, none within [`TRAIL_MIN_STEP_KM`] of the
+    /// next, none older than [`TRAIL_STALE_S`].
+    pub trail: Vec<TrailPoint>,
+}
+
+impl HfdlPlot {
+    /// File a past position, unless one is already held for that second.
+    fn remember(&mut self, pt: TrailPoint) {
+        if pt.at != self.last_at && !self.trail.iter().any(|t| t.at == pt.at) {
+            self.trail.push(pt);
+        }
+    }
+
+    /// Put the trail in order and within bounds: oldest first, expired points
+    /// gone, a point that sits on the one after it gone, and only the newest
+    /// [`TRAIL_MAX`] kept. Idempotent, so it can run after every snapshot.
+    fn tidy_trail(&mut self, now: i64) {
+        self.trail.sort_by_key(|t| t.at);
+        self.trail.retain(|t| now - t.at <= TRAIL_STALE_S);
+        let mut kept: Vec<TrailPoint> = Vec::with_capacity(self.trail.len());
+        let mut next = (self.lat, self.lon);
+        for t in self.trail.iter().rev() {
+            if sdroxide_types::distance_km(next, (t.lat, t.lon)) >= TRAIL_MIN_STEP_KM {
+                kept.push(*t);
+                next = (t.lat, t.lon);
+            }
+        }
+        kept.reverse();
+        let excess = kept.len().saturating_sub(TRAIL_MAX);
+        kept.drain(..excess);
+        self.trail = kept;
+    }
 }
 
 /// The map's state, owned by the app so the view survives across frames and the
@@ -79,6 +196,10 @@ pub struct HfdlMapState {
     pub selected: Option<String>,
     /// Latest fix per identity, keyed by [`sdroxide_types::HfdlFix::key`].
     plots: BTreeMap<String, HfdlPlot>,
+    /// The plot asked to blink, the time (egui seconds) it started, and the
+    /// ground station the aircraft is talking to — the line to it is drawn for
+    /// as long as the blink lasts, and only then.
+    blink: Option<(String, f64, Option<u8>)>,
 }
 
 impl HfdlMapState {
@@ -91,8 +212,11 @@ impl HfdlMapState {
         for d in log {
             let Some(fix) = &d.position else { continue };
             let key = fix.key();
+            let here = TrailPoint { lat: fix.lat, lon: fix.lon, at: d.unix };
             match self.plots.get_mut(&key) {
                 Some(p) if d.unix > p.last_at => {
+                    // The position it was at becomes the newest of its trail.
+                    let was = TrailPoint { lat: p.lat, lon: p.lon, at: p.last_at };
                     p.label = fix.label();
                     p.lat = fix.lat;
                     p.lon = fix.lon;
@@ -100,8 +224,11 @@ impl HfdlMapState {
                     p.snr_db = d.snr_db;
                     p.freq_khz = d.freq_khz;
                     p.fixes = p.fixes.saturating_add(1);
+                    p.remember(was);
                 }
-                Some(_) => {}
+                // An older fix than the one held — the log carries several per
+                // aircraft, newest first — is a place it has been.
+                Some(p) => p.remember(here),
                 None => {
                     self.plots.insert(
                         key,
@@ -113,10 +240,14 @@ impl HfdlMapState {
                             snr_db: d.snr_db,
                             freq_khz: d.freq_khz,
                             fixes: 1,
+                            trail: Vec::new(),
                         },
                     );
                 }
             }
+        }
+        for p in self.plots.values_mut() {
+            p.tidy_trail(now);
         }
         // Retire what nothing has refreshed for a long time.
         self.plots.retain(|_, p| now - p.last_at <= PLOT_STALE_S);
@@ -130,6 +261,32 @@ impl HfdlMapState {
 
     pub fn len(&self) -> usize {
         self.plots.len()
+    }
+
+    /// Make the plot under `key` blink for [`BLINK_S`] seconds, starting at
+    /// `now` (egui seconds), and select it. Returns whether there is such a
+    /// plot — an aircraft that has sent no position has nothing to blink.
+    ///
+    /// The view is handed back to the auto-fit, which frames every plot, so a
+    /// plot panned or zoomed out of sight is in view for the blink.
+    ///
+    /// `gs` is the ground station the aircraft is talking to: while it blinks a
+    /// line is drawn from it to that station, where the station's position is
+    /// known.
+    pub fn blink(&mut self, key: &str, now: f64, gs: Option<u8>) -> bool {
+        if !self.plots.contains_key(key) {
+            return false;
+        }
+        self.blink = Some((key.to_owned(), now, gs));
+        self.selected = Some(key.to_owned());
+        self.view.manual = false;
+        true
+    }
+
+    /// Whether an aircraft is plotted under `key` — so a list row can select
+    /// its plot only when there is one to select.
+    pub fn has(&self, key: &str) -> bool {
+        self.plots.contains_key(key)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -181,6 +338,7 @@ pub fn show(
     ui: &mut Ui,
     state: &mut HfdlMapState,
     home: Option<(f64, f64)>,
+    stations: &[MapStation],
     now: i64,
     max_h: f32,
 ) -> Option<String> {
@@ -277,6 +435,65 @@ pub fn show(
 
     let font = FontId::monospace(9.0);
     let selected = state.selected.clone();
+
+    // ── the ground stations ──
+    // Small triangles: lit and named while heard, dim and unnamed while known
+    // only from the table — a world of sixteen labels would bury the aircraft.
+    let heard_ink = crate::theme::GREEN();
+    for st in stations {
+        let c = project(st.lat, st.lon);
+        if !rect.contains(c) {
+            continue;
+        }
+        let (fill, edge) = match st.heard_age {
+            Some(_) => (alpha(heard_ink, 220.0), alpha(map.sea, 200.0)),
+            None => (alpha(map.city, 150.0), alpha(map.sea, 160.0)),
+        };
+        let tri = vec![c + vec2(0.0, -4.5), c + vec2(4.2, 3.0), c + vec2(-4.2, 3.0)];
+        p.add(eframe::egui::Shape::convex_polygon(tri, fill, (1.0, edge)));
+        if st.heard_age.is_some() {
+            p.text(
+                c + vec2(6.0, 0.0),
+                Align2::LEFT_CENTER,
+                town(&st.name),
+                FontId::proportional(9.0),
+                alpha(heard_ink, 200.0),
+            );
+        }
+    }
+
+    // ── where each aircraft has been ──
+    // Dots, the oldest smallest and faintest, under the squares so the present
+    // position is always the clearest thing on the map. Drawn for every
+    // aircraft; the selected one's in the selection's colour.
+    for (key, a) in &live {
+        let tint = if selected.as_deref() == Some(key.as_str()) { map.dx } else { map.station };
+        let n = a.trail.len();
+        for (i, t) in a.trail.iter().enumerate() {
+            let c = project(t.lat, t.lon);
+            if !rect.contains(c) {
+                continue;
+            }
+            // 1/n for the oldest up to 1 for the newest.
+            let f = (i + 1) as f32 / n as f32;
+            p.circle_filled(c, 1.8 + 0.8 * f, alpha(map.sea, 150.0));
+            p.circle_filled(c, 1.2 + 0.8 * f, alpha(tint, 70.0 + 140.0 * f));
+        }
+    }
+    // The selected aircraft's reported positions joined, oldest to newest, by a
+    // dotted red line — so a click in the table shows the path it has flown.
+    if let Some((_, a)) = live.iter().find(|(k, _)| selected.as_deref() == Some(k.as_str())) {
+        let path: Vec<Pos2> = a
+            .trail
+            .iter()
+            .map(|t| project(t.lat, t.lon))
+            .chain(std::iter::once(project(a.lat, a.lon)))
+            .collect();
+        let red = eframe::egui::Color32::from_rgb(235, 40, 40);
+        for seg in split_on_wrap(&path, rect.width()) {
+            p.extend(eframe::egui::Shape::dashed_line(&seg, (1.6, red), 2.0, 4.0));
+        }
+    }
     let tint_for = |key: &str, top: bool| -> eframe::egui::Color32 {
         if selected.as_deref() == Some(key) {
             map.dx
@@ -312,6 +529,53 @@ pub fn show(
     if let Some(i) = hover {
         let (key, a) = &live[i];
         draw_target(key, a, true);
+    }
+
+    // ── the blink asked for from the list ──
+    let t_now = ui.input(|i| i.time);
+    if let Some((key, start, gs)) = state.blink.clone() {
+        match blink_phase(start, t_now) {
+            None => state.blink = None,
+            Some((lit, ring)) => {
+                if let Some((_, a)) = live.iter().find(|(k, _)| *k == key) {
+                    let c = project(a.lat, a.lon);
+                    let tint = map.dx;
+                    // The great circle to the station it is talking to, for as
+                    // long as it blinks — the only time it is drawn — and the
+                    // station marked at its end.
+                    if let Some(st) = gs.and_then(|id| stations.iter().find(|s| s.id == id)) {
+                        let path: Vec<Pos2> = sdroxide_types::great_circle_points(
+                            (a.lat, a.lon),
+                            (st.lat, st.lon),
+                            64,
+                        )
+                        .into_iter()
+                        .map(|(la, lo)| project(la, lo))
+                        .collect();
+                        for seg in split_on_wrap(&path, rect.width()) {
+                            p.add(eframe::egui::Shape::line(seg, (1.6, alpha(map.trail, 220.0))));
+                        }
+                        let sc = project(st.lat, st.lon);
+                        p.circle_stroke(sc, 7.0, (1.6, alpha(map.trail, 230.0)));
+                        p.text(
+                            sc + vec2(9.0, 0.0),
+                            Align2::LEFT_CENTER,
+                            town(&st.name),
+                            FontId::proportional(10.0),
+                            alpha(map.trail, 240.0),
+                        );
+                    }
+                    // The ring spreads and fades once per half-second cycle; the
+                    // disc under the square flashes with it.
+                    let spread = TARGET_R + 3.0 + 16.0 * ring;
+                    p.circle_stroke(c, spread, (2.0, alpha(tint, 255.0 * (1.0 - ring))));
+                    if lit {
+                        p.circle_filled(c, TARGET_R + 6.0, alpha(tint, 150.0));
+                    }
+                }
+                crate::repaint::animate(ui.ctx());
+            }
+        }
     }
 
     // ── the data blocks ──
@@ -385,17 +649,34 @@ pub fn show(
             state.selected = Some(key.clone());
             clicked = Some(key.clone());
         }
-    } else if resp.clicked() {
-        // A click on empty map clears the selection, the way the ADS-B picture
-        // does.
-        state.selected = None;
+    } else {
+        // Over a ground station: what it is, and whether it has been heard.
+        if let Some(m) = pointer
+            && let Some(st) = stations
+                .iter()
+                .map(|st| (st, project(st.lat, st.lon).distance(m)))
+                .filter(|(_, d)| *d <= HIT_RADIUS)
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(st, _)| st)
+        {
+            let heard = match st.heard_age {
+                Some(age) => tr!("hfdlmap-gs-heard", age = fmt_age(age)).to_string(),
+                None => tr!("hfdlmap-gs-not-heard").to_string(),
+            };
+            resp.clone().on_hover_text(format!("{} (GS {})\n{heard}", st.name, st.id));
+        }
+        if resp.clicked() {
+            // A click on empty map clears the selection, the way the ADS-B
+            // picture does.
+            state.selected = None;
+        }
     }
 
     clicked
 }
 
 /// A short age, for a tooltip: `12 s`, `4 min`, `2 h`.
-fn fmt_age(secs: i64) -> String {
+pub(crate) fn fmt_age(secs: i64) -> String {
     let s = secs.max(0);
     if s < 90 {
         format!("{s} s")
@@ -422,6 +703,7 @@ mod tests {
             fec_corrected: None,
             details: "{}".into(),
             position: fix,
+            acars: None,
         }
     }
 
@@ -485,6 +767,175 @@ mod tests {
         m.observe(&[decode(1_000, Some(fix(Some("040087"), None, 50.0, -3.0)))], 1_000);
         m.observe(&[], 1_000 + PLOT_STALE_S + 1);
         assert!(m.is_empty(), "a plot nothing refreshes must come off the map");
+    }
+
+    /// Fixes of one aircraft a degree of latitude (~111 km) and ten minutes
+    /// apart, oldest first: `n` of them from `t0`.
+    fn flight(n: usize, t0: i64) -> Vec<HfdlDecode> {
+        (0..n)
+            .map(|i| {
+                decode(t0 + 600 * i as i64, Some(fix(Some("484123"), None, 40.0 + i as f64, -30.0)))
+            })
+            .collect()
+    }
+
+    fn newest_first(mut v: Vec<HfdlDecode>) -> Vec<HfdlDecode> {
+        v.reverse();
+        v
+    }
+
+    fn trail_ats(m: &HfdlMapState) -> Vec<i64> {
+        plot_of(m, "icao:484123").unwrap().trail.iter().map(|t| t.at).collect()
+    }
+
+    /// The log carries several fixes per aircraft, so the first snapshot already
+    /// has a history: the older ones are where it has been.
+    #[test]
+    fn the_first_snapshot_already_gives_a_trail() {
+        let mut m = HfdlMapState::default();
+        m.observe(&newest_first(flight(3, 1_000)), 3_000);
+        let p = plot_of(&m, "icao:484123").unwrap();
+        assert_eq!((p.last_at, p.lat), (2_200, 42.0), "the latest is the plot");
+        assert_eq!(trail_ats(&m), vec![1_000, 1_600]);
+        assert_eq!(p.trail[0].lat, 40.0);
+        assert_eq!(p.fixes, 1, "history is not counted as new fixes");
+    }
+
+    /// Snapshots repeat the whole log; a trail must not grow with each.
+    #[test]
+    fn a_repeated_snapshot_leaves_the_trail_alone() {
+        let mut m = HfdlMapState::default();
+        let log = newest_first(flight(4, 1_000));
+        m.observe(&log, 3_000);
+        let once = trail_ats(&m);
+        m.observe(&log, 3_001);
+        m.observe(&log, 3_002);
+        assert_eq!(trail_ats(&m), once);
+        assert_eq!(once, vec![1_000, 1_600, 2_200]);
+    }
+
+    #[test]
+    fn a_newer_fix_pushes_the_old_position_onto_the_trail() {
+        let mut m = HfdlMapState::default();
+        m.observe(&flight(1, 1_000), 1_100);
+        assert!(trail_ats(&m).is_empty(), "a lone fix has no past");
+        m.observe(&newest_first(flight(2, 1_000)), 1_700);
+        assert_eq!(trail_ats(&m), vec![1_000]);
+        m.observe(&newest_first(flight(3, 1_000)), 2_300);
+        assert_eq!(trail_ats(&m), vec![1_000, 1_600]);
+        assert_eq!(plot_of(&m, "icao:484123").unwrap().last_at, 2_200);
+    }
+
+    #[test]
+    fn a_trail_keeps_only_the_newest_few() {
+        let mut m = HfdlMapState::default();
+        m.observe(&newest_first(flight(9, 1_000)), 6_000);
+        let ats = trail_ats(&m);
+        assert_eq!(ats.len(), TRAIL_MAX);
+        // Of the eight past fixes the five latest, oldest first.
+        assert_eq!(ats, vec![2_800, 3_400, 4_000, 4_600, 5_200]);
+    }
+
+    #[test]
+    fn a_fix_reported_twice_does_not_stack_two_dots() {
+        let mut m = HfdlMapState::default();
+        let mut log = flight(3, 1_000);
+        // A second record from the same spot as the first, a minute later.
+        log.insert(1, decode(1_060, Some(fix(Some("484123"), None, 40.0001, -30.0))));
+        m.observe(&newest_first(log), 3_000);
+        assert_eq!(trail_ats(&m).len(), 2, "{:?}", trail_ats(&m));
+    }
+
+    /// An aircraft that reports only every twenty minutes would otherwise carry
+    /// a trail reaching back across hours: points over an hour old go.
+    #[test]
+    fn a_position_from_long_ago_is_not_part_of_the_trail() {
+        let mut m = HfdlMapState::default();
+        let sparse: Vec<HfdlDecode> = (0..6)
+            .map(|i| {
+                decode(1_000 + 1_200 * i, Some(fix(Some("484123"), None, 40.0 + i as f64, -30.0)))
+            })
+            .collect();
+        // Fixes at 1000, 2200, 3400, 4600, 5800, 7000; it is 7010.
+        m.observe(&newest_first(sparse), 7_010);
+        assert_eq!(trail_ats(&m), vec![4_600, 5_800], "1000..3400 are over an hour old");
+    }
+
+    #[test]
+    fn two_aircraft_keep_separate_trails() {
+        let mut m = HfdlMapState::default();
+        let mut log = flight(3, 1_000);
+        log.extend((0..3).map(|i| {
+            decode(1_000 + 600 * i, Some(fix(Some("A1B2C3"), None, 10.0 + i as f64, 100.0)))
+        }));
+        m.observe(&newest_first(log), 3_000);
+        assert_eq!(trail_ats(&m).len(), 2);
+        assert_eq!(plot_of(&m, "icao:A1B2C3").unwrap().trail.len(), 2);
+    }
+
+    #[test]
+    fn a_blink_lasts_three_seconds_in_half_second_beats() {
+        // Not started yet, and over.
+        assert_eq!(blink_phase(10.0, 9.0), None);
+        assert_eq!(blink_phase(10.0, 10.0 + BLINK_S), None);
+        // Lit for the first quarter second, dark for the next.
+        assert_eq!(blink_phase(10.0, 10.1).map(|p| p.0), Some(true));
+        assert_eq!(blink_phase(10.0, 10.3).map(|p| p.0), Some(false));
+        assert_eq!(blink_phase(10.0, 10.6).map(|p| p.0), Some(true));
+        // The ring starts at the plot and grows to the edge of each beat.
+        let (_, early) = blink_phase(10.0, 10.05).unwrap();
+        let (_, late) = blink_phase(10.0, 10.45).unwrap();
+        assert!(early < 0.2 && late > 0.8, "{early} {late}");
+        assert!((0.0..=1.0).contains(&late));
+    }
+
+    #[test]
+    fn blinking_needs_a_plot_and_hands_the_view_back_to_the_auto_fit() {
+        let mut m = HfdlMapState::default();
+        m.observe(&[decode(1_000, Some(fix(Some("484123"), None, 52.0, -30.0)))], 1_010);
+        m.view.manual = true;
+        assert!(!m.blink("icao:999999", 5.0, None), "nothing plotted under that key");
+        assert!(m.view.manual, "a miss leaves the view alone");
+        assert_eq!(m.selected, None);
+        assert!(m.blink("icao:484123", 5.0, Some(4)));
+        assert!(!m.view.manual, "the plot is framed so the blink is seen");
+        assert_eq!(m.selected.as_deref(), Some("icao:484123"));
+    }
+
+    #[test]
+    fn a_path_is_split_where_it_crosses_the_edge_of_the_map() {
+        let p = |x: f32| pos2(x, 10.0);
+        // Straight across: one piece.
+        assert_eq!(split_on_wrap(&[p(10.0), p(20.0), p(30.0)], 100.0).len(), 1);
+        // Off the right edge and back on the left: two pieces, no line across.
+        let segs = split_on_wrap(&[p(80.0), p(95.0), p(3.0), p(15.0)], 100.0);
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].len(), 2);
+        assert_eq!(segs[1].len(), 2);
+        // A lone point either side of a wrap draws nothing on its own.
+        assert_eq!(split_on_wrap(&[p(95.0), p(3.0)], 100.0).len(), 0);
+    }
+
+    #[test]
+    fn a_station_is_labelled_by_its_town() {
+        assert_eq!(town("Shannon, Ireland"), "Shannon");
+        assert_eq!(town("GS 12"), "GS 12");
+    }
+
+    #[test]
+    fn the_blink_remembers_the_station_for_its_line() {
+        let mut m = HfdlMapState::default();
+        m.observe(&[decode(1_000, Some(fix(Some("484123"), None, 52.0, -30.0)))], 1_010);
+        assert!(m.blink("icao:484123", 5.0, Some(7)));
+        assert_eq!(m.blink.as_ref().map(|b| b.2), Some(Some(7)));
+    }
+
+    #[test]
+    fn the_map_says_whether_a_key_is_plotted() {
+        let mut m = HfdlMapState::default();
+        m.observe(&[decode(1_000, Some(fix(Some("484123"), None, 52.0, -30.0)))], 1_010);
+        assert!(m.has("icao:484123"));
+        assert!(!m.has("icao:999999"));
     }
 
     #[test]

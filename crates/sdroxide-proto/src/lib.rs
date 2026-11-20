@@ -1749,7 +1749,13 @@ use sdroxide_types::{
 ///
 /// v218: SAM sidebands. `RxState` gains `sam_sideband` and `sam_mrc_tau_s` at
 /// its tail and `Command::SetSamSideband` is appended.
-pub const PROTO_VERSION: u16 = 218;
+///
+/// v219: HFDL channels, auto-follow and feeds. `HfdlSettings` gains `also_khz`
+/// (the channels decoded alongside the primary) and `auto_follow` at its tail;
+/// it crosses whole inside `RadioState` and `Command::SetHfdlConfig`.
+/// `RadioState` gains `hfdl_outputs` at its tail, and `Command` gains
+/// `SetHfdlOutputs` after `ScanBack`.
+pub const PROTO_VERSION: u16 = 219;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
@@ -2444,6 +2450,30 @@ mod tests {
         };
         let cmd = Command::SetSondeConfig(sonde);
         assert_eq!(decode::<Command>(&encode(&cmd).unwrap()).unwrap(), cmd);
+
+        // The HFDL settings (several channels, auto-follow) and feeds, both
+        // ways, away from their defaults.
+        let mut hfdl = sdroxide_types::HfdlSettings {
+            enabled: true,
+            frequency_hz: 13_276_000.0,
+            auto_follow: true,
+            ..Default::default()
+        };
+        hfdl.set_also(&[13_312, 13_324]);
+        let cmd = Command::SetHfdlConfig(hfdl);
+        assert_eq!(decode::<Command>(&encode(&cmd).unwrap()).unwrap(), cmd);
+        let feeds = sdroxide_types::HfdlOutputs {
+            station_id: "XX-TEST-HFDL".into(),
+            airframes: true,
+            json_udp: vec!["127.0.0.1:5556".into()],
+            sbs_port: 30_003,
+            sbs_lan: true,
+        };
+        let cmd = Command::SetHfdlOutputs(feeds.clone());
+        assert_eq!(decode::<Command>(&encode(&cmd).unwrap()).unwrap(), cmd);
+        let frame =
+            ServerMsg::State(RadioState { hfdl, hfdl_outputs: feeds, ..Default::default() });
+        assert_eq!(decode::<ServerMsg>(&encode(&frame).unwrap()).unwrap(), frame);
         let state = RadioState { sonde, ..Default::default() };
         let frame = ServerMsg::State(state);
         assert_eq!(decode::<ServerMsg>(&encode(&frame).unwrap()).unwrap(), frame);

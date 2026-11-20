@@ -1335,4 +1335,9 @@ pub enum Command {
         sideband: crate::SamSideband,
         tau_s: f32,
     },
+
+    /// Where decoded HFDL is fed besides the panel. Kept in
+    /// `hfdl_outputs.json`, echoed back in [`crate::RadioState::hfdl_outputs`].
+    /// Appended last, for the usual reason.
+    SetHfdlOutputs(crate::HfdlOutputs),
 }

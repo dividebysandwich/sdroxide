@@ -4356,6 +4356,7 @@ saving an empty file. What goes in the file depends on the mode:
 | FSQ | One line per message: whether it was for you, sender, addressee and text. FSQ messages carry no time, so there is no time column |
 | ACARS, packet, JS8 and APRS | A `.csv` file, one row per message or frame, with its UTC time |
 | NAVTEX, VDL2 and HFDL | A tab-separated `.txt` file, one line per message, with its UTC time |
+| HFDL (MESSAGES tab) | A `.csv` file, one row per ACARS message, oldest first, with its UTC time |
 | WSPR and PI4 | The reception list as a `.csv` file, in the **RECEPTIONS** header |
 | The CW/RTTY skimmer | Its spot list, from the **Spots** row of the skimmer's settings |
 
@@ -7454,13 +7455,18 @@ HFDL (High Frequency Data Link, ARINC 635) is the datalink airliners use where n
 
 Choose **HFDL** under **MONITOR › Aviation**, or press the **HFDL** chip in the Display box, beside SKIM. The panel docks under the waterfall: the decode log on the left, an aircraft map on the right, with a draggable divider between them that is remembered with the rest of the layout.
 
-**One channel at a time, and you choose which.** This is the difference between HFDL and the other aircraft lanes. ADS-B has exactly one frequency and AIS and VDL2 cover all of their channels at once, because theirs sit next to each other. HFDL's do not — they are scattered across the whole shortwave spectrum — so the decoder listens to one 24 kHz lane and the frequency is yours to pick.
+**A handful of channels at a time, and you choose which.** This is the difference between HFDL and the other aircraft lanes. ADS-B has exactly one frequency and AIS and VDL2 cover all of their channels at once, because theirs sit next to each other. HFDL's do not — they are scattered across the whole shortwave spectrum, a few in each band — so the decoder listens to one lane and the channels in it are yours to pick.
+
+By default that is one channel: click a chip and the decoder listens to it alone, on the 24 kHz lane HFDL has always used. **Ctrl-click** a chip (**⌘-click** on a Mac) to decode it *as well*, and again to take it away; **+ NEARBY** adds, in one go, every channel close enough to the one in force to share its lane, nearest first; **×** goes back to the one channel. Up to eight channels can be decoded at once, as long as the lowest and the highest are no more than 200 kHz apart — HFDL's channels within a band are well inside that (13 264–13 351 kHz, for instance) — and all of them lie inside the receiver's window. A channel asked for that cannot be fitted in turns **amber**, and its tooltip says why; the one the dial is on is underlined. With more than one, a **CHANNELS** row under the chips gives each its decode count and level.
+
+Every channel decodes into the same log, station list, message list and aircraft table, each event marked with the channel it came in on. The cost is one more channel decoder on the HFDL worker for each channel: a mixer and filter at the lane's rate, then the demodulator. When a very strong burst on one channel also reaches the decoder of its neighbour, the copy that came in weaker is dropped, so a frame is filed only under the channel it was sent on.
 
 | Control | What it does |
 | --- | --- |
 | **LISTEN** | Switches the decoder on and off. It costs a downconverter and a worker thread whether the panel is on screen or not, so it starts off, and it is off again next time you start sdroxide. |
+| **AUTO** | Auto-follow: the decoder finds an open band by itself (below). Picking a channel by hand turns it off. |
 | The kHz field | The channel to listen on. Anything from 2 800 to 30 000 kHz. |
-| The frequency chips | The published assigned frequencies, one click each. **21.931 M** — Riverhead, covering the northern Atlantic and North America — is the default. Your own channels follow them: **+** saves the channel in force as a chip, a click tunes to one, a right-click removes it. They are kept per machine in `hfdl_channels.json`. |
+| The frequency chips | The assigned frequencies, one click each, a band at a time: the **MHz** row above them picks the band (2 to 21 MHz) whose channels are shown — it starts on, and follows, the band the dial is on; a band is green while a station is working one of its channels and underlined while one of its channels is being decoded. **21.931 M** — Riverhead, covering the northern Atlantic and North America — is the default. The chips are the channels the ground stations use, from the network's system table (see **STATIONS** below): a copy built into sdroxide (version 52, from the table dumphfdl distributes) until a newer one has been received over the air. A chip turns **green** while a station is known to be working that channel, and its tooltip names the stations that use it. Your own channels follow them: **+** saves the channel in force as a chip, a click tunes to one, a right-click removes it. They are kept per machine in `hfdl_channels.json`. |
 
 Changing the channel moves the dial with it, so the panadapter shows the signal the decoder is working on. The channel frequency is the *assigned* frequency, which is where the suppressed carrier of the upper-sideband channel sits; the decoder finds its own subcarrier 1440 Hz above that, so put the assigned frequency on the dial and do not offset it by hand.
 
@@ -7469,6 +7475,8 @@ Changing the channel moves the dial with it, so the panadapter shows the signal 
 **An HF antenna and a receiver that hands over raw I/Q.** HFDL rides its own downconversion of the I/Q stream, like ADS-B, AIS, VDL2 and the QO-100 beacon, so it needs a wideband front end — an RSP, an Airspy HF+, an RX-888, a KiwiSDR, a directly-connected SDR of any kind. A transceiver driven over CAT with its audio on a sound card hands sdroxide demodulated audio and no I/Q to mix a lane out of, and the decoder cannot run on it. The **LISTEN** switch turns itself off on such a radio rather than pretending.
 
 **The right band for the time of day.** This is ordinary shortwave propagation and it matters more than anything in the panel. The higher channels — 17 and 21 MHz — are daytime paths; 5, 6 and 8 MHz are the night ones; 11 and 13 MHz work around the changes. A channel that is dead is usually dead because the band is closed, not because the decoder is failing.
+
+**AUTO does that choosing for you.** Every ground station sends a squitter on each of its channels about every 32 seconds, so an open band announces itself within a minute. With **AUTO** on, the decoder stays where it is as long as a station has been heard on one of its channels in the last two minutes; when none has been heard for a minute and forty seconds — about three squitter periods, so one lost to fading does not move it — it moves to the next band, taking *every* channel of that band that fits one lane at once (see *several channels* above), the one most stations share on the dial. Which band comes next: by the sun at your grid square (the digital-mode setup's locator; UTC without one), the higher bands by day, the lower ones by night and the middle around dawn and dusk — and before all of them, a band where some station's latest squitter says it is working a channel. A line under the chips says what it is doing: *13 MHz is open — Shannon heard 20 s ago* in green, or *listening on 8 MHz; the next band in 40 s* in yellow. It moves the dial, so on a radio whose tuning is shared with other listening, leave it off.
 
 #### What you see
 
@@ -7486,13 +7494,88 @@ Below that, the log, newest first: the time (UTC), what kind of record it is, th
 
 **A squitter every 32 seconds is the first thing to look for.** Each ground station announces itself on its own schedule whether or not any aircraft are talking to it, so a channel that is open gives you something to see within a minute of switching **LISTEN** on. Aircraft traffic is much rarer than that.
 
+#### The ground stations
+
+The header of the left-hand pane has four chips, **DECODES**, **STATIONS**, **MESSAGES** and **AIRCRAFT**. **STATIONS** lists every ground station the decoder knows of, the one heard most recently first:
+
+- **When and how well it was heard** — how long ago, on which channel, its signal-to-noise figure, and how many squitters it has sent since you switched **LISTEN** on. It is green while that was within the last quarter of an hour. A station known only from the saved table says *not heard yet*.
+- **Its channels**, in kHz. A channel is green while the station is working it: the one it was just heard on, and any other its latest squitter lists as in use. Click a channel to tune to it; the channel you are on is underlined.
+
+The squitter says which channels are in use as a *bitmap* — bit by bit, the station's first channel, its second, and so on. What turns that into frequencies is the network's **system table**, which the stations broadcast only now and then, in several parts, over the air. sdroxide reassembles it when it hears one, keeps the latest in `hfdl_stations.json`, and starts the next session from it, so the channels are known from the first squitter after the first time. On a first run, before any table has been received, sdroxide starts from its built-in copy of version 52 — positions and channels for all sixteen stations — so the channels are known from the first squitter; a station missing from the table in use is listed with what it was heard on and *channels unknown*.
+
+Only the station's own transmissions count as hearing it: squitters, and the uplinks a station sends to aircraft. An aircraft's downlink names the station it is talking to, but that is the aircraft's signal, which a receiver can hear from much farther away than the station itself.
+
+The list does not roll like the decode log: a station stays on it for the session.
+
+#### The ACARS messages
+
+Airline ACARS messages ride inside HFDL exactly as they do inside VDL2 — the same ARINC 618 blocks, over shortwave. They are rarer than on VHF, and between squitters on a busy channel the decode log, which holds only the last 64 events, rolls past them within minutes. So they are also kept on the **MESSAGES** tab, the last 300, newest first.
+
+Each message shows:
+
+- the time, an arrow (**↓** from an aircraft, **↑** from a ground station), the aircraft's registration — or its flight, or its ICAO address, in that order, whichever the block carried — and the flight beside it;
+- the **label**, which says what kind of message it is (hover for its name where it is one of the few xng's decoder recognises: `H1` company messages, `A6`/`B6` ATS, `5Z`, `SA`, `MA`), the channel and the burst's signal-to-noise;
+- a cyan line when the message could be understood: an ADS-C report, a CPDLC message, an OOOI time such as `OUT 1204`, a position, the kind of a Q-series report;
+- the text itself on one line, line breaks shown as ⏎.
+
+**CRC** in amber means the message's own check sequence did not match, so some of the text may be wrong; the frame it rode in did pass its own check, which is why the message is shown at all. **more…** means one block of a longer message. The filter box above the list matches any of it — registration, flight, label, a word of the text.
+
+**SAVE** follows the tab. On **MESSAGES** it writes `sdroxide-hfdl-acars.csv`, one row per message with the oldest first, the text in one quoted field with its line breaks intact; on the other tabs it writes the decode log as before.
+
+The decode log's rows for the same messages now show the aircraft, the label and the start of the text instead of the link-layer envelope. The log also now lists its newest event at the top, as this section always said it did.
+
+#### The aircraft list
+
+**AIRCRAFT** is a table of every aircraft the decoder has heard from — including the ones that never sent a position, which the map cannot show. An aircraft is listed from its first downlink and stays for three hours after it was last heard. The table fills the left-hand pane, out to the divider between it and the map: the **LAST MESSAGE** column takes whatever width the others leave and cuts its text with an ellipsis where it runs out, so dragging the divider, or resizing the window, shows more or less of the message at once. The table scrolls sideways only when the pane is too narrow for the other columns and a usable stretch of message.
+
+| Column | What it holds |
+| --- | --- |
+| *(▸)* | Click to filter the decode log to this aircraft and switch to **DECODES**. |
+| **REG** | The registration, once an ACARS message has given it; until then the ICAO address, then the alias, in a dimmer tone. **Click it and the aircraft blinks on the map** (see below). Hover for the ICAO address. Struck through: the aircraft has logged off. |
+| **FLIGHT** | The flight, from a position report or an ACARS message. |
+| **HEARD** | How long ago it was last heard — green within five minutes. Hover for the UTC time. |
+| **STATION** | The ground station it is talking to, by its town. Hover for the full name. |
+| **MHz** | The channel it was last heard on. |
+| **dB** | The signal-to-noise figure of its latest burst that measured one. |
+| **MSGS** | How many events are attributed to it. |
+| **KM** | Distance from your grid square to its last reported position; empty with no position or no grid. Hover for the position, how long ago it was reported, and the bearing. |
+| **CALC TRK**, **CALC KT** | Course over the ground (degrees true) and ground speed (knots), *calculated* by sdroxide from the aircraft's last two position reports — marked **≈**, because HFDL's position reports carry neither, so this is the average between two fixes usually minutes apart, not what the aircraft reported. Timed by the aircraft's own clock in the reports where both carry it. Left empty when the two fixes are under 30 s or 2 km apart, implausibly fast (over 750 kt: a bad fix), or more than an hour apart. |
+| **LAST MESSAGE** | What its latest ACARS message said, as `[label] text` on one line, cut to the width the pane has (hover for the whole of it, up to 200 characters). A position report after it does not replace it. An aircraft that has sent no ACARS shows the kind of event last heard from it, dimmer — `performance-data`, `logon-confirm`. |
+
+Click a column heading to sort by it, and again to reverse; the arrow shows which. It starts on **HEARD**, newest first. An aircraft with nothing in the sorted column — no registration, no position — goes last whichever way it runs. The sort is remembered with the rest of the layout.
+
+**Blinking on the map.** The registration of an aircraft that has a plot on the map selects it and makes it blink for three seconds, a ring spreading from the square. If you had panned or zoomed it out of sight, the map goes back to framing every aircraft so the blink is on screen. An aircraft that never sent a position has no plot, and its tooltip says so.
+
+An HFDL aircraft has no name of its own on the air. It logs on to a ground station giving its ICAO address and is handed a short *alias*, good only on that station, which every later frame uses. Until a logon is heard — often the case, since a logon is heard only if you were tuned to that channel at that moment — an aircraft is listed under its alias and station, and it is *merged into one row with its ICAO address* the moment the logon confirmation arrives. Two aircraft with the same alias on different stations stay two rows. Squitters, and uplinks addressed to an alias whose logon was never heard, say nothing reliable about which aircraft they concern and are not counted.
+
+The **aircraft** figure in the status strip is still the number plotted on the map, so it can be lower than the list's length.
+
 #### The aircraft map
 
 Every position an aircraft has sent, over the same dotted continents the FT8, ADS-B and AIS maps use. Drag to pan, scroll to zoom, click a square to select it; the view eases to fit what it is holding. Your own station is placed from the grid square in the digital-mode setup, the same one those other maps use.
 
-**It is not ADS-B and it does not look like it.** A position arrives only when an aircraft sends a performance-data or frequency-data record — minutes apart at best, not twice a second — and the record carries latitude and longitude and nothing else. There is no altitude, no speed and no heading in it, so there is no leader line and no aeroplane symbol pointed anywhere: just a square, the flight number beside it, and the plot moved in place as later fixes arrive. An aircraft is dropped from the map after half an hour with nothing new, which is far longer than one stays in range of a single ground station.
+**It is not ADS-B and it does not look like it.** A position arrives only when an aircraft sends a performance-data or frequency-data record — minutes apart at best, not twice a second — and the record carries latitude and longitude and nothing else. There is no altitude, no speed and no heading in it, so there is no leader line and no aeroplane symbol pointed anywhere: just a square, the flight number beside it, and the plot moved in place as later fixes arrive. **The ground stations** are on the map too, as small triangles at the positions the system table gives: green and named while the station is being heard, dim and unnamed while it is known only from the table. Hover one for its name and when it was last heard.
+
+**The line to the station.** When you click an aircraft's registration in the **AIRCRAFT** table and it blinks, a great-circle line is drawn from it to the ground station it is talking to, and that station is marked and named at the line's end — for the three seconds of the blink, and only then, so the map is not covered in lines. The station is the one the aircraft's latest position report names, or else the one its latest frame was addressed to; an aircraft whose station is not in the table gets the blink without a line.
+
+**Where it has been.** Behind each square the map draws up to five dots, the positions the aircraft reported before its latest — the oldest the smallest and faintest — so which way it is going, and how fast, can be read from the picture. A position is left out of the trail when it sits within 2 km of the one after it (the same fix reported twice) or is over an hour old, so an aircraft that reports only every twenty minutes does not drag a trail across half a day. The dots build from what the log already holds the moment the decoder has two fixes for an aircraft, and they are on the map only; the aircraft table keeps just the latest position.
+
+An aircraft is dropped from the map after half an hour with nothing new, which is far longer than one stays in range of a single ground station.
 
 Where an aircraft is labelled by a number rather than a flight, the ground station had given it a short local alias and the logon that would resolve it to an ICAO address had not been heard. Catch that logon later in the session and the plot keeps its identity rather than splitting in two.
+
+#### Feeds
+
+**FEEDS**, in the top row, sends what is decoded somewhere besides this panel. Everything in it is off until you switch it on, because feeding a network sends your station ID and everything you decode to someone else.
+
+- **Station ID** — stamped on every frame sent. Airframes credits a feed to it and asks for one shaped `XX-YYYY-HFDL`: your initials, an airport code or locator, and the mode. Letters, digits, `-` and `_`, up to 32 characters.
+- **Feed Airframes** — sends every decoded frame to Airframes' HFDL ingest, `feed.airframes.io`, TCP port 5556 (a connection kept open and re-opened by itself, not datagrams), where it appears on airframes.io under your station ID. It is sent in dumphfdl's `decoded:json` format, one line per frame — the format that ingest reads — built field for field after dumphfdl's own, with these differences: the application is named `sdroxide`; the bit rate and slot are the burst's own, as in dumphfdl's every line; the signal and noise levels are this decoder's measurements; a frame carried in an *acknowledged* data LPDU is reported as unnumbered data; and frames dumphfdl would label an unknown protocol are not sent. Under the switch, a line says how many frames have gone, or why they are not going (no station ID, still connecting, the connection refused or lost). The count is of frames written to an open connection.
+
+- **Send the same JSON to** — any number of `host:port` targets, comma-separated, each sent the same lines as Airframes, one UDP datagram per frame, as dumphfdl's `decoded:json` UDP output sends them: for acarshub (whose HFDL input is usually port 5556), a logger, or a program of your own. No station ID is needed for these; when one is set it is included. A target that is not a `host:port` is named in amber and skipped; otherwise a line gives the count sent, or the first target that failed and why.
+
+- **BaseStation (SBS) port** — serves aircraft positions as BaseStation CSV over TCP for Virtual Radar Server, PlanePlotter and the like: the same line dumphfdl's `basestation` output writes, `MSG,3,1,1,<ICAO>,1,<date>,<time>,<date>,<time>,<flight>,,,,<lat>,<lon>,,0,,,,0`, stamped with the report's own time. Only positions from aircraft whose ICAO address is known are sent (the format has no other way to name one), and only while the report is under five minutes old; there is no altitude, speed or track in them, because an HFDL position report carries none — the table's calculated course and speed are estimates and are deliberately not sent, where a plotter would show them as reported. **0** is off; 30003 is BaseStation's usual port, so pick another if an ADS-B decoder on the same computer already serves it. It listens on this computer only unless **Let other computers connect** is on. A client that cannot take a line at once is dropped rather than waited for. A line under it gives the clients connected and positions sent, or why it is not listening (the port is taken).
+
+The sending happens on the decoder's own thread without ever waiting on the network: a frame that cannot go at once is dropped, never queued, and the name is looked up again every ten minutes on a thread of its own. The settings are kept in `hfdl_outputs.json`.
 
 **Receive only.** HFDL is an airline and air-traffic service. There is no transmit half of this panel, and there never will be.
 
@@ -17316,6 +17399,8 @@ and not the station's.
 | `broadcast/` | CSV | The broadcasting season's schedule as downloaded from eibispace.de, one file per season. Managed by sdroxide: refetched when the season changes, and safe to delete. |
 | `sstv_messages.json` | JSON | The overlay message stored for each of the ten SSTV transmit slots. |
 | `hfdl_channels.json` | JSON | Your own HFDL frequency chips, in kHz ([§3.19](#319-hfdl-aircraft-on-shortwave)). |
+| `hfdl_outputs.json` | JSON | Where decoded HFDL is fed besides the panel: the station ID and which feeds are on ([§3.19](#319-hfdl-aircraft-on-shortwave)). All off until switched on. |
+| `hfdl_stations.json` | JSON | The HFDL system table — each ground station's position and channels — as the network last broadcast it. Managed by sdroxide: rewritten when a new version is received, and safe to delete. |
 | `filter_presets.json` | JSON | Your own receive filter presets: for each one, the mode, which built-in chip it replaces, its label and its two edges in Hz. |
 | `voice_names.json` | JSON | The label given to each of the ten voice-keyer slots. |
 | `voice/` | dir | The voice-keyer recordings (`slot1.wav`…`slot10.wav`), 48 kHz mono. Drop your own WAV in to replace a message. |

@@ -5990,3 +5990,104 @@ textmodem-psk-coded-hint =
 topbar-sk-filter-after-nr-hint = SK を RNN/DFNR の後に — つまり AGC の後: フィルターが下げたレベルは戻らない (隣のブースト参照)。オフ: レベルを戻す AGC の前
 topbar-sk-filter-boost-hint = SK フィルター後のブースト 0–18 dB (5 dB)、フルスケール手前でソフトリミット: NR の後ではフィルターが下げたレベルを戻すものがない
 topbar-sk-filter-boost-before-nr = NR の前では AGC がレベルを戻すため、ブーストは NR の後のみ有効
+
+## hfdl：地上局（src/app/hfdl.rs）
+
+hfdl-stations = 地上局
+hfdl-no-station-heard-yet = まだ地上局を受信していません。局のスキッターは、使用しているチャンネル上で約 32 秒ごとに繰り返されます。ネットワークのシステムテーブルを受信すると、一覧にも局が加わります。
+hfdl-station-heard = { $mhz } MHz で { $age } 前に受信
+hfdl-station-squitters = スキッター { $n } 件
+hfdl-station-not-heard = まだ受信していません
+hfdl-station-channel-hint = { $mhz } MHz に合わせてください。緑：この局は今このチャンネルで運用中です。
+hfdl-station-channels-unknown = ネットワークがシステムテーブルを送信するまで、チャンネルは不明です。
+hfdl-chip-stations = 使用中: { $stations }
+hfdl-chip-working = { $station } はこのチャンネルで運用中です — { $age } 前に受信
+
+## hfdl：ACARS メッセージ（src/app/hfdl.rs）
+
+hfdl-messages = メッセージ
+hfdl-no-acars-yet = ACARS メッセージはまだありません。航空会社のメッセージは、スキッターの間のデータリンク内を流れます。その頻度は VHF よりずっと低くなります。受信したものは、デコードログから流れ去った後もここに保存されます。
+hfdl-save-hfdl-acars-messages-csv = ACARS メッセージを CSV ファイルに保存
+hfdl-acars-downlink = 機体から地上へ
+hfdl-acars-uplink = 地上から機体へ
+hfdl-acars-crc-bad = CRC
+hfdl-acars-crc-bad-hint = メッセージ自身のチェック符号が一致しなかったため、テキストの一部が誤っている可能性があります。ただし、メッセージを運んだデータリンクのフレームは、そのチェックに合格しています。
+hfdl-acars-more = 続き…
+hfdl-acars-more-hint = 長いメッセージの一部です。後続のブロックがあります。
+
+## hfdl：機体一覧（src/app/hfdl.rs）
+
+hfdl-aircraft-list = 機体
+hfdl-no-aircraft-heard-yet = まだ機体を受信していません。機体は、最初のダウンリンク（ログオン、位置報告、ACARS メッセージなど）から、地図用の位置を送信するかどうかに関係なくここに表示されます。
+hfdl-aircraft-position = { $lat }, { $lon } 付近 · { $age } 前
+hfdl-aircraft-from-you = あなたから { $km } km、{ $bearing }°
+hfdl-aircraft-logged-off = ログオフ済み
+hfdl-aircraft-no-position-hint = まだ位置が報告されていないため、地図上で点滅するものはありません
+hfdl-aircraft-filter-hint = この機体のデコードのみを表示します。フィルターを設定し、デコードを開きます
+hfdl-col-reg = 登録記号
+hfdl-col-flight = 便名
+hfdl-col-heard = 受信
+hfdl-col-station = 局
+hfdl-col-mhz = MHz
+hfdl-col-snr = dB
+hfdl-col-msgs = 件数
+hfdl-col-dist = km
+hfdl-col-last = 最終通信
+hfdl-aircraft-sort-hint = この列で並べ替えます。もう一度クリックすると逆順になります
+hfdl-aircraft-blink-hint = この機体を地図上で点滅させます
+
+## hfdl：複数チャンネルの同時受信（src/app/hfdl.rs）
+
+hfdl-chip-multi-hint = クリックするとこのチャンネルだけを受信します。Ctrl+クリック（Mac では ⌘+クリック）で、ほかのチャンネルと並べてデコードします。
+hfdl-left-out-hint = 指定されていますが、デコードされていません。ほかのチャンネルと帯域を共有するには離れすぎているか（最大 200 kHz）、受信機のウィンドウの外にあります。
+hfdl-nearby = + 近隣
+hfdl-nearby-hint = 現在のチャンネルと 1 つのレーンを共有できるほど近いチャンネルもすべてデコードします。互いに 200 kHz 以内で、受信機のウィンドウ内にあるものに限り、最大 8 つです。
+hfdl-nearby-none-hint = ほかのどのチャンネルもレーンを共有できません。十分に近いものがないか、8 つの枠がすべて埋まっているか、受信機のウィンドウが狭すぎます。
+hfdl-single-hint = ダイヤルが合っている 1 つのチャンネルに戻します
+hfdl-lane-label = チャンネル
+
+## hfdl：自動追従（src/app/hfdl.rs）
+
+hfdl-auto = AUTO
+hfdl-auto-hint = 開いているバンドを自動で見つけます。そのバンドで地上局が受信されている間は留まり、約 1 分半どの局も受信されなくなると次のバンドへ移ります。昼は高いバンド、夜は低いバンドを、あなたのグリッドスクエアを基準に選び、いずれかの局が運用中だと伝えているバンドを他より優先します。そのバンドのチャンネルはすべて同時に取り込みます。チャンネルを手動で選ぶと、この機能はオフになります。
+hfdl-follow-starting = AUTO · デコーダーを待っています…
+hfdl-follow-parked = AUTO · { $mhz } MHz が開いています — { $station } を { $age } 前に受信
+hfdl-follow-listening = AUTO · { $mhz } MHz を受信中。何も受信されなければ { $secs } 秒後に次のバンドへ
+
+## hfdlmap：地上局（src/hfdl_map.rs）
+
+hfdlmap-gs-heard = { $age } 前に受信
+hfdlmap-gs-not-heard = 最近は受信していません — システムテーブルから判明
+
+## hfdl：バンド別のチャンネル（src/app/hfdl.rs）
+
+hfdl-band-label = MHz
+hfdl-band-hint = { $mhz } MHz のチャンネルを表示します。緑：いずれかで局が運用中です。下線：いずれかをデコード中です。
+
+## hfdl：計算によるコースと速度（src/app/hfdl.rs）
+
+hfdl-col-calc-trk = 計算コース
+hfdl-col-calc-kt = 計算 kt
+hfdl-col-calc-hint = 機体の直近 2 回の位置報告から計算した、対地コースと、その間の平均対地速度です。機体が報告した値ではありません。HFDL の位置報告には、どちらも含まれていません。
+
+## hfdl：フィード（src/app/hfdl.rs）
+
+hfdl-feeds = フィード
+hfdl-feeds-hint = デコード結果を、このパネル以外の場所へ送信します。Airframes へ送るか、独自のプログラムへ送ります。オンにするまで、すべてオフです。
+hfdl-station-id = 局 ID
+hfdl-station-id-hint = 送信するすべてのフレームに付加されます。Airframes はこの ID にフィードを関連付けます。形式は XX-YYYY-HFDL です。イニシャル、空港コードまたはロケーター、モードを指定してください。英字、数字、-、_ を使い、最大 32 文字です。
+hfdl-station-id-bad = 英字、数字、-、_ のみで、最大 32 文字です。
+hfdl-feed-airframes = Airframes へ送信 (feed.airframes.io)
+hfdl-feed-airframes-hint = デコードしたすべてのフレーム（スキッター、位置、ACARS メッセージ）を、局 ID を付けて Airframes の HFDL 受信口（TCP、ポート 5556）へ送信します。形式は dumphfdl の JSON で、Airframes が読み取る形式です。送信されたフィードは、その ID で airframes.io に表示されます。オフの間は何も送信されません。
+hfdl-feed-needs-id = 送信されていません。先に局 ID を入力してください。
+hfdl-feed-sent = { $n } フレームを送信
+hfdl-feed-json = 同じ JSON を次へ送信（UDP host:port、カンマ区切り）
+hfdl-feed-json-hint = dumphfdl の JSON を読み取る独自のプログラム（acarshub は通常、HFDL の入力を UDP ポート 5556 で受け付けます）、ロガー、スクリプトなど。各フレームを、dumphfdl の decoded:json UDP 出力と同様に、それぞれへ 1 データグラムずつ送ります。局 ID は不要です。入力欄を離れると適用されます。
+hfdl-feed-json-bad = host:port ではありません: { $targets }
+hfdl-feed-sbs = BaseStation（SBS）ポート
+hfdl-feed-sbs-hint = 機体の位置を、この TCP ポートで BaseStation 形式の行として配信します。Virtual Radar Server、PlanePlotter などで使用します。dumphfdl の basestation 出力と同じ行です。0 はオフです。30003 は一般的な BaseStation ポートです。このコンピューター上の ADS-B デコーダーがすでに使用している場合は、別のポートを選んでください。入力欄を離れると適用されます。
+hfdl-feed-sbs-lan = ほかのコンピューターからの接続を許可
+hfdl-feed-sbs-lan-hint = オフ：このコンピューター上のプログラムだけが接続できます。オン：ネットワーク経由でこのコンピューターに到達できるどのコンピューターも接続できます。
+hfdl-feed-sbs-status = { $clients ->
+       *[other] { $clients } 件の接続 · 位置 { $n } 件を送信済み
+    }
