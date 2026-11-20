@@ -28,6 +28,10 @@ const POLL: Duration = Duration::from_millis(5);
 /// Realtime frames a client may have queued before we consider it stalled.
 const DATA_LANE: usize = 64;
 
+/// Most complex IQ samples in one packet when the hub coalesces the engine's
+/// blocks: 16 ms at 2 MS/s, 256 KiB on the wire.
+const MAX_IQ_PER_PACKET: usize = 32_768;
+
 /// How long a client's data lane may stay full before we conclude the peer is
 /// gone (suspended laptop, dead network) and reclaim its slot. Without this a
 /// vanished client would hold a slot until TCP finally timed out.
@@ -163,6 +167,16 @@ impl Hub {
                     return;
                 }
             };
+            // The client thread is written for a blocking socket with a read
+            // timeout. On macOS (and the other BSDs) an accepted socket
+            // inherits the listener's non-blocking flag, Linux's does not:
+            // left so, a write that meets a full send buffer returns EAGAIN,
+            // which the thread takes for a dead peer and hangs up, and the
+            // read timeout never paces its loop.
+            if let Err(e) = stream.set_nonblocking(false) {
+                warn!("TCI server: could not make a client socket blocking: {e}");
+                continue;
+            }
             if self.clients.len() >= self.cfg.max_clients {
                 warn!(max = self.cfg.max_clients, "TCI server at client limit; refusing");
                 continue; // dropping the stream closes it
@@ -253,11 +267,35 @@ impl Hub {
     // --- Realtime fan-out ------------------------------------------------
 
     fn drain_streams(&mut self) {
+        // Everything the engine handed over since the last wake goes out as
+        // one packet per rate, up to MAX_IQ_PER_PACKET samples. The engine
+        // hands IQ over in small blocks, about 1,800 a second at 2 MS/s, and a
+        // client thread writes 32 frames per 20 ms tick: one frame per block
+        // would cap a client near 1,600 a second. One packet per 5 ms wake is
+        // ~200 a second at any rate.
+        let mut pending: Option<(u32, Vec<f32>)> = None;
         while let Ok(block) = self.iq_rx.try_recv() {
             if block.rate == 0 {
                 continue;
             }
-            let pkt = Bytes::from(p::build_iq(block.rate, RX, &block.data));
+            match pending.as_mut() {
+                Some((rate, buf))
+                    if *rate == block.rate
+                        && buf.len() + block.data.len() <= 2 * MAX_IQ_PER_PACKET =>
+                {
+                    buf.extend_from_slice(&block.data);
+                }
+                _ => {
+                    if let Some((rate, buf)) = pending.take() {
+                        let pkt = Bytes::from(p::build_iq(rate, RX, &buf));
+                        self.fan_out(pkt, |s| s.iq_on.load(Ordering::Relaxed));
+                    }
+                    pending = Some((block.rate, block.data));
+                }
+            }
+        }
+        if let Some((rate, buf)) = pending {
+            let pkt = Bytes::from(p::build_iq(rate, RX, &buf));
             self.fan_out(pkt, |s| s.iq_on.load(Ordering::Relaxed));
         }
         while let Ok(AudioBlock(mono)) = self.aud_rx.try_recv() {
