@@ -1254,13 +1254,43 @@ pub fn rename_radio(id: u32, name: &str) -> Result<(), ConfigError> {
     save_radios(&roster)
 }
 
-/// Directory for a mode's received pictures (`~/.config/sdroxide/<kind>_rx`),
-/// created on demand.
-///
-/// One store per mode rather than one for everything: an SSTV picture and a
-/// weather chart are browsed for entirely different reasons, and a
-/// fifteen-minute chart arriving every half hour would bury a session's SSTV.
-pub fn image_rx_dir(kind: &str) -> Result<PathBuf, ConfigError> {
+/// Where the received-picture stores are kept (`picture_folders.json`). One
+/// folder per store; empty is the default for it.
+pub fn load_picture_folders() -> sdroxide_types::PictureFolders {
+    load_json("picture_folders.json")
+}
+
+pub fn save_picture_folders(cfg: &sdroxide_types::PictureFolders) -> Result<(), ConfigError> {
+    save_json("picture_folders.json", cfg)
+}
+
+/// A store's configured folder, created. `None` when none is set or it cannot
+/// be created — an external drive that is not plugged in, a path that needs
+/// permissions this program does not have. The caller then uses the default,
+/// which loses no picture; the warning says why they are not where they were
+/// pointed.
+fn configured_picture_dir(kind: sdroxide_types::ImageKind) -> Option<PathBuf> {
+    let folders = load_picture_folders();
+    if folders.is_ignored(kind) {
+        warn!("{} picture folder is not an absolute path; using the default", kind.key());
+    }
+    let dir = folders.for_kind(kind)?;
+    match fs::create_dir_all(&dir) {
+        Ok(()) => Some(dir),
+        Err(e) => {
+            warn!(
+                "{} picture folder {} is unusable ({e}); using the default",
+                kind.key(),
+                dir.display()
+            );
+            None
+        }
+    }
+}
+
+/// The built-in location of a mode's received pictures
+/// (`~/.config/sdroxide/<kind>_rx`), created on demand.
+fn default_image_rx_dir(kind: &str) -> Result<PathBuf, ConfigError> {
     // The caller's `kind` is a literal today, but it ends up in a path.
     let safe: String = kind.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
     let dir = config_dir()?.join(format!("{}_rx", if safe.is_empty() { "image" } else { &safe }));
@@ -1268,8 +1298,24 @@ pub fn image_rx_dir(kind: &str) -> Result<PathBuf, ConfigError> {
     Ok(dir)
 }
 
-/// Directory for received weather-fax charts, created on demand: the user's
-/// pictures directory (`<Pictures>/sdroxide/wefax`), or the config directory
+/// Directory for a mode's received pictures — the folder the operator chose in
+/// Settings, else `~/.config/sdroxide/<kind>_rx` — created on demand.
+///
+/// One store per mode rather than one for everything: an SSTV picture and a
+/// weather chart are browsed for entirely different reasons, and a
+/// fifteen-minute chart arriving every half hour would bury a session's SSTV.
+pub fn image_rx_dir(kind: &str) -> Result<PathBuf, ConfigError> {
+    if kind == sdroxide_types::ImageKind::Sstv.key()
+        && let Some(dir) = configured_picture_dir(sdroxide_types::ImageKind::Sstv)
+    {
+        return Ok(dir);
+    }
+    default_image_rx_dir(kind)
+}
+
+/// Directory for received weather-fax charts, created on demand: the folder
+/// the operator chose in Settings, else the user's pictures directory
+/// (`<Pictures>/sdroxide/wefax`), or the config directory
 /// (`~/.config/sdroxide/wefax_rx`) when the platform exposes no pictures folder.
 ///
 /// Charts go where pictures go, unlike every other store here, because that is
@@ -1278,14 +1324,41 @@ pub fn image_rx_dir(kind: &str) -> Result<PathBuf, ConfigError> {
 /// outside this program, in a file manager, and none of which anyone will do
 /// from a hidden directory under `~/.config`.
 pub fn wefax_rx_dir() -> Result<PathBuf, ConfigError> {
-    let dir = match directories::UserDirs::new()
-        .and_then(|u| u.picture_dir().map(std::path::Path::to_path_buf))
-    {
-        Some(pictures) => pictures.join("sdroxide").join("wefax"),
-        None => config_dir()?.join("wefax_rx"),
-    };
+    if let Some(dir) = configured_picture_dir(sdroxide_types::ImageKind::Wefax) {
+        return Ok(dir);
+    }
+    let dir = wefax_default_rx_dir_path()?;
     fs::create_dir_all(&dir)?;
     Ok(dir)
+}
+
+fn wefax_default_rx_dir_path() -> Result<PathBuf, ConfigError> {
+    Ok(
+        match directories::UserDirs::new()
+            .and_then(|u| u.picture_dir().map(std::path::Path::to_path_buf))
+        {
+            Some(pictures) => pictures.join("sdroxide").join("wefax"),
+            None => config_dir()?.join("wefax_rx"),
+        },
+    )
+}
+
+/// The built-in folder of a store, when the operator has pointed it somewhere
+/// else and the built-in one already holds pictures.
+///
+/// Read-only and never created, like [`wefax_legacy_rx_dir`]: the gallery lists
+/// it beside the chosen folder so pictures received before the move do not
+/// appear to have been lost.
+pub fn picture_default_rx_dir(kind: sdroxide_types::ImageKind) -> Option<PathBuf> {
+    let default = match kind {
+        sdroxide_types::ImageKind::Sstv => config_dir().ok()?.join("sstv_rx"),
+        sdroxide_types::ImageKind::Wefax => wefax_default_rx_dir_path().ok()?,
+    };
+    let current = match kind {
+        sdroxide_types::ImageKind::Sstv => image_rx_dir("sstv").ok()?,
+        sdroxide_types::ImageKind::Wefax => wefax_rx_dir().ok()?,
+    };
+    (default != current && default.is_dir()).then_some(default)
 }
 
 /// Where charts were kept before they moved to the pictures directory.
@@ -3702,6 +3775,44 @@ mod tests {
         save_filter_presets(std::slice::from_ref(&preset)).unwrap();
         assert!(root.join("filter_presets.json").exists());
         assert_eq!(load_filter_presets(), vec![preset]);
+
+        // Received pictures: the default until a folder is chosen, then the
+        // chosen one, with the built-in one still readable. (Charts are only
+        // exercised with a folder set — with none, the store is the real
+        // Pictures directory.)
+        assert_eq!(image_rx_dir("sstv").unwrap(), root.join("sstv_rx"));
+        let ext = root.join("external-drive").join("sstv");
+        let wx = root.join("external-drive").join("charts");
+        save_picture_folders(&sdroxide_types::PictureFolders {
+            sstv: format!("  {}  ", ext.display()),
+            wefax: wx.display().to_string(),
+        })
+        .unwrap();
+        assert_eq!(image_rx_dir("sstv").unwrap(), ext, "a pasted path is trimmed");
+        assert!(ext.is_dir(), "the folder is created on demand");
+        assert_eq!(wefax_rx_dir().unwrap(), wx);
+        assert_eq!(
+            picture_default_rx_dir(sdroxide_types::ImageKind::Sstv),
+            Some(root.join("sstv_rx")),
+            "what was received before the move stays listed"
+        );
+        // A folder that cannot be made (here: under a regular file, as an
+        // unplugged drive's mount point would be) costs no picture.
+        let blocker = root.join("blocker");
+        fs::write(&blocker, b"x").unwrap();
+        save_picture_folders(&sdroxide_types::PictureFolders {
+            sstv: blocker.join("sub").display().to_string(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(image_rx_dir("sstv").unwrap(), root.join("sstv_rx"));
+        // A relative path is not somewhere anyone chose.
+        save_picture_folders(&sdroxide_types::PictureFolders {
+            sstv: "pictures".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(image_rx_dir("sstv").unwrap(), root.join("sstv_rx"));
 
         unsafe { std::env::remove_var("SDROXIDE_CONFIG_DIR") };
     }

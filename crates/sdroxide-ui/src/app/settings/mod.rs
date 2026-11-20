@@ -295,6 +295,9 @@ pub(in crate::app) struct SettingsIo<'a> {
     /// Received pictures → FTP: the dialog's copy, and whether to send it.
     picup_edit: &'a mut sdroxide_types::PictureUploadConfig,
     picup_apply: &'a mut bool,
+    /// Where received pictures are saved: the dialog's copy, and whether to send it.
+    folders_edit: &'a mut sdroxide_types::PictureFolders,
+    folders_apply: &'a mut bool,
     /// The rotctld *client* — the satellite lock steering a motorized antenna.
     rot_edit: &'a mut sdroxide_types::RotatorConfig,
     rot_apply: &'a mut bool,
@@ -1089,6 +1092,8 @@ impl SdroxideApp {
         let mut wsjtx_apply = false;
         let mut picup_edit = self.picup_edit.clone();
         let mut picup_apply = false;
+        let mut folders_edit = self.folders_edit.clone();
+        let mut folders_apply = false;
         let mut rot_edit = self.rot_cfg_edit.clone();
         let mut rot_apply = false;
         let mut relay_edit = self.relay_edit.clone();
@@ -1271,6 +1276,8 @@ impl SdroxideApp {
                             wsjtx_apply: &mut wsjtx_apply,
                             picup_edit: &mut picup_edit,
                             picup_apply: &mut picup_apply,
+                            folders_edit: &mut folders_edit,
+                            folders_apply: &mut folders_apply,
                             rot_edit: &mut rot_edit,
                             rot_apply: &mut rot_apply,
                             relay_edit: &mut relay_edit,
@@ -1380,6 +1387,11 @@ impl SdroxideApp {
         if picup_apply {
             // The engine persists picupload.json and announces it back.
             cmds.push(Command::SetPictureUploadConfig(Box::new(self.picup_edit.clone())));
+        }
+        self.folders_edit = folders_edit;
+        if folders_apply {
+            // The engine persists picture_folders.json and announces it back.
+            cmds.push(Command::SetPictureFolders(Box::new(self.folders_edit.clone())));
         }
         self.rot_cfg_edit = rot_edit;
         if rot_apply {
@@ -3376,6 +3388,9 @@ impl SdroxideApp {
                     }
                 });
 
+                ui.add_space(10.0);
+                ui.separator();
+                self.folders_section(ui, io.folders_edit, io.folders_apply);
                 ui.add_space(10.0);
                 ui.separator();
                 self.picup_section(ui, cmds, io.picup_edit, io.picup_apply);

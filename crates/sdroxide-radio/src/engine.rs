@@ -11017,6 +11017,22 @@ impl Engine {
                 self.picup.test(*cfg);
                 return;
             }
+            SetPictureFolders(cfg) => {
+                if let Err(e) = sdroxide_config::save_picture_folders(&cfg) {
+                    warn!("saving picture folders: {e}");
+                }
+                // Create them now rather than at the next picture, so a path
+                // that cannot be used is in the log when it is set and not
+                // hours later when the first image arrives.
+                for kind in ImageKind::ALL {
+                    let _ = match kind {
+                        ImageKind::Sstv => sdroxide_config::image_rx_dir("sstv"),
+                        ImageKind::Wefax => sdroxide_config::wefax_rx_dir(),
+                    };
+                }
+                self.emit_station_config();
+                return;
+            }
             SetRelayConfig(cfg) => {
                 if let Err(e) = sdroxide_config::save_relay_config(&cfg) {
                     warn!("saving T/R switch config: {e}");
@@ -13984,6 +14000,7 @@ impl Engine {
                 digi_presets: sdroxide_types::digi_presets().to_vec(),
                 picture_upload: self.picup_cfg.clone(),
                 beast: self.beast_cfg.clone(),
+                picture_folders: sdroxide_config::load_picture_folders(),
             },
         )));
     }

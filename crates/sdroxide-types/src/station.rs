@@ -108,4 +108,11 @@ pub struct StationConfig {
     ///
     /// Appended last, for the usual reason.
     pub beast: crate::BeastConfig,
+
+    /// Where received SSTV pictures and weather charts are saved —
+    /// `picture_folders.json`. A path on the engine's machine, so a remote
+    /// screen edits it but cannot browse for it.
+    ///
+    /// Appended last, for the usual reason.
+    pub picture_folders: crate::PictureFolders,
 }
