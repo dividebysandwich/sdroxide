@@ -934,7 +934,7 @@ impl RxChain {
             tap_out: Vec::new(),
             tap_level_db: f32::NAN,
             tap_gain: 1.0,
-            notch: AutoNotch::new(),
+            notch: AutoNotch::default(),
             notch_on: false,
             hum: None,
             sk: None,
@@ -1148,6 +1148,7 @@ impl RxChain {
             self.notch_on = rx.auto_notch;
         }
         if self.notch_on && self.mode.auto_notch_applies() {
+            self.notch.set_rate(audio_rate);
             self.notch.process(&mut self.audio_buf);
         }
         if self.nr_level != rx.noise_reduction {
@@ -4755,7 +4756,7 @@ fn engine_thread(
         auto_shift_dial: None,
         nb: NoiseBlanker::new(),
         adc: AdcMeter::new(),
-        audio_notch: AutoNotch::new(),
+        audio_notch: AutoNotch::default(),
         audio_notch_on: false,
         audio_nr: SpectralNr::new(),
         audio_sbnr: SpecBleachNr::new(),
@@ -6519,6 +6520,7 @@ impl Engine {
             self.audio_notch_on = notch_on;
         }
         if self.audio_notch_on && self.state.rx[0].mode.auto_notch_applies() {
+            self.audio_notch.set_rate(in_rate);
             self.audio_notch.process(&mut self.audio_re);
         }
         let nr_level = self.state.rx[0].noise_reduction;
