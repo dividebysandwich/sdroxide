@@ -23220,10 +23220,11 @@ mod meter_ballistics_tests {
         }
         assert!(v > -80.0, "rose to {v}");
         // Gone again: a third of a second later it has fallen less than half.
+        let top = v;
         for _ in 0..10 {
             v = meter_ballistics(v, -113.0, TICK);
         }
-        assert!(v > -95.0, "fell to {v}");
+        assert!(top - v < (top - -113.0) / 2.0, "fell from {top} to {v}");
         // And after two seconds it is down.
         for _ in 0..60 {
             v = meter_ballistics(v, -113.0, TICK);

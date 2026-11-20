@@ -11666,7 +11666,7 @@ mod tests {
 
         let (ctx, input) = desktop_ctx();
         let mut picked = None;
-        let mut draw = |input: egui::RawInput, picked: &mut Option<Probe>| {
+        let draw = |input: egui::RawInput, picked: &mut Option<Probe>| {
             ctx.run_ui(input, |ui| {
                 let mut probes = ProbeRow::default();
                 let mut cmds = Vec::new();
