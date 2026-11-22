@@ -531,12 +531,14 @@ impl Station {
     fn attach(self: &Arc<Self>, r: RadioParams, primary: bool) -> Arc<Shared> {
         let (spectrum_watch, spectrum_rx) = watch::channel(None);
         let (wide_watch, wide_spectrum_rx) = watch::channel(None);
+        let (state_ready_tx, state_ready_rx) = watch::channel(false);
         let shared = Arc::new(Shared {
             id: r.id,
             name: Mutex::new(r.name),
             primary,
             cmd_tx: r.cmd_tx,
             latest: Mutex::new(Latest::default()),
+            state_ready: state_ready_rx,
             session: Mutex::new(None),
             busy: AtomicBool::new(false),
             mic_tx: Mutex::new(r.mic_tx),
@@ -566,6 +568,7 @@ impl Station {
                     r.audio_rx,
                     spectrum_watch,
                     wide_watch,
+                    state_ready_tx,
                 )
             })
             .expect("spawn pump thread");
@@ -590,6 +593,8 @@ pub(crate) struct Shared {
     pub primary: bool,
     pub cmd_tx: crossbeam_channel::Sender<Command>,
     pub latest: Mutex<Latest>,
+    /// Set when the engine has supplied its first complete radio state.
+    pub state_ready: watch::Receiver<bool>,
     pub session: Mutex<Option<SessionTx>>,
     pub busy: AtomicBool,
     pub mic_tx: Mutex<rtrb::Producer<f32>>,
@@ -883,6 +888,7 @@ fn pump(
     mut audio_rx: rtrb::Consumer<f32>,
     spectrum_watch: watch::Sender<Option<SpectrumFrame>>,
     wide_watch: watch::Sender<Option<SpectrumFrame>>,
+    state_ready: watch::Sender<bool>,
 ) {
     let mut mono = Vec::<f32>::new();
     let mut opus_enc: Option<opus::Encoder> = None;
@@ -906,9 +912,18 @@ fn pump(
         // Events: block briefly so the loop runs ~200 Hz even when idle.
         match event_rx.recv_timeout(Duration::from_millis(5)) {
             Ok(ev) => {
+                let is_state = matches!(&ev, RadioEvent::State(_));
                 handle_event(&shared, ev);
+                if is_state {
+                    state_ready.send_replace(true);
+                }
+
                 while let Ok(ev) = event_rx.try_recv() {
+                    let is_state = matches!(&ev, RadioEvent::State(_));
                     handle_event(&shared, ev);
+                    if is_state {
+                        state_ready.send_replace(true);
+                    }
                 }
             }
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}

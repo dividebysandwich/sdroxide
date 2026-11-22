@@ -73,6 +73,27 @@ async fn session(
         return;
     };
 
+    // Do not acknowledge a radio with its default, pre-initialisation state.
+    // The pump signals this after caching the engine's first complete state.
+    let mut state_ready = shared.state_ready.clone();
+
+    let ready = tokio::time::timeout(Duration::from_secs(10), async {
+        while !*state_ready.borrow_and_update() {
+            if state_ready.changed().await.is_err() {
+                return false;
+            }
+        }
+        true
+    })
+    .await;
+
+    if !matches!(ready, Ok(true)) {
+        let _ =
+            socket.send(msg(&ServerMsg::Error("radio did not initialise its state".into()))).await;
+        let _ = socket.close().await;
+        return;
+    }
+
     // Single-client rule: the loser gets Busy and is closed immediately.
     if shared.busy.swap(true, Ordering::SeqCst) {
         let _ = socket.send(msg(&ServerMsg::Busy)).await;
