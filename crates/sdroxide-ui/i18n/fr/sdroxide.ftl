@@ -29,6 +29,7 @@ ui-theme-dracula = Dracula
 ui-theme-catppuccin-mocha = Catppuccin mocha
 ui-theme-catppuccin-latte = Catppuccin latte
 ui-theme-modern-minimalist = Minimaliste moderne
+ui-theme-simplesdr = SimpleSDR
 
 chrome-style-angled = Anguleux
 chrome-style-rectangular = Rectangulaire
@@ -324,7 +325,7 @@ settings-added-radio-s-s-meter =
 settings-t-0-db = 0 dB
 settings-antenna-somewhere-else-no-locator = L'antenne est ailleurs et aucun locator n'est défini, donc rien de ce qu'entend cette radio n'est transmis à PSK Reporter, WSPRnet ou FreeDV Reporter. Saisissez le locator du récepteur ci-dessus pour transmettre depuis lui.
 settings-ranges-are-mhz-low-high = Les plages sont en MHz, bas-haut, séparées par des virgules : 144-146, 430-440 — soit 144000000-146000000 Hz et 430000000-440000000 Hz. Ce sont des fréquences de cadran : un décalage de convertisseur ne les déplace pas. Le décalage de convertisseur ci-dessus est le champ en hertz. Laissez une plage vide pour utiliser ce que le périphérique annonce de lui-même ; un périphérique qui n'annonce rien est pris au mot.
-settings-careful-rtl-sdr-blog-v4 = Attention avec un RTL-SDR : le Blog V4 convertit déjà vers le haut en dessous de 28,8 MHz ; un décalage négatif qui amène le matériel dans cette zone se décale donc deux fois.
+settings-careful-rtl-sdr-blog-v4 = Attention avec un RTL-SDR : le Blog V4/V4L convertit déjà vers le haut en dessous de 28,8 MHz ; un décalage négatif qui amène le matériel dans cette zone se décale donc deux fois.
 settings-transmit-audio = Audio d'émission
 settings-use = utilisé
 settings-every-stage-off = tous les étages désactivés
@@ -735,6 +736,13 @@ settings-picup-sstv-dir = Dossier SSTV
 settings-picup-weather-fax = Fax météo
 settings-picup-wefax-dir = Dossier WEFAX
 settings-picup-empty-login-directory = Vide : le répertoire de connexion.
+settings-folders-heading = Dossiers des images reçues
+settings-folders-explain = Où cette station enregistre ce qu'elle reçoit. Le chemin se trouve sur la machine à laquelle la radio est reliée : un écran distant peut le saisir mais pas le parcourir. Les images déjà enregistrées restent listées.
+settings-folders-sstv = Dossier SSTV
+settings-folders-wefax = Dossier WEFAX
+settings-folders-not-absolute = ⚠ Chemin non absolu — ignoré, le dossier par défaut est utilisé.
+settings-folders-empty-default = Vide utilise le dossier par défaut. Si un dossier ne peut pas être créé (disque non branché), le dossier par défaut sert jusqu'à ce que ce soit possible.
+settings-folders-apply = APPLIQUER
 settings-picup-file-names = Noms de fichiers
 settings-picup-format = Format
 settings-picup-add-extension = ajouter l'extension
@@ -1402,7 +1410,7 @@ settings-radio-applies-immediately-no-reconnect-tuner = S'applique immédiatemen
 settings-radio-crystal-error-parts-per-million = Erreur du quartz en parties par million. Lancez avec RUST_LOG=sdroxide_rtlsdr=debug et le journal affiche l'erreur d'horloge mesurée après environ 20 secondes — c'est ce nombre-là qu'il faut saisir. S'applique immédiatement.
 settings-radio-hf-reception = Réception HF
 settings-radio-tuner-itself-starts-24-mhz =
-    L'accord lui-même commence à 24 MHz. Un RTL-SDR Blog V4 convertit vers le haut en dessous de cette valeur, matériellement ; les autres clés n'atteignent la HF qu'en échantillonnant directement le CAN, par le port HF du V3. Automatique confie tout ce qui est sous 24 MHz au CAN et tout ce qui est au-dessus à l'accord.
+    L'accord lui-même commence à 24 MHz. Un RTL-SDR Blog V4/V4L convertit vers le haut en dessous de cette valeur, matériellement ; les autres clés n'atteignent la HF qu'en échantillonnant directement le CAN, par le port HF du V3. Automatique confie tout ce qui est sous 24 MHz au CAN et tout ce qui est au-dessus à l'accord.
 
     L'échantillonnage direct couvre toutes les bandes HF, 17 m et 15 m compris — elles arrivent dans la seconde zone de Nyquist du CAN, dans le bon sens. Rien ne filtre toutefois l'entrée du CAN, donc ce qui se trouve à 28,8 MHz moins le cadran arrive avec elles : 10,7 MHz sous le 17 m, 7,726 MHz sous le 15 m.
 
@@ -2022,6 +2030,8 @@ topbar-radio = RADIO
 topbar-tune-voice-keyer-drive-mic = Accord, le manipulateur vocal, et les niveaux d'excitation et de micro
 topbar-transmit = ÉMISSION
 topbar-tune = {" "}ACCORD{" "}
+topbar-two-tone = {" "}2T{" "}
+topbar-two-tone-hover = Test deux tons : émet 700 Hz et 1900 Hz ensemble au niveau d'Accord, jusqu'à un nouveau clic. Son enveloppe va de rien au maximum, ce qui montre nettement les produits d'intermodulation d'un amplificateur sur un second récepteur, et c'est le signal dont PureSignal apprend le plus vite — une porteuse fixe ne lui apprend qu'un point. Utilisez une charge fictive.
 topbar-panadapter-two-layers-their-speeds = Le panoramique — ses deux couches, leurs vitesses et leur détail, la mémoire de crête — ainsi que le contraste de la cascade, la taille de la FFT et les skimmers
 topbar-display = AFFICHAGE
 topbar-logbook-spots-awards-memories-scanner = Journal, spots, distinctions, mémoires, le scanner, les réglages et le manuel
@@ -2281,7 +2291,6 @@ topbar-recent = RÉCENTS
 topbar-recent-empty =
     Se remplit après 3 s sur un poste
 topbar-mode = MODE
-topbar-digital = NUMÉRIQUE
 
 ## Top bar: the System box's window chips.
 
@@ -4081,7 +4090,6 @@ scanner-move-don-t-stop-channel = Passer à la suite, et ne plus s'arrêter sur 
 adsb-starting-ads-b-decoder = démarrage du décodeur ADS-B…
 adsb-ads-b = ADS-B
 adsb-t-1090-mhz-mode-s = Mode S 1090 MHz
-adsb-tune-receiver-1090-000-mhz = Accordez le récepteur sur 1090,000 MHz, la liaison descendante ADS-B mondiale. Il n'y a qu'un seul canal.
 adsb-setup = CONFIGURATION
 adsb-timeouts-trail-length-how-far = Délais, longueur de traînée et portée des vecteurs de vitesse
 adsb-aircraft = AVIONS
@@ -4098,7 +4106,7 @@ adsb-last-frame-accepted-aircraft = La dernière trame acceptée de cet avion
 adsb-ads-b-setup = Configuration ADS-B
 adsb-drop-map-after = Retirer de la carte après
 adsb-without-position-report = sans rapport de position
-adsb-past-aircraft-comes-off-map = Au-delà, l'avion quitte la carte et sa ligne grisonne. Il n'est pas estompé : un carré pâle à une position périmée reste une affirmation sur l'endroit où se trouve un avion, à la même encre que les vrais.
+adsb-past-aircraft-comes-off-map = Au-delà, l'avion quitte la carte et sa ligne grisonne. Il n'est pas estompé : un symbole pâle à une position périmée reste une affirmation sur l'endroit où se trouve un avion, à la même encre que les vrais.
 adsb-drop-list-after = Retirer de la liste après
 adsb-nothing-heard-all = sans rien avoir entendu du tout
 adsb-trail-length = Longueur de traînée
@@ -5012,7 +5020,6 @@ acars-mode = mode { $mode }
 
 ## adsb: messages with values (src/app/panels/adsb.rs)
 
-adsb-aircraft-3 = { $aircraft } avions
 adsb-frames = { $frames } trames
 adsb-preambles = { $preambles } préambules
 adsb-bad-crc = { $bad_crc } CRC mauvais
@@ -6043,3 +6050,105 @@ textmodem-psk-coded-hint =
 topbar-sk-filter-after-nr-hint = SK après RNN/DFNR — et après l'AGC : ce que le filtre retire reste retiré (voir le gain à côté) ; désactivé : avant l'AGC, qui rétablit le niveau
 topbar-sk-filter-boost-hint = Gain après le filtre SK, 0–18 dB (5 dB), limité en douceur sous la pleine échelle : après le NR rien ne rétablit le niveau retiré par le filtre
 topbar-sk-filter-boost-before-nr = Avant le NR l'AGC rétablit le niveau ; le gain n'agit qu'après le NR
+
+## hfdl: ground stations (src/app/hfdl.rs)
+
+hfdl-stations = STATIONS
+hfdl-no-station-heard-yet = Aucune station au sol entendue pour l'instant. Le squitter d'une station se répète toutes les ~32 s sur les canaux qu'elle utilise ; la liste se remplit aussi à partir de la table système du réseau, dès qu'elle a été reçue.
+hfdl-station-heard = entendue il y a { $age } sur { $mhz } MHz
+hfdl-station-squitters = { $n } squitters
+hfdl-station-not-heard = pas encore entendue
+hfdl-station-channel-hint = Accordez-vous sur { $mhz } MHz. Vert : la station travaille sur ce canal en ce moment.
+hfdl-station-channels-unknown = Canaux inconnus tant que le réseau n'a pas diffusé sa table système.
+hfdl-chip-stations = Utilisée par { $stations }
+hfdl-chip-working = { $station } travaille sur ce canal — entendue il y a { $age }
+
+## hfdl: ACARS messages (src/app/hfdl.rs)
+
+hfdl-messages = MESSAGES
+hfdl-no-acars-yet = Aucun message ACARS pour l'instant. Les messages des compagnies aériennes passent dans la liaison de données entre les squitters, bien moins souvent qu'en VHF ; ceux qui sont entendus sont conservés ici après que le journal de décodage les a fait défiler.
+hfdl-save-hfdl-acars-messages-csv = Enregistrer les messages ACARS dans un fichier CSV
+hfdl-acars-downlink = De l'avion vers le sol
+hfdl-acars-uplink = Du sol vers l'avion
+hfdl-acars-crc-bad = CRC
+hfdl-acars-crc-bad-hint = La séquence de contrôle propre au message ne correspondait pas, une partie du texte peut donc être erronée. La trame de liaison de données qui le transportait a, elle, passé son propre contrôle.
+hfdl-acars-more = plus…
+hfdl-acars-more-hint = Une partie d'un message plus long — d'autres blocs suivent.
+
+## hfdl: aircraft list (src/app/hfdl.rs)
+
+hfdl-aircraft-list = AVIONS
+hfdl-no-aircraft-heard-yet = Aucun avion entendu pour l'instant. Un avion apparaît ici dès sa première liaison descendante — une connexion, un rapport de position, un message ACARS —, qu'il envoie ou non une position pour la carte.
+hfdl-aircraft-position = à { $lat }, { $lon } · il y a { $age }
+hfdl-aircraft-from-you = { $km } km, { $bearing }° de vous
+hfdl-aircraft-logged-off = déconnecté
+hfdl-aircraft-no-position-hint = Aucune position signalée pour l'instant : rien à faire clignoter sur la carte
+hfdl-aircraft-filter-hint = Afficher seulement les décodages de cet avion : active le filtre et ouvre DÉCODAGES
+hfdl-col-reg = IMMAT.
+hfdl-col-flight = VOL
+hfdl-col-heard = ÉCOUTÉ
+hfdl-col-station = STATION
+hfdl-col-mhz = MHz
+hfdl-col-snr = dB
+hfdl-col-msgs = MSG
+hfdl-col-dist = KM
+hfdl-col-last = DERN. MSG
+hfdl-aircraft-sort-hint = Trier selon cette colonne ; cliquez à nouveau pour inverser
+hfdl-aircraft-blink-hint = Faire clignoter cet avion sur la carte
+
+## hfdl: several channels at once (src/app/hfdl.rs)
+
+hfdl-chip-multi-hint = Cliquez pour n'écouter que ce canal ; Ctrl-clic (⌘-clic sur Mac) pour le décoder en même temps que les autres.
+hfdl-left-out-hint = Demandé mais non décodé : trop éloigné des autres canaux pour partager leur voie (200 kHz au plus), ou hors de la fenêtre du récepteur.
+hfdl-nearby = + PROCHES
+hfdl-nearby-hint = Décoder aussi chaque canal assez proche pour partager une voie avec celui en vigueur — à 200 kHz au plus les uns des autres et dans la fenêtre du récepteur, huit au maximum.
+hfdl-nearby-none-hint = Aucun autre canal ne peut partager la voie : aucun n'est assez proche, les huit places sont prises, ou la fenêtre du récepteur est trop étroite.
+hfdl-single-hint = Revenir au seul canal sur lequel le cadran est réglé
+hfdl-lane-label = CANAUX
+
+## hfdl: auto-follow (src/app/hfdl.rs)
+
+hfdl-auto = AUTO
+hfdl-auto-hint = Trouver seul une bande ouverte : rester dessus tant que des stations au sol y sont entendues et, lorsqu'aucune ne l'a été depuis environ une minute et demie, passer à la bande suivante — les plus hautes le jour et les plus basses la nuit, selon votre carré locator, et d'abord une bande qu'une station annonce utiliser — en prenant d'un coup tous les canaux de cette bande. Choisir un canal à la main désactive ce mode.
+hfdl-follow-starting = AUTO · attente du décodeur…
+hfdl-follow-parked = AUTO · { $mhz } MHz est ouverte — { $station } entendue il y a { $age }
+hfdl-follow-listening = AUTO · écoute sur { $mhz } MHz ; bande suivante dans { $secs } s si rien n'est entendu
+
+## hfdlmap: ground stations (src/hfdl_map.rs)
+
+hfdlmap-gs-heard = entendue il y a { $age }
+hfdlmap-gs-not-heard = pas entendue récemment — connue par la table système
+
+## hfdl: channels by band (src/app/hfdl.rs)
+
+hfdl-band-label = MHz
+hfdl-band-hint = Afficher les canaux de { $mhz } MHz. Vert : une station travaille sur l'un d'eux ; souligné : l'un d'eux est en cours de décodage.
+
+## hfdl: calculated course and speed (src/app/hfdl.rs)
+
+hfdl-col-calc-trk = CAP CALC.
+hfdl-col-calc-kt = KT CALC.
+hfdl-col-calc-hint = Calculé à partir des deux derniers rapports de position de l'avion : route sur le sol et vitesse sol moyenne entre les deux. Non transmis par l'avion : les rapports de position HFDL ne contiennent ni l'un ni l'autre.
+
+## hfdl: feeds (src/app/hfdl.rs)
+
+hfdl-feeds = FLUX
+hfdl-feeds-hint = Envoyer ce qui est décodé ailleurs que dans ce panneau — vers Airframes, ou vers vos propres programmes. Tout est désactivé tant que vous ne l'activez pas.
+hfdl-station-id = ID de station
+hfdl-station-id-hint = Inscrit dans chaque trame envoyée. Airframes attribue votre flux à cet ID et demande une forme XX-YYYY-HFDL : vos initiales, un code d'aéroport ou un locator, et le mode. Lettres, chiffres, - et _, jusqu'à 32.
+hfdl-station-id-bad = Lettres, chiffres, - et _ uniquement, jusqu'à 32 caractères.
+hfdl-feed-airframes = Envoyer à Airframes (feed.airframes.io)
+hfdl-feed-airframes-hint = Envoyer chaque trame décodée — squitters, positions, messages ACARS — avec votre ID de station à l'entrée HFDL d'Airframes (TCP, port 5556), au format JSON de dumphfdl, celui qu'elle lit. Votre flux apparaît ensuite sur airframes.io sous cet ID. Rien n'est envoyé tant que ceci est désactivé.
+hfdl-feed-needs-id = Non envoyé : indiquez d'abord un ID de station.
+hfdl-feed-sent = { $n } trames envoyées
+hfdl-feed-json = Envoyer le même JSON à (UDP host:port, séparés par des virgules)
+hfdl-feed-json-hint = Vos propres programmes qui lisent le JSON de dumphfdl — acarshub (dont l'entrée HFDL est en général le port UDP 5556), un journal de bord, un script. Un datagramme par trame à chacun, comme l'envoie la sortie UDP decoded:json de dumphfdl. Aucun ID de station nécessaire. Appliqué quand vous quittez le champ.
+hfdl-feed-json-bad = Ce n'est pas un host:port : { $targets }
+hfdl-feed-sbs = Port BaseStation (SBS)
+hfdl-feed-sbs-hint = Servir les positions des avions sous forme de lignes BaseStation sur ce port TCP, pour Virtual Radar Server, PlanePlotter et similaires — les mêmes lignes que celles qu'écrit la sortie basestation de dumphfdl. 0 désactive. 30003 est le port BaseStation habituel ; choisissez-en un autre si un décodeur ADS-B de cet ordinateur l'utilise déjà. Appliqué quand vous quittez le champ.
+hfdl-feed-sbs-lan = Autoriser d'autres ordinateurs à se connecter
+hfdl-feed-sbs-lan-hint = Désactivé : seuls les programmes de cet ordinateur peuvent se connecter. Activé : tout ordinateur pouvant joindre celui-ci sur le réseau le peut.
+hfdl-feed-sbs-status = { $clients ->
+        [one] { $clients } client connecté
+       *[other] { $clients } clients connectés
+    } · { $n } positions envoyées

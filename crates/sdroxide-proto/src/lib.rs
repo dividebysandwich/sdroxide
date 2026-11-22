@@ -1722,10 +1722,53 @@ use sdroxide_types::{
 /// v211: ELAD monitoring. `CatConfig` gains `elad_mute_on_radio_ptt` and
 /// `EladConfig` gains `hear_own_tx`, which changes every `RadioConfig`.
 ///
-/// v212: HPSDR ATU diagnostics. `AtuState` gains `reg7_supported`,
+/// v212: ADS-B avionics. `AdsbAircraft` gains `avionics` (`AdsbAvionics`:
+/// heading, airspeeds, selected altitude and heading, QNH, autopilot modes,
+/// ADS-B version) at its tail, which changes every `AdsbStatus`.
+///
+/// v213: ADS-B carrier. `AdsbAircraft` gains `carrier_hz` (where the
+/// transponder's carrier sits) at its tail, which changes every `AdsbStatus`.
+///
+/// v214: Mode-S Beast in and out. `Command::SetBeastConfig`,
+/// `ServerMsg::BeastStatus` appended; `StationConfig` gains `beast` and
+/// `AdsbStatus` gains `feed` and `feed_state` at their tails.
+///
+/// v215: ELAD transverter port. `DeviceCaps` gains `rx_antenna_is_xvtr` and
+/// `Transverter` gains `elad_rf_out`, which changes every `RadioConfig`.
+///
+/// v216: the Hardrock tuner's last tunes. `AtuNetwork` gains `start_swr` and
+/// `AtuReadout` gains `history` (`Vec<TuneRecord>`) on their tails, which
+/// changes the layout of every `ServerMsg::AmpStatus` with a tuner.
+///
+/// v217: TCI spots. `SpotKind::Tci` is appended, so no surviving discriminant
+/// moves, but `Spot` gains `color` at its tail — the colour a TCI client chose
+/// for one spot — and postcard is not self-describing, so every `Spots` message
+/// changes layout. The labels travel in the new `ServerMsg::TciSpots`, appended
+/// last, apart from `Spots` because they belong to one radio and the feeds to
+/// the station.
+///
+/// v218: SAM sidebands. `RxState` gains `sam_sideband` and `sam_mrc_tau_s` at
+/// its tail and `Command::SetSamSideband` is appended.
+///
+/// v219: HFDL channels, auto-follow and feeds. `HfdlSettings` gains `also_khz`
+/// (the channels decoded alongside the primary) and `auto_follow` at its tail;
+/// it crosses whole inside `RadioState` and `Command::SetHfdlConfig`.
+/// `RadioState` gains `hfdl_outputs` at its tail, and `Command` gains
+/// `SetHfdlOutputs` after `ScanBack`.
+///
+/// v220: where received pictures are saved. `StationConfig` gains
+/// `picture_folders` (`PictureFolders`) on its tail and `Command` gains
+/// `SetPictureFolders` last. `StationConfig` rides whole, so a v211 peer fails
+/// to decode it.
+///
+/// v221: TUNE can send a two-tone test signal (issue #525). `TxState` gains
+/// `two_tone` on its tail and `Command` gains a trailing `SetTuneTwoTone`;
+/// `TxState` rides whole inside `RadioState`, so a v211 peer reads the extra
+/// byte as the start of the next field and fails to decode every state.
+/// v222: HPSDR ATU diagnostics. `AtuState` gains `reg7_supported`,
 /// `reg7_status`, `reg7_fresh` and `command_error`, changing the serialized
 /// `RadioState` layout.
-pub const PROTO_VERSION: u16 = 212;
+pub const PROTO_VERSION: u16 = 222;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
@@ -2235,6 +2278,25 @@ pub enum ServerMsg {
     ///
     /// Appended last, for the usual reason.
     SondeStatus(Box<sdroxide_types::SondeStatus>),
+
+    /// `RadioEvent::BeastStatus`: the Beast output server's state, for the
+    /// settings dialog on a remote client.
+    ///
+    /// Appended last, for the usual reason.
+    BeastStatus {
+        running: bool,
+        addr: String,
+        clients: usize,
+        error: Option<String>,
+    },
+
+    /// `RadioEvent::TciSpots`: every label TCI clients have placed on this
+    /// radio with `SPOT:`. A whole book each time, kept by the station and
+    /// replayed to a client that attaches late: a label is a condition, and
+    /// a logger may not re-send it for minutes.
+    ///
+    /// Appended last, for the usual reason.
+    TciSpots(Vec<Spot>),
 }
 
 /// One radio in a station's roster, as a client sees it.
@@ -2401,6 +2463,30 @@ mod tests {
         };
         let cmd = Command::SetSondeConfig(sonde);
         assert_eq!(decode::<Command>(&encode(&cmd).unwrap()).unwrap(), cmd);
+
+        // The HFDL settings (several channels, auto-follow) and feeds, both
+        // ways, away from their defaults.
+        let mut hfdl = sdroxide_types::HfdlSettings {
+            enabled: true,
+            frequency_hz: 13_276_000.0,
+            auto_follow: true,
+            ..Default::default()
+        };
+        hfdl.set_also(&[13_312, 13_324]);
+        let cmd = Command::SetHfdlConfig(hfdl);
+        assert_eq!(decode::<Command>(&encode(&cmd).unwrap()).unwrap(), cmd);
+        let feeds = sdroxide_types::HfdlOutputs {
+            station_id: "XX-TEST-HFDL".into(),
+            airframes: true,
+            json_udp: vec!["127.0.0.1:5556".into()],
+            sbs_port: 30_003,
+            sbs_lan: true,
+        };
+        let cmd = Command::SetHfdlOutputs(feeds.clone());
+        assert_eq!(decode::<Command>(&encode(&cmd).unwrap()).unwrap(), cmd);
+        let frame =
+            ServerMsg::State(RadioState { hfdl, hfdl_outputs: feeds, ..Default::default() });
+        assert_eq!(decode::<ServerMsg>(&encode(&frame).unwrap()).unwrap(), frame);
         let state = RadioState { sonde, ..Default::default() };
         let frame = ServerMsg::State(state);
         assert_eq!(decode::<ServerMsg>(&encode(&frame).unwrap()).unwrap(), frame);
@@ -2481,8 +2567,16 @@ mod tests {
         }));
         let back: ServerMsg = decode(&encode(&m).unwrap()).unwrap();
         assert_eq!(back, m);
+        let folders = sdroxide_types::PictureFolders {
+            sstv: "/Volumes/Drive/sstv".into(),
+            wefax: "/Volumes/Drive/wefax".into(),
+        };
+        let m = ClientMsg::Command(Command::SetPictureFolders(Box::new(folders.clone())));
+        let back: ClientMsg = decode(&encode(&m).unwrap()).unwrap();
+        assert_eq!(back, m);
         let m = ServerMsg::StationConfig(Box::new(sdroxide_types::StationConfig {
             picture_upload: cfg,
+            picture_folders: folders,
             ..Default::default()
         }));
         let back: ServerMsg = decode(&encode(&m).unwrap()).unwrap();
@@ -3299,6 +3393,33 @@ mod tests {
             let m = ServerMsg::ProbeAnswer(Box::new(a));
             assert_eq!(decode::<ServerMsg>(&encode(&m).unwrap()).unwrap(), m);
         }
+    }
+
+    /// A TCI spot with its own colour, and a feed spot without one, both
+    /// survive the wire — `color` sits at `Spot`'s tail, where a field-order
+    /// slip would show.
+    #[test]
+    fn roundtrip_tci_spots() {
+        use sdroxide_types::SpotKind;
+        let spot = |kind, color| Spot {
+            id: Spot::make_id(kind, "RN6LHF", 7_100_000.0),
+            kind,
+            freq_hz: 7_100_000.0,
+            call: "RN6LHF".into(),
+            spotter: String::new(),
+            mode: "CW".into(),
+            comment: "ANY_TEXT".into(),
+            reference: None,
+            grid: None,
+            loc: None,
+            when_utc: 1_763_200_000,
+            snr_db: None,
+            color,
+        };
+        let m = ServerMsg::TciSpots(vec![spot(SpotKind::Tci, Some([255, 0, 0]))]);
+        assert_eq!(decode::<ServerMsg>(&encode(&m).unwrap()).unwrap(), m);
+        let m = ServerMsg::Spots(vec![spot(SpotKind::DxCluster, None)]);
+        assert_eq!(decode::<ServerMsg>(&encode(&m).unwrap()).unwrap(), m);
     }
 
     /// The sign-in exchange, both ways.

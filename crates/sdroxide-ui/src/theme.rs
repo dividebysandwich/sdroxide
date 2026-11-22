@@ -828,8 +828,53 @@ const MODERN_MINIMALIST: Palette = Palette {
     hazard_dark: c(0x161204),
 };
 
+/// A flat application look: neutral charcoal grounds a step apart, soft white
+/// text, and a single plain blue doing all the accent work. The chrome role is
+/// the muted caption grey rather than a second hue, so windows are outlined
+/// instead of decorated.
+const SIMPLE_SDR: Palette = Palette {
+    light: false,
+    no_dim: false,
+    bg_deep: c(0x0f1115),
+    panel: c(0x171a21),
+    input_bg: c(0x0c0e12),
+    fill: c(0x1f232c),
+    fill_hover: c(0x2a2f3a),
+    fill_active: c(0x343a47),
+    line: c(0x272c36),
+    line_lit: c(0x4b5362),
+    text: c(0xe6e8eb),
+    text_strong: c(0xffffff),
+    // The scheme's own accent is #3b82f6, which is a fill colour: as heading
+    // and link text on the panel it is lifted one step so it clears 4.5:1
+    // with room to spare, and the original stays on as the dim register.
+    cyan: c(0x4ba3f0),
+    cyan_dim: c(0x3b82f6),
+    pink: c(0x8a93a3),
+    yellow: c(0xf5c542),
+    green: c(0x3dd68c),
+    ink_on_cyan: c(0x08131f),
+    ink_on_bright: Color32::BLACK,
+    red_deep: c(0x6b2228),
+    cq_bg: c(0x33191c),
+    tome_bg: c(0x3a2e12),
+    done_bg: c(0x12301f),
+    row_bg: c(0x13161c),
+    row_hover: c(0x1f232c),
+    scroll_track: c(0x1b1f27),
+    scroll_handle: c(0x5a6373),
+    scroll_handle_hover: c(0x4ba3f0),
+    scroll_handle_drag: c(0x3b82f6),
+    faint_bg: c(0x1b1f27),
+    // The scheme's transmit ink is a coral (#ff6b6b); carried to a red that
+    // reads as an alarm, like the Nord/Everforest trade above.
+    alert: c(0xe5484d),
+    hazard: c(0xf5c542),
+    hazard_dark: c(0x171307),
+};
+
 /// Indexed by [`theme_index`].
-static PALETTES: [Palette; 17] = [
+static PALETTES: [Palette; 18] = [
     DEFAULT,           // 0  Default
     GREEN_PHOSPHOR,    // 1  Green phosphor
     AMBER_PHOSPHOR,    // 2  Amber phosphor
@@ -847,6 +892,7 @@ static PALETTES: [Palette; 17] = [
     MODERN_MINIMALIST, // 14 Modern minimalist
     LIGHT,             // 15 Light
     HIGH_CONTRAST,     // 16 High contrast
+    SIMPLE_SDR,        // 17 SimpleSDR
 ];
 
 /// The S-meter instrument's colours: the face wash, the backlight bloom, the
@@ -1082,6 +1128,39 @@ const METER_HIGH_CONTRAST: MeterPalette = MeterPalette {
     ramp_hi: c(0xccffff),
 };
 
+/// The SimpleSDR instrument: flat. One ground with no wash down it, no
+/// backlight and no halo anywhere, a plain pointer in the text colour, and the
+/// ramps in the theme's one blue — a meter drawn the way the rest of that
+/// theme is, as a diagram rather than as a lit object.
+///
+/// It takes the [`MeterFace::Contrast`] face for what that face *does* rather
+/// than for its shades: it is the one that does not bloom, and a bloom is the
+/// only thing here that could not be switched off by picking a colour.
+const METER_SIMPLE_SDR: MeterPalette = MeterPalette {
+    face: MeterFace::Contrast,
+    needle_root: c(0xe6e8eb),
+    needle_mid: c(0xe6e8eb),
+    needle_tip: c(0xe6e8eb),
+    needle_glow: Color32::TRANSPARENT,
+    face_top: c(0x171a21), // = the panel, top and bottom alike
+    face_bot: c(0x171a21),
+    glass: c(0x272c36),
+    backlight: Color32::TRANSPARENT,
+    readout: c(0xe6e8eb),
+    subdued: c(0x8a93a3),
+    tick_minor: c(0x8a93a3),
+    tick_major: c(0xe6e8eb),
+    label: c(0xc3c8d0),
+    grid_line: c(0x272c36),
+    grid_label: c(0x8a93a3),
+    rail_top: c(0x1f232c),
+    rail_bot: c(0x1f232c),
+    rail_edge: c(0x4b5362),
+    ramp_lo: c(0x3b82f6),
+    ramp_mid: c(0x3b82f6),
+    ramp_hi: c(0x4ba3f0),
+};
+
 /// A Glass instrument built from a dark theme's palette rather than written
 /// out: the theme's panel is the dial, its cyan is the backlight and the
 /// ramps, its text is the ink, and the historic red blade rides on top.
@@ -1155,7 +1234,7 @@ const fn meter_paper(p: &Palette) -> MeterPalette {
 /// Indexed by [`theme_index`], like [`PALETTES`]. Rainbow keeps the historic
 /// navy instrument: its grounds are the default's, and the meter already
 /// reads in the accents the ramps give it.
-static METER_PALETTES: [MeterPalette; 17] = [
+static METER_PALETTES: [MeterPalette; 18] = [
     METER_DEFAULT,                   // 0  Default
     METER_GREEN,                     // 1  Green phosphor
     METER_AMBER,                     // 2  Amber phosphor
@@ -1173,6 +1252,7 @@ static METER_PALETTES: [MeterPalette; 17] = [
     meter_paper(&MODERN_MINIMALIST), // 14 Modern minimalist
     METER_LIGHT,                     // 15 Light
     METER_HIGH_CONTRAST,             // 16 High contrast
+    METER_SIMPLE_SDR,                // 17 SimpleSDR
 ];
 
 /// The current theme's S-meter instrument colours.
@@ -1276,7 +1356,7 @@ const fn scope_light_from(p: &Palette) -> ScopePalette {
 /// Indexed by [`theme_index`], like [`PALETTES`]. High contrast lends the
 /// instruments its own roles like any other dark theme — its accents were
 /// already picked to sit on black, which is what the glass is.
-static SCOPE_PALETTES: [ScopePalette; 17] = [
+static SCOPE_PALETTES: [ScopePalette; 18] = [
     scope_from(&DEFAULT),                 // 0  Default
     scope_from(&GREEN_PHOSPHOR),          // 1  Green phosphor
     scope_from(&AMBER_PHOSPHOR),          // 2  Amber phosphor
@@ -1294,6 +1374,7 @@ static SCOPE_PALETTES: [ScopePalette; 17] = [
     scope_light_from(&MODERN_MINIMALIST), // 14 Modern minimalist
     SCOPE_LIGHT,                          // 15 Light
     scope_from(&HIGH_CONTRAST),           // 16 High contrast
+    scope_from(&SIMPLE_SDR),              // 17 SimpleSDR
 ];
 
 /// The current theme's instrument inks — see [`ScopePalette`].
@@ -1460,7 +1541,7 @@ const fn map_light_from(p: &Palette) -> MapPalette {
 }
 
 /// Indexed by [`theme_index`], like [`PALETTES`].
-static MAP_PALETTES: [MapPalette; 17] = [
+static MAP_PALETTES: [MapPalette; 18] = [
     map_from(&DEFAULT),                 // 0  Default
     map_from(&GREEN_PHOSPHOR),          // 1  Green phosphor
     map_from(&AMBER_PHOSPHOR),          // 2  Amber phosphor
@@ -1478,6 +1559,7 @@ static MAP_PALETTES: [MapPalette; 17] = [
     map_light_from(&MODERN_MINIMALIST), // 14 Modern minimalist
     SCOPE_MAP_LIGHT,                    // 15 Light
     MAP_HIGH_CONTRAST,                  // 16 High contrast
+    map_from(&SIMPLE_SDR),              // 17 SimpleSDR
 ];
 
 /// The current theme's world-map inks — see [`MapPalette`].
@@ -1515,6 +1597,7 @@ const fn theme_index(t: UiTheme) -> u8 {
         UiTheme::ModernMinimalist => 14,
         UiTheme::Light => 15,
         UiTheme::HighContrast => 16,
+        UiTheme::SimpleSdr => 17,
     }
 }
 
@@ -1741,6 +1824,13 @@ pub fn spot_color(kind: SpotKind) -> (u8, u8, u8) {
     }
     let [_, r, g, b] = packed.to_be_bytes();
     (r, g, b)
+}
+
+/// The colour one spot is drawn in: its own, where a TCI client chose one,
+/// otherwise its kind's tint from [`spot_color`].
+#[inline]
+pub fn spot_rgb(spot: &sdroxide_types::Spot) -> (u8, u8, u8) {
+    spot.rgb(spot_color(spot.kind))
 }
 
 // The band-plan strip's shades, packed 0x00RRGGBB, one per `BandplanKind`.

@@ -167,6 +167,51 @@ pub struct AdsbAircraft {
     /// The last accepted frame as hex, for identifying something the decoder
     /// only half understands.
     pub raw_hex: String,
+    /// What the aircraft reports from its own systems beyond position and
+    /// velocity: airspeed, heading, what the crew has selected, the ADS-B
+    /// version. Each field stays `None` until a message carrying it arrives.
+    pub avionics: AdsbAvionics,
+    /// Where this transponder's carrier is, absolute Hz: the median of the
+    /// last frames' measurements. A transponder may sit anywhere within
+    /// ±1 MHz of 1090 MHz and each sits at its own oscillator's offset, which
+    /// is what draws one trace per aircraft in a waterfall zoomed in on
+    /// 1090. `None` until a frame has been measured.
+    pub carrier_hz: Option<f64>,
+}
+
+/// What an aircraft reports from its own systems (TC 19 subtypes 3/4, TC 29,
+/// TC 31). Most aircraft send only some of it: the airspeed message only when
+/// there is no velocity over the ground to send, the target state only from
+/// ADS-B version 2 transponders.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AdsbAvionics {
+    /// Heading, degrees — where the nose points, which differs from the
+    /// track by the wind.
+    pub heading_deg: Option<f32>,
+    /// Indicated airspeed, knots.
+    pub ias_kt: Option<f32>,
+    /// True airspeed, knots.
+    pub tas_kt: Option<f32>,
+    /// Selected altitude, feet.
+    pub selected_alt_ft: Option<i32>,
+    /// The selected altitude comes from the FMS rather than the MCP/FCU.
+    pub selected_alt_fms: bool,
+    /// Barometer setting, hPa.
+    pub qnh_hpa: Option<f32>,
+    /// Selected heading, degrees.
+    pub selected_heading_deg: Option<f32>,
+    /// Autopilot engaged.
+    pub autopilot: Option<bool>,
+    /// The autopilot modes on, in the order `VNAV ALT APP LNAV`.
+    pub modes: Vec<String>,
+    /// TCAS operational.
+    pub tcas: Option<bool>,
+    /// ADS-B version of the transponder (0, 1 or 2).
+    pub version: Option<u8>,
+    /// Navigation accuracy category for position, 0–11.
+    pub nac_p: Option<u8>,
+    /// Source integrity level, 0–3.
+    pub sil: Option<u8>,
 }
 
 impl AdsbAircraft {
@@ -195,6 +240,8 @@ impl AdsbAircraft {
             last_at: now,
             last_pos_at: 0,
             raw_hex: String::new(),
+            avionics: AdsbAvionics::default(),
+            carrier_hz: None,
         }
     }
 
@@ -300,6 +347,13 @@ pub struct AdsbStatus {
     ///
     /// Appended, for the usual reason: postcard numbers fields by position.
     pub degraded: Option<String>,
+    /// Where the frames come from: this receiver's own demodulator, or a Beast
+    /// stream from another program. Appended.
+    pub feed: AdsbFeed,
+    /// For a Beast feed, what its connection is doing — "192.168.178.127:30005
+    /// · connected" — so an empty table can be told apart from a dead link.
+    /// Appended.
+    pub feed_state: Option<String>,
 }
 
 /// How the ADS-B decoder behaves. Owned by the engine (it lives in
@@ -372,6 +426,77 @@ impl AdsbSettings {
     }
 }
 
+/// Where the ADS-B panel's frames come from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum AdsbFeed {
+    /// This receiver, tuned to 1090 MHz, through the built-in demodulator.
+    #[default]
+    Radio,
+    /// A Beast stream from another program — `readsb` or `dump1090` on a
+    /// Raspberry Pi at the window, say. Needs no receiver here at all.
+    Beast,
+}
+
+/// Mode-S Beast in and out (`beast.json`).
+///
+/// Out is a server, like the TCI and rigctld ones: it offers every frame this
+/// station decodes to whoever connects, which is how `readsb`, `tar1090` and
+/// the feeders take it. In is a subscription: the panel shows another
+/// program's frames instead of this receiver's.
+///
+/// One file for both because they are two ends of one thing, and because the
+/// rule that keeps them apart — what comes in never goes out — is easier to
+/// see in one place.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BeastConfig {
+    /// Serve the decoded frames. Off by default: it opens a port.
+    pub out_enabled: bool,
+    /// Interface to bind. `0.0.0.0` by default, because the usual reader is
+    /// `readsb` on another machine; there is nothing to control through it.
+    pub out_bind: String,
+    /// 30005 is the port every Beast reader assumes.
+    pub out_port: u16,
+    /// Which frames the panel shows.
+    pub feed: AdsbFeed,
+    /// `host:port` of the Beast output to subscribe to.
+    pub in_addr: String,
+}
+
+impl Default for BeastConfig {
+    fn default() -> Self {
+        BeastConfig {
+            out_enabled: false,
+            out_bind: "0.0.0.0".into(),
+            out_port: 30005,
+            feed: AdsbFeed::Radio,
+            in_addr: String::new(),
+        }
+    }
+}
+
+impl BeastConfig {
+    /// Bind addresses offered in the UI.
+    pub const BINDS: [&'static str; 2] = ["0.0.0.0", "127.0.0.1"];
+
+    pub fn out_addr(&self) -> String {
+        format!("{}:{}", self.out_bind, self.out_port)
+    }
+
+    /// The input address with the Beast port added when none was given, or
+    /// `None` when there is nothing to connect to.
+    pub fn in_target(&self) -> Option<String> {
+        let a = self.in_addr.trim();
+        if a.is_empty() {
+            None
+        } else if a.rsplit_once(':').is_some_and(|(_, p)| p.parse::<u16>().is_ok()) {
+            Some(a.to_string())
+        } else {
+            Some(format!("{a}:30005"))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,5 +557,15 @@ mod tests {
         assert!(s.drop_list_s >= s.drop_map_s);
         let s = AdsbSettings { history_points: 60_000, ..AdsbSettings::default() }.sane();
         assert_eq!(s.history_points, ADSB_TRACK_MAX as u16);
+    }
+
+    /// A bare host gets the Beast port; an explicit one is kept; nothing is
+    /// nothing to connect to.
+    #[test]
+    fn a_beast_input_address_gets_its_port() {
+        let at = |a: &str| BeastConfig { in_addr: a.into(), ..BeastConfig::default() }.in_target();
+        assert_eq!(at("192.168.178.127").as_deref(), Some("192.168.178.127:30005"));
+        assert_eq!(at(" pi:30105 ").as_deref(), Some("pi:30105"));
+        assert_eq!(at("  "), None);
     }
 }

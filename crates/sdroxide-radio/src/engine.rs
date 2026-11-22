@@ -31,6 +31,7 @@ use sdroxide_dsp::{
     channel_target_at, hd_radio_is_am, make_demod, make_modulator,
 };
 use sdroxide_hfdl::HfdlController;
+use sdroxide_hfdl::controller::LaneChannel;
 use sdroxide_ism::{IsmAction, IsmController};
 use sdroxide_nrsc5::{HdDemod, Mode as HdMode};
 use sdroxide_qo100::Qo100Controller;
@@ -933,7 +934,7 @@ impl RxChain {
             tap_out: Vec::new(),
             tap_level_db: f32::NAN,
             tap_gain: 1.0,
-            notch: AutoNotch::new(),
+            notch: AutoNotch::default(),
             notch_on: false,
             hum: None,
             sk: None,
@@ -1013,6 +1014,7 @@ impl RxChain {
             d.set_filter(rx.filter_lo, rx.filter_hi);
             d.set_stereo_enabled(stereo_allowed(rx));
             d.set_fm_decrackle(rx.fm_decrackle, rx.fm_deemph, rx.fm_decrackle_dip);
+            d.set_sam_sideband(rx.sam_sideband, rx.sam_mrc_tau_s);
         }
         let audio_rate =
             self.demod.as_ref().map(|d| d.audio_rate()).unwrap_or_else(|| self.ddc.out_rate());
@@ -1059,6 +1061,7 @@ impl RxChain {
         demod.process(&self.channel_buf, &mut self.audio_buf);
         demod.set_stereo_enabled(stereo_allowed(rx));
         demod.set_fm_decrackle(rx.fm_decrackle, rx.fm_deemph, rx.fm_decrackle_dip);
+        demod.set_sam_sideband(rx.sam_sideband, rx.sam_mrc_tau_s);
         let stereo = demod.take_side(&mut self.side_buf);
         // The decoder's tap, taken *before* the AGC.
         //
@@ -1145,6 +1148,7 @@ impl RxChain {
             self.notch_on = rx.auto_notch;
         }
         if self.notch_on && self.mode.auto_notch_applies() {
+            self.notch.set_rate(audio_rate);
             self.notch.process(&mut self.audio_buf);
         }
         if self.nr_level != rx.noise_reduction {
@@ -1972,6 +1976,52 @@ const TCI_IQ_DEFAULT_HZ: f64 = 192_000.0;
 const TCI_TX_FIFO_CAP: usize = 24_000;
 /// Sample rate of the TX baseband/audio fed to the TX-monitor analyzer.
 const TX_MONITOR_RATE: f64 = 48_000.0;
+
+/// The classic two-tone test signal: 700 Hz and 1900 Hz, equal amplitude.
+///
+/// Neither tone is a harmonic of the other and both sit well inside a voice
+/// passband, so the third- and fifth-order products (at 1200 Hz spacing from
+/// each tone) land where a panadapter shows them plainly. Each tone is half
+/// scale, so the sum peaks at exactly the level it is multiplied by — the
+/// TUNE level — and its envelope swings to zero 1200 times a second, which is
+/// what visits every point of an amplifier's curve (issue #525).
+#[derive(Debug, Default, Clone, Copy)]
+struct TwoTone {
+    ph: [f32; 2],
+}
+
+impl TwoTone {
+    const HZ: [f32; 2] = [700.0, 1900.0];
+
+    fn step(&mut self) -> [f32; 2] {
+        let now = self.ph;
+        for (p, hz) in self.ph.iter_mut().zip(Self::HZ) {
+            *p += std::f32::consts::TAU * hz / TX_MONITOR_RATE as f32;
+            if *p > std::f32::consts::TAU {
+                *p -= std::f32::consts::TAU;
+            }
+        }
+        now
+    }
+
+    /// The next audio sample, peak 1.0, for a rig that modulates itself.
+    fn next_audio(&mut self) -> f32 {
+        let [a, b] = self.step();
+        0.5 * (a.cos() + b.cos())
+    }
+
+    /// The next sample both ways at once, from one step of the phases: the
+    /// complex baseband for the transmitter and the audio the recording tap
+    /// hears, which is the same signal.
+    fn next_both(&mut self, lower: bool) -> (Complex32, f32) {
+        let [a, b] = self.step();
+        let sign = if lower { -1.0 } else { 1.0 };
+        (
+            Complex32::from_polar(0.5, sign * a) + Complex32::from_polar(0.5, sign * b),
+            0.5 * (a.cos() + b.cos()),
+        )
+    }
+}
 /// The TX monitor's baseband/IQ runs near digital full scale (~0 dBFS), far
 /// hotter than any received signal, so on the shared floor/ceil it would clamp
 /// the waterfall to maximum. Dim it so the strongest TX lands this many dB below
@@ -2878,6 +2928,13 @@ struct Engine {
     /// (`EladConfig::hear_own_tx`, the DIG A chip under TX power). Taken at each
     /// key-down rather than at open, so it too needs no reopen.
     elad_hear_own_tx: bool,
+    /// What [`Self::follow_transverter_port`] last asked of the radio's
+    /// transverter port, so it acts only when the dial crosses into or out of
+    /// a row that wants it — never on a port the operator set by hand.
+    xvtr_port_applied: bool,
+    /// The receive socket the transverter port moved off, put back when the
+    /// dial leaves the row.
+    xvtr_prev_ant: Option<String>,
     /// The transmit frequency the source has already been told, so
     /// [`Self::push_tx_freq`] only speaks when it moves.
     tx_freq_told: Option<f64>,
@@ -2958,6 +3015,9 @@ struct Engine {
     /// Phase accumulator for the TUNE tone on audio-modulated rigs (CAT/TCI),
     /// which need an audio carrier to key up.
     tune_phase: f32,
+    /// The two-tone test signal's two phase accumulators — see
+    /// [`TwoTone`] and `TxState::two_tone`.
+    two_tone: TwoTone,
     /// The CTCSS tone or DCS stream going out under the voice, built from
     /// [`RadioState::repeater`] and rebuilt whenever that changes. `None` with
     /// the tone off, which is also what every non-FM mode gets: sub-audible
@@ -3150,6 +3210,20 @@ struct Engine {
     /// panel that connected while the lane was down would sit on "starting the
     /// decoder" forever.
     adsb_idle_sent: Option<Option<String>>,
+    /// Mode-S Beast in and out (`beast.json`): the output server and the feed
+    /// the ADS-B panel shows.
+    beast_cfg: sdroxide_types::BeastConfig,
+    /// The Beast output, while enabled and bound. On the primary engine only:
+    /// a station has one port 30005, not one per radio.
+    beast_srv: Option<sdroxide_adsb::beast_net::BeastServer>,
+    /// Last bind failure, for the settings dialog — usually `readsb` or
+    /// `dump1090` already serving 30005 on this machine.
+    beast_err: Option<String>,
+    /// Readers last reported, so the status goes out on a change only.
+    beast_clients: usize,
+    /// The feed the running ADS-B worker was started on. A change of feed is a
+    /// new worker, since it is a new table on a new clock.
+    adsb_feed: sdroxide_types::AdsbFeed,
 
     /// The VDL Mode 2 lane: a fourth window, on the 136.7-137.0 MHz datalink
     /// channels.
@@ -3230,10 +3304,19 @@ struct Engine {
     /// The stream rate `hfdl_ddc` was built to decimate — the same reason
     /// `qo100_in_rate` exists.
     hfdl_in_rate: f64,
+    /// The lane the HFDL worker was last given — its centre and channels — so a
+    /// retune that leaves them as they were only re-seats the mixer.
+    hfdl_lane: (f64, Vec<u32>),
+    /// HFDL auto-follow, while `state.hfdl.auto_follow` is on.
+    hfdl_follow: Option<sdroxide_hfdl::follow::Follow>,
     /// The last HFDL setting the operator chose, held in step with
     /// `state.hfdl` for symmetry with `qo100_cfg`. Nothing reads it back yet,
     /// and it is not persisted — the same convention `qo100_cfg` follows.
     hfdl_cfg: sdroxide_types::HfdlSettings,
+    /// The version of the HFDL system table last written to disk, so a table
+    /// the network keeps rebroadcasting is saved once rather than on every
+    /// status.
+    hfdl_saved_table: Option<u16>,
     /// Weather-satellite (NOAA APT / Meteor LRPT) decoder lane: one channel
     /// mixed from the wide window, only while the operator has it enabled. See
     /// `sdroxide_wxsat::WxsatLane`.
@@ -3298,6 +3381,9 @@ struct Engine {
     /// Most recent S-meter reading, so rigctld's `STRENGTH` level has a value
     /// to report between meter updates.
     last_s_dbm: f32,
+    /// The S-meter as this engine measures it, after its ballistics, and
+    /// when: see [`meter_ballistics`].
+    meter_held: Option<(f32, Instant)>,
     /// Dial the RDS decoder was last reading, so a retune can be told from the
     /// endless small offset changes this engine makes for its own reasons
     /// (centre moves, satellite Doppler). See [`RDS_RETUNE_HZ`].
@@ -4355,6 +4441,8 @@ fn engine_thread(
     } else {
         adsb_cfg
     };
+    // Where decoded HFDL is fed: off unless the operator switched a feed on.
+    state.hfdl_outputs = sdroxide_config::load_hfdl_outputs();
     let ais_cfg = sdroxide_config::load_ais_config();
     state.ais = if audio_mode {
         sdroxide_types::AisSettings::OFF // wideband-only, like the rest of the lanes
@@ -4626,6 +4714,8 @@ fn engine_thread(
         rig_tx: false,
         elad_mute_rig_tx: radio_cfg.cat.elad_mute_on_radio_ptt,
         elad_hear_own_tx: radio_cfg.elad.hear_own_tx,
+        xvtr_port_applied: false,
+        xvtr_prev_ant: None,
         tx_freq_told: None,
         drive_trim_db: 0.0,
         drive_trim: radio_cfg.tx_drive_trim.clone(),
@@ -4668,13 +4758,14 @@ fn engine_thread(
         ),
         tx_mon_buf: Vec::new(),
         tune_phase: 0.0,
+        two_tone: TwoTone::default(),
         sub_tone: None,
         burst: None,
         burst_unkeys: false,
         auto_shift_dial: None,
         nb: NoiseBlanker::new(),
         adc: AdcMeter::new(),
-        audio_notch: AutoNotch::new(),
+        audio_notch: AutoNotch::default(),
         audio_notch_on: false,
         audio_nr: SpectralNr::new(),
         audio_sbnr: SpecBleachNr::new(),
@@ -4730,6 +4821,13 @@ fn engine_thread(
         adsb_cfg,
         adsb_home: None,
         adsb_idle_sent: None,
+        // Loaded here rather than beside the servers below: `sync_adsb` runs
+        // before them and has to know which feed to start on.
+        beast_cfg: sdroxide_config::load_beast_config(),
+        beast_srv: None,
+        beast_err: None,
+        beast_clients: 0,
+        adsb_feed: sdroxide_types::AdsbFeed::Radio,
         vdl2_ddc: None,
         vdl2: None,
         vdl2_buf: Vec::new(),
@@ -4756,8 +4854,11 @@ fn engine_thread(
         hfdl: None,
         hfdl_buf: Vec::new(),
         hfdl_in_rate: 0.0,
+        hfdl_lane: (0.0, Vec::new()),
+        hfdl_follow: None,
         // Session-scoped only, for the same reason as `qo100_cfg`.
         hfdl_cfg: sdroxide_types::HfdlSettings::default(),
+        hfdl_saved_table: None,
         wxsat: None,
         wxsat_pass: 0,
         wxsat_cfg,
@@ -4784,6 +4885,7 @@ fn engine_thread(
         rigctld_err: None,
         rigctld_seen: None,
         last_s_dbm: -127.0,
+        meter_held: None,
         rds_dial_hz: 0.0,
         drm_dial_hz: 0.0,
         hd_dial_hz: 0.0,
@@ -4976,6 +5078,11 @@ fn engine_thread(
     // commonly already taken by a real rigctld, and it has no authentication.
     engine.rigctld_cfg = engine.store.load_rigctld_config();
     engine.sync_rigctld();
+    // The Beast output is off unless the operator turned it on, and only the
+    // primary engine holds it.
+    if engine.primary {
+        engine.sync_beast_out();
+    }
     // WSJT-X UDP broadcast is likewise off unless the operator turned it on.
     engine.wsjtx_cfg = engine.store.load_wsjtx_config();
     engine.sync_wsjtx();
@@ -5172,6 +5279,7 @@ fn engine_thread(
         // answers once its control link has been open a round trip.
         engine.refresh_antennas();
         engine.refresh_rx_antenna();
+        engine.follow_transverter_port();
         // …and its tuner, which a FLEX reports in the status burst after it
         // has connected rather than in anything the open waits for.
         engine.refresh_atu();
@@ -5248,6 +5356,7 @@ fn engine_thread(
                     lane_samples += n as u64;
                     engine.samples_read += n as u64;
                     engine.last_block = n as u64;
+                    engine.adc.set_full_scale(engine.source.sample_full_scale());
                     engine.adc.observe(&buf[..n]);
                     if engine.state.noise_blanker {
                         engine.nb.process(&mut buf[..n]);
@@ -5267,6 +5376,7 @@ fn engine_thread(
                     lane_samples += n as u64;
                     engine.samples_read += n as u64;
                     engine.last_block = n as u64;
+                    engine.adc.set_full_scale(engine.source.sample_full_scale());
                     engine.adc.observe(&buf[..n]);
                     engine.run_audio_mode(&buf[..n]);
                 }
@@ -5278,6 +5388,7 @@ fn engine_thread(
                     engine.last_block = n as u64;
                     // Ahead of the blanker and of `decimate`, both of which
                     // destroy what this is looking for. See `AdcMeter`.
+                    engine.adc.set_full_scale(engine.source.sample_full_scale());
                     engine.adc.observe(&buf[..n]);
                     // Blanking comes first, at the device rate: an impulse is
                     // only an impulse before the anti-alias filter smears it
@@ -5706,6 +5817,11 @@ struct RigDigest {
     /// The CW sidetone pitch, by bit pattern — a client's CW filter is centred
     /// on it, so a change has to reach the protocol layer.
     cw_pitch: u32,
+    /// The sampled span and the rate it is divided from, by bit pattern, plus
+    /// whether there is a decimation at all — `SPECTRUM_SPAN` over rigctl.
+    span: u64,
+    device_rate: u64,
+    can_decimate: bool,
     /// The front-end gain's setting and range, by bit pattern.
     rf_gain: Option<(u64, u64, u64)>,
     ranges: (usize, usize),
@@ -5739,6 +5855,9 @@ impl RigDigest {
             rig_squelch: s.rig_squelch.map(f32::to_bits),
             agc: s.agc,
             cw_pitch: s.cw_pitch_hz.to_bits(),
+            span: s.span_hz.to_bits(),
+            device_rate: s.device_rate_hz.to_bits(),
+            can_decimate: s.can_decimate,
             rf_gain: s
                 .rf_gain
                 .as_ref()
@@ -6410,6 +6529,7 @@ impl Engine {
             self.audio_notch_on = notch_on;
         }
         if self.audio_notch_on && self.state.rx[0].mode.auto_notch_applies() {
+            self.audio_notch.set_rate(in_rate);
             self.audio_notch.process(&mut self.audio_re);
         }
         let nr_level = self.state.rx[0].noise_reduction;
@@ -9268,6 +9388,16 @@ impl Engine {
                     p.fm_decrackle_dip = Some(dip);
                 });
             }
+            SetSamSideband { rx, sideband, tau_s } => {
+                let tau_s = sdroxide_types::sam_mrc_tau_snap(tau_s);
+                let r = &mut self.state.rx[rx.index()];
+                r.sam_sideband = sideband;
+                r.sam_mrc_tau_s = tau_s;
+                self.remember_mode_setting(rx, |p| {
+                    p.sam_sideband = Some(sideband);
+                    p.sam_mrc_tau_s = Some(tau_s);
+                });
+            }
             SetHumFilter { rx, on } => {
                 self.state.rx[rx.index()].hum_filter = on;
                 self.remember_mode_setting(rx, |p| p.hum_filter = Some(on));
@@ -9467,12 +9597,23 @@ impl Engine {
                 self.end_tci_tx();
                 self.cancel_voice_play();
                 self.state.tx.tune = on;
+                if !on {
+                    self.end_two_tone();
+                }
                 self.sync_tx_state();
                 // Toggled mid-over (PTT held): already keyed, so `sync_tx_state`
                 // left the rig alone — swap the power level over by hand.
                 if self.tx_active {
                     self.source.set_tx_drive(self.tx_power_level() as f64);
                 }
+            }
+            SetTuneTwoTone(on) => {
+                // Only the waveform: TUNE keys and levels it as it always has,
+                // so the drive guards, the T/R switch and the time limit all
+                // apply unchanged.
+                self.state.tx.two_tone = on;
+                self.two_tone = TwoTone::default();
+                self.emit_state();
             }
             SetSwrGuard { enabled, limit } => {
                 // Clamped, not trusted. Below about 1.1:1 no real antenna ever
@@ -9679,6 +9820,14 @@ impl Engine {
             // would fight that on every band change.
             SetRxAntenna(on) => {
                 if !self.caps.has_rx_antenna {
+                    return;
+                }
+                // On an ELAD this flag is the transmit output (`TT`, the XVTR
+                // chip), and moving the PA's path mid-over is the one thing it
+                // must never do. The rig refuses it too; this says why.
+                if self.caps.rx_antenna_is_xvtr && (self.tx_active || self.rig_tx) {
+                    self.notice("The transverter port can't be switched while transmitting.");
+                    let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
                     return;
                 }
                 if let Err(e) = self.source.set_rx_antenna(on) {
@@ -10472,6 +10621,16 @@ impl Engine {
                 }
             }
 
+            SetHfdlOutputs(o) => {
+                if let Err(e) = sdroxide_config::save_hfdl_outputs(&o) {
+                    warn!("saving HFDL outputs: {e}");
+                }
+                if let Some(c) = self.hfdl.as_ref() {
+                    c.set_outputs(o.clone());
+                }
+                self.state.hfdl_outputs = o;
+            }
+
             SetSondeConfig(cfg) => {
                 let cfg = cfg.sane();
                 self.state.sonde = cfg;
@@ -10562,6 +10721,25 @@ impl Engine {
                 return;
             }
 
+            // Mode-S Beast in and out (no RadioState change → return before
+            // the State emit below).
+            SetBeastConfig(cfg) => {
+                if let Err(e) = sdroxide_config::save_beast_config(&cfg) {
+                    warn!("saving Beast config: {e}");
+                }
+                self.beast_cfg = cfg;
+                if self.primary {
+                    self.sync_beast_out();
+                }
+                // A change of feed restarts the lane; a new address on the
+                // same feed only redirects the subscription.
+                self.sync_adsb();
+                if let Some(d) = self.adsb.as_ref() {
+                    d.set_feed(self.beast_cfg.feed, self.beast_cfg.in_target());
+                }
+                self.emit_station_config();
+                return;
+            }
             // Built-in rigctld server (no RadioState change → return before
             // the State emit below).
             SetRigctldConfig(cfg) => {
@@ -11028,6 +11206,22 @@ impl Engine {
             }
             TestPictureUpload(cfg) => {
                 self.picup.test(*cfg);
+                return;
+            }
+            SetPictureFolders(cfg) => {
+                if let Err(e) = sdroxide_config::save_picture_folders(&cfg) {
+                    warn!("saving picture folders: {e}");
+                }
+                // Create them now rather than at the next picture, so a path
+                // that cannot be used is in the log when it is set and not
+                // hours later when the first image arrives.
+                for kind in ImageKind::ALL {
+                    let _ = match kind {
+                        ImageKind::Sstv => sdroxide_config::image_rx_dir("sstv"),
+                        ImageKind::Wefax => sdroxide_config::wefax_rx_dir(),
+                    };
+                }
+                self.emit_station_config();
                 return;
             }
             SetRelayConfig(cfg) => {
@@ -12114,18 +12308,27 @@ impl Engine {
         }
         match (self.hfdl_wanted(), self.hfdl.is_some()) {
             (true, false) => {
-                let mut ddc = Ddc::new(self.state.sample_rate, sdroxide_types::HFDL_LANE_RATE_HZ);
-                ddc.set_offset_hz(self.state.hfdl.frequency_hz - self.state.center_hz);
+                let (plan, target) = self.hfdl_lane_plan();
+                let mut ddc = Ddc::new(self.state.sample_rate, target);
+                ddc.set_offset_hz(plan.center_hz - self.state.center_hz);
                 let out_rate = ddc.out_rate();
-                self.hfdl = Some(HfdlController::new(out_rate, self.state.hfdl));
+                let lane = Self::hfdl_lane_channels(&plan);
+                self.hfdl = Some(Self::new_hfdl_controller(
+                    out_rate,
+                    lane,
+                    self.state.hfdl,
+                    self.state.hfdl_outputs.clone(),
+                ));
                 self.hfdl_ddc = Some(ddc);
                 self.hfdl_in_rate = self.state.sample_rate;
-                info!(rate = out_rate, "HFDL decoder started");
+                self.hfdl_lane = (plan.center_hz, plan.channels.clone());
+                info!(rate = out_rate, channels = ?plan.channels, "HFDL decoder started");
             }
             (false, true) => {
                 self.hfdl = None;
                 self.hfdl_ddc = None;
                 self.hfdl_buf.clear();
+                self.hfdl_lane = (0.0, Vec::new());
                 info!("HFDL decoder stopped");
             }
             (true, true) => self.sync_hfdl_window(),
@@ -12133,34 +12336,130 @@ impl Engine {
         }
     }
 
-    /// Re-seat the HFDL downconverter's mixer after a retune, and rebuild it
-    /// outright if the sample rate feeding it has changed — a `Ddc` bakes its
-    /// input rate and its decimation chain in at construction. The target rate
-    /// is fixed, so a retune never resizes the lane; it only moves the mixer.
+    /// The lane the HFDL settings ask for, inside the receiver's window, and
+    /// the rate to ask the downconverter for. One channel is the 24 kS/s lane
+    /// HFDL has always had; several share a lane wide enough for all of them.
+    fn hfdl_lane_plan(&self) -> (sdroxide_types::HfdlLanePlan, f64) {
+        let window = Some((self.state.center_hz, self.state.sample_rate / 2.0));
+        let plan = sdroxide_types::hfdl_lane_plan(&self.state.hfdl, window);
+        if plan.channels.len() == 1 {
+            return (plan, sdroxide_types::HFDL_LANE_RATE_HZ);
+        }
+        // The DDC rounds to a rate its halfband chain can reach, which can land
+        // a little under what was asked; ask for more until it is enough, never
+        // past the stream itself.
+        let mut target = plan.min_rate_hz;
+        while Ddc::rate_for(self.state.sample_rate, target) < plan.min_rate_hz
+            && target < self.state.sample_rate
+        {
+            target *= 1.15;
+        }
+        (plan, target.min(self.state.sample_rate))
+    }
+
+    /// Each planned channel at its offset from the lane's centre.
+    fn hfdl_lane_channels(plan: &sdroxide_types::HfdlLanePlan) -> Vec<LaneChannel> {
+        plan.channels
+            .iter()
+            .map(|&khz| LaneChannel { khz, offset_hz: f64::from(khz) * 1000.0 - plan.center_hz })
+            .collect()
+    }
+
+    /// Re-seat the HFDL downconverter's mixer after a retune, and re-plan the
+    /// lane when the channels asked for, or the window they must fit, change.
+    /// The worker keeps its log and its station and aircraft books through a
+    /// new lane: only the channel decoders are rebuilt.
     fn sync_hfdl_window(&mut self) {
         if self.hfdl_ddc.is_none() {
             return;
         }
-        let rebuild = (self.state.sample_rate - self.hfdl_in_rate).abs() >= 1.0;
-        if rebuild {
-            let mut ddc = Ddc::new(self.state.sample_rate, sdroxide_types::HFDL_LANE_RATE_HZ);
-            ddc.set_offset_hz(self.state.hfdl.frequency_hz - self.state.center_hz);
-            let out_rate = ddc.out_rate();
-            self.hfdl_ddc = Some(ddc);
+        let (plan, target) = self.hfdl_lane_plan();
+        let want_rate = Ddc::rate_for(self.state.sample_rate, target);
+        let rate_changed = (self.state.sample_rate - self.hfdl_in_rate).abs() >= 1.0
+            || self.hfdl_ddc.as_ref().is_some_and(|d| (d.out_rate() - want_rate).abs() >= 1.0);
+        if rate_changed {
+            self.hfdl_ddc = Some(Ddc::new(self.state.sample_rate, target));
             self.hfdl_in_rate = self.state.sample_rate;
-            self.hfdl = Some(HfdlController::new(out_rate, self.state.hfdl));
-            info!(rate = out_rate, "HFDL window rebuilt");
-            return;
         }
         let Some(ddc) = self.hfdl_ddc.as_mut() else { return };
-        ddc.set_offset_hz(self.state.hfdl.frequency_hz - self.state.center_hz);
+        ddc.set_offset_hz(plan.center_hz - self.state.center_hz);
+        let out_rate = ddc.out_rate();
+        let moved =
+            (plan.center_hz - self.hfdl_lane.0).abs() >= 0.5 || plan.channels != self.hfdl_lane.1;
+        if rate_changed || moved {
+            if let Some(c) = self.hfdl.as_ref() {
+                c.set_lane(out_rate, Self::hfdl_lane_channels(&plan));
+            }
+            self.hfdl_lane = (plan.center_hz, plan.channels.clone());
+            info!(rate = out_rate, channels = ?plan.channels, "HFDL lane re-planned");
+        }
     }
 
-    /// Drain the HFDL decoder's latest status and forward it.
+    /// A fresh HFDL worker, seeded with the system table saved from the last
+    /// time the network broadcast one (or the built-in copy before that) — so a squitter's channel bitmap can be
+    /// read as frequencies from the first burst rather than after the stations
+    /// next send the table, which they do only now and then.
+    fn new_hfdl_controller(
+        rate_hz: f64,
+        lane: Vec<LaneChannel>,
+        cfg: sdroxide_types::HfdlSettings,
+        outputs: sdroxide_types::HfdlOutputs,
+    ) -> HfdlController {
+        let c = HfdlController::with_lane(rate_hz, lane, cfg);
+        c.set_outputs(outputs);
+        // The table saved from the air when there is one, the built-in copy
+        // (version 52) on a first run — so stations can be placed on the map and
+        // squitters read as frequencies from the start.
+        let saved = sdroxide_config::load_hfdl_stations();
+        c.seed_stations(if saved.is_empty() {
+            sdroxide_types::hfdl_builtin_stations()
+        } else {
+            saved
+        });
+        c
+    }
+
+    /// Drain the HFDL decoder's latest status and forward it, keeping the
+    /// system table on disk up to date as new versions arrive.
     fn poll_hfdl(&mut self) {
-        let Some(c) = self.hfdl.as_ref() else { return };
-        let Some(status) = c.poll() else { return };
+        let Some(mut status) = self.hfdl.as_ref().and_then(|c| c.poll()) else { return };
+        if status.table_version.is_some() && status.table_version != self.hfdl_saved_table {
+            let entries: Vec<_> =
+                status.stations.iter().filter(|s| s.has_table()).map(|s| s.table_entry()).collect();
+            match sdroxide_config::save_hfdl_stations(&entries) {
+                Ok(()) => self.hfdl_saved_table = status.table_version,
+                Err(e) => warn!(%e, "could not save the HFDL system table"),
+            }
+        }
+        self.step_hfdl_follow(&mut status);
         let _ = self.event_tx.send(RadioEvent::HfdlStatus(status));
+    }
+
+    /// Auto-follow: report what it is doing on the status, and when the band in
+    /// use has been silent for its dwell, move to the next — through the same
+    /// commands the panel sends, so the dial and the lane move together exactly
+    /// as they would for a click.
+    fn step_hfdl_follow(&mut self, status: &mut sdroxide_types::HfdlStatus) {
+        if !(self.state.hfdl.auto_follow && self.state.hfdl.enabled) {
+            self.hfdl_follow = None;
+            return;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        let decoding: Vec<u32> = status.channels.iter().map(|c| c.khz).collect();
+        let lon = sdroxide_types::grid_to_latlon(&self.digi_config.my_grid).map(|p| p.1);
+        let follow = self.hfdl_follow.get_or_insert_with(sdroxide_hfdl::follow::Follow::new);
+        let (report, hop) = follow.step(now, &decoding, &status.stations, lon);
+        status.follow = Some(report);
+        if let Some(lane) = hop {
+            let mut cfg = self.state.hfdl;
+            cfg.frequency_hz = f64::from(lane.primary_khz) * 1000.0;
+            cfg.set_also(&lane.also_khz);
+            info!(band = lane.band_mhz, channels = ?lane.also_khz, primary = lane.primary_khz, "HFDL auto-follow: moving on");
+            self.apply(Command::SetHfdlConfig(cfg));
+            self.apply(Command::SetVfo { vfo: self.state.active_vfo, hz: cfg.frequency_hz });
+        }
     }
 
     /// Construct or tear down the weather-satellite lane: one fixed-frequency
@@ -12411,7 +12710,10 @@ impl Engine {
     /// to arithmetic rather than to propagation.
     fn adsb_degraded(&self) -> Option<String> {
         let rate = Ddc::rate_for(self.state.sample_rate, self.adsb_target_rate_hz());
-        if rate >= sdroxide_types::ADSB_GOOD_RATE_HZ || self.adsb_unavailable().is_some() {
+        if rate >= sdroxide_types::ADSB_GOOD_RATE_HZ
+            || self.adsb_unavailable().is_some()
+            || self.beast_cfg.feed == sdroxide_types::AdsbFeed::Beast
+        {
             return None;
         }
         Some(format!(
@@ -12445,6 +12747,11 @@ impl Engine {
     /// "this receiver was never going to hear any" produce the same empty list,
     /// and only this tells them apart.
     fn adsb_unavailable(&self) -> Option<String> {
+        // A Beast feed asks nothing of this receiver: not its rate, not its
+        // tuning, not even that it delivers I/Q.
+        if self.beast_cfg.feed == sdroxide_types::AdsbFeed::Beast {
+            return None;
+        }
         if self.audio_mode {
             return Some(
                 "this front end hands over demodulated audio; ADS-B needs the raw I/Q stream"
@@ -12502,22 +12809,47 @@ impl Engine {
     /// and nothing else can be listened to through that.
     fn sync_adsb(&mut self) {
         let want = self.state.rx[0].mode.is_adsb() && self.adsb_unavailable().is_none();
+        let feed = self.beast_cfg.feed;
+        let beast = feed == sdroxide_types::AdsbFeed::Beast;
         // The operator's own preference survives being overruled: `state.adsb`
         // is what the panel reads, `adsb_cfg` is what they chose.
-        if self.audio_mode {
+        if self.audio_mode && !beast {
             self.state.adsb = sdroxide_types::AdsbSettings::OFF;
         } else {
             self.state.adsb = self.adsb_cfg;
         }
+        // Another feed is another worker: a new table, on another clock.
+        if self.adsb.is_some() && self.adsb_feed != feed {
+            self.adsb = None;
+            self.adsb_ddc = None;
+            self.adsb_buf.clear();
+            info!(?feed, "ADS-B decoder restarting on another feed");
+        }
         match (want, self.adsb.is_some()) {
+            (true, false) if beast => {
+                // No window and no down-converter: nothing from this receiver
+                // reaches the worker, which is the point.
+                let c = AdsbController::new(
+                    sdroxide_types::ADSB_FREQ_HZ,
+                    sdroxide_types::ADSB_GOOD_RATE_HZ,
+                    self.state.adsb,
+                );
+                c.set_home(self.adsb_home);
+                c.set_feed(feed, self.beast_cfg.in_target());
+                self.adsb = Some(c);
+                self.adsb_feed = feed;
+                info!(addr = ?self.beast_cfg.in_target(), "ADS-B decoder started on a Beast feed");
+            }
             (true, false) => {
                 let (ddc, center) = self.build_adsb_window();
                 let out_rate = ddc.out_rate();
                 let c = AdsbController::new(center, out_rate, self.state.adsb);
                 c.set_home(self.adsb_home);
+                c.set_out(self.beast_srv.as_ref().map(|s| s.out()));
                 self.adsb = Some(c);
                 self.adsb_ddc = Some(ddc);
                 self.adsb_center_hz = center;
+                self.adsb_feed = feed;
                 info!(rate = out_rate, center, "ADS-B decoder started");
             }
             (false, true) => {
@@ -12644,6 +12976,7 @@ impl Engine {
     /// been decoding, so the "why is this empty" fields are filled in here,
     /// where the front end's capabilities are.
     fn poll_adsb(&mut self) {
+        self.poll_beast_out();
         let unavailable = self.adsb_unavailable();
         let Some(d) = self.adsb.as_ref() else {
             // Nothing running. On the ADS-B mode that is a fact worth sending —
@@ -13183,6 +13516,59 @@ impl Engine {
         self.emit_rigctld_status();
     }
 
+    /// Start, stop or rebind the Beast output to match `beast_cfg`.
+    fn sync_beast_out(&mut self) {
+        let want = self.beast_cfg.out_enabled.then(|| self.beast_cfg.out_addr());
+        let have = self.beast_srv.as_ref().map(|s| s.local_addr().to_string());
+        if want.is_some() && want == have {
+            self.emit_beast_status();
+            return;
+        }
+        // Dropped first, so a rebind to the same port finds it free.
+        self.beast_srv = None;
+        self.beast_err = None;
+        if let Some(addr) = want {
+            match sdroxide_adsb::beast_net::BeastServer::bind(&addr) {
+                Ok(srv) => self.beast_srv = Some(srv),
+                Err(e) => {
+                    warn!("Beast output {addr}: {e}");
+                    self.beast_err = Some(if e.kind() == std::io::ErrorKind::AddrInUse {
+                        format!("{addr} is in use — readsb or dump1090 on this machine?")
+                    } else {
+                        format!("{addr}: {e}")
+                    });
+                }
+            }
+        }
+        if let Some(d) = self.adsb.as_ref() {
+            d.set_out(self.beast_srv.as_ref().map(|s| s.out()));
+        }
+        self.beast_clients = 0;
+        self.emit_beast_status();
+    }
+
+    /// Tell the settings dialog when a reader comes or goes.
+    fn poll_beast_out(&mut self) {
+        let n = self.beast_srv.as_ref().map_or(0, |s| s.clients());
+        if n != self.beast_clients {
+            self.beast_clients = n;
+            self.emit_beast_status();
+        }
+    }
+
+    fn emit_beast_status(&self) {
+        let _ = self.event_tx.send(RadioEvent::BeastStatus {
+            running: self.beast_srv.is_some(),
+            addr: self
+                .beast_srv
+                .as_ref()
+                .map(|s| s.local_addr().to_string())
+                .unwrap_or_else(|| self.beast_cfg.out_addr()),
+            clients: self.beast_clients,
+            error: self.beast_err.clone(),
+        });
+    }
+
     fn emit_rigctld_status(&self) {
         let _ = self.event_tx.send(RadioEvent::RigctldStatus {
             running: self.rigctld.is_some(),
@@ -13225,6 +13611,9 @@ impl Engine {
             rig_squelch: self.caps.commands_squelch.then_some(self.state.rig_squelch),
             agc: rx.agc,
             cw_pitch_hz: self.cw_pitch_hz(),
+            span_hz: self.state.sample_rate,
+            device_rate_hz: self.radio_fs,
+            can_decimate: !self.audio_mode,
             rf_gain: self.rigctld_rf_gain().map(|(g, value)| sdroxide_rigctld::RfGain {
                 element: g.name.clone(),
                 min: g.min_db,
@@ -13297,6 +13686,9 @@ impl Engine {
             rig_squelch: self.caps.commands_squelch.then_some(self.state.rig_squelch.to_bits()),
             agc: rx.agc,
             cw_pitch: self.cw_pitch_hz().to_bits(),
+            span: self.state.sample_rate.to_bits(),
+            device_rate: self.radio_fs.to_bits(),
+            can_decimate: !self.audio_mode,
             rf_gain: self
                 .rigctld_rf_gain()
                 .map(|(g, value)| (value.to_bits(), g.min_db.to_bits(), g.max_db.to_bits())),
@@ -13346,6 +13738,9 @@ impl Engine {
                 self.tci_tx = false;
                 self.tci_last_snap = None;
                 self.sync_audio_tap();
+                // With the server gone nobody can delete its spots any more,
+                // so they go with it rather than linger out their lifetime.
+                let _ = self.event_tx.send(RadioEvent::TciSpots(Vec::new()));
                 info!("TCI server stopped");
                 self.emit_tci_status();
             }
@@ -13411,8 +13806,10 @@ impl Engine {
                 self.tci_tune_err = None;
             }
         }
-        // The dial may already be somewhere. Send it without waiting for the
-        // next click; the worker holds it until the socket is up.
+        // The dial may already be somewhere. Hand it over without waiting for
+        // the next click. The worker listens first once the socket is up: if
+        // the server says where its radio is, that comes back through
+        // `poll_tci_client` and this is never sent.
         self.push_tci_client();
         self.emit_tci_status();
     }
@@ -13450,6 +13847,11 @@ impl Engine {
 
     fn start_tci_server(&mut self) {
         self.tci_srv_err = None;
+        // Whatever server came before — a rebind, or an engine restarted under
+        // the same window — its spot book is gone, and a new server starts
+        // with an empty one, if it starts at all. Said out loud so the old
+        // labels do not linger on the waterfall.
+        let _ = self.event_tx.send(RadioEvent::TciSpots(Vec::new()));
         // The most likely first-run failure by far: sdroxide is itself a TCI
         // client of a rig on this machine, and that rig already owns the port.
         // Diagnose it rather than leaving the operator with "address in use".
@@ -13564,6 +13966,11 @@ impl Engine {
                 ServerRequest::Cmd(c) => self.apply(c),
                 ServerRequest::Key(on) => self.tci_key(on),
                 ServerRequest::Clients(_) => clients_changed = true,
+                // The labels clients placed: straight on to this radio's
+                // waterfall. The server keeps the book and its lifetimes.
+                ServerRequest::Spots(s) => {
+                    let _ = self.event_tx.send(RadioEvent::TciSpots(s));
+                }
             }
         }
         if clients_changed {
@@ -13791,6 +14198,8 @@ impl Engine {
                 band_plan: sdroxide_types::band_plan().clone(),
                 digi_presets: sdroxide_types::digi_presets().to_vec(),
                 picture_upload: self.picup_cfg.clone(),
+                beast: self.beast_cfg.clone(),
+                picture_folders: sdroxide_config::load_picture_folders(),
             },
         )));
     }
@@ -15204,6 +15613,7 @@ impl Engine {
         if rx == RxId::Main && mode.is_rx_only() && (self.state.tx.ptt || self.state.tx.tune) {
             self.state.tx.ptt = false;
             self.state.tx.tune = false;
+            self.end_two_tone();
             self.sync_tx_state();
             self.notice(&format!("{} is receive-only — the transmitter was unkeyed", mode.label()));
         }
@@ -15361,8 +15771,21 @@ impl Engine {
     ///   what a demod-audio source used to show, having no `RxChain` to ask.
     fn rx_signal_dbm(&mut self) -> Option<f32> {
         if let Some(dbm) = self.source.rx_signal_dbm() {
+            self.meter_held = None;
             return Some(dbm);
         }
+        let now = Instant::now();
+        let measured = self.measured_signal_dbm()?;
+        let shown = match self.meter_held {
+            Some((held, at)) => meter_ballistics(held, measured, now.duration_since(at)),
+            None => measured,
+        };
+        self.meter_held = Some((shown, now));
+        Some(shown)
+    }
+
+    /// The level this engine measures itself, raw: see [`Self::rx_signal_dbm`].
+    fn measured_signal_dbm(&mut self) -> Option<f32> {
         // Listening to the transceiver behind an attached panadapter receiver:
         // the main chain is still running, but on the *other* radio's antenna,
         // and a meter reading a signal nobody is listening to is worse than no
@@ -16241,11 +16664,23 @@ impl Engine {
         warn!("TX refused on radio {} ({:?}): {reason}", self.instance + 1, self.state.rx[0].mode);
         self.state.tx.ptt = false;
         self.state.tx.tune = false;
+        self.end_two_tone();
         // Every deny happens before the transmitter keyed, so a gate claimed
         // moments ago by the rail sequence has to be handed back — and if this
         // radio never held it, releasing is a no-op by contract.
         self.release_tx_gate();
         self.notice(&format!("transmit refused — {reason}"));
+    }
+
+    /// TUNE has ended, so the two-tone choice goes with it.
+    ///
+    /// The choice belongs to the TUNE it was made for. Only the main window's
+    /// chips ever send `SetTuneTwoTone`; the footswitch and hotkey, rigctld's
+    /// `TUNE`, TCI's `tune:`, remote clients and a headless tune all send a
+    /// bare `SetTune(true)`, and each of those means a carrier. Left set, the
+    /// next of them would key a two-tone instead (review of #743).
+    fn end_two_tone(&mut self) {
+        self.state.tx.two_tone = false;
     }
 
     /// Hand back the station's transmit interlock, if this engine holds it,
@@ -16425,6 +16860,47 @@ impl Engine {
         self.restore_antennas();
         self.follow_band_antenna(self.state.band);
         let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
+    }
+
+    /// Switch an ELAD FDM-DUO's transmit to its 0 dBm RF OUT port when the
+    /// dial enters a Transverters row that asks for it, and back to the PA when
+    /// it leaves — see [`IqSource::transverter_port`].
+    ///
+    /// Receive goes with it to the RX-only socket, where the transverter's I.F.
+    /// comes back, and returns to the socket it was on. Only on a change, so a
+    /// port the operator set with the XVTR chip on a band no row covers is left
+    /// as they set it; and never during an over, ours or the radio's own — a
+    /// change waits here until the over has ended.
+    fn follow_transverter_port(&mut self) {
+        if !self.caps.rx_antenna_is_xvtr || !self.caps.has_rx_antenna {
+            return;
+        }
+        let want = self.source.transverter_port();
+        if want == self.xvtr_port_applied || self.tx_active || self.rig_tx {
+            return;
+        }
+        self.xvtr_port_applied = want;
+        const RX_SOCKET: &str = "RX only";
+        if want {
+            if self.state.antenna_rx != RX_SOCKET
+                && self.caps.antennas_rx.iter().any(|a| a == RX_SOCKET)
+            {
+                self.xvtr_prev_ant = Some(self.state.antenna_rx.clone());
+                self.apply(Command::SetAntenna { dir: Direction::Rx, name: RX_SOCKET.into() });
+            }
+            if !self.state.rx_antenna {
+                self.apply(Command::SetRxAntenna(true));
+            }
+        } else {
+            if self.state.rx_antenna {
+                self.apply(Command::SetRxAntenna(false));
+            }
+            if let Some(prev) = self.xvtr_prev_ant.take()
+                && self.caps.antennas_rx.contains(&prev)
+            {
+                self.apply(Command::SetAntenna { dir: Direction::Rx, name: prev });
+            }
+        }
     }
 
     /// Re-publish the receiving antenna when the radio has since said
@@ -17557,7 +18033,13 @@ impl Engine {
             antenna_rx: self.source.current_antenna(),
             antenna_tx: self.source.current_tx_antenna(),
             // The levels carry over; a keyed transmit never does.
-            tx: sdroxide_types::TxState { ptt: false, tune: false, ..self.state.tx },
+            // Two-tone ends with the TUNE it was chosen for, here too.
+            tx: sdroxide_types::TxState {
+                ptt: false,
+                tune: false,
+                two_tone: false,
+                ..self.state.tx
+            },
             // The old source's tuner state does not describe the new source.
             atu: Default::default(),
             // The scan was walking the old front end's span.
@@ -19471,25 +19953,41 @@ impl Engine {
         tx.mod_buf.clear();
         let mut burst_done = false;
         if self.state.tx.tune || atu_rf || tx.modulator.is_none() {
-            // Steady carrier at the tune level. A PTT in CW only gets here with
-            // no keyer to hold the over for (see `set_ptt`).
+            // An external ATU request needs a steady carrier. The radio's own
+            // TUNE may use the two-tone test signal at the same peak level.
+            // A PTT in CW only gets here with no keyer to hold the over for
+            // (see `set_ptt`).
             let level = tune_level;
-            tx.mod_buf.resize(TX_AUDIO_BLOCK, Complex32::new(level, 0.0));
-            self.mic_fifo.clear();
             // The recording tap has no other source of TX audio during tune —
             // without this the tap goes quiet for the tune's duration and
-            // drifts out of sync with RX, worse with every tune. Same audible
-            // tone `tx_block_audio`'s tune branch already generates.
-            if let Some(mixer) = self.mixer.as_mut() {
-                let mut tone = [0.0f32; TX_AUDIO_BLOCK];
-                let inc = std::f32::consts::TAU * 1000.0 / TX_MONITOR_RATE as f32;
-                for a in &mut tone {
-                    *a = self.tune_phase.cos() * level;
-                    self.tune_phase += inc;
-                    if self.tune_phase > std::f32::consts::TAU {
-                        self.tune_phase -= std::f32::consts::TAU;
+            // drifts out of sync with RX, worse with every tune. It hears what
+            // is on the air: the two tones with two-tone on, otherwise the same
+            // 1 kHz tone `tx_block_audio`'s tune branch generates.
+            let mut tone = [0.0f32; TX_AUDIO_BLOCK];
+            if self.state.tx.tune && self.state.tx.two_tone {
+                // The sideband at the transmit dial, which is where SSTV and
+                // RADE take theirs from on 160/80/40 m.
+                let lower = self.state.rx[0].mode.is_lower_sideband_at(self.state.tx_freq_hz());
+                for t in &mut tone {
+                    let (iq, audio) = self.two_tone.next_both(lower);
+                    tx.mod_buf.push(iq * level);
+                    *t = audio * level;
+                }
+            } else {
+                tx.mod_buf.resize(TX_AUDIO_BLOCK, Complex32::new(level, 0.0));
+                if self.mixer.is_some() {
+                    let inc = std::f32::consts::TAU * 1000.0 / TX_MONITOR_RATE as f32;
+                    for a in &mut tone {
+                        *a = self.tune_phase.cos() * level;
+                        self.tune_phase += inc;
+                        if self.tune_phase > std::f32::consts::TAU {
+                            self.tune_phase -= std::f32::consts::TAU;
+                        }
                     }
                 }
+            }
+            self.mic_fifo.clear();
+            if let Some(mixer) = self.mixer.as_mut() {
                 mixer.push_tx(&tone);
             }
         } else {
@@ -19744,12 +20242,20 @@ impl Engine {
             } else {
                 self.state.tx.tune_drive.clamp(0.05, 1.0)
             };
-            let inc = std::f32::consts::TAU * 1000.0 / TX_MONITOR_RATE as f32;
-            for a in &mut audio {
-                *a = self.tune_phase.cos() * amp;
-                self.tune_phase += inc;
-                if self.tune_phase > std::f32::consts::TAU {
-                    self.tune_phase -= std::f32::consts::TAU;
+            if self.state.tx.two_tone {
+                // The rig's own SSB modulator puts the audio in the sideband,
+                // so the real sum of the two tones is all it needs.
+                for a in &mut audio {
+                    *a = self.two_tone.next_audio() * amp;
+                }
+            } else {
+                let inc = std::f32::consts::TAU * 1000.0 / TX_MONITOR_RATE as f32;
+                for a in &mut audio {
+                    *a = self.tune_phase.cos() * amp;
+                    self.tune_phase += inc;
+                    if self.tune_phase > std::f32::consts::TAU {
+                        self.tune_phase -= std::f32::consts::TAU;
+                    }
                 }
             }
         } else if self.burst.is_some() && self.state.rx[0].mode == Mode::Nfm {
@@ -20463,11 +20969,28 @@ fn save_image_rx(kind: &str, png: &[u8]) -> Option<String> {
         .map(|d| d.as_millis())
         .unwrap_or(0);
     let name = format!("{kind}-{ts}.png");
-    let path = dir.join(&name);
+    write_picture(kind, &dir, &name, png)
+}
+
+/// Write a received picture to `dir`, or, when that fails (a chosen folder
+/// that is read-only or full), to the built-in folder, so the picture is not
+/// lost.
+fn write_picture(kind: &str, dir: &std::path::Path, name: &str, png: &[u8]) -> Option<String> {
+    let path = dir.join(name);
+    let Err(e) = std::fs::write(&path, png) else { return Some(name.to_string()) };
+    warn!("saving {kind} picture {}: {e}", path.display());
+    let fallback = sdroxide_config::default_picture_dir(kind).ok()?;
+    if fallback == dir {
+        return None;
+    }
+    let path = fallback.join(name);
     match std::fs::write(&path, png) {
-        Ok(()) => Some(name),
+        Ok(()) => {
+            warn!("saved {kind} picture to {} instead", path.display());
+            Some(name.to_string())
+        }
         Err(e) => {
-            warn!("saving {kind} image {}: {e}", path.display());
+            warn!("saving {kind} picture {}: {e}", path.display());
             None
         }
     }
@@ -20500,14 +21023,7 @@ fn save_wefax_rx(png: &[u8], dial_hz: f64) -> Option<String> {
         dial_hz: (dial_hz > 0.0).then_some(dial_hz),
     };
     let name = meta.file_name();
-    let path = dir.join(&name);
-    match std::fs::write(&path, png) {
-        Ok(()) => Some(name),
-        Err(e) => {
-            warn!("saving wefax chart {}: {e}", path.display());
-            None
-        }
-    }
+    write_picture(sdroxide_types::ImageKind::Wefax.key(), &dir, &name, png)
 }
 
 /// Encode a single-channel raster as a grayscale PNG.
@@ -22848,5 +23364,102 @@ mod tx_voice_tester_tests {
         assert!(!t.is_recording());
         t.stop();
         assert_eq!(t.status().0, TxVoiceTest::Idle);
+    }
+}
+
+/// An S-meter's ballistics on this engine's own measurement: up quickly, so
+/// a signal coming in shows at once, and back down slowly, as a rig's meter
+/// does, rather than following every block. The demodulator's power average
+/// steps once a block, and on a wide I/Q (an FDM-DUO at 1.536 MHz) the blocks
+/// come so often that the meter pumped faster than the eye could follow (AJ3G,
+/// 17 Nov 2026), where the DUO's own meter at 192 kHz moved calmly.
+fn meter_ballistics(held: f32, measured: f32, dt: Duration) -> f32 {
+    /// Time constants, rising and falling.
+    const ATTACK_S: f32 = 0.05;
+    const RELEASE_S: f32 = 0.5;
+    if !held.is_finite() {
+        return measured;
+    }
+    let tau = if measured > held { ATTACK_S } else { RELEASE_S };
+    let k = 1.0 - (-dt.as_secs_f32() / tau).exp();
+    held + k * (measured - held)
+}
+
+#[cfg(test)]
+mod meter_ballistics_tests {
+    use super::meter_ballistics;
+    use std::time::Duration;
+
+    const TICK: Duration = Duration::from_millis(33);
+
+    #[test]
+    fn a_signal_shows_at_once_and_falls_back_slowly() {
+        // Up 40 dB: most of the way within a couple of ticks.
+        let mut v = -113.0;
+        for _ in 0..3 {
+            v = meter_ballistics(v, -73.0, TICK);
+        }
+        assert!(v > -80.0, "rose to {v}");
+        // Gone again: a third of a second later it has fallen less than half.
+        let top = v;
+        for _ in 0..10 {
+            v = meter_ballistics(v, -113.0, TICK);
+        }
+        assert!(top - v < (top - -113.0) / 2.0, "fell from {top} to {v}");
+        // And after two seconds it is down.
+        for _ in 0..60 {
+            v = meter_ballistics(v, -113.0, TICK);
+        }
+        assert!(v < -111.0, "settled at {v}");
+    }
+
+    #[test]
+    fn a_steady_signal_reads_steady() {
+        let mut v = -73.0;
+        for _ in 0..100 {
+            v = meter_ballistics(v, -73.0, TICK);
+        }
+        assert!((v - -73.0).abs() < 1e-3);
+        assert_eq!(meter_ballistics(f32::NEG_INFINITY, -90.0, TICK), -90.0);
+    }
+}
+
+#[cfg(test)]
+mod two_tone_tests {
+    use super::*;
+
+    /// Peaks at the level it is scaled by and no higher, so TUNE's level is
+    /// still the most the transmitter is asked for; and the envelope really
+    /// does swing to (near) zero, which is the point of the signal.
+    #[test]
+    fn the_two_tone_signal_peaks_at_full_scale_and_beats_to_zero() {
+        let mut t = TwoTone::default();
+        let (mut peak, mut floor) = (0.0f32, f32::MAX);
+        for _ in 0..48_000 {
+            let m = t.next_both(false).0.norm();
+            peak = peak.max(m);
+            floor = floor.min(m);
+        }
+        assert!(peak <= 1.0 + 1e-4 && peak > 0.99, "peak {peak}");
+        assert!(floor < 0.02, "the envelope never beat down: floor {floor}");
+    }
+
+    /// The tones land in the sideband asked for: positive frequencies for
+    /// upper, negative for lower — measured as the phase advance per sample.
+    #[test]
+    fn the_two_tone_signal_follows_the_sideband() {
+        let rotation = |lower: bool| {
+            let mut t = TwoTone::default();
+            let mut prev = t.next_both(lower).0;
+            let mut turn = 0.0f32;
+            for _ in 0..4800 {
+                let z = t.next_both(lower).0;
+                turn += (z * prev.conj()).arg();
+                prev = z;
+            }
+            turn
+        };
+        assert!(rotation(false) > 0.0, "upper sideband should turn positive");
+        assert!(rotation(true) < 0.0, "lower sideband should turn negative");
     }
 }

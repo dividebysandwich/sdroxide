@@ -5271,6 +5271,7 @@ dependencies = [
  "anyhow",
  "clap",
  "eframe",
+ "nu-ansi-term",
  "num-complex",
  "rtrb",
  "sdroxide-airspy",
@@ -5314,6 +5315,7 @@ version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
  "num-complex",
+ "rustfft",
  "sdroxide-dsp",
  "sdroxide-types",
  "tracing",
@@ -5584,10 +5586,13 @@ name = "sdroxide-hfdl"
 version = "1.7.3"
 dependencies = [
  "crossbeam-channel",
+ "num-complex",
  "sdroxide-dsp",
  "sdroxide-types",
  "serde_json",
  "tracing",
+ "xng-acars",
+ "xng-dsp",
  "xng-mode-hfdl",
 ]
 
@@ -6072,6 +6077,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdroxide-tmate2"
+version = "1.7.3"
+dependencies = [
+ "crossbeam-channel",
+ "libc",
+ "sdroxide-types",
+ "tracing",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "sdroxide-tnc"
 version = "1.7.3"
 dependencies = [
@@ -6119,6 +6135,7 @@ dependencies = [
  "sdroxide-proto",
  "sdroxide-solar",
  "sdroxide-speech",
+ "sdroxide-tmate2",
  "sdroxide-types",
  "sdroxide-version",
  "serde",

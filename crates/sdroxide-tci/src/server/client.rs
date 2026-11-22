@@ -109,7 +109,8 @@ fn run(pr: ClientParams) {
         for _ in 0..WRITE_BUDGET {
             match out.data_rx.try_recv() {
                 Ok(pkt) => {
-                    if ws.write(Message::Binary(pkt)).is_err() {
+                    if let Err(e) = ws.write(Message::Binary(pkt)) {
+                        debug!(id, "TCI client stream write failed: {e}");
                         return;
                     }
                     dirty = true;
@@ -119,7 +120,8 @@ fn run(pr: ClientParams) {
             }
         }
 
-        if dirty && ws.flush().is_err() {
+        if dirty && let Err(e) = ws.flush() {
+            debug!(id, "TCI client flush failed: {e}");
             return;
         }
 

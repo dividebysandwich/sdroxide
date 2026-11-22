@@ -200,6 +200,11 @@ pub struct ViewState {
     pub fft_size: u32,
     /// Fraction of the panadapter height used by the spectrum line (rest = waterfall).
     pub spectrum_fraction: f32,
+    /// [`sdroxide_types::Action::TuneLock`]: bound tuning controls leave
+    /// the frequency alone. Not saved: a lock left on across a restart would
+    /// look like a dead dial.
+    #[serde(skip)]
+    pub tune_locked: bool,
     /// Draw a decaying peak-hold trace over the spectrum.
     pub peak_hold: bool,
     /// The SK filter's presets (see [`SkPreset`]): slots 1–3 start as HDZ's
@@ -379,7 +384,7 @@ pub struct ViewState {
     /// Which spot kinds are shown in the SPOTS list, on the panadapter and on
     /// the world map — indexed by `SpotKind::index`, so the chip order in the
     /// SPOTS window and this array have to stay in lockstep.
-    #[serde(default = "spot_kinds_default")]
+    #[serde(default = "spot_kinds_default", deserialize_with = "spot_kinds")]
     pub spot_kinds_shown: [bool; SPOT_KINDS],
     /// The SPOTS window shows its spots on a world map instead of as a list.
     #[serde(default)]
@@ -415,6 +420,79 @@ pub struct ViewState {
     /// anything while a target is selected.
     #[serde(default = "adsb_card_default")]
     pub adsb_card_fraction: f32,
+    /// Cities on the ADS-B map, this map alone. On by default: they are what
+    /// a position is read against.
+    // Why: HDZ 2026-11-17: „bei der Karte dann die Chips, City an aus, Nacht an
+    //      aus und … die Range, bis wohin empfangen wurde“.
+    #[serde(default = "adsb_map_cities_default")]
+    pub adsb_map_cities: bool,
+    /// Bearing and distance from home under the pointer on the ADS-B map,
+    /// with the coverage cell there. A chip, as it is not always wanted.
+    // Why: HDZ 2026-11-17: „für den Mauscursor mach einen Chip, der ist ok,
+    //      aber nicht immer gewünscht“.
+    #[serde(default = "adsb_map_cities_default")]
+    pub adsb_map_pointer: bool,
+    /// Airports with their ICAO code on the ADS-B map (OurAirports, public
+    /// domain). On by default, beside the cities.
+    // Why: HDZ 2026-11-17: „die Airports könnten in die Karte eingeblendet
+    //      sein, das ist sinnvoll neben den Städten“.
+    #[serde(default = "adsb_map_cities_default")]
+    pub adsb_map_airports: bool,
+    /// Routes, airlines, registrations and the map's airports fetched from
+    /// the internet. Off until the operator switches it on, as nothing is
+    /// asked of a server unbidden (see `sonde_online`).
+    #[serde(default)]
+    pub adsb_online_lookups: bool,
+    /// The coverage diagram on the ADS-B map (see `adsb_coverage`).
+    #[serde(default = "adsb_map_cities_default")]
+    pub adsb_map_range: bool,
+    /// The window the coverage diagram sums: 0 = last hour, 1 = last 24 h,
+    /// 2 = last 7 days.
+    #[serde(default = "adsb_range_window_default")]
+    pub adsb_range_window: u8,
+    /// Receive gains saved for ADS-B, per device (`driver:label`): set by a
+    /// left click on the 1090.000 chip, saved from its right-click menu.
+    #[serde(default)]
+    pub adsb_gain_presets: std::collections::BTreeMap<String, Vec<(String, f64)>>,
+    /// The DWD precipitation radar on the ADS-B map. Off by default: it is
+    /// fetched from the network every five minutes while on.
+    #[serde(default)]
+    pub adsb_map_wx: bool,
+    /// Cloud (NOAA geostationary mosaic) and thunderstorm cells on the ADS-B
+    /// map. Off by default: fetched from the network while on.
+    #[serde(default)]
+    pub adsb_map_clouds: bool,
+    #[serde(default)]
+    pub adsb_map_storms: bool,
+    /// Which radar WEATHER shows: 0 by home, 1 DWD, 2 US NEXRAD
+    /// (see `adsb_wx::Source::pick`).
+    #[serde(default)]
+    pub adsb_wx_source: u8,
+    /// The box in the map's bottom right corner: source, aircraft on the map,
+    /// UTC time, for screenshots. On by default; off under ADS-B SETUP.
+    #[serde(default = "adsb_map_stamp_default")]
+    pub adsb_map_stamp: bool,
+    /// Trails coloured by altitude, with the legend (chip ALT); off, the
+    /// trail is the engine's dots in one colour.
+    #[serde(default)]
+    pub adsb_map_alt: bool,
+    /// With ALT on, the aircraft symbols in the colour of their altitude;
+    /// off, white. Set under ADS-B SETUP.
+    #[serde(default = "adsb_alt_planes_default")]
+    pub adsb_alt_planes: bool,
+    /// The ADS-B list shows today's sightings instead of the live table.
+    #[serde(default)]
+    pub adsb_show_log: bool,
+    /// With the log shown, the right side shows its bar chart instead of the
+    /// map (chips MAP / PLOTS).
+    #[serde(default)]
+    pub adsb_log_plots: bool,
+    /// The chart's x axis, [`crate::adsb_plots::Axis`] as a number.
+    #[serde(default)]
+    pub adsb_plot_axis: u8,
+    /// The ADS-B map in a window of its own; the list then has the panel.
+    #[serde(default)]
+    pub adsb_map_out: bool,
     /// Fraction of the AIS panel's width given to the vessel list; the rest is
     /// the chart.
     #[serde(default = "ais_split_default")]
@@ -426,6 +504,16 @@ pub struct ViewState {
     /// the aircraft map. User-draggable.
     #[serde(default = "hfdl_split_default")]
     pub hfdl_split_fraction: f32,
+    /// Which list the HFDL window's left pane shows: 0 the decode log, 1 the
+    /// ground stations.
+    #[serde(default)]
+    pub hfdl_tab: u8,
+    /// The HFDL aircraft table's sort column (0 = last heard) and whether it
+    /// runs ascending. Descending on last-heard is the default: newest first.
+    #[serde(default)]
+    pub hfdl_aircraft_sort: u8,
+    #[serde(default)]
+    pub hfdl_aircraft_asc: bool,
     /// Fraction of the QSO area's height given to the world map; the rest is the
     /// station card + transcript + buttons. User-draggable.
     ///
@@ -820,6 +908,7 @@ impl Default for ViewState {
             fft_size: 4096,
             spectrum_fraction: 0.35,
             peak_hold: false,
+            tune_locked: false,
             sk_presets: sk_presets_default(),
             snr_guide: false,
             sk_guide: false,
@@ -853,9 +942,30 @@ impl Default for ViewState {
             js8_split_fraction: js8_split_default(),
             adsb_split_fraction: adsb_split_default(),
             adsb_card_fraction: adsb_card_default(),
+            adsb_map_cities: adsb_map_cities_default(),
+            adsb_map_range: adsb_map_cities_default(),
+            adsb_map_airports: adsb_map_cities_default(),
+            adsb_online_lookups: false,
+            adsb_show_log: false,
+            adsb_map_wx: false,
+            adsb_map_clouds: false,
+            adsb_map_storms: false,
+            adsb_wx_source: 0,
+            adsb_map_stamp: true,
+            adsb_map_alt: false,
+            adsb_alt_planes: true,
+            adsb_log_plots: false,
+            adsb_plot_axis: 0,
+            adsb_gain_presets: Default::default(),
+            adsb_map_pointer: adsb_map_cities_default(),
+            adsb_range_window: adsb_range_window_default(),
+            adsb_map_out: false,
             ais_split_fraction: ais_split_default(),
             ais_card_fraction: ais_card_default(),
             hfdl_split_fraction: hfdl_split_default(),
+            hfdl_tab: 0,
+            hfdl_aircraft_sort: 0,
+            hfdl_aircraft_asc: false,
             digi_map_fraction: 0.6,
             digi_map_window: false,
             digi_map_links: false,
@@ -1040,6 +1150,16 @@ fn decode_labels_default() -> bool {
     true
 }
 
+/// Default for [`ViewState::adsb_map_stamp`]: on, the corner box is small.
+fn adsb_map_stamp_default() -> bool {
+    true
+}
+
+/// Default for [`ViewState::adsb_alt_planes`]: altitude colour, as asked first.
+fn adsb_alt_planes_default() -> bool {
+    true
+}
+
 /// Default for [`ViewState::wide_waterfall`] — on, so a receiver that has a
 /// full-band lane shows it without anyone having to find the chip first.
 fn wide_waterfall_default() -> bool {
@@ -1131,6 +1251,40 @@ fn spot_kinds_default() -> [bool; SPOT_KINDS] {
     [true; SPOT_KINDS]
 }
 
+/// Read [`ViewState::spot_kinds_shown`] from a list of any length, so a view
+/// stored before a spot kind was added — or by a newer build with one more —
+/// still loads. A short list leaves the kinds it doesn't reach shown; a long
+/// one has its tail ignored. A fixed-size array would refuse the stored list
+/// outright, and with it the whole view would fall back to its defaults: zoom,
+/// levels and every panel divider lost over one new chip.
+fn spot_kinds<'de, D>(d: D) -> Result<[bool; SPOT_KINDS], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct Kinds;
+    impl<'de> serde::de::Visitor<'de> for Kinds {
+        type Value = [bool; SPOT_KINDS];
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a list of spot-kind switches")
+        }
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: serde::de::SeqAccess<'de>,
+        {
+            let mut out = spot_kinds_default();
+            let mut i = 0;
+            while let Some(on) = seq.next_element::<bool>()? {
+                if let Some(slot) = out.get_mut(i) {
+                    *slot = on;
+                }
+                i += 1;
+            }
+            Ok(out)
+        }
+    }
+    d.deserialize_tuple(SPOT_KINDS, Kinds)
+}
+
 fn spot_labels_default() -> bool {
     true
 }
@@ -1198,6 +1352,16 @@ fn prop_map_band_default() -> u8 {
 /// map — which is the pane that gains most from whatever is left.
 fn adsb_split_default() -> f32 {
     0.42
+}
+
+/// Default for [`ViewState::adsb_map_cities`] and [`ViewState::adsb_map_range`].
+fn adsb_map_cities_default() -> bool {
+    true
+}
+
+/// Default for [`ViewState::adsb_range_window`]: the last 24 hours.
+fn adsb_range_window_default() -> u8 {
+    1
 }
 
 /// Default for [`ViewState::adsb_card_fraction`].
@@ -1419,8 +1583,24 @@ mod tests {
         let mut v = ViewState { wide_waterfall: false, ..ViewState::default() };
         v.spot_kinds_shown[3] = false; // PSK off
         let back: ViewState = ron::from_str(&ron::to_string(&v).unwrap()).unwrap();
-        assert_eq!(back.spot_kinds_shown, [true, true, true, false, true, true]);
+        assert_eq!(back.spot_kinds_shown, [true, true, true, false, true, true, true]);
         assert!(!back.wide_waterfall);
+    }
+
+    /// A view stored before the TCI kind was added carries six chips. It must
+    /// load with the six as they were and TCI shown — not fall back to a
+    /// default view, which would throw away the operator's zoom and layout.
+    #[test]
+    fn a_view_with_fewer_spot_chips_still_loads() {
+        let stored = "(view_lo_hz:7000000.0,view_hi_hz:7200000.0,fft_size:8192,\
+                      spot_kinds_shown:(true,false,true,true,true,false))";
+        let v: ViewState = ron::from_str(stored).expect("a six-chip view must parse");
+        assert_eq!(v.fft_size, 8192, "the rest of the view survived");
+        assert_eq!(v.spot_kinds_shown, [true, false, true, true, true, false, true]);
+        // And one from a newer build with a chip more than this one knows.
+        let stored = "(fft_size:8192,spot_kinds_shown:(false,true,true,true,true,true,false,true))";
+        let v: ViewState = ron::from_str(stored).expect("an eight-chip view must parse");
+        assert_eq!(v.spot_kinds_shown, [false, true, true, true, true, true, false]);
     }
 
     /// The SPEC popup's two chips are independent switches, so all four

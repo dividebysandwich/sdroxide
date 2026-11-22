@@ -19,6 +19,9 @@
 //! below directly; what they expose *to each other* is marked
 //! `pub(in crate::app)`, which is as wide as anything here ever gets.
 
+/// ADS-B SETUP → Range log: setups and their days.
+#[cfg(not(target_arch = "wasm32"))]
+mod adsb_range_tab;
 pub(in crate::app) mod alerts;
 mod amp;
 pub(in crate::app) mod awards;
@@ -174,6 +177,9 @@ pub struct SdroxideApp {
     /// ends, so the tune box can still show what the antenna was matched to.
     /// Cleared when a different radio is connected.
     last_swr: Option<f32>,
+    /// The ELAD receive socket the XVTR chip moved off when it was lit, so
+    /// putting the chip out puts the receiver back where it was.
+    xvtr_prev_ant: Option<String>,
     memories: Vec<MemoryChannel>,
     mem_folders: Vec<MemoryFolder>,
     /// The scanner's settings, mirrored from the engine and edited in place —
@@ -518,6 +524,16 @@ pub struct SdroxideApp {
     /// busy assigned frequencies that are not in the published plan, drawn as
     /// one-click chips beside it in the HFDL panel.
     hfdl_channels: Vec<u32>,
+    /// HFDL: the band whose channels the chip row shows, when the operator has
+    /// picked one other than the dial's; and the dial's band last frame, so a
+    /// retune to another band brings the row with it.
+    hfdl_band_shown: Option<u32>,
+    hfdl_band_seen: u32,
+    /// HFDL: the feeds being edited while their popup is open (the station id
+    /// is typed into this, and sent when the field is left).
+    hfdl_outputs_edit: Option<sdroxide_types::HfdlOutputs>,
+    /// ...and the JSON targets as typed, `host:port, host:port`.
+    hfdl_json_draft: Option<String>,
     /// The operator's own filter presets (`filter_presets.json`), each in
     /// place of one of a mode's built-in chips in the BW popup.
     filter_presets: Vec<sdroxide_types::CustomFilterPreset>,
@@ -840,12 +856,46 @@ pub struct SdroxideApp {
     adsb_status: Option<Box<sdroxide_types::AdsbStatus>>,
     /// ADS-B: the radar picture's pan/zoom and which target is selected.
     adsb_map: crate::adsb_map::AdsbMapState,
+    /// Routes by callsign and airport places, fetched as aircraft are heard
+    /// (see [`crate::adsb_route`]).
+    adsb_routes: crate::adsb_route::RouteBook,
+    /// Where this station hears aircraft, by bearing and distance, by the
+    /// hour (see [`crate::adsb_coverage`]). Fed as each table arrives.
+    adsb_coverage: crate::adsb_coverage::CoverageBook,
+    /// How far each setup hears, by day, in SQLite (see
+    /// [`crate::adsb_range`]). Fed as each table arrives.
+    #[cfg(not(target_arch = "wasm32"))]
+    adsb_range: adsb_range_tab::RangeTab,
+    /// Every aircraft heard, a line a day, and the types learnt from them
+    /// (see [`crate::adsb_log`]). Fed as each table arrives.
+    adsb_log: crate::adsb_log::SightingBook,
+    /// Where each aircraft went, thinned, a file a day
+    /// (see [`crate::adsb_tracks`]). Fed as each table arrives.
+    #[cfg(not(target_arch = "wasm32"))]
+    adsb_tracks: crate::adsb_tracks::TrackBook,
+    /// The DWD precipitation radar for the ADS-B map's WEATHER layer.
+    adsb_wx: crate::adsb_wx::WxRadar,
+    /// Cloud and storm cells for the ADS-B map's CLOUDS and STORMS layers.
+    adsb_clouds: crate::adsb_clouds::CloudLayer,
+    /// The note beside the 1090.000 chip after a gain save or recall, and
+    /// when it was set.
+    adsb_gain_note: Option<(String, i64)>,
     /// ADS-B: filter for the aircraft list; matches a callsign or an address.
     adsb_filter: String,
     /// ADS-B: the decoder's own settings window is open.
     show_adsb_setup: bool,
     adsb_sort: panels::adsb::AdsbSort,
     adsb_sort_desc: bool,
+    adsb_log_sort: panels::adsb::LogSort,
+    adsb_log_desc: bool,
+    /// The day the sighting log shows; `None` is today, following midnight.
+    adsb_log_day: Option<String>,
+    /// The log shows the week ending with its day instead of the day.
+    adsb_log_week: bool,
+    /// The lines the log showed last, for its chart on the right.
+    adsb_log_shown: Vec<crate::adsb_log::Sighting>,
+    /// The log shows only the aircraft in the live table now (today only).
+    adsb_log_live: bool,
     /// AIS: the vessel table and everything the decoder is seeing, as the
     /// engine last sent it. Boxed for the reason the ADS-B one is — a busy
     /// estuary's table, each row carrying a trail, is far larger than anything
@@ -944,6 +994,11 @@ pub struct SdroxideApp {
     /// The RADIOSONDES window, its map and the SondeHub layer — see
     /// [`sonde::SondeUi`].
     sonde: sonde::SondeUi,
+    /// The TRANSMIT window — what the compact strip's TX chip opens. A window
+    /// rather than a drop-down so it can be dragged off whatever it would
+    /// otherwise cover (the S-meter, on most layouts) and left open through an
+    /// over (issue #525).
+    show_tx_window: bool,
     /// The propagation field rendered to pixels, rebuilt only when it moves.
     prop_heat: crate::prop_map::PropHeat,
     /// The grey-line (night/twilight) overlay rendered to pixels, rebuilt at
@@ -1013,6 +1068,10 @@ pub struct SdroxideApp {
     /// UTC minute rolls over — the finest granularity a schedule changes at —
     /// rather than every frame.
     broadcast_spots: Vec<Spot>,
+    /// The labels TCI clients placed on this radio with `SPOT:`, from its own
+    /// engine — never borrowed from the station radio as `spots` are, because
+    /// they mark this radio's panorama.
+    tci_spots: Vec<Spot>,
     /// The UTC minute `broadcast_spots` was built for.
     broadcast_minute: i64,
     /// An in-flight schedule download, if one is running.
@@ -1038,6 +1097,12 @@ pub struct SdroxideApp {
     /// like the network config above.
     tci_srv_edit: sdroxide_types::TciServerConfig,
     tci_srv_seeded: bool,
+    /// The TCI server config this radio's engine last announced — adopted on
+    /// every `RadioEvent::StationConfig`, unlike the edit copy above, because
+    /// it is what the roster reports for this radio to the other tabs (their
+    /// Servers page names the ports already taken) and what Settings → Radio
+    /// shows. `None` until the engine has spoken.
+    tci_srv_cfg: Option<sdroxide_types::TciServerConfig>,
     /// Live server status (bound address, connected clients, bind error) from
     /// `RadioEvent::TciServerStatus`.
     tci_srv_status: Option<TciServerStatus>,
@@ -1053,6 +1118,10 @@ pub struct SdroxideApp {
     /// UI-owned editable copy, seeded from the engine like the configs above.
     picup_edit: sdroxide_types::PictureUploadConfig,
     picup_seeded: bool,
+    /// Where received pictures are saved: the dialog's copy, seeded like the
+    /// configs above.
+    folders_edit: sdroxide_types::PictureFolders,
+    folders_seeded: bool,
     /// When a TEST went out, while its answer is awaited. Cleared by the
     /// answer, or after a while if none comes (the station may have gone).
     picup_test_pending: Option<f64>,
@@ -1063,6 +1132,13 @@ pub struct SdroxideApp {
     /// Live status from `RadioEvent::RigctldStatus`. Same shape as the TCI
     /// server's, so the two share one status type.
     rigctld_status: Option<TciServerStatus>,
+    /// Mode-S Beast in and out, as the station has it, and the edit the
+    /// settings dialog and the ADS-B panel work on. Seeded from the station
+    /// config, like `rigctld_edit`.
+    beast_edit: sdroxide_types::BeastConfig,
+    beast_seeded: bool,
+    /// Live status of the Beast output, from `RadioEvent::BeastStatus`.
+    beast_status: Option<TciServerStatus>,
     /// Editable "extra cluster commands" (one per line), split into
     /// `net_cfg_edit.cluster.commands` on apply.
     net_cluster_cmds: String,
@@ -1367,6 +1443,20 @@ pub(crate) struct RadioChip {
     /// `/ws`. It is not offered for closing anywhere, because no station will
     /// let go of it.
     pub first_of_station: bool,
+    /// This radio's built-in TCI server as its engine announced it — `None`
+    /// until it has. Each radio binds its own server, so a port is only taken
+    /// for the radio being edited if another radio of the same station holds
+    /// it; Settings → Servers reads that off here.
+    pub tci: Option<TciBrief>,
+}
+
+/// One radio's TCI server in a word: whether it is on, on which port, and
+/// whether the engine failed to bind it (the port held by another program).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TciBrief {
+    pub enabled: bool,
+    pub port: u16,
+    pub failed: bool,
 }
 
 impl RadioChip {
@@ -1391,6 +1481,10 @@ pub(crate) enum RadioTabRequest {
     /// Switch to this radio, carrying the settings dialog along: the origin's
     /// closes, the target's opens on its Radio page.
     Focus(u32),
+    /// [`RadioTabRequest::Focus`], opening on the Servers page instead: the
+    /// radio picker there switches which radio's TCI server is edited, and
+    /// that server is the target tab's, reached through its own engine.
+    FocusServers(u32),
     /// Put another radio in a roster. `station` is empty for this machine's own
     /// — the "+" the shell has always had — and otherwise the station key of a
     /// connection ([`SdroxideApp::station_key`]), which asks the station at the
@@ -1601,6 +1695,7 @@ impl SdroxideApp {
             rec_tab: Default::default(),
             meters: None,
             last_swr: None,
+            xvtr_prev_ant: None,
             memories: Vec::new(),
             mem_folders: Vec::new(),
             scanner: sdroxide_types::ScannerConfig::default(),
@@ -1722,6 +1817,10 @@ impl SdroxideApp {
             hfdl_map: crate::hfdl_map::HfdlMapState::default(),
             hfdl_filter: String::new(),
             hfdl_channels: load_hfdl_channels(storage),
+            hfdl_band_shown: None,
+            hfdl_band_seen: 0,
+            hfdl_outputs_edit: None,
+            hfdl_json_draft: None,
             filter_presets: load_filter_presets(storage),
             preset_edit: None,
             show_settings: false,
@@ -1814,10 +1913,26 @@ impl SdroxideApp {
             aprs_map: crate::aprs_map::AprsMapState::default(),
             adsb_status: None,
             adsb_map: crate::adsb_map::AdsbMapState::default(),
+            adsb_routes: crate::adsb_route::RouteBook::default(),
+            adsb_coverage: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            adsb_range: Default::default(),
+            adsb_log: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            adsb_tracks: Default::default(),
+            adsb_wx: Default::default(),
+            adsb_clouds: Default::default(),
+            adsb_gain_note: None,
             adsb_filter: String::new(),
             show_adsb_setup: false,
             adsb_sort: panels::adsb::AdsbSort::default(),
             adsb_sort_desc: true,
+            adsb_log_sort: panels::adsb::LogSort::default(),
+            adsb_log_desc: true,
+            adsb_log_day: None,
+            adsb_log_week: false,
+            adsb_log_shown: Vec::new(),
+            adsb_log_live: false,
             ais_status: None,
             ais_map: crate::ais_map::AisMapState::default(),
             ais_filter: String::new(),
@@ -1870,6 +1985,7 @@ impl SdroxideApp {
             playback: playback::PlaybackUi::default(),
             wxsat: wxsat::WxsatUi::default(),
             sonde: sonde::SondeUi::default(),
+            show_tx_window: false,
             digi_stations: Default::default(),
             prop: Default::default(),
             prop_heat: Default::default(),
@@ -1896,6 +2012,7 @@ impl SdroxideApp {
             spot_search: String::new(),
             broadcast: load_broadcast_stations(),
             broadcast_spots: Vec::new(),
+            tci_spots: Vec::new(),
             broadcast_minute: -1,
             // Kicked off at startup: the first run has no cached schedule, and
             // after that this only fires again when the season turns over.
@@ -1925,12 +2042,18 @@ impl SdroxideApp {
             wsjtx_seeded: false,
             picup_edit: sdroxide_types::PictureUploadConfig::default(),
             picup_seeded: false,
+            folders_edit: sdroxide_types::PictureFolders::default(),
+            folders_seeded: false,
             picup_test_pending: None,
             picup_test: None,
             picup_last: None,
             rigctld_status: None,
+            beast_edit: sdroxide_types::BeastConfig::default(),
+            beast_seeded: false,
+            beast_status: None,
             tci_srv_edit: sdroxide_types::TciServerConfig::default(),
             tci_srv_seeded: false,
+            tci_srv_cfg: None,
             tci_srv_status: None,
             net_cluster_cmds: String::new(),
             net_rbn_cmds: String::new(),
@@ -2459,8 +2582,38 @@ impl SdroxideApp {
     }
 
     pub(crate) fn open_radio_settings(&mut self) {
+        self.reseed_tci_form();
         self.show_settings = true;
         self.settings_tab = SettingsTab::Radio;
+    }
+
+    /// Open the Settings dialog on the Servers tab — where the radio picker of
+    /// the TCI server section lands the operator on another radio.
+    pub(crate) fn open_servers_settings(&mut self) {
+        self.reseed_tci_form();
+        self.show_settings = true;
+        self.settings_tab = SettingsTab::Servers;
+    }
+
+    /// Put the TCI server form back on the config this radio's engine last
+    /// announced, dropping what was typed and never applied.
+    /// Why: the form was seeded once per tab and kept every unapplied tick for
+    ///      good, so a radio reached through the picker showed Aktivieren for a
+    ///      server that was off, or off for one that was listening (Befund
+    ///      2026-11-16). Called where the dialog closes and where the shell
+    ///      opens it on another tab — that tab's closed-dialog pass may not
+    ///      have run, as it was not on screen.
+    pub(crate) fn reseed_tci_form(&mut self) {
+        if let Some(c) = &self.tci_srv_cfg {
+            self.tci_srv_edit = c.clone();
+        }
+    }
+
+    /// This radio's TCI server for the roster (see [`RadioChip::tci`]).
+    pub(crate) fn tci_brief(&self) -> Option<TciBrief> {
+        let cfg = self.tci_srv_cfg.as_ref()?;
+        let failed = self.tci_srv_status.as_ref().is_some_and(|s| !s.running && s.error.is_some());
+        Some(TciBrief { enabled: cfg.enabled, port: cfg.port, failed: cfg.enabled && failed })
     }
 
     /// Close the Settings dialog — the shell moves it to another tab when the

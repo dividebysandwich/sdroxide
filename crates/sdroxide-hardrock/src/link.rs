@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded};
 use sdroxide_types::{
     AmpAction, AmpAlerts, AmpConfig, AmpGauge, AmpLevel, AmpLimits, AmpReadings, AmpStatus,
-    AtuNetwork, AtuReadout,
+    AtuNetwork, AtuReadout, TUNE_HISTORY, TUNE_RESULT_BYPASSED, TUNE_RESULT_TUNED, TuneRecord,
 };
 use tracing::{debug, info, warn};
 
@@ -28,6 +28,14 @@ const ATU_POLL: Duration = Duration::from_secs(1);
 /// How long after a click the tuner is read back: long enough for its relays
 /// to settle, so the read confirms the change instead of showing the old state.
 const ATU_SETTLE: Duration = Duration::from_millis(300);
+/// How often `HRAP` is asked again while no tuner has been seen. Asked once
+/// only, a single missed answer (a busy amplifier just after the link was
+/// reopened, a byte lost on the USB lead) hid the tuner and its buttons until
+/// SDROxide was restarted (AJ3G, Nov 2026).
+#[cfg(not(test))]
+const ATU_PROBE: Duration = Duration::from_secs(5);
+#[cfg(test)]
+const ATU_PROBE: Duration = Duration::from_millis(50);
 /// How often the temperature is read with `HRTP`. Its value is the one the
 /// amplifier's own screen shows, and it carries the scale letter; the status
 /// frame's temperature lagged it by several degrees after a C/F toggle (AJ3G,
@@ -286,6 +294,10 @@ fn worker(cfg: AmpConfig, rx: Receiver<Msg>, status: Arc<Mutex<AmpStatus>>) {
         return;
     }
     let mut backoff = Duration::from_secs(1);
+    // Whether this amplifier has been seen with a tuner. Kept across a
+    // reopened link: the ATU-500 does not come and go while the amplifier is
+    // on, and a missed `HRAP` answer after a reconnect must not lose it.
+    let mut atu_seen = false;
     loop {
         match open(&cfg) {
             Ok(amp) => {
@@ -295,7 +307,7 @@ fn worker(cfg: AmpConfig, rx: Receiver<Msg>, status: Arc<Mutex<AmpStatus>>) {
                     s.connected = true;
                     s.error = None;
                 });
-                if !run(amp, &rx, &status, cfg.model.limits()) {
+                if !run(amp, &rx, &status, cfg.model.limits(), &mut atu_seen) {
                     return;
                 }
                 set(&status, |s| {
@@ -333,9 +345,19 @@ fn run<P: std::io::Read + std::io::Write>(
     rx: &Receiver<Msg>,
     status: &Mutex<AmpStatus>,
     limits: AmpLimits,
+    atu_seen: &mut bool,
 ) -> bool {
-    let has_atu = matches!(amp.query(&Command::AtuPresent), Ok(Response::AtuPresent(true)));
-    set(status, |s| s.atu = has_atu.then(AtuReadout::default));
+    let mut has_atu = *atu_seen || atu_present(&mut amp);
+    *atu_seen |= has_atu;
+    // A reopen keeps the tuner's history and last result.
+    set(status, |s| {
+        if has_atu {
+            s.atu.get_or_insert_with(AtuReadout::default);
+        } else {
+            s.atu = None;
+        }
+    });
+    let mut next_probe = Instant::now() + ATU_PROBE;
     let mut celsius: Option<bool> = None;
     let mut misses = 0;
     let mut next_atu = Instant::now();
@@ -488,6 +510,20 @@ fn run<P: std::io::Read + std::io::Write>(
             }
         }
 
+        // No tuner seen yet: keep asking, in case the first answer was missed.
+        if !has_atu && Instant::now() >= next_probe {
+            next_probe = Instant::now() + ATU_PROBE;
+            if atu_present(&mut amp) {
+                info!("hardrock: tuner found");
+                has_atu = true;
+                *atu_seen = true;
+                next_atu = Instant::now();
+                set(status, |st| {
+                    st.atu.get_or_insert_with(AtuReadout::default);
+                });
+            }
+        }
+
         if has_atu && (was_tuning || Instant::now() >= next_atu) {
             next_atu = Instant::now() + ATU_POLL;
             let tuning = matches!(amp.query(&Command::IsTuning), Ok(Response::Tuning(true)));
@@ -508,7 +544,16 @@ fn run<P: std::io::Read + std::io::Write>(
                 None
             };
             was_tuning = tuning;
+            // When a tune has just ended, its time; the network above was
+            // read after it ended, so the record carries both SWRs of this
+            // tune.
+            let ended_at = result.is_some().then(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs())
+            });
             set(status, |st| {
+                let band = st.readings.and_then(|r| r.band);
                 let atu = st.atu.get_or_insert_with(AtuReadout::default);
                 atu.tuning = tuning;
                 if let Some(a) = active {
@@ -516,6 +561,12 @@ fn run<P: std::io::Read + std::io::Write>(
                 }
                 if network.is_some() {
                     atu.network = network;
+                }
+                if let (Some(text), Some(at_unix)) = (&result, ended_at) {
+                    let rec = TuneRecord { at_unix, band, result: text.clone(), network };
+                    info!("{}", tune_log_line(&rec));
+                    atu.history.insert(0, rec);
+                    atu.history.truncate(TUNE_HISTORY);
                 }
                 if result.is_some() {
                     atu.last_result = result;
@@ -525,6 +576,11 @@ fn run<P: std::io::Read + std::io::Write>(
     }
 }
 
+/// Whether the amplifier says it has a tuner (`HRAP`).
+fn atu_present<P: std::io::Read + std::io::Write>(amp: &mut Amp<P>) -> bool {
+    matches!(amp.query(&Command::AtuPresent), Ok(Response::AtuPresent(true)))
+}
+
 fn network_of(p: AtuParams) -> AtuNetwork {
     AtuNetwork {
         l_step: p.l_step,
@@ -532,12 +588,36 @@ fn network_of(p: AtuParams) -> AtuNetwork {
         bypassed: p.bypassed,
         cap_output: p.cap_output,
         swr: p.swr(),
+        start_swr: p.start_swr(),
     }
+}
+
+/// The log line for a tune that has just ended: how it ended, the SWR before
+/// and after (from the tuner's own coupler) and the network it left in.
+fn tune_log_line(r: &TuneRecord) -> String {
+    let band = r.band.and_then(Band::from_code).map_or("band ?", Band::label);
+    let mut line = format!("hardrock: tune ended on {band}: {}", r.result);
+    if let Some(n) = r.network {
+        let swr = |s: Option<f32>| s.map_or("?".to_string(), |s| format!("{s:.2}:1"));
+        line += &format!("; SWR {} -> {}", swr(n.start_swr), swr(n.swr));
+        if n.bypassed {
+            line += "; network bypassed";
+        } else if n.c_step == 0 {
+            // No capacitor in: which side it is on means nothing (AJ3G,
+            // 16 Nov 2026).
+            line += &format!("; L {} C 0", n.l_step);
+        } else {
+            let side = if n.cap_output { "antenna" } else { "transmitter" };
+            line += &format!("; L {} C {} on the {side} side", n.l_step, n.c_step);
+        }
+    }
+    line
 }
 
 fn result_text(r: TuneResult) -> String {
     match r {
-        TuneResult::Tuned => "Tuned".into(),
+        TuneResult::Tuned => TUNE_RESULT_TUNED.into(),
+        TuneResult::Bypassed => TUNE_RESULT_BYPASSED.into(),
         TuneResult::Aborted => "Aborted".into(),
         TuneResult::SwrTooHigh => "SWR above 6:1".into(),
         TuneResult::NotBelow2to1 => "Failed (above 2:1)".into(),
@@ -651,6 +731,89 @@ fn fresh_temp(screen: Option<(f32, Instant)>, now: Instant) -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
+    use std::io;
+
+    /// A fake amplifier that answers by what was written: `HRST` with a
+    /// reading every time, `HRAP` from `hrap` in turn (`None` is silence, and
+    /// the last entry repeats), anything else not at all.
+    struct Scripted {
+        hrap: VecDeque<Option<&'static str>>,
+        out: VecDeque<u8>,
+    }
+
+    impl io::Read for Scripted {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.out.is_empty() {
+                return Err(io::ErrorKind::TimedOut.into());
+            }
+            let n = buf.len().min(self.out.len());
+            for b in buf.iter_mut().take(n) {
+                *b = self.out.pop_front().unwrap_or_default();
+            }
+            Ok(n)
+        }
+    }
+
+    impl io::Write for Scripted {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            let reply = match buf {
+                b"HRST;" => Some("HRST-100-002-020-011-058-008-30-1-07-1-;"),
+                b"HRAP;" => {
+                    let r = self.hrap.front().copied().flatten();
+                    if self.hrap.len() > 1 {
+                        self.hrap.pop_front();
+                    }
+                    r
+                }
+                _ => None,
+            };
+            self.out.extend(reply.unwrap_or_default().bytes());
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Runs the link against `hrap` for a while and returns the tuner as the
+    /// panel would see it.
+    fn run_for(hrap: &[Option<&'static str>], atu_seen: bool) -> (Option<AtuReadout>, bool) {
+        let amp = Amp::new(Scripted { hrap: hrap.iter().copied().collect(), out: VecDeque::new() })
+            .with_timeout(Duration::from_millis(5));
+        let status = Arc::new(Mutex::new(AmpStatus::default()));
+        let (tx, rx) = bounded(1);
+        let st = status.clone();
+        let t = thread::spawn(move || {
+            let mut seen = atu_seen;
+            let lost = run(amp, &rx, &st, sdroxide_types::AmpModel::Hr500.limits(), &mut seen);
+            (lost, seen)
+        });
+        thread::sleep(Duration::from_millis(800));
+        drop(tx);
+        let (lost, seen) = t.join().unwrap();
+        assert!(!lost, "the fake amplifier always answers HRST");
+        let atu = status.lock().unwrap().atu.clone();
+        (atu, seen)
+    }
+
+    #[test]
+    fn a_missed_tuner_answer_is_asked_again() {
+        let (atu, seen) = run_for(&[None, Some("HRAP1;")], false);
+        assert!(atu.is_some() && seen);
+    }
+
+    #[test]
+    fn a_tuner_seen_before_a_reconnect_stays() {
+        let (atu, seen) = run_for(&[None], true);
+        assert!(atu.is_some() && seen);
+    }
+
+    #[test]
+    fn no_tuner_is_still_no_tuner() {
+        let (atu, seen) = run_for(&[Some("HRAP0;")], false);
+        assert!(atu.is_none() && !seen);
+    }
 
     #[test]
     fn a_peak_past_a_trip_level_is_not_a_trip() {
@@ -726,14 +889,53 @@ mod tests {
     fn tuner_results_read_as_the_panel_words_them() {
         assert_eq!(result_text(TuneResult::PowerTooLow), "Lo power");
         assert_eq!(result_text(TuneResult::Tuned), "Tuned");
+        assert_eq!(result_text(TuneResult::Bypassed), "Tuned: under 1.3:1, bypassed");
     }
 
     #[test]
     fn network_carries_the_swr() {
-        let p = AtuParams::parse("HRTM-L012-C034-H1-B5-S000-F145-").unwrap();
+        let p = AtuParams::parse("HRTM-L012-C034-H1-B0-S052-F145-").unwrap();
         let n = network_of(p);
         assert_eq!((n.l_step, n.c_step, n.cap_output), (12, 34, true));
         assert!(n.swr.is_some());
+        assert!(n.start_swr.is_some());
+    }
+
+    #[test]
+    fn a_tune_that_ends_is_logged_with_its_swr_before_and_after() {
+        let n = network_of(AtuParams::parse("HRTM-L012-C034-H1-B0-S052-F145-").unwrap());
+        let rec = TuneRecord {
+            at_unix: 0,
+            band: Some(5),
+            result: result_text(TuneResult::Tuned),
+            network: Some(n),
+        };
+        assert_eq!(
+            tune_log_line(&rec),
+            "hardrock: tune ended on 20m: Tuned; SWR 3.44:1 -> 1.46:1; L 12 C 34 on the antenna side"
+        );
+        let bypassed = network_of(AtuParams::parse("HRTM-L000-C000-H0-B1-S190-F190-").unwrap());
+        let rec = TuneRecord {
+            at_unix: 0,
+            band: Some(10),
+            result: result_text(TuneResult::Bypassed),
+            network: Some(bypassed),
+        };
+        assert_eq!(
+            tune_log_line(&rec),
+            "hardrock: tune ended on 160m: Tuned: under 1.3:1, bypassed; SWR 1.25:1 -> 1.25:1; \
+             network bypassed"
+        );
+        // No capacitor in: no side named.
+        let no_c = network_of(AtuParams::parse("HRTM-L003-C000-H0-B0-S072-F152-").unwrap());
+        let rec = TuneRecord { band: Some(1), network: Some(no_c), ..rec };
+        assert!(tune_log_line(&rec).ends_with("; L 3 C 0"), "{}", tune_log_line(&rec));
+        // Nothing read back: just how it ended.
+        let rec = TuneRecord { band: None, network: None, ..rec };
+        assert_eq!(
+            tune_log_line(&rec),
+            "hardrock: tune ended on band ?: Tuned: under 1.3:1, bypassed"
+        );
     }
 
     #[test]

@@ -55,7 +55,8 @@ use self::radio::{
 #[cfg(not(target_arch = "wasm32"))]
 use self::remote::settings_remote_tab;
 use self::servers::{
-    settings_rigctld_tab, settings_rotator_tab, settings_tci_server_tab, settings_wsjtx_tab,
+    settings_beast_out_tab, settings_rigctld_tab, settings_rotator_tab, settings_tci_server_tab,
+    settings_wsjtx_tab,
 };
 use self::tle::settings_tle_tab;
 use self::ui_tab::settings_ui_tab;
@@ -284,6 +285,9 @@ pub(in crate::app) struct SettingsIo<'a> {
     /// "NET rigctl" client speaks.
     rigctld_edit: &'a mut sdroxide_types::RigctldConfig,
     rigctld_apply: &'a mut bool,
+    /// The Mode-S Beast output (the input lives in the ADS-B panel).
+    beast_edit: &'a mut sdroxide_types::BeastConfig,
+    beast_apply: &'a mut bool,
     /// The WSJT-X UDP broadcast — decodes, status and logged QSOs for
     /// GridTracker, JTAlert, N1MM+ and Log4OM.
     wsjtx_edit: &'a mut sdroxide_types::WsjtxConfig,
@@ -291,6 +295,9 @@ pub(in crate::app) struct SettingsIo<'a> {
     /// Received pictures → FTP: the dialog's copy, and whether to send it.
     picup_edit: &'a mut sdroxide_types::PictureUploadConfig,
     picup_apply: &'a mut bool,
+    /// Where received pictures are saved: the dialog's copy, and whether to send it.
+    folders_edit: &'a mut sdroxide_types::PictureFolders,
+    folders_apply: &'a mut bool,
     /// The rotctld *client* — the satellite lock steering a motorized antenna.
     rot_edit: &'a mut sdroxide_types::RotatorConfig,
     rot_apply: &'a mut bool,
@@ -458,17 +465,28 @@ fn transverter_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
     ui.add_space(6.0);
 
     let mut remove: Option<usize> = None;
-    egui::Grid::new("xvtr-grid").num_columns(8).spacing([10.0, 6.0]).striped(true).show(ui, |ui| {
-        for h in [
-            "",
-            &tr!("settings-name"),
-            &tr!("settings-band-low"),
-            &tr!("settings-band-high"),
-            &tr!("settings-offset"),
-            &tr!("settings-transmit"),
-            &tr!("settings-max-drive"),
-            "",
-        ] {
+    // An ELAD FDM-DUO can send its transmit out of a 0 dBm port meant for
+    // exactly this, so each row says whether it should.
+    let elad = cfg.backend == sdroxide_types::Backend::Elad
+        || (cfg.backend == sdroxide_types::Backend::Cat
+            && cfg.cat.family == sdroxide_types::CatFamily::Elad);
+    let cols = if elad { 9 } else { 8 };
+    let grid = egui::Grid::new("xvtr-grid").num_columns(cols).spacing([10.0, 6.0]).striped(true);
+    grid.show(ui, |ui| {
+        let mut heads: Vec<String> = vec![
+            String::new(),
+            tr!("settings-name").to_string(),
+            tr!("settings-band-low").to_string(),
+            tr!("settings-band-high").to_string(),
+            tr!("settings-offset").to_string(),
+            tr!("settings-transmit").to_string(),
+            tr!("settings-max-drive").to_string(),
+        ];
+        if elad {
+            heads.push(tr!("settings-xvtr-rf-out").to_string());
+        }
+        heads.push(String::new());
+        for h in heads {
             ui.label(RichText::new(h).weak().size(10.0));
         }
         ui.end_row();
@@ -520,6 +538,10 @@ fn transverter_table(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
                     .suffix(" %"),
             )
             .on_hover_text(tr!("settings-ceiling-transmit-drive-while-transverter"));
+            if elad {
+                crate::chrome::checkbox(ui, &mut x.elad_rf_out, "")
+                    .on_hover_text(tr!("settings-xvtr-rf-out-hover"));
+            }
             if crate::chrome::chip(ui, false, tr!("settings-remove")).clicked() {
                 remove = Some(i);
             }
@@ -904,6 +926,9 @@ impl SdroxideApp {
             self.converter_edit_hz = None;
             self.range_edit = None;
             self.rx_site_edit = None;
+            // Likewise the TCI server form: the next open shows the server
+            // this radio runs.
+            self.reseed_tci_form();
             // The next open starts at the tab bar, not wherever the window was
             // last scrolled to — the offset is one shared egui memory for all
             // the tabs, and it outlives the process.
@@ -1061,10 +1086,14 @@ impl SdroxideApp {
         let mut tci_srv_apply = false;
         let mut rigctld_edit = self.rigctld_edit.clone();
         let mut rigctld_apply = false;
+        let mut beast_edit = self.beast_edit.clone();
+        let mut beast_apply = false;
         let mut wsjtx_edit = self.wsjtx_edit.clone();
         let mut wsjtx_apply = false;
         let mut picup_edit = self.picup_edit.clone();
         let mut picup_apply = false;
+        let mut folders_edit = self.folders_edit.clone();
+        let mut folders_apply = false;
         let mut rot_edit = self.rot_cfg_edit.clone();
         let mut rot_apply = false;
         let mut relay_edit = self.relay_edit.clone();
@@ -1241,10 +1270,14 @@ impl SdroxideApp {
                             tci_srv_apply: &mut tci_srv_apply,
                             rigctld_edit: &mut rigctld_edit,
                             rigctld_apply: &mut rigctld_apply,
+                            beast_edit: &mut beast_edit,
+                            beast_apply: &mut beast_apply,
                             wsjtx_edit: &mut wsjtx_edit,
                             wsjtx_apply: &mut wsjtx_apply,
                             picup_edit: &mut picup_edit,
                             picup_apply: &mut picup_apply,
+                            folders_edit: &mut folders_edit,
+                            folders_apply: &mut folders_apply,
                             rot_edit: &mut rot_edit,
                             rot_apply: &mut rot_apply,
                             relay_edit: &mut relay_edit,
@@ -1339,6 +1372,12 @@ impl SdroxideApp {
             // The engine persists rigctld.json when it binds (or fails to).
             cmds.push(Command::SetRigctldConfig(self.rigctld_edit.clone()));
         }
+        // Kept every frame, like the other servers' edits, or a tick in the
+        // box would be gone again before APPLY could send it.
+        take_beast_out_edit(&mut self.beast_edit, beast_edit);
+        if beast_apply {
+            cmds.push(Command::SetBeastConfig(self.beast_edit.clone()));
+        }
         self.wsjtx_edit = wsjtx_edit;
         if wsjtx_apply {
             // The engine persists wsjtx.json when it opens the socket.
@@ -1348,6 +1387,11 @@ impl SdroxideApp {
         if picup_apply {
             // The engine persists picupload.json and announces it back.
             cmds.push(Command::SetPictureUploadConfig(Box::new(self.picup_edit.clone())));
+        }
+        self.folders_edit = folders_edit;
+        if folders_apply {
+            // The engine persists picture_folders.json and announces it back.
+            cmds.push(Command::SetPictureFolders(Box::new(self.folders_edit.clone())));
         }
         self.rot_cfg_edit = rot_edit;
         if rot_apply {
@@ -1998,6 +2042,7 @@ impl SdroxideApp {
                 // hidden until there is more than one — where the second radio
                 // is added in the first place.
                 self.settings_radio_roster(ui, io.radio_tabs, io.radio_name_edit);
+                self.settings_tci_line(ui, io.tab);
                 let Some(cfg) = io.radio_edit.as_mut() else {
                     // A remote client cannot choose the server's interface or
                     // edit its config — that file lives on the other machine.
@@ -3345,6 +3390,9 @@ impl SdroxideApp {
 
                 ui.add_space(10.0);
                 ui.separator();
+                self.folders_section(ui, io.folders_edit, io.folders_apply);
+                ui.add_space(10.0);
+                ui.separator();
                 self.picup_section(ui, cmds, io.picup_edit, io.picup_apply);
             }
             SettingsTab::FreeDv => {
@@ -3372,6 +3420,8 @@ impl SdroxideApp {
                 &self.midi_out_ports,
                 &self.input.midi_status(),
                 self.input.last_midi,
+                &self.input.tmate2_status(),
+                self.input.last_tmate2.clone(),
             ),
             SettingsTab::Servers => {
                 settings_rigctld_tab(
@@ -3388,8 +3438,21 @@ impl SdroxideApp {
                     ui,
                     io.tci_srv_edit,
                     self.tci_srv_seeded,
+                    self.tci_srv_cfg.as_ref(),
                     &self.tci_srv_status,
+                    &self.tci_radios(),
                     io.tci_srv_apply,
+                    io.radio_tabs,
+                );
+                ui.add_space(12.0);
+                ui.separator();
+                ui.add_space(8.0);
+                settings_beast_out_tab(
+                    ui,
+                    io.beast_edit,
+                    self.beast_seeded,
+                    &self.beast_status,
+                    io.beast_apply,
                 );
                 ui.add_space(12.0);
                 ui.separator();
@@ -3796,6 +3859,69 @@ impl SdroxideApp {
             out.push(AddTarget { key: chip.station.clone() });
         }
         out
+    }
+
+    /// The radios of this tab's station for the TCI server section's picker
+    /// ([`servers::TciRadio`]), in the roster's order. Empty outside a
+    /// multi-radio session, which hides the picker.
+    fn tci_radios(&self) -> Vec<servers::TciRadio> {
+        let here = self.radio_roster.iter().find(|c| c.id == self.radio_id);
+        let station = here.map_or_else(String::new, |c| c.station.clone());
+        self.radio_roster
+            .iter()
+            .filter(|c| c.station == station)
+            .map(|c| {
+                let own = c.id == self.radio_id;
+                servers::TciRadio {
+                    id: c.id,
+                    name: c.display_name().to_string(),
+                    // This radio's own from this tab, current this frame; the
+                    // others as the shell last published them.
+                    tci: if own { self.tci_brief() } else { c.tci },
+                    own,
+                }
+            })
+            .collect()
+    }
+
+    /// One read-only line on the Radio page: this radio's TCI server, and the
+    /// way to the page that sets it.
+    ///
+    /// The server is configured under Servers, beside rigctld and WSJT-X, and
+    /// stays there; this line is so the radio's own page answers "which port
+    /// is this radio on" without the operator having to know where to look.
+    // Why: HDZ 2026-11-15: "sorge dafür, dass am Ort der Server aus
+    //      'Server'-Settings geschrieben wird mit Hinweis 'set server in
+    //      Servers'".
+    fn settings_tci_line(&self, ui: &mut egui::Ui, tab: &mut SettingsTab) {
+        let Some(b) = self.tci_brief() else { return };
+        let port = b.port.to_string();
+        let (text, color) = match (b.enabled, b.failed) {
+            (false, _) => (tr!("settings-tci-server-line-off"), None),
+            (true, true) => (
+                tr!("settings-tci-server-line-failed", port = port),
+                Some(Color32::from_rgb(230, 90, 80)),
+            ),
+            (true, false) => (tr!("settings-tci-server-line-on", port = port), None),
+        };
+        ui.horizontal_wrapped(|ui| {
+            let text = RichText::new(text).size(12.0);
+            ui.label(match color {
+                Some(c) => text.color(c),
+                None => text.weak(),
+            });
+            if crate::chrome::chip(
+                ui,
+                false,
+                RichText::new(tr!("settings-tci-server-line-set")).size(11.0),
+            )
+            .on_hover_text(tr!("settings-tci-server-line-set-tip"))
+            .clicked()
+            {
+                *tab = SettingsTab::Servers;
+            }
+        });
+        ui.add_space(6.0);
     }
 
     fn settings_radio_roster(
@@ -4271,5 +4397,45 @@ mod tests {
     fn soapy_only_appears_when_supported() {
         assert!(iface_opts(true).contains(&sdroxide_types::Backend::Soapy));
         assert!(!iface_opts(false).contains(&sdroxide_types::Backend::Soapy));
+    }
+}
+
+/// Take the Beast output's fields from the dialog's working copy into the
+/// app's. Only those: the feed and the input address belong to the ADS-B
+/// panel, which may have changed them while the dialog was open.
+fn take_beast_out_edit(
+    stored: &mut sdroxide_types::BeastConfig,
+    edited: sdroxide_types::BeastConfig,
+) {
+    stored.out_enabled = edited.out_enabled;
+    stored.out_bind = edited.out_bind;
+    stored.out_port = edited.out_port;
+}
+
+#[cfg(test)]
+mod beast_out_edit_tests {
+    use super::take_beast_out_edit;
+    use sdroxide_types::{AdsbFeed, BeastConfig};
+
+    /// A tick in "Enable" survives to the next frame — the bug HDZ met on
+    /// 2026-11-18 („kann nicht enable anklicken“), when the copy was only
+    /// taken on APPLY — and the panel's feed and address are left alone.
+    #[test]
+    fn the_output_fields_are_kept_and_the_panels_are_not_touched() {
+        let mut stored = BeastConfig {
+            feed: AdsbFeed::Beast,
+            in_addr: "192.168.178.127".into(),
+            ..BeastConfig::default()
+        };
+        let mut edited = stored.clone();
+        edited.out_enabled = true;
+        edited.out_port = 30105;
+        edited.feed = AdsbFeed::Radio;
+        edited.in_addr.clear();
+        take_beast_out_edit(&mut stored, edited);
+        assert!(stored.out_enabled);
+        assert_eq!(stored.out_port, 30105);
+        assert_eq!(stored.feed, AdsbFeed::Beast);
+        assert_eq!(stored.in_addr, "192.168.178.127");
     }
 }

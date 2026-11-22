@@ -16,6 +16,7 @@ use tracing::{debug, info, warn};
 use tungstenite::Bytes;
 
 use super::client::{self, Out, Up};
+use super::spots::SpotBook;
 use super::text::{self, ClientReq};
 use super::{AUDIO_RATE_HZ, AudioBlock, Ctl, IqBlock, RX, ServerRequest, Shared, Subs};
 use crate::protocol as p;
@@ -28,10 +29,27 @@ const POLL: Duration = Duration::from_millis(5);
 /// Realtime frames a client may have queued before we consider it stalled.
 const DATA_LANE: usize = 64;
 
+/// Most complex IQ samples in one packet when the hub coalesces the engine's
+/// blocks: 16 ms at 2 MS/s, 256 KiB on the wire.
+const MAX_IQ_PER_PACKET: usize = 32_768;
+
 /// How long a client's data lane may stay full before we conclude the peer is
 /// gone (suspended laptop, dead network) and reclaim its slot. Without this a
 /// vanished client would hold a slot until TCP finally timed out.
 const STALL_LIMIT: Duration = Duration::from_secs(5);
+
+/// How often the spot book is checked for spots whose lifetime ran out. A
+/// lifetime is ten minutes, so a second late is nothing, and checking on every
+/// 5 ms wake would walk the whole book two hundred times a second.
+const SPOT_EXPIRY_CHECK: Duration = Duration::from_secs(1);
+
+/// Wall-clock seconds, which is what a [`sdroxide_types::Spot`] is stamped with.
+fn now_utc() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
 
 pub(crate) struct HubParams {
     pub listener: TcpListener,
@@ -100,6 +118,13 @@ struct Hub {
     next_id: u64,
     /// The one client allowed to feed TX audio, if any.
     tx_owner: Option<u64>,
+    /// The labels clients placed with `SPOT:`.
+    spots: SpotBook,
+    /// The book changed since the engine was last sent it. One send per wake
+    /// however many spot lines arrived, because a bridge flushing its backlog
+    /// sends hundreds in one message and each send is the whole book.
+    spots_dirty: bool,
+    spots_checked: Instant,
 }
 
 impl Hub {
@@ -124,6 +149,9 @@ impl Hub {
             clients: HashMap::new(),
             next_id: 1,
             tx_owner: None,
+            spots: SpotBook::default(),
+            spots_dirty: false,
+            spots_checked: Instant::now(),
         }
     }
 
@@ -136,6 +164,7 @@ impl Hub {
             }
             self.drain_streams();
             self.drain_up();
+            self.tick_spots();
             self.reap_stalled();
             std::thread::sleep(POLL);
         }
@@ -163,6 +192,16 @@ impl Hub {
                     return;
                 }
             };
+            // The client thread is written for a blocking socket with a read
+            // timeout. On macOS (and the other BSDs) an accepted socket
+            // inherits the listener's non-blocking flag, Linux's does not:
+            // left so, a write that meets a full send buffer returns EAGAIN,
+            // which the thread takes for a dead peer and hangs up, and the
+            // read timeout never paces its loop.
+            if let Err(e) = stream.set_nonblocking(false) {
+                warn!("TCI server: could not make a client socket blocking: {e}");
+                continue;
+            }
             if self.clients.len() >= self.cfg.max_clients {
                 warn!(max = self.cfg.max_clients, "TCI server at client limit; refusing");
                 continue; // dropping the stream closes it
@@ -253,11 +292,35 @@ impl Hub {
     // --- Realtime fan-out ------------------------------------------------
 
     fn drain_streams(&mut self) {
+        // Everything the engine handed over since the last wake goes out as
+        // one packet per rate, up to MAX_IQ_PER_PACKET samples. The engine
+        // hands IQ over in small blocks, about 1,800 a second at 2 MS/s, and a
+        // client thread writes 32 frames per 20 ms tick: one frame per block
+        // would cap a client near 1,600 a second. One packet per 5 ms wake is
+        // ~200 a second at any rate.
+        let mut pending: Option<(u32, Vec<f32>)> = None;
         while let Ok(block) = self.iq_rx.try_recv() {
             if block.rate == 0 {
                 continue;
             }
-            let pkt = Bytes::from(p::build_iq(block.rate, RX, &block.data));
+            match pending.as_mut() {
+                Some((rate, buf))
+                    if *rate == block.rate
+                        && buf.len() + block.data.len() <= 2 * MAX_IQ_PER_PACKET =>
+                {
+                    buf.extend_from_slice(&block.data);
+                }
+                _ => {
+                    if let Some((rate, buf)) = pending.take() {
+                        let pkt = Bytes::from(p::build_iq(rate, RX, &buf));
+                        self.fan_out(pkt, |s| s.iq_on.load(Ordering::Relaxed));
+                    }
+                    pending = Some((block.rate, block.data));
+                }
+            }
+        }
+        if let Some((rate, buf)) = pending {
+            let pkt = Bytes::from(p::build_iq(rate, RX, &buf));
             self.fan_out(pkt, |s| s.iq_on.load(Ordering::Relaxed));
         }
         while let Ok(AudioBlock(mono)) = self.aud_rx.try_recv() {
@@ -385,7 +448,26 @@ impl Hub {
                     Some(line) => self.send_to(id, line),
                     None => self.send_to(id, echo),
                 },
+                // Spots are not echoed — see the module doc.
+                ClientReq::Spot(s) => {
+                    self.spots.put(s, now_utc());
+                    self.spots_dirty = true;
+                }
+                ClientReq::SpotDelete(call) => self.spots_dirty |= self.spots.delete(&call),
+                ClientReq::SpotClear => self.spots_dirty |= self.spots.clear(),
             }
+        }
+    }
+
+    /// Retire spots whose lifetime ran out, and hand the engine the book if it
+    /// changed since the last time.
+    fn tick_spots(&mut self) {
+        if self.spots_checked.elapsed() >= SPOT_EXPIRY_CHECK {
+            self.spots_checked = Instant::now();
+            self.spots_dirty |= self.spots.expire(now_utc());
+        }
+        if std::mem::take(&mut self.spots_dirty) {
+            let _ = self.req_tx.send(ServerRequest::Spots(self.spots.snapshot()));
         }
     }
 

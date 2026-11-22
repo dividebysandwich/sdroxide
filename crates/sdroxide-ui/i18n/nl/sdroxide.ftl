@@ -29,6 +29,7 @@ ui-theme-dracula = Dracula
 ui-theme-catppuccin-mocha = Catppuccin mocha
 ui-theme-catppuccin-latte = Catppuccin latte
 ui-theme-modern-minimalist = Modern minimalistisch
+ui-theme-simplesdr = SimpleSDR
 
 chrome-style-angled = Hoekig
 chrome-style-rectangular = Rechthoekig
@@ -324,7 +325,7 @@ settings-added-radio-s-s-meter =
 settings-t-0-db = 0 dB
 settings-antenna-somewhere-else-no-locator = De antenne staat ergens anders en er is geen locator ingesteld, dus wat deze radio hoort, wordt niet gemeld aan PSK Reporter, WSPRnet of FreeDV Reporter. Typ hierboven de locator van de ontvanger om vanaf daar te melden.
 settings-ranges-are-mhz-low-high = Bereiken staan in MHz, laag-hoog, gescheiden door komma's: 144-146, 430-440 — dat is 144000000-146000000 Hz en 430000000-440000000 Hz. Het zijn dialfrequenties: een converteroffset verschuift ze niet. De converteroffset hierboven is het veld in hertz. Laat een bereik leeg om te gebruiken wat het apparaat over zichzelf meldt; een apparaat dat niets meldt, wordt op zijn woord geloofd.
-settings-careful-rtl-sdr-blog-v4 = Pas op met een RTL-SDR: de Blog V4 zet zelf onder 28,8 MHz al op, dus een negatieve offset die de hardware daarheen brengt, verschuift twee keer.
+settings-careful-rtl-sdr-blog-v4 = Pas op met een RTL-SDR: de Blog V4/V4L zet zelf onder 28,8 MHz al op, dus een negatieve offset die de hardware daarheen brengt, verschuift twee keer.
 settings-transmit-audio = Zendaudio
 settings-use = in gebruik
 settings-every-stage-off = elke trap uit
@@ -735,6 +736,13 @@ settings-picup-sstv-dir = SSTV-map
 settings-picup-weather-fax = Weerfax
 settings-picup-wefax-dir = WEFAX-map
 settings-picup-empty-login-directory = Leeg is de loginmap.
+settings-folders-heading = Mappen voor ontvangen beelden
+settings-folders-explain = Waar dit station bewaart wat het ontvangt. Het pad staat op de computer waar de radio aan hangt; een extern scherm kan het intypen maar er niet doorheen bladeren. Reeds opgeslagen beelden blijven zichtbaar.
+settings-folders-sstv = SSTV-map
+settings-folders-wefax = WEFAX-map
+settings-folders-not-absolute = ⚠ Geen absoluut pad — genegeerd, de standaardmap wordt gebruikt.
+settings-folders-empty-default = Leeg gebruikt de standaardmap. Kan een map niet worden aangemaakt (een losgekoppelde schijf), dan geldt de standaardmap tot het wel kan.
+settings-folders-apply = TOEPASSEN
 settings-picup-file-names = Bestandsnamen
 settings-picup-format = Indeling
 settings-picup-add-extension = extensie toevoegen
@@ -1399,7 +1407,7 @@ settings-radio-applies-immediately-no-reconnect-tuner = Werkt meteen — zonder 
 settings-radio-crystal-error-parts-per-million = Kristalfout in delen per miljoen. Draai met RUST_LOG=sdroxide_rtlsdr=debug en het logboek drukt na ongeveer 20 seconden de gemeten klookfout af — dat is het getal om in te voeren. Werkt meteen.
 settings-radio-hf-reception = HF-ontvangst
 settings-radio-tuner-itself-starts-24-mhz =
-    De tuner zelf begint bij 24 MHz. Een RTL-SDR Blog V4 zet daaronder in de hardware zelf op; andere dongles bereiken HF alleen door de ADC rechtstreeks te bemonsteren, via de HF-poort van de V3. Automatisch geeft alles onder 24 MHz aan de ADC en alles erboven aan de tuner.
+    De tuner zelf begint bij 24 MHz. Een RTL-SDR Blog V4/V4L zet daaronder in de hardware zelf op; andere dongles bereiken HF alleen door de ADC rechtstreeks te bemonsteren, via de HF-poort van de V3. Automatisch geeft alles onder 24 MHz aan de ADC en alles erboven aan de tuner.
 
     Directe bemonstering dekt elke HF-band, 17 m en 15 m inbegrepen — ze komen in de tweede Nyquist-zone van de ADC binnen, rechtop. Niets filtert de ingang van de ADC, dus wat er op 28,8 MHz min de dial zit, komt er ook mee: 10,7 MHz onder 17 m, 7,726 MHz onder 15 m.
 
@@ -2018,6 +2026,8 @@ topbar-radio = RADIO
 topbar-tune-voice-keyer-drive-mic = Afstemmen, de spraakkeyer, en de niveaus van aansturing en microfoon
 topbar-transmit = ZENDEN
 topbar-tune = {" "}TUNE{" "}
+topbar-two-tone = {" "}2T{" "}
+topbar-two-tone-hover = Twee-toontest: zendt 700 Hz en 1900 Hz samen uit op het afstemniveau, tot opnieuw geklikt wordt. De omhullende gaat van niets tot vol, dus de splatter van een versterker is duidelijk te zien op een tweede ontvanger, en PureSignal leert er het snelst van — een vaste draaggolf leert het maar één punt. Gebruik een kunstantenne.
 topbar-panadapter-two-layers-their-speeds = Het panadapter — de twee lagen, hun snelheden en detail, peak hold — plus contrast van de waterval, FFT-grootte en de skimmers
 topbar-display = WEERGAVE
 topbar-logbook-spots-awards-memories-scanner = Logboek, spots, prijzen, geheugens, de scanner, instellingen en de handleiding
@@ -2277,7 +2287,6 @@ topbar-recent = RECENT
 topbar-recent-empty =
     Vult na 3 s op een plek
 topbar-mode = MODUS
-topbar-digital = DIGITAAL
 
 ## Top bar: the System box's window chips.
 
@@ -4074,7 +4083,6 @@ scanner-move-don-t-stop-channel = Doorgaan, en op dit kanaal niet opnieuw stoppe
 adsb-starting-ads-b-decoder = de ADS-B-decoder starten…
 adsb-ads-b = ADS-B
 adsb-t-1090-mhz-mode-s = 1090 MHz Mode S
-adsb-tune-receiver-1090-000-mhz = Stem de ontvanger af op 1090,000 MHz, de wereldwijde ADS-B-downlink. Er is maar één kanaal.
 adsb-setup = INSTELLING
 adsb-timeouts-trail-length-how-far = Time-outs, lengte van het spoor en hoe ver de snelheidsvectoren reiken
 adsb-aircraft = VLIEGTUIGEN
@@ -4091,7 +4099,7 @@ adsb-last-frame-accepted-aircraft = Het laatste frame dat van dit vliegtuig is a
 adsb-ads-b-setup = ADS-B-instelling
 adsb-drop-map-after = Van de kaart halen na
 adsb-without-position-report = zonder positiemelding
-adsb-past-aircraft-comes-off-map = Daarna gaat het vliegtuig van de kaart en wordt de rij grijs. Hij wordt niet vervaagd: een dof vierkantje op een verouderde positie is nog steeds een bewering over waar een vliegtuig is, in dezelfde inkt als de ware.
+adsb-past-aircraft-comes-off-map = Daarna gaat het vliegtuig van de kaart en wordt de rij grijs. Hij wordt niet vervaagd: een dof symbool op een verouderde positie is nog steeds een bewering over waar een vliegtuig is, in dezelfde inkt als de ware.
 adsb-drop-list-after = Van de lijst halen na
 adsb-nothing-heard-all = waarvan helemaal niets gehoord is
 adsb-trail-length = Lengte van het spoor
@@ -5005,7 +5013,6 @@ acars-mode = modus { $mode }
 
 ## adsb: messages with values (src/app/panels/adsb.rs)
 
-adsb-aircraft-3 = { $aircraft } vliegtuigen
 adsb-frames = { $frames } frames
 adsb-preambles = { $preambles } preambules
 adsb-bad-crc = { $bad_crc } foute CRC
@@ -6036,3 +6043,105 @@ textmodem-psk-coded-hint =
 topbar-sk-filter-after-nr-hint = SK achter RNN/DFNR — en dus achter de AGC: wat het filter wegneemt blijft weg (zie de boost ernaast); uit: vóór de AGC, die het niveau herstelt
 topbar-sk-filter-boost-hint = Versterking na het SK-filter, 0–18 dB (5 dB), zacht begrensd onder volle schaal: achter NR herstelt niets het niveau dat het filter wegneemt
 topbar-sk-filter-boost-before-nr = Vóór NR herstelt de AGC het niveau; de boost werkt alleen achter NR
+
+## hfdl: ground stations (src/app/hfdl.rs)
+
+hfdl-stations = STATIONS
+hfdl-no-station-heard-yet = Nog geen grondstation gehoord. De squitter van een station herhaalt zich elke ~32 s op de kanalen die het gebruikt; de lijst vult zich ook uit de systeemtabel van het netwerk zodra die is ontvangen.
+hfdl-station-heard = { $age } geleden gehoord op { $mhz } MHz
+hfdl-station-squitters = { $n } squitters
+hfdl-station-not-heard = nog niet gehoord
+hfdl-station-channel-hint = Stem af op { $mhz } MHz. Groen: het station werkt nu op dit kanaal.
+hfdl-station-channels-unknown = Kanalen onbekend totdat het netwerk zijn systeemtabel uitzendt.
+hfdl-chip-stations = Gebruikt door { $stations }
+hfdl-chip-working = { $station } werkt op dit kanaal — { $age } geleden gehoord
+
+## hfdl: ACARS messages (src/app/hfdl.rs)
+
+hfdl-messages = BERICHTEN
+hfdl-no-acars-yet = Nog geen ACARS-bericht. Luchtvaartberichten reizen in de datalink tussen de squitters, veel minder vaak dan op VHF; de gehoorde worden hier bewaard nadat het decodeerlogboek ze heeft laten verdwijnen.
+hfdl-save-hfdl-acars-messages-csv = De ACARS-berichten opslaan in een CSV-bestand
+hfdl-acars-downlink = Vliegtuig naar grond
+hfdl-acars-uplink = Grond naar vliegtuig
+hfdl-acars-crc-bad = CRC
+hfdl-acars-crc-bad-hint = De eigen controlereeks van het bericht klopte niet, dus een deel van de tekst kan fout zijn. Het datalinkframe waarin het zat, heeft zijn eigen controle wel doorstaan.
+hfdl-acars-more = meer…
+hfdl-acars-more-hint = Een deel van een langer bericht — er volgen nog blokken.
+
+## hfdl: aircraft list (src/app/hfdl.rs)
+
+hfdl-aircraft-list = VLIEGTUIGEN
+hfdl-no-aircraft-heard-yet = Nog geen vliegtuig gehoord. Een vliegtuig verschijnt hier vanaf zijn eerste downlink — een logon, een positierapport, een ACARS-bericht —, of het ooit een positie voor de kaart stuurt of niet.
+hfdl-aircraft-position = op { $lat }, { $lon } · { $age } geleden
+hfdl-aircraft-from-you = { $km } km, { $bearing }° van jou
+hfdl-aircraft-logged-off = afgemeld
+hfdl-aircraft-no-position-hint = Nog geen positie gemeld, dus er is op de kaart nog niets om te laten knipperen
+hfdl-aircraft-filter-hint = Toon alleen de decoderingen van dit vliegtuig: zet het filter en opent DECODERINGEN
+hfdl-col-reg = REG
+hfdl-col-flight = VLUCHT
+hfdl-col-heard = GEHOORD
+hfdl-col-station = STATION
+hfdl-col-mhz = MHz
+hfdl-col-snr = dB
+hfdl-col-msgs = BERK.
+hfdl-col-dist = KM
+hfdl-col-last = LAATSTE BER.
+hfdl-aircraft-sort-hint = Sorteer op deze kolom; klik nogmaals om om te keren
+hfdl-aircraft-blink-hint = Laat dit vliegtuig op de kaart knipperen
+
+## hfdl: several channels at once (src/app/hfdl.rs)
+
+hfdl-chip-multi-hint = Klik om alleen dit kanaal te beluisteren; Ctrl-klik (⌘-klik op een Mac) om het naast de andere te decoderen.
+hfdl-left-out-hint = Gevraagd maar niet gedecodeerd: te ver van de andere kanalen om hun baan te delen (hooguit 200 kHz), of buiten het venster van de ontvanger.
+hfdl-nearby = + NABIJ
+hfdl-nearby-hint = Decodeer ook elk kanaal dat dichtbij genoeg ligt om één baan te delen met het huidige — binnen 200 kHz van elkaar en binnen het venster van de ontvanger, hooguit acht.
+hfdl-nearby-none-hint = Geen ander kanaal kan de baan delen: geen ligt dichtbij genoeg, alle acht plaatsen zijn bezet, of het venster van de ontvanger is te smal.
+hfdl-single-hint = Terug naar het ene kanaal waarop de draaiknop staat
+hfdl-lane-label = KANALEN
+
+## hfdl: auto-follow (src/app/hfdl.rs)
+
+hfdl-auto = AUTO
+hfdl-auto-hint = Zoek zelf een open band: blijf erop zolang er grondstations op gehoord worden, en wanneer er al ongeveer anderhalve minuut geen meer is gehoord, ga naar de volgende band — de hogere overdag en de lagere 's nachts, op basis van je gridvakje, en een band waarop een station zelf zegt te werken eerst — waarbij je al die kanalen van die band tegelijk neemt. Handmatig een kanaal kiezen zet dit uit.
+hfdl-follow-starting = AUTO · wacht op de decoder…
+hfdl-follow-parked = AUTO · { $mhz } MHz is open — { $station } gehoord { $age } geleden
+hfdl-follow-listening = AUTO · luistert op { $mhz } MHz; de volgende band over { $secs } s als er niets wordt gehoord
+
+## hfdlmap: ground stations (src/hfdl_map.rs)
+
+hfdlmap-gs-heard = { $age } geleden gehoord
+hfdlmap-gs-not-heard = recent niet gehoord — bekend uit de systeemtabel
+
+## hfdl: channels by band (src/app/hfdl.rs)
+
+hfdl-band-label = MHz
+hfdl-band-hint = Toon de kanalen van { $mhz } MHz. Groen: een station werkt nu op een ervan; onderstreept: een ervan wordt gedecodeerd.
+
+## hfdl: calculated course and speed (src/app/hfdl.rs)
+
+hfdl-col-calc-trk = BEREK. KOERS
+hfdl-col-calc-kt = BEREK. KT
+hfdl-col-calc-hint = Berekend uit de laatste twee positierapporten van het vliegtuig — koers over de grond en gemiddelde grondsnelheid daartussen. Niet door het vliegtuig gemeld: HFDL-positierapporten bevatten geen van beide.
+
+## hfdl: feeds (src/app/hfdl.rs)
+
+hfdl-feeds = FEEDS
+hfdl-feeds-hint = Stuur wat gedecodeerd wordt ergens anders heen dan naar dit paneel — naar Airframes, of naar je eigen programma's. Alles staat uit tot je het aanzet.
+hfdl-station-id = Station-ID
+hfdl-station-id-hint = Wordt op elk verzonden frame gezet. Airframes schrijft je feed toe aan dit ID en vraagt om de vorm XX-YYYY-HFDL: je initialen, een luchthavencode of locator, en de modus. Letters, cijfers, - en _, tot 32.
+hfdl-station-id-bad = Alleen letters, cijfers, - en _, tot 32 tekens.
+hfdl-feed-airframes = Feed naar Airframes (feed.airframes.io)
+hfdl-feed-airframes-hint = Stuur elk gedecodeerd frame — squitters, posities, ACARS-berichten — met je station-ID naar de HFDL-ingang van Airframes (TCP, poort 5556), in dumphfdl's JSON, het formaat dat die leest. Je feed verschijnt dan op airframes.io onder dat ID. Er wordt niets verzonden zolang dit uit staat.
+hfdl-feed-needs-id = Niet verzonden: geef eerst een station-ID op.
+hfdl-feed-sent = { $n } frames verzonden
+hfdl-feed-json = Stuur dezelfde JSON naar (UDP host:port, door komma's gescheiden)
+hfdl-feed-json-hint = Eigen programma's die dumphfdl's JSON lezen — acarshub (waarvan de HFDL-ingang meestal UDP-poort 5556 is), een logger, een script. Eén datagram per frame naar elk, zoals dumphfdl's decoded:json-UDP-uitvoer ze verstuurt. Geen station-ID nodig. Wordt toegepast zodra je het veld verlaat.
+hfdl-feed-json-bad = Geen host:port: { $targets }
+hfdl-feed-sbs = BaseStation-poort (SBS)
+hfdl-feed-sbs-hint = Serveer vliegtuigposities als BaseStation-regels op deze TCP-poort, voor Virtual Radar Server, PlanePlotter en dergelijke — dezelfde regels als dumphfdl's basestation-uitvoer schrijft. 0 is uit. 30003 is de gebruikelijke BaseStation-poort; kies een andere als een ADS-B-decoder op deze computer die poort al gebruikt. Wordt toegepast zodra je het veld verlaat.
+hfdl-feed-sbs-lan = Andere computers laten verbinden
+hfdl-feed-sbs-lan-hint = Uit: alleen programma's op deze computer kunnen verbinden. Aan: elke computer die deze via het netwerk kan bereiken, kan verbinden.
+hfdl-feed-sbs-status = { $clients ->
+        [one] { $clients } client verbonden
+       *[other] { $clients } clients verbonden
+    } · { $n } posities verzonden

@@ -29,19 +29,26 @@ pub enum SpotKind {
     /// the wire — but it shares `Spot` so the overlay, the list and the map
     /// render it through one path. Appended last, as above.
     Broadcast,
+    /// A label a TCI client placed with `SPOT:` on this radio's built-in TCI
+    /// server — a logger marking a needed station, a cluster bridge, a
+    /// skimmer. Unlike the feeds above it belongs to one radio, not to the
+    /// station: it is about the panorama of the radio whose server took it.
+    /// Appended last, as above.
+    Tci,
 }
 
 impl SpotKind {
     /// Every kind, in the order the SPOTS window's filter chips, the settings
     /// colour pickers and [`SpotKind::index`] all use. Anything indexed by kind
     /// — the filter array, [`crate::UiSettings::spot_colors`] — is this wide.
-    pub const ALL: [SpotKind; 6] = [
+    pub const ALL: [SpotKind; 7] = [
         SpotKind::DxCluster,
         SpotKind::Pota,
         SpotKind::Sota,
         SpotKind::PskReporter,
         SpotKind::FreeDv,
         SpotKind::Broadcast,
+        SpotKind::Tci,
     ];
 
     /// How many kinds there are, i.e. the width of every per-kind array.
@@ -56,6 +63,7 @@ impl SpotKind {
             SpotKind::PskReporter => 3,
             SpotKind::FreeDv => 4,
             SpotKind::Broadcast => 5,
+            SpotKind::Tci => 6,
         }
     }
 
@@ -67,6 +75,22 @@ impl SpotKind {
             SpotKind::PskReporter => "PSK",
             SpotKind::FreeDv => "FREEDV",
             SpotKind::Broadcast => "BC",
+            SpotKind::Tci => "TCI",
+        }
+    }
+
+    /// How long a spot of this kind lives, when the kind itself fixes it.
+    ///
+    /// `None` for the network feeds: how stale a report may get is the
+    /// operator's `spot_max_age_secs`. A TCI spot lives ten minutes from the
+    /// `SPOT:` that placed it, because the TCI 2.1 specification says so and a
+    /// client sends its spots on that understanding — a logger that re-sends a
+    /// needed station every few minutes expects it to stay up between sends,
+    /// and one that stops expects it to go.
+    pub fn lifetime_secs(self) -> Option<i64> {
+        match self {
+            SpotKind::Tci => Some(TCI_SPOT_LIFETIME_SECS),
+            _ => None,
         }
     }
 
@@ -90,9 +114,17 @@ impl SpotKind {
             // the label takes the brightest hue the other five leave free, which
             // is the gap between SOTA's amber and POTA's green.
             SpotKind::Broadcast => (190, 240, 120),
+            // Near-white: most TCI clients send a colour of their own, and the
+            // tint is for the ones that send black. White sits apart from all
+            // six hues above and reads on every waterfall palette.
+            SpotKind::Tci => (235, 235, 235),
         }
     }
 }
+
+/// Lifetime of a TCI spot: "The spot lifetime is 10 minutes" (TCI Protocol
+/// 2.1, `SPOT`). See [`SpotKind::lifetime_secs`].
+pub const TCI_SPOT_LIFETIME_SECS: i64 = 600;
 
 /// One spot from a network feed: a station heard/announced at a frequency, with
 /// enough context to place a clickable marker on the panadapter and world map
@@ -123,9 +155,24 @@ pub struct Spot {
     pub when_utc: i64,
     /// SNR in dB (PSK Reporter), if any.
     pub snr_db: Option<i16>,
+    /// The colour the reporter chose for this one spot, as RGB. Only a TCI
+    /// client can choose one (`SPOT:`'s ARGB argument); `None` wears the
+    /// kind's tint, [`crate::UiSettings::spot_colors`]. Use [`Spot::rgb`]
+    /// rather than reading the two separately.
+    #[serde(default)]
+    pub color: Option<[u8; 3]>,
 }
 
 impl Spot {
+    /// This spot's colour: its own if the reporter chose one, else `kind_tint`
+    /// — the operator's tint for its kind, which only the UI knows.
+    pub fn rgb(&self, kind_tint: (u8, u8, u8)) -> (u8, u8, u8) {
+        match self.color {
+            Some([r, g, b]) => (r, g, b),
+            None => kind_tint,
+        }
+    }
+
     /// Best-effort radio [`Mode`] for click-to-tune from the spot's mode string.
     /// `SSB`/`PHONE` resolve to LSB below 10 MHz and USB above (ham convention);
     /// unknown data modes fall back to USB.

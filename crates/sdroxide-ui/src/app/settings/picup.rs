@@ -8,8 +8,8 @@
 use crate::i18n::{Tr, tr};
 use eframe::egui::{self, Color32, ComboBox, RichText};
 use sdroxide_types::{
-    Command, FtpSecurity, PictureUploadConfig, PictureUploadStatus, TlsVerify, UploadFormat,
-    UploadNaming, format_fingerprint,
+    Command, FtpSecurity, ImageKind, PictureFolders, PictureUploadConfig, PictureUploadStatus,
+    TlsVerify, UploadFormat, UploadNaming, format_fingerprint,
 };
 
 use super::net::{net_heading, net_row, net_secret};
@@ -29,6 +29,39 @@ fn result_line(ui: &mut egui::Ui, st: &PictureUploadStatus) {
 }
 
 impl crate::app::SdroxideApp {
+    /// Where the station saves what it receives. Like the FTP section it has an
+    /// APPLY button, so a half-typed path is not tried on the next picture.
+    pub(in crate::app) fn folders_section(
+        &self,
+        ui: &mut egui::Ui,
+        edit: &mut PictureFolders,
+        apply: &mut bool,
+    ) {
+        net_heading(ui, &tr!("settings-folders-heading"));
+        note(ui, &tr!("settings-folders-explain"), crate::theme::gray(140));
+        net_row(ui, &tr!("settings-folders-sstv"), &mut edit.sstv, 320.0);
+        if edit.is_ignored(ImageKind::Sstv) {
+            note(ui, &tr!("settings-folders-not-absolute"), RED);
+        }
+        net_row(ui, &tr!("settings-folders-wefax"), &mut edit.wefax, 320.0);
+        if edit.is_ignored(ImageKind::Wefax) {
+            note(ui, &tr!("settings-folders-not-absolute"), RED);
+        }
+        note(ui, &tr!("settings-folders-empty-default"), crate::theme::gray(140));
+        ui.add_space(4.0);
+        if crate::chrome::chip_accent(
+            ui,
+            false,
+            RichText::new(tr!("settings-folders-apply")).strong(),
+            crate::theme::GREEN(),
+            crate::theme::INK_ON_CYAN(),
+        )
+        .clicked()
+        {
+            *apply = true;
+        }
+    }
+
     /// The section itself. `edit` is the dialog's copy; `apply` asks for it to
     /// be sent.
     pub(in crate::app) fn picup_section(

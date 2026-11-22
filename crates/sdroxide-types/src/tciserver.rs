@@ -53,6 +53,29 @@ impl TciServerConfig {
     /// Bind addresses offered in the UI.
     pub const BINDS: [&'static str; 2] = ["127.0.0.1", "0.0.0.0"];
 
+    /// The TCI default port, which the station radio keeps.
+    pub const BASE_PORT: u16 = 50001;
+
+    /// The port radio `index` (its place in the station's roster, the station
+    /// radio being 0) listens on until the operator picks one. One apart per
+    /// radio, so enabling a second radio's server does not land it on the
+    /// station's port and fail to bind.
+    pub fn default_port(index: usize) -> u16 {
+        let index = u16::try_from(index).unwrap_or(u16::MAX);
+        Self::BASE_PORT.saturating_add(index)
+    }
+
+    /// What radio `index` starts with when it has no `tciserver.json`: the
+    /// station radio (index 0) gets the plain default, on, so clients reach
+    /// it without arming anything; every further radio is off, on a port of
+    /// its own, ready to be switched on in Settings → Servers.
+    pub fn for_radio(index: usize) -> Self {
+        if index == 0 {
+            return Self::default();
+        }
+        TciServerConfig { enabled: false, port: Self::default_port(index), ..Self::default() }
+    }
+
     pub fn addr(&self) -> String {
         format!("{}:{}", self.bind, self.port)
     }
@@ -118,6 +141,19 @@ mod tests {
         assert!(!cfg.client);
         assert_eq!(cfg.client_address, "127.0.0.1:50001");
         assert!(cfg.enabled);
+    }
+
+    #[test]
+    fn each_radio_defaults_to_a_port_of_its_own_and_only_the_station_is_on() {
+        assert_eq!(TciServerConfig::default_port(0), 50001);
+        assert_eq!(TciServerConfig::default_port(1), 50002);
+        assert_eq!(TciServerConfig::default_port(11), 50012);
+        assert_eq!(TciServerConfig::default_port(usize::MAX), u16::MAX, "saturates, no wrap");
+        assert_eq!(TciServerConfig::for_radio(0), TciServerConfig::default());
+        let second = TciServerConfig::for_radio(1);
+        assert!(!second.enabled);
+        assert_eq!(second.port, 50002);
+        assert_eq!(second.bind, "127.0.0.1");
     }
 
     #[test]

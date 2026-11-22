@@ -512,6 +512,31 @@ pub fn save_hfdl_channels(khz: &[u32]) -> Result<(), ConfigError> {
     save_json("hfdl_channels.json", &khz)
 }
 
+/// The HFDL system table (`hfdl_stations.json`): every ground station's
+/// position and channels, as the network last broadcast them. The stations send
+/// the table only now and then, and without it a squitter's channel bitmap
+/// cannot be read as frequencies, so the engine keeps the last one received and
+/// starts the next run from it. Entries carry only the table's own fields; what
+/// was heard is per run.
+pub fn load_hfdl_stations() -> Vec<sdroxide_types::HfdlStation> {
+    load_json_list("hfdl_stations.json")
+}
+
+pub fn save_hfdl_stations(stations: &[sdroxide_types::HfdlStation]) -> Result<(), ConfigError> {
+    save_json("hfdl_stations.json", &stations)
+}
+
+/// Where decoded HFDL is fed besides the panel (`hfdl_outputs.json`): the
+/// station id and which feeds are on. Per machine, like the other lanes'
+/// settings.
+pub fn load_hfdl_outputs() -> sdroxide_types::HfdlOutputs {
+    load_json("hfdl_outputs.json")
+}
+
+pub fn save_hfdl_outputs(o: &sdroxide_types::HfdlOutputs) -> Result<(), ConfigError> {
+    save_json("hfdl_outputs.json", o)
+}
+
 /// The operator's own receive filter presets (`filter_presets.json`), each
 /// standing in for one of a mode's built-in chips. A missing file is none.
 pub fn load_filter_presets() -> Vec<sdroxide_types::CustomFilterPreset> {
@@ -887,8 +912,25 @@ impl Store {
         self.save("scanner.json", cfg)
     }
 
+    /// This scope's `tciserver.json`, or — when there is none to read — what
+    /// [`sdroxide_types::TciServerConfig::for_radio`] gives this radio's place
+    /// in the roster.
+    ///
+    /// Not the type's own default: that is the station radio's (on, port
+    /// 50001), and a further radio without a file — a scope made by hand, or
+    /// one whose file was quarantined — came up on the station's port too, and
+    /// one of the two failed to bind.
     pub fn load_tci_server_config(&self) -> sdroxide_types::TciServerConfig {
-        self.load("tciserver.json")
+        self.load_if_present("tciserver.json")
+            .unwrap_or_else(|| sdroxide_types::TciServerConfig::for_radio(self.roster_index()))
+    }
+
+    /// Where this scope's radio stands in the roster (`radios.json`), the
+    /// station radio being 0. A radio the roster does not list counts by its
+    /// id, which no listed radio shares.
+    fn roster_index(&self) -> usize {
+        let id = self.radio_id();
+        load_radios().radios.iter().position(|r| r.id == id).unwrap_or(id as usize)
     }
 
     pub fn save_tci_server_config(
@@ -1134,7 +1176,9 @@ impl RadiosFile {
 /// The scope is seeded with a default `radio.json` and — deliberately — a
 /// `tciserver.json` with the server disabled: [`TciServerConfig`]'s default is
 /// *enabled* on a fixed port, which is right for the station's first radio and
-/// a guaranteed bind collision for every additional one.
+/// a guaranteed bind collision for every additional one. The seeded port is
+/// the radio's own ([`sdroxide_types::TciServerConfig::default_port`] of its
+/// place in the roster), so switching the server on needs no port found.
 pub fn create_radio(name: &str) -> Result<RadioSlot, ConfigError> {
     let mut roster = load_radios();
     let id = roster.next_id;
@@ -1150,7 +1194,8 @@ pub fn create_radio(name: &str) -> Result<RadioSlot, ConfigError> {
         ..Default::default()
     };
     store.save_radio_config(&cfg)?;
-    let tci = sdroxide_types::TciServerConfig { enabled: false, ..Default::default() };
+    // Never index 0, which is the station's (on) — this radio goes after it.
+    let tci = sdroxide_types::TciServerConfig::for_radio(roster.radios.len().max(1));
     store.save_tci_server_config(&tci)?;
     roster.radios.push(slot.clone());
     roster.next_id = id + 1;
@@ -1209,13 +1254,43 @@ pub fn rename_radio(id: u32, name: &str) -> Result<(), ConfigError> {
     save_radios(&roster)
 }
 
-/// Directory for a mode's received pictures (`~/.config/sdroxide/<kind>_rx`),
-/// created on demand.
-///
-/// One store per mode rather than one for everything: an SSTV picture and a
-/// weather chart are browsed for entirely different reasons, and a
-/// fifteen-minute chart arriving every half hour would bury a session's SSTV.
-pub fn image_rx_dir(kind: &str) -> Result<PathBuf, ConfigError> {
+/// Where the received-picture stores are kept (`picture_folders.json`). One
+/// folder per store; empty is the default for it.
+pub fn load_picture_folders() -> sdroxide_types::PictureFolders {
+    load_json("picture_folders.json")
+}
+
+pub fn save_picture_folders(cfg: &sdroxide_types::PictureFolders) -> Result<(), ConfigError> {
+    save_json("picture_folders.json", cfg)
+}
+
+/// A store's configured folder, created. `None` when none is set or it cannot
+/// be created — an external drive that is not plugged in, a path that needs
+/// permissions this program does not have. The caller then uses the default,
+/// which loses no picture; the warning says why they are not where they were
+/// pointed.
+fn configured_picture_dir(kind: sdroxide_types::ImageKind) -> Option<PathBuf> {
+    let folders = load_picture_folders();
+    if folders.is_ignored(kind) {
+        warn!("{} picture folder is not an absolute path; using the default", kind.key());
+    }
+    let dir = folders.for_kind(kind)?;
+    match fs::create_dir_all(&dir) {
+        Ok(()) => Some(dir),
+        Err(e) => {
+            warn!(
+                "{} picture folder {} is unusable ({e}); using the default",
+                kind.key(),
+                dir.display()
+            );
+            None
+        }
+    }
+}
+
+/// The built-in location of a mode's received pictures
+/// (`~/.config/sdroxide/<kind>_rx`), created on demand.
+fn default_image_rx_dir(kind: &str) -> Result<PathBuf, ConfigError> {
     // The caller's `kind` is a literal today, but it ends up in a path.
     let safe: String = kind.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
     let dir = config_dir()?.join(format!("{}_rx", if safe.is_empty() { "image" } else { &safe }));
@@ -1223,8 +1298,24 @@ pub fn image_rx_dir(kind: &str) -> Result<PathBuf, ConfigError> {
     Ok(dir)
 }
 
-/// Directory for received weather-fax charts, created on demand: the user's
-/// pictures directory (`<Pictures>/sdroxide/wefax`), or the config directory
+/// Directory for a mode's received pictures — the folder the operator chose in
+/// Settings, else `~/.config/sdroxide/<kind>_rx` — created on demand.
+///
+/// One store per mode rather than one for everything: an SSTV picture and a
+/// weather chart are browsed for entirely different reasons, and a
+/// fifteen-minute chart arriving every half hour would bury a session's SSTV.
+pub fn image_rx_dir(kind: &str) -> Result<PathBuf, ConfigError> {
+    if kind == sdroxide_types::ImageKind::Sstv.key()
+        && let Some(dir) = configured_picture_dir(sdroxide_types::ImageKind::Sstv)
+    {
+        return Ok(dir);
+    }
+    default_image_rx_dir(kind)
+}
+
+/// Directory for received weather-fax charts, created on demand: the folder
+/// the operator chose in Settings, else the user's pictures directory
+/// (`<Pictures>/sdroxide/wefax`), or the config directory
 /// (`~/.config/sdroxide/wefax_rx`) when the platform exposes no pictures folder.
 ///
 /// Charts go where pictures go, unlike every other store here, because that is
@@ -1233,14 +1324,53 @@ pub fn image_rx_dir(kind: &str) -> Result<PathBuf, ConfigError> {
 /// outside this program, in a file manager, and none of which anyone will do
 /// from a hidden directory under `~/.config`.
 pub fn wefax_rx_dir() -> Result<PathBuf, ConfigError> {
-    let dir = match directories::UserDirs::new()
-        .and_then(|u| u.picture_dir().map(std::path::Path::to_path_buf))
-    {
-        Some(pictures) => pictures.join("sdroxide").join("wefax"),
-        None => config_dir()?.join("wefax_rx"),
-    };
+    if let Some(dir) = configured_picture_dir(sdroxide_types::ImageKind::Wefax) {
+        return Ok(dir);
+    }
+    let dir = wefax_default_rx_dir_path()?;
     fs::create_dir_all(&dir)?;
     Ok(dir)
+}
+
+/// The built-in folder for a mode's received pictures, ignoring the one the
+/// operator chose: where a picture goes when the chosen folder exists but
+/// cannot be written to. Created on demand.
+pub fn default_picture_dir(kind: &str) -> Result<PathBuf, ConfigError> {
+    if kind == sdroxide_types::ImageKind::Wefax.key() {
+        let dir = wefax_default_rx_dir_path()?;
+        fs::create_dir_all(&dir)?;
+        return Ok(dir);
+    }
+    default_image_rx_dir(kind)
+}
+
+fn wefax_default_rx_dir_path() -> Result<PathBuf, ConfigError> {
+    Ok(
+        match directories::UserDirs::new()
+            .and_then(|u| u.picture_dir().map(std::path::Path::to_path_buf))
+        {
+            Some(pictures) => pictures.join("sdroxide").join("wefax"),
+            None => config_dir()?.join("wefax_rx"),
+        },
+    )
+}
+
+/// The built-in folder of a store, when the operator has pointed it somewhere
+/// else and the built-in one already holds pictures.
+///
+/// Read-only and never created, like [`wefax_legacy_rx_dir`]: the gallery lists
+/// it beside the chosen folder so pictures received before the move do not
+/// appear to have been lost.
+pub fn picture_default_rx_dir(kind: sdroxide_types::ImageKind) -> Option<PathBuf> {
+    let default = match kind {
+        sdroxide_types::ImageKind::Sstv => config_dir().ok()?.join("sstv_rx"),
+        sdroxide_types::ImageKind::Wefax => wefax_default_rx_dir_path().ok()?,
+    };
+    let current = match kind {
+        sdroxide_types::ImageKind::Sstv => image_rx_dir("sstv").ok()?,
+        sdroxide_types::ImageKind::Wefax => wefax_rx_dir().ok()?,
+    };
+    (default != current && default.is_dir()).then_some(default)
 }
 
 /// Where charts were kept before they moved to the pictures directory.
@@ -1960,6 +2090,17 @@ pub fn load_adsb_config() -> sdroxide_types::AdsbSettings {
 
 pub fn save_adsb_config(cfg: &sdroxide_types::AdsbSettings) -> Result<(), ConfigError> {
     save_json("adsb.json", cfg)
+}
+
+/// Mode-S Beast in and out (`beast.json`). One file for the station, like
+/// `adsb.json`: the output port is the machine's, and only the primary engine
+/// binds it.
+pub fn load_beast_config() -> sdroxide_types::BeastConfig {
+    load_json::<sdroxide_types::BeastConfig>("beast.json")
+}
+
+pub fn save_beast_config(cfg: &sdroxide_types::BeastConfig) -> Result<(), ConfigError> {
+    save_json("beast.json", cfg)
 }
 
 /// VDL Mode 2 decoder preferences.
@@ -3377,6 +3518,19 @@ mod tests {
             "a new radio's TCI server must come up disabled"
         );
         assert!(sdroxide_types::TciServerConfig::default().enabled, "or this seeding is moot");
+        assert_eq!(
+            Store::radio(slot.id).load_tci_server_config().port,
+            50002,
+            "the second radio's TCI server is seeded one port above the station's"
+        );
+        // A further radio with no file at all: off, on the port its place in
+        // the roster gives it, not on the station's.
+        fs::remove_file(root.join("radio-1/tciserver.json")).unwrap();
+        let bare = Store::radio(slot.id).load_tci_server_config();
+        assert!(!bare.enabled, "only the station's server is on without a file");
+        assert_eq!(bare.port, 50002);
+        // The station radio without a file keeps the plain default.
+        assert_eq!(Store::radio(0).load_tci_server_config(), Default::default());
 
         // The on/off switch. A radio is on until somebody says otherwise, the
         // answer survives a reload, and switching it off is nothing but that
@@ -3602,6 +3756,25 @@ mod tests {
         assert!(root.join("hfdl_channels.json").exists());
         assert_eq!(load_hfdl_channels(), vec![5_451, 8_843, 11_184]);
 
+        // The HFDL system table round-trips too.
+        assert!(load_hfdl_stations().is_empty(), "no file, no saved table");
+        let mut gs = sdroxide_types::HfdlStation::new(4, Some("Riverhead, New York"));
+        gs.freqs =
+            vec![sdroxide_types::HfdlStationFreq { freq_hz: 21_931_000, slot: 2, active: false }];
+        save_hfdl_stations(std::slice::from_ref(&gs)).unwrap();
+        assert!(root.join("hfdl_stations.json").exists());
+        assert_eq!(load_hfdl_stations(), vec![gs]);
+
+        // The HFDL feeds too; nothing on by default.
+        assert_eq!(load_hfdl_outputs(), sdroxide_types::HfdlOutputs::default());
+        let feeds = sdroxide_types::HfdlOutputs {
+            station_id: "XX-TEST-HFDL".into(),
+            airframes: true,
+            ..Default::default()
+        };
+        save_hfdl_outputs(&feeds).unwrap();
+        assert_eq!(load_hfdl_outputs(), feeds);
+
         // Custom filter presets round-trip the same way.
         assert!(load_filter_presets().is_empty(), "no file, no custom presets");
         let preset = sdroxide_types::CustomFilterPreset {
@@ -3614,6 +3787,44 @@ mod tests {
         save_filter_presets(std::slice::from_ref(&preset)).unwrap();
         assert!(root.join("filter_presets.json").exists());
         assert_eq!(load_filter_presets(), vec![preset]);
+
+        // Received pictures: the default until a folder is chosen, then the
+        // chosen one, with the built-in one still readable. (Charts are only
+        // exercised with a folder set — with none, the store is the real
+        // Pictures directory.)
+        assert_eq!(image_rx_dir("sstv").unwrap(), root.join("sstv_rx"));
+        let ext = root.join("external-drive").join("sstv");
+        let wx = root.join("external-drive").join("charts");
+        save_picture_folders(&sdroxide_types::PictureFolders {
+            sstv: format!("  {}  ", ext.display()),
+            wefax: wx.display().to_string(),
+        })
+        .unwrap();
+        assert_eq!(image_rx_dir("sstv").unwrap(), ext, "a pasted path is trimmed");
+        assert!(ext.is_dir(), "the folder is created on demand");
+        assert_eq!(wefax_rx_dir().unwrap(), wx);
+        assert_eq!(
+            picture_default_rx_dir(sdroxide_types::ImageKind::Sstv),
+            Some(root.join("sstv_rx")),
+            "what was received before the move stays listed"
+        );
+        // A folder that cannot be made (here: under a regular file, as an
+        // unplugged drive's mount point would be) costs no picture.
+        let blocker = root.join("blocker");
+        fs::write(&blocker, b"x").unwrap();
+        save_picture_folders(&sdroxide_types::PictureFolders {
+            sstv: blocker.join("sub").display().to_string(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(image_rx_dir("sstv").unwrap(), root.join("sstv_rx"));
+        // A relative path is not somewhere anyone chose.
+        save_picture_folders(&sdroxide_types::PictureFolders {
+            sstv: "pictures".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(image_rx_dir("sstv").unwrap(), root.join("sstv_rx"));
 
         unsafe { std::env::remove_var("SDROXIDE_CONFIG_DIR") };
     }

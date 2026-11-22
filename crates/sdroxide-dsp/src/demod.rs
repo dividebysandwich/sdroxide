@@ -69,6 +69,11 @@ pub trait Demodulator: Send {
     /// every block, so it must be cheap when nothing changes.
     fn set_fm_decrackle(&mut self, _on: bool, _deemph: bool, _dip: f32) {}
 
+    /// SAM's sidebands: plain, combined per frequency (MRC), or one alone, and
+    /// MRC's averaging time. Only SAM acts on it; called every block, so it
+    /// must be cheap when nothing changes.
+    fn set_sam_sideband(&mut self, _sideband: sdroxide_types::SamSideband, _tau_s: f32) {}
+
     /// How much of the difference channel is currently mixed in (0 = mono,
     /// 1 = full stereo). Diagnostic; the blend is driven by pilot SNR.
     fn stereo_blend(&self) -> f32 {
@@ -604,6 +609,22 @@ impl Demodulator for AmDemod {
 
 /// Synchronous AM: a 2nd-order PLL locks the carrier, then coherent
 /// detection (real part of the de-rotated signal).
+///
+/// With SAM-MRC, SAM-USB or SAM-LSB, two things change, and nothing else: the
+/// loop steers in proportion to the carrier's level, and the sidebands go
+/// through [`crate::sam_mrc::SidebandMrc`], combined frequency by frequency
+/// or one of them alone, instead of being added with equal weight. With both
+/// sidebands, this is the detector as it always was.
+//
+// Why the loop: its phase detector, atan2(im, |re|), does not depend on the
+//      amplitude, so when a fade takes the carrier into the noise the noise
+//      steers with full gain. On HDZ's 49 m recording (2026-11-16) the loop
+//      sat within 17 Hz (p95) of the carrier while it was there and wandered
+//      227 Hz (p95, peaks 375 Hz) while it was more than 20 dB down; it then
+//      has to pull in again as the carrier returns, which is heard. Scaling the
+//      error by the carrier's level against its own two-second average keeps it
+//      to 46 Hz; freezing the loop below −12 dB instead kept 148 Hz and twice
+//      froze on a wrong frequency.
 pub struct SamDemod {
     rate: f64,
     fir: ComplexFir,
@@ -615,6 +636,17 @@ pub struct SamDemod {
     max_freq: f64,
     filtered: Vec<Complex32>,
     power: PowerMeter,
+    /// The sidebands chosen, the combiner (`None` for plain SAM), and the
+    /// de-rotated block it reads.
+    sideband: sdroxide_types::SamSideband,
+    mrc: Option<crate::sam_mrc::SidebandMrc>,
+    derot: Vec<Complex32>,
+    /// Carrier level for the loop's gain: |carrier| over 10 ms, and its mean
+    /// over 2 s (`None` until the first sample), with their coefficients.
+    car: Complex32,
+    car_alpha: f32,
+    car_slow: Option<f32>,
+    slow_alpha: f32,
 }
 
 impl SamDemod {
@@ -632,6 +664,40 @@ impl SamDemod {
             max_freq: std::f64::consts::TAU * 1_000.0 / rate,
             filtered: Vec::new(),
             power: PowerMeter::new(),
+            sideband: sdroxide_types::SamSideband::Both,
+            mrc: None,
+            derot: Vec::new(),
+            car: Complex32::new(0.0, 0.0),
+            car_alpha: (1.0 - (-1.0 / (rate * 0.010)).exp()) as f32,
+            car_slow: None,
+            slow_alpha: (1.0 - (-1.0 / (rate * 2.0)).exp()) as f32,
+        }
+    }
+
+    /// SAM-MRC: level-weighted loop, sidebands combined per frequency.
+    fn process_mrc(&mut self, out: &mut Vec<f32>) {
+        self.derot.clear();
+        for &z in &self.filtered {
+            let r = Complex32::new(self.phase.cos() as f32, -(self.phase.sin() as f32));
+            let v = z * r;
+            self.car += (v - self.car) * self.car_alpha;
+            let mag = self.car.norm();
+            let slow = match self.car_slow.as_mut() {
+                Some(s) => {
+                    *s += self.slow_alpha * (mag - *s);
+                    *s
+                }
+                None => *self.car_slow.insert(mag),
+            };
+            let weight = if slow > 0.0 { (mag / slow).min(1.0) as f64 } else { 1.0 };
+            let err = (v.im as f64).atan2((v.re as f64).abs().max(1e-12)) * weight;
+            self.freq = (self.freq + self.beta * err).clamp(-self.max_freq, self.max_freq);
+            self.phase += self.freq + self.alpha * err;
+            self.phase %= std::f64::consts::TAU;
+            self.derot.push(v);
+        }
+        if let Some(m) = self.mrc.as_mut() {
+            m.process(&self.derot, out);
         }
     }
 }
@@ -642,6 +708,10 @@ impl Demodulator for SamDemod {
         self.fir.process(iq, &mut self.filtered);
         self.power.update(&self.filtered);
 
+        if self.mrc.is_some() {
+            self.process_mrc(out);
+            return;
+        }
         for &z in &self.filtered {
             let r = Complex32::new(self.phase.cos() as f32, -(self.phase.sin() as f32));
             let v = z * r;
@@ -655,6 +725,39 @@ impl Demodulator for SamDemod {
 
     fn set_filter(&mut self, lo: f32, hi: f32) {
         self.fir.set_taps(bandpass_taps(PASSBAND_TAPS, lo as f64, hi as f64, self.rate));
+    }
+
+    fn set_sam_sideband(&mut self, sideband: sdroxide_types::SamSideband, tau_s: f32) {
+        use crate::sam_mrc::Pick;
+        use sdroxide_types::SamSideband as S;
+        if let Some(m) = self.mrc.as_mut() {
+            m.set_tau(tau_s);
+        }
+        if sideband == self.sideband {
+            return;
+        }
+        let pick = match sideband {
+            S::Both => None,
+            S::Mrc => Some(Pick::Mrc),
+            S::Upper => Some(Pick::Upper),
+            S::Lower => Some(Pick::Lower),
+        };
+        match (pick, self.mrc.as_mut()) {
+            // Between MRC and one sideband: the combiner and the loop carry on.
+            (Some(p), Some(m)) => m.set_pick(p),
+            // From plain SAM: a fresh combiner and carrier level, nothing from
+            // before the switch.
+            (Some(p), None) => {
+                let mut m = crate::sam_mrc::SidebandMrc::new(self.rate, p);
+                m.set_tau(tau_s);
+                self.mrc = Some(m);
+                self.car = Complex32::new(0.0, 0.0);
+                self.car_slow = None;
+            }
+            // To plain SAM: it carries on from the loop's current state.
+            (None, _) => self.mrc = None,
+        }
+        self.sideband = sideband;
     }
 
     fn audio_rate(&self) -> f64 {

@@ -129,6 +129,7 @@ sdroxide-config = { path = "crates/sdroxide-config" }
 sdroxide-ui = { path = "crates/sdroxide-ui" }
 sdroxide-cat = { path = "crates/sdroxide-cat" }
 sdroxide-midi = { path = "crates/sdroxide-midi" }
+sdroxide-tmate2 = { path = "crates/sdroxide-tmate2" }
 sdroxide-rigctld = { path = "crates/sdroxide-rigctld" }
 sdroxide-rotator = { path = "crates/sdroxide-rotator" }
 sdroxide-hpsdr = { path = "crates/sdroxide-hpsdr" }
@@ -196,6 +197,12 @@ rtrb = "0.4"
 # instead: `cargo fmt -p sdroxide-radio -p sdroxide-ui …`, or check with
 # `cargo fmt --all --check` and read past the `vendor/xng` lines.
 xng-mode-hfdl = { path = "vendor/xng/crates/xng-mode-hfdl" }
+# The ACARS application layer HFDL's data link frames carry (and the decoder
+# above already links): reached directly so the log can say what a message is,
+# not only what it says.
+xng-acars = { path = "vendor/xng/crates/xng-acars" }
+# The DSP blocks the HFDL channel decoder is built from (see sdroxide-hfdl).
+xng-dsp = { path = "vendor/xng/crates/xng-dsp" }
 # Radiosonde (Vaisala RS41) decode core, same vendored tree and same rules.
 xng-mode-sonde = { path = "vendor/xng/crates/xng-mode-sonde" }
 # Pure-Rust USB — the RTL-SDR backend's only dependency. No libusb, so it needs
@@ -268,6 +275,13 @@ tracing-subscriber.workspace = true
 num-complex.workspace = true
 rtrb.workspace = true
 
+
+# The console a Windows build opens is the legacy one whenever the shortcut runs
+# it minimised, and that one prints colour codes as text unless asked to
+# interpret them (#914). Already in the lock file through tracing-subscriber.
+[target.'cfg(windows)'.dependencies]
+nu-ansi-term = "0.50"
+
 [features]
 default = ["soapy", "rtl433"]
 # SoapySDR device support. Turn off (`--no-default-features`) for a CAT-only
@@ -310,6 +324,7 @@ assets = [
     ["packaging/linux/60-sdroxide-elad.rules", "usr/lib/udev/rules.d/", "644"],
     ["packaging/linux/60-sdroxide-limerfe.rules", "usr/lib/udev/rules.d/", "644"],
     ["packaging/linux/60-sdroxide-relay.rules", "usr/lib/udev/rules.d/", "644"],
+    ["packaging/linux/60-sdroxide-tmate2.rules", "usr/lib/udev/rules.d/", "644"],
     ["packaging/icons/sdroxide.svg", "usr/share/icons/hicolor/scalable/apps/sdroxide.svg", "644"],
     ["packaging/icons/sdroxide-16.png", "usr/share/icons/hicolor/16x16/apps/sdroxide.png", "644"],
     ["packaging/icons/sdroxide-24.png", "usr/share/icons/hicolor/24x24/apps/sdroxide.png", "644"],

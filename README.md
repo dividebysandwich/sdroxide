@@ -560,7 +560,7 @@ starting sdroxide before the rig is fine:
   pure-Rust driver. **No SoapySDR and no libusb needed**, so it works in every
   build including the standard `.msi` and `.dmg`. Covers the R820T, R820T2 and
   R828D tuners, which is effectively every dongle still sold. HF works through
-  an RTL-SDR Blog V4's built-in upconverter, or on other sticks by direct
+  an RTL-SDR Blog V4's or V4L's built-in upconverter, or on other sticks by direct
   sampling the ADC's Q branch (the V3's HF port). Bias tee and ppm correction
   are on the Radio tab; see "RTL-SDR permissions" under Building.
   
@@ -1103,6 +1103,25 @@ Push-to-talk ships **unbound** on purpose. One click binds hold-to-talk to
 Space, and a held PTT is released on key-up, on window focus loss, on a text
 field taking the keyboard, when the controller is unplugged, and after a
 configurable timeout.
+
+The **ELAD / WoodBoxRadio TMate 2** USB controller is supported directly, with
+no ELAD software or DLL: enable it under **Controls → ELAD TMate 2** and it is
+found by itself when plugged in. The main dial tunes, E1 and E2 drive volume and
+filter width, and the dial pushes and F1–F6 are bindable to any action. Windows
+and Linux; on Linux install `packaging/linux/60-sdroxide-tmate2.rules` so it can
+be opened without root. The LCD shows the frequency, mode and S-meter (output
+power while transmitting) and the A/B, RX/TX, NB, NR, AN, RIT and XIT legends.
+With a Hardrock amplifier connected the power is the amplifier's output;
+without one it is the radio's own, and a radio that reports no power leaves the
+bargraph empty while transmitting. The small display can show REFL or SWR
+instead, and there are bindable actions for the dial step and a tuning lock (with
+the LOCK LED). See the user manual, §6.4.4.
+
+Switching VFOs from the TM2 (the main-dial push, by default) tunes to whatever
+the other VFO last held, exactly as the on-screen A/B button does. After a
+transverter session that may be a VHF/UHF frequency the radio cannot receive
+on its own, and it is then pulled back into range with a warning. Press A→B
+once to give VFO B the current frequency.
 
 Bindings are stored with the *user interface*, not the engine, so a knob plugged
 into your laptop works against a remote radio over `--connect` too.

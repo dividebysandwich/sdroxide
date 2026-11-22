@@ -14,8 +14,9 @@
 use sdroxide_types::{Command, Direction, NrLevel, NrStrength, RigctldConfig, RxId, Vfo};
 
 use crate::state::{
-    RigState, agc_from_hamlib, agc_to_hamlib, centred_on, filter_for, from_hamlib_mode,
-    nr_engine_for, nr_on_level, nr_strength_for, nr_to_hamlib, squelch_db_for, to_hamlib_mode,
+    RigState, agc_from_hamlib, agc_to_hamlib, centred_on, decimation_for_span, filter_for,
+    from_hamlib_mode, nr_engine_for, nr_on_level, nr_strength_for, nr_to_hamlib, squelch_db_for,
+    to_hamlib_mode,
 };
 
 /// Hamlib error codes (`rig.h`), returned negated in `RPRT`.
@@ -79,6 +80,8 @@ mod rig_level {
     pub const RFPOWER: u64 = 1 << 12;
     pub const MICGAIN: u64 = 1 << 13;
     pub const AGC: u64 = 1 << 17;
+    /// `SPECTRUM_SPAN` — the scope's span in centre mode, an int in Hz.
+    pub const SPECTRUM_SPAN: u64 = 1 << 41;
     pub const STRENGTH: u64 = 1 << 30;
 }
 
@@ -479,6 +482,15 @@ fn dispatch(
                 out.value("Level Value", agc_to_hamlib(st.agc));
                 out.finish(OK, true)
             }
+            // The sampled span: the device rate over the decimation. Read back
+            // after a set, which is how a client learns the width it got.
+            Some(l) if l == "SPECTRUM_SPAN" => match st.can_decimate {
+                true => {
+                    out.value("Level Value", format!("{:.0}", st.span_hz));
+                    out.finish(OK, true)
+                }
+                false => out.finish(ENAVAIL, true),
+            },
             // The front-end gain, where the radio has one: 0.0..=1.0 over the
             // stage's range.
             Some(l) if l == "RF" => match &st.rf_gain {
@@ -535,6 +547,16 @@ fn dispatch(
                         out.finish(OK, false)
                     }
                     None => out.finish(EINVAL, false),
+                },
+                ("SPECTRUM_SPAN", Some(v)) => match st.can_decimate {
+                    true => {
+                        cmds.push(Command::SetDecimation(decimation_for_span(
+                            st.device_rate_hz,
+                            v.round(),
+                        )));
+                        out.finish(OK, false)
+                    }
+                    false => out.finish(ENAVAIL, false),
                 },
                 ("RF", Some(v)) => match &st.rf_gain {
                     Some(g) => {
@@ -848,7 +870,9 @@ fn dump_state(st: &RigState, cfg: &RigctldConfig) -> String {
     // RF only where there is a gain stage to set: a client that sees it
     // advertised offers the control, and one refused every time looks broken.
     let rf = if st.rf_gain.is_some() { rig_level::RF } else { 0 };
-    s.push_str(&format!("0x{:x}\n0x{:x}\n", LEVEL_GET | rf, LEVEL_SET | rf));
+    // The span likewise: an audio-mode rig has no decimation to set.
+    let span = if st.can_decimate { rig_level::SPECTRUM_SPAN } else { 0 };
+    s.push_str(&format!("0x{:x}\n0x{:x}\n", LEVEL_GET | rf | span, LEVEL_SET | rf | span));
     s.push_str("0x0\n0x0\n"); // get/set parm
 
     // The trailing key=value block.
@@ -1017,6 +1041,31 @@ mod tests {
             run_with("M USB 2400", &s, &cfg).1,
             vec![Command::SetFilter { rx: RxId::Main, lo: 150.0, hi: 2550.0 }]
         );
+    }
+
+    /// The span a client sets is turned into a power-of-two decimation, and
+    /// read back as the width it actually got.
+    #[test]
+    fn the_spectrum_span_is_the_decimation() {
+        let cfg = RigctldConfig::default();
+        let s = RigState {
+            can_decimate: true,
+            device_rate_hz: 1_536_000.0,
+            span_hz: 768_000.0,
+            ..st()
+        };
+        assert_eq!(run_with("l SPECTRUM_SPAN", &s, &cfg).0, "768000\n");
+        // 1.536 MHz / 500 kHz is 3.07, so the nearest power of two is 4.
+        assert_eq!(run_with("L SPECTRUM_SPAN 500000", &s, &cfg).1, vec![Command::SetDecimation(4)]);
+        // Already narrower than the device: no decimation at all.
+        assert_eq!(
+            run_with("L SPECTRUM_SPAN 2000000", &s, &cfg).1,
+            vec![Command::SetDecimation(1)]
+        );
+        // An audio-mode rig has no span to set, and says so rather than lying.
+        let audio = RigState { can_decimate: false, ..st() };
+        assert_eq!(run_with("L SPECTRUM_SPAN 500000", &audio, &cfg).0, "RPRT -11\n");
+        assert_eq!(run_with("l SPECTRUM_SPAN", &audio, &cfg).0, "RPRT -11\n");
     }
 
     /// The width already set, re-sent with the mode, still changes nothing.

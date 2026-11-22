@@ -398,8 +398,15 @@ popup with three rows:
   has a standard calling frequency carry a cyan underline; see
   [§3.1](#31-general-considerations).
 - **MODE:** `LSB USB CW AM SAM NFM WFM DRM HD DIGU DIGL DSB ISB SPEC`.
-- **DIGITAL:** `FT8 FT4 FT2 JS8 WSPR PI4 MSK144 JT65 JT9 FST4 Q65 FSK441 JTTY PSK RTTY RTTY-FM OLIVIA THOR FSQ ATCHAT HELL SSTV SSTV-FM RIFP WEFAX NAVTEX ACARS RFPAINT RADE PACKET PACKET-HF APRS ADS-B VDL2 AIS HFDL` (see
-  [Digital modes](#3-digital-modes)).
+- **HAM:** the digital modes for working other stations, in four groups —
+  *Talk* (PSK, RTTY, OLIVIA, MT63, ATCHAT, RADE and the other keyboard modes),
+  *Digi modes* (FT8, FT4, FT2, JS8, WSPR and the other slotted modes), *Image*
+  (SSTV, SSTV-FM, RIFP, RFPAINT) and *Data* (PACKET, PACKET-HF, APRS, MERCURY,
+  DATA2G).
+- **MONITOR:** services to listen to — *Aviation* (ADS-B, VDL2, ACARS, HFDL),
+  *Sea* (AIS, NAVTEX, WEFAX) and *Probes* (ISM, RADIOSONDES, SAT, WEATHER
+  SATELLITES, QO-100), whose chips open their windows directly. The full table
+  is in [§3.1](#31-general-considerations).
 
 On a desktop or tablet layout the popup carries a **DOCK** chip. It moves the
 selector into a resizable column beside the waterfall so it stays open while you
@@ -582,9 +589,9 @@ menu. Ordinary dragging and keyboard adjustment still work.
   from there it is yours to set, and it stays put however the signal moves.
 - **🔊** — audio volume.
 - **Front-end gain** — one rail per gain stage the radio lets software set, up
-  to three, each with its stage's short name: **ATT · VGA** on an RX-888 (the
-  attenuator first, the order the signal meets them; the VHF tuner's gain is in
-  Settings → Radio, as it does nothing on HF), **LNA · VGA** on a
+  to three, each with its stage's short name: **ATT · VGA** on an RX-888 on
+  HF (the attenuator first, the order the signal meets them), **RF** on an
+  RX-888 on VHF (see below), **LNA · VGA** on a
   HackRF, **LNA · MIX · IF** on an RTL-SDR on USB (over `rtl_tcp` the one
   combined **Gain**, which is all that protocol can set). A radio with a single
   stage shows one rail called **Gain**. The gain rails share one short length,
@@ -602,6 +609,18 @@ menu. Ordinary dragging and keyboard adjustment still work.
   **AUTO** picks whichever of the AD8370's two ranges lands nearer the gain
   asked for, **LOW** keeps the pre-amplifier out (tops out near +17 dB),
   **HIGH** puts it in (starts near −8 dB). Click to step through them.
+  An RX-888 swaps its controls with the band it is on. Its two inputs share
+  one ADC: on VHF the R828D tuner feeds it, and the driver holds the HF chain's
+  attenuator and VGA at a fixed setting there, while the tuner's gain does
+  nothing on HF. So above the HF/VHF crossover the strip shows the tuner's gain
+  as **RF** (0–49.6 dB) with its **AUTO** beside it (lit while the tuner runs
+  its own LNA and mixer loops, which greys the rail out) in place of
+  **ATT · VGA** and the range chip, and below the crossover it shows them again.
+  The switch follows the band the receiver reports, so it happens wherever the
+  dial crosses, by hand or by the automatic crossover. **RF** and **AUTO** are
+  the same settings as Settings → Radio → RX-888 → VHF tuner gain and its
+  Auto, and move them there too: both read the saved figure. A server too old
+  to report the band keeps **ATT · VGA** on the strip.
   On a desktop window 1800 pt wide or more, three rails cost the strip no row;
   narrower, an RTL-SDR's three can push the strip onto another row.
 - **DEC** — **front-end decimation**: keep the middle `1/N` of the span the radio
@@ -797,6 +816,27 @@ menu. Ordinary dragging and keyboard adjustment still work.
     slider is the **sensitivity**, 0.1 to 0.6: how deep the magnitude must dip,
     as a share of its mean, for a jump to count as a slip; 0.2 is the start,
     higher repairs more. All three are remembered for NFM.
+  - **SAM** (SAM only, greyed out in other modes) — a row of its own that
+    picks what the synchronous detector hears after it has locked the
+    carrier. **DSB** is plain SAM, both sidebands with equal weight.
+    **MRC** (the start) works against the fading of a skywave AM station
+    and is usually the best choice there.
+    Two paths a millisecond apart turn the channel into a comb of notches
+    that drifts across the signal: a notch on the carrier makes plain AM
+    distort, and a notch on one sideband takes out that audio frequency on
+    that side only. MRC combines the upper and lower sideband frequency by
+    frequency, each in proportion to how well it came through
+    (maximal-ratio combining), so where one sideband is in a notch the other
+    carries that frequency; on a channel without fading it sounds exactly
+    like DSB. Beside it, **0.2 s**, **0.5 s** and **1 s** set how long MRC
+    averages each sideband's quality: 0.2 s (the start) follows fast fading,
+    longer is steadier. **USB** and **LSB** take one sideband
+    alone, at the same level, for a neighbour that sits on the other side
+    of the carrier. In MRC, USB and LSB the carrier loop also steers in
+    proportion to the carrier's level, so it stays on frequency while the
+    carrier is faded instead of wandering off with the noise and having to
+    pull in again; these three delay the audio by about 27 ms. The choice is
+    remembered for SAM.
 
 - **BIN** (CW and SSB) — **binaural** audio: the receive passband spread across
   the two ears, so that a signal's *pitch* becomes a *direction*. Whatever sits
@@ -1080,7 +1120,7 @@ of an FT8 decoder, and a slow AGC is kinder to a signal sitting in the noise
 than the fast one that sounds right on a strong local. So each mode carries a
 set of starting values for **AGC**, **Man**, **SQL**, **NR**, **ANC**, **BIN**
 and WFM's **ST**, and for the NR menu's filters (**HUM**, the **SK** post-filter
-with its τ, width and place, NFM's **FM-DECRACKLE**), and selecting a mode — here, or on a CAT rig's own controls —
+with its τ, width and place, NFM's **FM-DECRACKLE**, SAM's sidebands), and selecting a mode — here, or on a CAT rig's own controls —
 lays its own on the receiver.
 
 The built-in defaults are deliberately plain. A slow AGC on the weak-signal
@@ -1447,7 +1487,7 @@ The **waterfall colour scheme** and the **spectrum background gradient** are set
 on the **UI** tab of the Settings window (see
 [§6.3](#63-ui-display-preferences-and-voice-announcements)). The colour scheme is one of
 `Classic`, `Viridis`, `Gray`, `Icom`, `Neon`, `Synthwave`, `Matrix`, `Tron`,
-`Amber`, or `Rainbow`;
+`Amber`, `Rainbow`, `Blue`, or `SimpleSDR`;
 the gradient fills the spectrum area from a top colour down to a bottom colour
 (default dark red → black) and can be turned off. The same tab also themes the
 UI itself — colour theme, button shape and window shape — independently of the
@@ -2820,7 +2860,8 @@ go out.
 
 #### 2.16.2 Weather satellites (NOAA APT and Meteor LRPT)
 
-The **WEATHER SATELLITES** chip at the top right of the SAT window opens a
+The **WEATHER SATELLITES** chip under **MONITOR › Probes** in the Band/Mode
+popup, or the one at the top right of the SAT window, opens a
 window of its own with the picture a weather satellite sends on 137 MHz, drawn
 as it comes in. It is not a radio mode: the decoder runs off its own
 downconversion of the sample window and the radio keeps its mode, so it needs a
@@ -2830,8 +2871,9 @@ over audio.
 The *Signal* choice picks the kind. **APT** is the analogue signal of NOAA-15
 (137.620 MHz), NOAA-18 (137.9125 MHz) and NOAA-19 (137.100 MHz): channel A on
 the left and channel B on the right, line by line, two lines a second. **LRPT**
-is the digital signal of Meteor-M2-3 (137.900 MHz) and Meteor-M2-4
-(137.100 MHz): QPSK at 72 ksym/s, picture rows of 1568 pixels, and one separate
+is the digital signal of Meteor-M2-3 and Meteor-M2-4, both on 137.900 MHz
+(either sometimes switches to its second transmitter on 137.100 MHz, the
+*alternate* channel): QPSK at 72 ksym/s, picture rows of 1568 pixels, and one separate
 picture for each channel the satellite sends (*Channel 1* to *Channel 6*, the
 visible and infrared bands), shown one at a time.
 
@@ -3073,8 +3115,10 @@ session restore, scanner setup and the built-in servers (TCI, rigctld,
 WSJT-X) belong to each radio. Each radio's servers have their own
 configuration precisely so two radios can serve two copies of WSJT-X on two
 ports — which also means an additional radio's TCI server starts *disabled*,
-because the default port would collide with the first radio's; enable it and
-pick a free port in [§6.8.2](#682-built-in-tci-server).
+on a port of its own (50002 for the second radio in the roster, 50003 for the
+third, and so on); switch it on in [§6.8.2](#682-built-in-tci-server). The
+radio's own **Settings → Radio** page shows a line such as *TCI server: on,
+port 50002* with a **Set in Servers** chip that opens the Servers tab.
 
 **Background tabs.** A hidden radio's waterfall freezes — the pixels are only
 drawn for the tab you are watching — and resumes with a clean gap when you
@@ -4015,8 +4059,9 @@ nothing wrong now, and from remote that would look like a fault. A red (a
 trip) always shows. From your first key-up the tiles follow the amplifier's
 lights exactly, so its own screen and this one can differ only before then.
 SWR has no colour of its own, as on the amplifier, except that it turns **red**
-at or past the tune limit (Settings → General, shown beside the SWR limit).
-There, a meter showing FWD or RFL measured by the radio says so across its
+at or past the tune limit (Settings → General, shown beside the SWR limit),
+or on an HR500 with its tuner from 6.1:1 at the latest, just past the 6:1
+where the tuner stops trying (never below the SWR limit itself). There, a meter showing FWD or RFL measured by the radio says so across its
 top in large red letters, for example *FWD UNRELIABLE AT THIS SWR*, and the
 tiles say why on hover: into an open the FDM-DUO reported about three times
 the power a wattmeter read, and only its SWR was right. Click
@@ -4040,7 +4085,21 @@ has switched in, with values, and which side the capacitor is on. When the
 tuner is bypassed, the drawing shows the bypass relays instead.
 
 - **TUNE** starts a tune. It blinks blue while tuning, turns green when tuned
-  and red if the tune fails, with the result and SWR on the line below.
+  and red if the tune fails, with the result and SWR on the line below. A
+  failed tune says what to do there and on hover (for *SWR above 6:1*: the
+  tuner doesn't try above about 6:1, so check the antenna and feed line). A
+  load already better than 1.3:1 is left bypassed and reads *Tuned: under
+  1.3:1 without the tuner*: that is expected. The tuner aims for 1.3:1 and
+  keeps the best match it has seen; its SWR, read on its own coupler, can
+  differ from the amplifier's SWR tile by up to about 0.2.
+- **Where a tune started from.** After a tune the line shows the SWR it
+  started from as well, as in *1.46:1 (from 3.44:1)*; after a load was left
+  bypassed it shows the load's own SWR. Under it, **LAST TUNES** lists the
+  last four tunes, newest first: the time, the band, the SWR before and
+  after, and the network left in (L and C steps, and ANT or TX for the
+  capacitor's side; no side when no capacitor is in), or *bypassed*. Each
+  tune is also written to the log, for example *hardrock: tune ended on 20m:
+  Tuned; SWR 3.44:1 -> 1.46:1; L 12 C 34 on the antenna side*.
 - **ON / BYP** puts the tuner in line or bypasses it.
 
 The tuner only reports step numbers. The values shown (for example "~0.20 µH ·
@@ -4073,6 +4132,10 @@ won't switch the antenna, band or tuner:
 - **PTT** can't be switched on (OFF to PTT) while the drive is over the
   amplifier's drive limit, 8 W on the HR500, as with a 100 W radio running
   barefoot through the bypassed amp. Lower the drive first.
+- Only reads are passed through to the tuner. Some tuner commands wipe or
+  rewrite its memory, and one switches its coupler in line, where full power
+  can damage it; sdroxide itself only ever reads the tuner, and the `hrctl`
+  tool refuses anything else.
 
 Each of these is marked *SAFETY INTERLOCK* in the code and explained in
 `docs/hardrock/safety-interlocks.md`.
@@ -4113,7 +4176,36 @@ is a list of paths rather than contacts (3.11).
 ### 3.1 General considerations
 
 Every digital mode is entered the same way: open the Band/Mode popup and choose
-the mode from the **DIGITAL** row. The panadapter locks to the digital sub-band
+the mode under **HAM** or **MONITOR**. The two sections sort the digital modes by
+what you are after, with a small heading over each group:
+
+| Section | Group | Modes |
+|---|---|---|
+| **HAM** — working other stations | Talk | PSK, RTTY, RTTY-FM, OLIVIA, CONTESTIA, THOR, DOMINOEX, MFSK, MT63, FSQ, JTTY, HELL, ATCHAT, RADE |
+| | Digi modes | FT8, FT4, FT2, JS8, WSPR, PI4, FST4, Q65, JT65, JT9, MSK144, FSK441 |
+| | Image | SSTV, SSTV-FM, RIFP, RFPAINT |
+| | Data | PACKET, PACKET-HF, APRS, MERCURY, DATA2G |
+| **MONITOR** — services to listen to | Aviation | ADS-B, VDL2, ACARS, HFDL |
+| | Sea | AIS, NAVTEX, WEFAX |
+| | Probes | ISM, RADIOSONDES, SAT, WEATHER SATELLITES, QO-100 |
+
+WEFAX and NAVTEX are under Sea because what they carry is the maritime weather
+and safety service. The **Probes** chips are windows rather than modes: each
+opens its window directly — the ISM decoder ([5](#5-ism-band-decoder)), the
+radiosonde map ([5.8](#58-radiosondes-400406-mhz)), the satellite window on its
+satellite page or on its QO-100 page ([2.16](#216-satellite-operation-sat),
+[2.22](#222-qo-100-beacon-plugin)), and the weather-satellite picture
+([2.16.2](#2162-weather-satellites-noaa-apt-and-meteor-lrpt)). A chip is lit
+while its window is open or its decoder is running; clicking a lit one closes
+its window. The **SAT** and **ISM** buttons in the System box still open the
+same windows.
+
+Rest the pointer on any mode chip, in MODE as well as under HAM and MONITOR, for
+three seconds and a one-line tooltip says what the mode is and where it is
+used. The wait is longer than for other tooltips so that the chips can be
+clicked in passing without one opening over the next.
+
+The panadapter locks to the digital sub-band
 (the audio range just above the dial), and the mode's operating panel rises over
 it like a curtain, covering the spectrum and the waterfall. The `— — —` handle
 on its top edge slides it down to show the waterfall above it, and the panel
@@ -4121,7 +4213,7 @@ fits itself into what is left, so its transmit buttons (Call CQ, Stop TX) stay
 in view. Only once it is pulled below the height the panel needs does its
 bottom slide past the window's edge. Its header row always stays in view to pull it up
 again, and a double-click on the handle sends it all the way up or back to
-where it was. Click the lit mode in the **DIGITAL** row again to leave it: the
+where it was. Click the lit mode chip again to leave it: the
 curtain falls and the mode you were in before comes back.
 
 While in a digital mode the **BAND** row of the Band/Mode popup doubles as a
@@ -4165,7 +4257,7 @@ FT8, FT4, FT2, JS8 and WSPR are worked on **one dial frequency per band**, in
 lockstep with everyone else on it — a receiver a few kilohertz off is not
 off-centre, it is deaf — and each of them keeps its own. On 20 m that is 14.074,
 14.080, 14.084, 14.078 and 14.095600 respectively, so even arriving from the
-mode next door is a move. Picking one of them from the DIGITAL row therefore
+mode next door is a move. Picking one of them under **HAM › Digi modes** therefore
 tunes the dial to that band's agreed frequency, the same way APRS, ADS-B, VDL2
 and AIS already do ([3.12](#312-aprs), [3.13](#313-ads-b-aircraft-on-1090-mhz),
 [3.15](#315-vdl2-what-the-aircraft-are-saying),
@@ -4265,6 +4357,7 @@ saving an empty file. What goes in the file depends on the mode:
 | FSQ | One line per message: whether it was for you, sender, addressee and text. FSQ messages carry no time, so there is no time column |
 | ACARS, packet, JS8 and APRS | A `.csv` file, one row per message or frame, with its UTC time |
 | NAVTEX, VDL2 and HFDL | A tab-separated `.txt` file, one line per message, with its UTC time |
+| HFDL (MESSAGES tab) | A `.csv` file, one row per ACARS message, oldest first, with its UTC time |
 | WSPR and PI4 | The reception list as a `.csv` file, in the **RECEPTIONS** header |
 | The CW/RTTY skimmer | Its spot list, from the **Spots** row of the skimmer's settings |
 
@@ -4274,8 +4367,8 @@ The FT8/FT4/FT2 decode list has its own **CSV** and **ADIF** buttons instead
 ### 3.2 FT8, FT4 and FT2
 
 **FT8**, **FT4** and **FT2** are the automatic modes: timeslot-based, with QSO
-sequencing, a world map, a transcript, and automatic logging. Choose one from
-the DIGITAL row ([3.1](#31-general-considerations)) and the operating panel
+sequencing, a world map, a transcript, and automatic logging. Choose one under
+**HAM › Digi modes** ([3.1](#31-general-considerations)) and the operating panel
 appears in the lower part of the window.
 
 Choosing one also puts the **dial** on that band's agreed frequency — 14.074,
@@ -4804,7 +4897,7 @@ The log is stored in `qso_log.json`.
 
 ### 3.3 PSK31 and RTTY
 
-Choose **PSK** or **RTTY** from the DIGITAL row of the Band/Mode popup. As with
+Choose **PSK** or **RTTY** under **HAM › Talk** in the Band/Mode popup. As with
 FT8/FT4/FT2 the panadapter switches to a zoomed sub-band waterfall, but the lower
 panel is a live **messaging area** instead of a QSO sequencer.
 
@@ -4925,7 +5018,7 @@ transmit. A label already in that mode leaves your own offset alone.
 **On VHF and UHF, use RTTY-FM instead.** Some national societies still send
 their weekly bulletin as RTTY on a 2 m FM channel, and that is not the same
 signal as RTTY on a sideband — the tone pair modulates an FM carrier rather than
-riding on one edge of a passband. **RTTY-FM** is on the DIGITAL row beside RTTY.
+riding on one edge of a passband. **RTTY-FM** is under HAM › Talk beside RTTY.
 
 Everything about the modem is the same: the same Baudot alphabet, the same
 2125/2295 Hz tone pair, the same shift, baud and **Reverse** controls and the
@@ -4947,7 +5040,7 @@ store it in a memory.
 
 ### 3.4 Olivia, THOR and FSQ
 
-Three more keyboard modes are on the DIGITAL row. **Olivia** and **THOR** reuse
+Three more keyboard modes are under **HAM › Talk**. **Olivia** and **THOR** reuse
 the same messaging panel as PSK/RTTY — including **SEND ON RETURN**
 ([3.3](#33-psk31-and-rtty)), which is worth a look in these modes in particular:
 at 32/1000 Olivia a typed correction takes long enough to send that it is better
@@ -4996,7 +5089,7 @@ signals.
 
 #### 3.4.1 MT63
 
-**MT63** is on the DIGITAL row with the other keyboard modes and uses the same
+**MT63** is under HAM › Talk with the other keyboard modes and uses the same
 messaging panel, including **SEND ON RETURN**. It is fldigi's 64-carrier mode:
 every character is spread over all 64 carriers by a Walsh code and interleaved
 over the next 32 (or 64) characters, so it rides through fading, static crashes
@@ -5103,7 +5196,7 @@ against fldigi on the air.
 
 ### 3.5 Hellschreiber
 
-Choose **HELL** from the DIGITAL row for **Hellschreiber** — the oldest digital
+Choose **HELL** under **HAM › Talk** for **Hellschreiber** — the oldest digital
 mode still in regular amateur use, and the only one you read with your eyes
 instead of a decoder.
 
@@ -5220,7 +5313,7 @@ more here than the numbers do. Check them against a current plan for your region
 
 ### 3.6 SSTV
 
-Choose **SSTV** from the DIGITAL row to send and receive pictures. The panel has
+Choose **SSTV** under **HAM › Image** to send and receive pictures. The panel has
 a received-image gallery on the left and a transmit compositor on the right, with
 a row of mode buttons across the top: **Auto**, **Scottie 1**, **Scottie 2**,
 **Scottie DX**, **Martin 1**, **Martin 2**, **Robot 72**, **Robot 36**,
@@ -5275,7 +5368,7 @@ radio whose SSB modulation source is already set to USB, or one with no data
 mode at all.
 
 **On VHF and UHF, use SSTV-FM instead.** Above 30 MHz a picture is normally sent
-on an FM carrier rather than a sideband, so the DIGITAL row has a second entry —
+on an FM carrier rather than a sideband, so HAM › Image has a second entry —
 **SSTV-FM** — beside SSTV. Everything about the picture is the same: the same
 transmission modes, the same decoder, the same gallery and the same
 compositor. What differs is the radio underneath. SSTV puts a CAT-controlled rig
@@ -5319,7 +5412,12 @@ one of the two.
   control only: it does not touch a transmission in progress (that is **ABORT
   TX**) and it does not put the mode selection back to **Auto**.
 - Received images are saved as PNG under `~/.config/sdroxide/sstv_rx/` and reload
-  into the gallery next time.
+  into the gallery next time. To keep them somewhere else — an external drive,
+  say — type an absolute path into **Settings → Uploads → Received pictures
+  folders** and press **APPLY**; new pictures go there, and the ones already in
+  `sstv_rx/` stay in the gallery. The path is on the machine the radio is
+  attached to. If the folder cannot be created (a drive that is not plugged in),
+  pictures go to the default folder until it can.
 - **Deleting.** Most of what a night on 20 m leaves behind is noise. **Right-click**
   a thumbnail and choose *Delete this picture*, or open one and use **Delete…** in
   the enlarged window — which asks a second time, because the file goes for good
@@ -5409,7 +5507,7 @@ QSSTV does it — see [Received pictures → FTP](#received-pictures--ftp) on th
 
 ### 3.7 RIFP (Radio Image Framing Protocol)
 
-Choose **RIFP** from the DIGITAL row to send and receive pictures over
+Choose **RIFP** under **HAM › Image** to send and receive pictures over
 [draft-dulaunoy-rifp-00](https://datatracker.ietf.org/doc/draft-dulaunoy-rifp/) —
 a packetised image protocol, and the only mode here that is *not* single
 sideband. Its `rifp-cpfsk-4800` radio profile keys the carrier itself:
@@ -5467,7 +5565,8 @@ between the two modes.
   many chunks arrived first time.
 - The counters read **frames** (valid), **bad** (failed their CRC and were not
   recovered) and **pictures** (complete and verified).
-- Received pictures are saved as PNG under `~/.config/sdroxide/sstv_rx/`,
+- Received pictures are saved as PNG under `~/.config/sdroxide/sstv_rx/` (or the
+  SSTV folder chosen in **Settings → Uploads**),
   alongside the SSTV ones — and are deleted the same way (3.6): right-click a
   thumbnail, or **Delete…** in the enlarged window.
 
@@ -5478,7 +5577,7 @@ extension.
 
 ### 3.8 Weather fax (WEFAX / radiofax)
 
-Choose **WEFAX** from the DIGITAL row to receive the weather charts the
+Choose **WEFAX** under **MONITOR › Sea** to receive the weather charts the
 meteorological services broadcast on short wave — surface analyses, wave
 heights, ice edges, satellite composites. It is **receive only**: these are
 commercial and military transmitters, and an amateur station has nothing to send
@@ -5572,7 +5671,9 @@ top. The **VIEW** controls decide how it is shown:
 **The gallery.** Completed charts are written as grayscale PNG to
 `~/Pictures/sdroxide/wefax/` — with your pictures rather than in a hidden config
 directory, because a weather chart usually gets printed, mailed or opened next
-to a routing program, and all of that happens in a file manager. Each is named
+to a routing program, and all of that happens in a file manager. To save them
+elsewhere, set the WEFAX folder under **Settings → Uploads → Received pictures
+folders**; charts already in `~/Pictures/sdroxide/wefax/` stay in the gallery. Each is named
 for when it was received and what it was tuned to:
 
 ```
@@ -5602,7 +5703,7 @@ does not reappear on the next listing.
 
 ### 3.9 JS8
 
-Choose **JS8** from the DIGITAL row. JS8 uses FT8's waveform — the same eight
+Choose **JS8** under **HAM › Digi modes**. JS8 uses FT8's waveform — the same eight
 tones in the same 79-symbol frame — but carries a conversation instead of a
 contest exchange: free text, questions you can ask another station, and a
 periodic "I am here" heartbeat. Because it is slotted like FT8 it decodes far
@@ -5854,7 +5955,7 @@ decision for the operator.
 
 ### 3.10 RF Paint (spectrum painting)
 
-Choose **RFPAINT** from the DIGITAL row for **RF Paint** — a transmit-only mode
+Choose **RFPAINT** under **HAM › Image** for **RF Paint** — a transmit-only mode
 that draws text and pictures **directly onto a receiver's waterfall**. There is no
 decoder and no message format: the picture *is* the signal. Anyone watching their
 panadapter on your frequency simply *sees* what you paint, so it is a fun way to
@@ -5894,7 +5995,7 @@ your own waterfall like any other signal.
 
 ### 3.11 WSPR (Weak Signal Propagation Reporter)
 
-Choose **WSPR** from the DIGITAL row. This is the one mode here that is not
+Choose **WSPR** under **HAM › Digi modes**. This is the one mode here that is not
 trying to make a contact. A WSPR transmission is 110.6 seconds of four-tone FSK
 six hertz wide, carrying a callsign, a four-character grid and a power level and
 nothing else, sent in a two-minute slot. It decodes about ten decibels below
@@ -6037,7 +6138,7 @@ both use the callsign and grid from the General tab.
 
 ### 3.12 APRS
 
-Choose **APRS** from the DIGITAL row. This is the Automatic Packet Reporting
+Choose **APRS** under **HAM › Data**. This is the Automatic Packet Reporting
 System: 1200 baud AX.25 on one shared FM channel per region, carrying positions,
 weather, telemetry, objects and short messages. It is not a QSO mode — almost
 everything on the channel is a broadcast that nobody answers — so the panel is a
@@ -6275,9 +6376,9 @@ hundredths of an inch the protocol carries.
 
 ### 3.13 ADS-B (aircraft on 1090 MHz)
 
-Choose **ADS-B** from the end of the **DIGITAL** row. It sits apart from the
-rest of that row all the same: there is no QSO to work and no transmitter, only
-a signal to point the radio at. Every civil aircraft in the sky transmits its identity,
+Choose **ADS-B** under **MONITOR › Aviation**. Like everything under MONITOR it
+is a service to listen to: there is no QSO to work and no transmitter, only a
+signal to point the radio at. Every civil aircraft in the sky transmits its identity,
 altitude, velocity and position on 1090 MHz, twice a second, in clear and with a
 checksum. The panel is a target list on the left and a radar picture on the
 right.
@@ -6286,6 +6387,14 @@ right.
 worldwide. Selecting the mode tunes to 1090.000 MHz unless the receiver is
 already looking at it, and the **1090.000** button in the panel header puts it
 back if you wander off.
+
+**The 1090.000 button also keeps your gains.** The gain settings that are right
+for 1090 MHz are rarely the ones you use on HF, so they can be stored with the
+button, one preset per receiver. **Right-click** it and choose **Save current
+gains as the ADS-B preset**; from then on a **click** tunes to 1090 MHz *and*
+sets those gains, the stages first and any AGC switch last. The tooltip shows
+the saved gains next to the current ones, and the right-click menu has
+**Forget preset**. Without a preset a click only tunes, as before.
 
 #### What you need
 
@@ -6331,9 +6440,14 @@ when it was registered, unique worldwide and unchanging.
 | Column | What it is |
 | --- | --- |
 | CALL | The flight identification it is broadcasting. Empty for the first few seconds: an aircraft sends its position twice a second and its callsign every five, so the address arrives first. The row shows the address until the callsign does. |
-| ICAO | The address, in hex, once there is a callsign to distinguish it from. |
+| ICAO | The address, in hex, once there is a callsign to distinguish it from, after the flag of the country whose address block it falls in. That is the country of registration, not the airline's: an Irish-registered Ryanair aircraft flies the Irish flag. |
 | ALT | Altitude. Flight level above 18 000 feet (`F350`), hundreds of feet below it (`045`), and `GND` on the ground. |
 | GS | Ground speed in knots. |
+| ROUTE | The callsign's usual route, departure and destination airport by ICAO code (`EDDK›GCLP`, `EDDL›…›GCLP` with stops). Shown where the panel is wide enough; see *Routes* below. |
+| FROM › TO | The same route by the places the airports serve (`London › Budapest`, `Köln › … › Las Palmas`), which is what a reader recognises. An airport whose file has not arrived yet stands as its code. |
+| AIRLINE | The airline's name, from the first three letters of the callsign (`RYR95MB` → Ryanair). Empty for private flights, whose callsign is a registration. |
+| TYPE | The aircraft type as an ICAO type designator (`B38M`, `A20N`), where the airframe is known. Otherwise a guess from the sighting log with a question mark (`A320?`), see *The sighting log* below; otherwise, faint, the class the aircraft sends about itself (`large`, `rotorcraft`). |
+| Δf | Where the aircraft's transponder carrier sits, in kHz from 1090.000 MHz (`+175`). Each transponder has its own; see *One trace per aircraft* below. Shown where the panel is wide. |
 | TRK | Track over ground, degrees true. |
 | V/S | Rate of climb or descent, feet per minute. |
 | SQK | The squawk — the four-digit code the crew set for air traffic control. Only some frames carry it; see below. |
@@ -6346,20 +6460,75 @@ room for, including geometric altitude, turn rate, signal level and the last
 frame as hex — and selects the aircraft on the map. **CENTER** in the card puts
 it in the middle of the picture.
 
+The card also shows what the aircraft reports from its own systems, each line
+once a message carrying it has arrived: **heading** (where the nose points;
+the track differs from it by the wind), **airspeed** (IAS or TAS), and from
+ADS-B version 2 transponders what the crew has set — **selected altitude**
+(from the MCP/FCU or the FMS), **selected heading**, **QNH**, and the
+**autopilot** with its modes (VNAV, ALT, APP, LNAV) and TCAS. The **ADS-B** line
+gives the transponder's version and the accuracy (NACp, 0–11) and integrity
+(SIL, 0–3) of its position. Many aircraft send only part of this: the
+airspeed message only when they have no velocity over the ground to send, the
+target state only from version 2 on.
+
+Above all that, the card says what the aircraft *is*, where it is known:
+**Registration**, **Model**, **Operator**, the year it was **Built**, and the
+**Country** of its address block (marked *military* where the block is). These
+come from the same standing data as the routes; see *Where the extra data comes
+from* below.
+
+When the panel is narrow, columns drop out rather than overprint each other.
+Among the ones after the speed, FROM › TO goes first, then AIRLINE; TYPE is
+short and stays longest. On the right, Δf goes first, then the signal column,
+then V/S, SQK and KM together.
+
+**Right-click a row** for what you would otherwise type somewhere else: copy
+the callsign or the ICAO address; open the aircraft on planespotters.net,
+ADS-B Exchange, adsb.lol or the OpenSky map, or the flight on Flightradar24;
+**Show on map**; and **Add to the VRS database**, which copies the address and
+opens the public form where anyone can add an aircraft the panel does not know.
+These are links only — nothing from those sites is fetched or kept.
+
+![A row's card: what the aircraft is, what it reports, and the table above it with flags, routes and types](images/adsb-card.jpg)
+
+#### One trace per aircraft
+
+Zoom the waterfall in on 1090 MHz and each aircraft draws its own thin,
+dashed vertical trace. A Mode S reply is a carrier switched on and off, so
+about half its power is a single line at the transmitter's own frequency, and
+the standard lets a transponder sit anywhere within ±1 MHz of 1090 MHz: each
+one sits at its own oscillator's offset, steady over a flight. Doppler moves it
+by less than a kilohertz.
+
+SDRoxide measures that line in every frame it decodes and keeps the median of
+the last nine per aircraft (a weak frame measured far off does not move it).
+In ADS-B mode the waterfall labels each trace with the aircraft's callsign —
+or its address until a callsign has arrived — solid while it is being heard,
+fading over half a minute after. The **LABELS** switch hides them with every
+other label; clicking one does nothing, because tuning onto it would move the
+decoder off 1090 MHz. The card gives the carrier as a frequency (**carrier**,
+`1090.175 MHz (+175 kHz)`), the list as Δf. Two traces under one address would
+be two transmitters claiming the same identity.
+
 A **greyed row** is an aircraft that is still being heard but has not reported a
 position for ten seconds. It stays on the list and comes off the map; see below.
 
 #### The radar picture
 
-![The ADS-B panel: the aircraft list and the radar picture](images/adsb-panel.jpg)
+![The ADS-B panel: the aircraft list with flags, routes and types, and the radar picture with airports, the coverage diagram and aircraft symbols by weight class](images/adsb-panel.jpg)
 
 Standard surveillance-display symbology, and each part of it is telling you
 something:
 
-- **A white square** is an aircraft. Everything up there is an aeroplane, so a
-  symbol that said which kind would be saying nothing; the square stays the same
-  size at every zoom, so a glance across a busy sector reads as one class of
-  thing. A dot inside it means the aircraft is on the ground.
+- **An aeroplane seen from above** is an aircraft, nose along its track. Its
+  size is the weight class the aircraft sends (light under 7 t, small to 34 t,
+  large to 136 t, heavy above), so a heavy stands out from the commuter
+  traffic at a glance; an aircraft that has not sent its class yet is drawn as
+  a large one, the commonest. The size does not change with zoom. A
+  helicopter is a hub with a crossed rotor; anything else that transmits — a
+  ground vehicle, a balloon, an obstacle — is a plain square. **Filled** means
+  airborne, **outline only** means on the ground, so a taxiing aircraft is
+  told apart from one a thousand feet above the same runway.
 - **History dots** behind it are where it has been. Their spacing is its speed
   and their curve is its turn, which is how a controller reads both before
   reading any number on the screen.
@@ -6377,9 +6546,245 @@ something:
 Drag to pan, scroll to zoom, double-click to reframe. Your own position is
 marked once **My grid** is set.
 
+The bottom right corner shows the source, how many aircraft the map is drawing
+in its frame and the time in UTC with the date (`SDR Oxide · 27 planes ·
+2026-11-18 09:41:07 UTC`), so a screenshot says what it is, what it holds and
+when it was taken. Switch it off under **SETUP** → *Map stamp, bottom right*.
+
+**The selected aircraft's route** is drawn as dashed great circles from the
+departure airport through the aircraft to the destination — the whole route,
+with the airports marked by their ICAO codes. A route with stops is drawn
+airport to airport.
+
+#### Map layers
+
+The chips above the map switch what lies under the traffic. Each is remembered.
+
+| Chip | What it shows |
+| --- | --- |
+| **CITIES** | City names. |
+| **AIRPORTS** | Airports as the chart sign, a ringed circle, with their IATA code — the one on tickets and departure boards (`HAJ`). Fields without one, many military ones among them, keep their ICAO code. Large airports show from a continent's width, medium ones with scheduled service at a few countries, the rest at a region. The ICAO code and the name are in the pointer readout. |
+| **NIGHT** | The day–night boundary, as on the other maps. |
+| **CURSOR** | A readout beside the pointer: bearing and distance from your station, with a faint line and range ring through the pointer, the airport under it, and with RANGE on what the coverage diagram holds there. It is painted rather than a tooltip because it is read while moving. Off, there is no readout at all. |
+| **ALT** | Each aircraft's trail as a line coloured by altitude — orange on the ground, yellow and green below 10 000 ft, cyan at 20 000, blue at 30 000, purple from 40 000 — with the scale along the bottom of the map. The line runs through the points the flight tracks keep (every 15 s, and at every turn or climb) over the last ten minutes, up to where the aircraft is now; the aircraft symbols take the colour of their altitude now, or white if *With ALT: aircraft in altitude colour* is off under **SETUP** (the selected one, the one under the pointer and an emergency keep their highlight). Off, the trail is the engine's dots in one colour. Not in the browser version, which keeps no tracks. |
+| **RANGE** | The coverage diagram, see below, with **1 H**, **24 H** and **7 D** to choose how far back it reaches. Needs your position (**My grid**). |
+| **CLOUDS** | Cloud cover from geostationary satellites, worldwide, a new picture every hour. Drawn under the night shading, so day and night still read through it. |
+| **STORMS** | Thunderstorm cells: a ring in the hazard colour with a lightning stroke, thicker for a harder-working storm. With CURSOR on, the readout over a cell gives its cloud-top height and an estimated flash rate. |
+| **WEATHER** | Precipitation, from the weather radar of your region; see *Weather* below. |
+
+**↻** fetches the weather radar, the clouds and the storm cells again at
+once, past the picture kept from the last run: what is on the map goes
+straight away and the new pictures appear as they arrive, so old weather
+visibly leaves. The aircraft need no such button; they arrive live.
+
+The last button puts the map into a window of its own, which can be as large
+as the screen. Closing that window brings the map back into the panel.
+
+#### Weather
+
+Pilots fly around weather, so a radar picture without it leaves the reason for
+a detour out. Three chips lay it over the map; each one names its source and
+the time of its picture in the corner of the map while it is on, and a
+right-click on the chip opens the source and its licence.
+
+![CLOUDS, STORMS and WEATHER (WORLD) together: cloud cover under the night shading, satellite precipitation and thunderstorm cells, with the sources in the corner](images/adsb-weather.jpg)
+
+**WEATHER** is precipitation. Which source draws it is set under **Weather
+radar** in **SETUP**:
+
+| Choice | Source | Covers | Terms |
+| --- | --- | --- | --- |
+| **AUTO** | the one below whose area holds your position (Canada from 49° N in America), else **WORLD**; with no position set, **DWD** | | |
+| **DWD** | Deutscher Wetterdienst radar composite, 1 km, every 5 minutes | Germany and its neighbours | CC BY 4.0, with the credit the map shows |
+| **USA** | NOAA NWS NEXRAD mosaic, through the Iowa Environmental Mesonet | contiguous United States | public domain |
+| **CANADA** | Environment and Climate Change Canada radar composite | Canada | Open Government Licence – Canada |
+| **WORLD** | NASA GPM IMERG precipitation estimated from satellites, through NASA GIBS | 60° N to 60° S, oceans included | NASA, free of restriction |
+
+Choosing a source by hand is how you look at another region's weather. The
+radar sources are fetched again every five minutes. The last picture of each
+source is kept in the `adsb-wx` folder of the configuration directory; on the
+next start one less than two hours old is shown at once while a fresh one is
+fetched behind it — the DWD server can take half a minute to answer. Older
+pictures are not shown. **WORLD** covers Africa,
+Australia and the oceans, where no free radar is, but it is coarser than radar
+and some hours late — read it as where it has been raining, not where it is.
+
+**CLOUDS** and **STORMS** come from the same NOAA/NESDIS global satellite mosaic
+as the 3D globe, through nowCOAST (public domain): infrared for the height of
+the cloud tops, the visible channel for low cloud by day. **STORMS** marks deep
+convection — very cold, very high cloud tops — and estimates the activity from
+them. It is an estimate from the satellite picture, not a lightning network:
+a cell on the map is where a thunderstorm is very likely, not a count of
+strikes.
+
+The weather layers are fetched by the desktop application only; the browser
+version shows the map without them.
+
+#### The coverage diagram
+
+**RANGE** answers the question every new antenna raises: how far, and in which
+directions, does this station hear? The sky around you is cut into slices of
+5° of bearing and rings of 10 km, out to 400 km, and every position an aircraft
+reports lands in one cell — but only if the same aircraft reported a position no
+more than 20 seconds before. A single frame from far away is a lucky decode; a
+track that keeps coming is reception, and the diagram is meant to show
+reception.
+
+Each cell is drawn yellow: **brighter** for a stronger signal, **more opaque**
+for more positions. The **line** joins the outer edge of the last cell in each
+direction that holds at least three positions — your steady range, which is
+rarely round: hills, buildings and the antenna's own pattern cut it per
+direction, and on some days the troposphere carries it far. With an aircraft
+selected, the slice from you to it is marked, so its bearing and distance read
+against the diagram.
+
+![The coverage diagram after seven hours: steady range per direction, with the selected aircraft's route and its slice from the station](images/adsb-coverage.jpg)
+
+The diagram is kept by the hour, a file an hour in the `adsb-coverage` folder
+of the configuration directory, for seven days — so the last hour (today's
+conditions) can be set against the last week (what the antenna usually does).
+Moving **My grid** starts a new diagram. After changing the antenna, clear it
+with **Reset…** in **SETUP**. The browser version keeps the current session
+only.
+
+#### The range log
+
+The diagram shows how the antenna does this week; the **range log** keeps the
+same cells by **setup** and **day**, for as long as its size limit allows, so a
+setup can be set against the one before it — the antenna on the roof against
+the one at the window, a receiver in a plastic case against a metal one. Open it
+under **Range log** in **SETUP**.
+
+A setup is the receiver the positions came from (named as its tab names it),
+an antenna label and your position, with a version counted per receiver
+(`RTL-SDR v2`). Each receiver has its own open setup, so going from one radio to
+another and back carries on where it was. Moving **My grid** starts the next
+version by itself; anything else — a new antenna, a new place on the roof — is
+started by hand: type the label under **Antenna** and press **NEW SETUP**. The
+old version is closed and kept. **NAME** gives the open setup the label without
+starting a new one.
+
+Each setup lists its days, the farthest steady range it reached and the space
+it takes; click it for its days: positions, how many of the 72 directions
+reached a steady range, and the farthest (with the median over the directions
+and the bearing in the tooltip). **DELETE** removes one setup in two clicks,
+**INIT** all of them; over the size limit (**Limit**, 50 MB to start with —
+well over a year at the 80 kB of a busy day) the oldest days go first, and the
+setups stay listed.
+
+The log is the SQLite file `adsb-range.sqlite` in the configuration directory.
+Its view `range_log` has one line per setup, day and 5° direction with the
+range in kilometres, the positions and the strongest signal, for a spreadsheet
+or DuckDB while the radio is off. The browser version has no range log.
+
+#### The sighting log
+
+The list forgets an aircraft a minute after its last frame. The **LOG** chip
+beside the filter opens the sighting log, which does not: every aircraft heard
+in a day, one line each — when it came and went, callsign, type, route, and how far
+from you it was heard — with a summary at the top (how many, the farthest, the
+commonest destinations and types). Click a column heading to sort by it, again
+to reverse; it opens on the last heard first. It is written once a minute to
+one CSV file per day, `adsb-log/<date>.csv` in the configuration directory, and
+kept for 30 days. An aircraft heard several times in a day keeps one line, with
+its first and last contact and its nearest and farthest distance. The times are
+in the file twice: as epoch seconds (`first`, `last`) for programs, and as local
+date and time (`first_local`, `last_local`, `2026-11-17 13:24:05`) for a
+spreadsheet.
+
+A row of filters sits above the summary, and the summary counts what they let
+through (`today 212 aircraft · 18 shown`):
+
+| Filter | What it keeps |
+|---|---|
+| Day slider | One day of the 30 kept: drag left for earlier days, the right end is today and follows midnight. Shown only once there is more than one day file. |
+| **1 D** / **7 D** | The span: the chosen day, or the seven days ending with it. Over a week an aircraft heard on several days has a line for each. |
+| Text | The filter field beside **LOG** also filters the log: a part of the callsign, the address, the type, the route (`EDDL`) or the country (`DE`). |
+| **LIVE** | Today only: just the aircraft in the table now. |
+
+With the log open, **MAP** and **PLOTS** over the right side swap the map for a
+bar chart of the lines the log shows, after its filters. **X axis** picks what
+the bars count by — each line is one aircraft on one day:
+
+| X axis | Bars |
+|---|---|
+| Daytime (h) | Aircraft heard in each hour of the day, local time. An aircraft counts in every hour it was heard in, so this is how busy the sky was. |
+| Height (FL) | Aircraft by their highest altitude, in 2,000 ft steps, the last open above FL440. |
+| Distance (km) | Aircraft by their farthest position, in the coverage diagram's 10 km rings. The diagnostic one: where the bars stop, reception stops, and a change of antenna shows as bars moving out. |
+| Airline | Aircraft by the airline code in the callsign, commonest first, as many as fit; how many more there are is written over the chart. |
+| Plane type | Aircraft by type, commonest first, guessed types counted as their type; the rest as for airlines. |
+
+Lines with nothing to count by — no altitude, no position, a callsign without an
+airline code, no type — get no bar; their share is written over the chart
+(`20 % missing data`). Hover a bar for its count.
+
+**Right-click a line** for what still answers once the flight is over: copy
+the callsign or the address; the aircraft's **track of that day** on ADS-B
+Exchange (the UTC day it was logged); the **flight's history** by callsign on
+FlightAware; and the airframe on planespotters.net. These are links only.
+
+Beside the log, the **flight tracks** are kept: where each aircraft went, one
+line per point in `adsb-tracks/<date>.csv` — address, callsign, time (epoch and
+local), latitude, longitude, altitude, ground speed and track. Not every
+position is written: a point is kept when fifteen seconds have passed since the
+last one, or the track has turned more than 5°, or the altitude has changed by
+more than 500 ft. A straight cruise costs four lines a minute and a turn keeps
+its shape; a busy day is one to three megabytes. Kept for 30 days, like the log.
+The browser version keeps no tracks.
+
+![The sighting log: today's aircraft with times, flags, types, routes, distance and level, and the summary at the top](images/adsb-log.jpg)
+
+The log also learns types. Whenever the standing data knows the airframe behind
+a callsign, the callsign remembers the type, and the airline counts it. An
+aircraft the standing data does not know then gets the type its flight number
+last flew with, or else its airline's usual type — if at least five of that
+airline's aircraft have been seen and four in five of them were that type —
+shown with a question mark. Airlines put the same flight on the same type most
+days and many fly one family; the guess is sometimes wrong, and the question
+mark says so.
+
+#### Where the extra data comes from
+
+Only sources whose terms allow them to be shipped with or fetched by GPL
+software are built in. Everything else is a link.
+
+| What | Source | Terms |
+| --- | --- | --- |
+| Routes, airline names, aircraft (registration, type, operator, year), country by address block | Virtual Radar Server standing data, `github.com/vradarserver/standing-data` | public domain (CC0) |
+| Airports on the map and the places in FROM › TO | OurAirports, `ourairports.com/data` | public domain |
+| Country flags | packaged with SDRoxide | public domain |
+| Precipitation, clouds, thunderstorms | see *Weather* above | CC BY 4.0, public domain, Open Government Licence – Canada, NASA |
+| planespotters.net, ADS-B Exchange, adsb.lol, OpenSky, Flightradar24 | right-click links only | — |
+
+The standing data is built from user submissions and knows a share of what
+flies, not all of it: many rows will have a route and an airline but no type.
+**Add to the VRS database** in the right-click menu is the way to change that
+for everyone.
+
+#### Routes
+
+ADS-B carries no flight plan: who, where, how high and how fast, nothing about
+where the flight is going. The ROUTE column, the route line in the card and the
+line on the map come from the callsign instead, looked up in the *standing data*
+of Virtual Radar Server (`github.com/vradarserver/standing-data`, public domain,
+CC0). It is the route the callsign usually flies, not the plan filed today; a
+charter, a diversion or a callsign reused for another flight will show the
+wrong airports or none. An aircraft far off its dashed line is the sign.
+
+Nothing is fetched until **Online lookups** is ticked in ADS-B SETUP; it is off
+by default, and the ROUTE, TYPE and country columns, the card's extra lines and
+the map's AIRPORTS layer stay empty without it. Once on, the data is fetched as
+aircraft are heard: one small file per airline and one
+per group of airports, from `raw.githubusercontent.com`, and kept for a week in
+the `adsb-routes` folder of the configuration directory. Only the file name is
+asked for — nothing about your station or the aircraft is sent. A callsign that
+is a registration (private flights) has no route. Without a network connection
+the column stays empty and the rest of the panel works as before. The browser
+version shows no routes.
+
 **A target with a stale position is not drawn at all.** Past the timeout it
-comes off the map — square, dots and block together — while staying on the list,
-greyed. It is deliberately not faded instead: a dim square at a half-minute-old
+comes off the map — symbol, dots and block together — while staying on the list,
+greyed. It is deliberately not faded instead: a dim symbol at a half-minute-old
 position is still a claim about where an aeroplane is, made in the same ink as
 the true ones, and the map is the one place with no room for a hedge.
 
@@ -6394,6 +6799,10 @@ the true ones, and the map is the one place with no room for a hedge.
 | Trail length | 40 points | How many past positions are kept and drawn. |
 | Speed vector | 1 min | How far ahead the leader line reaches. Zero switches leaders off. |
 | Track at most | 300 aircraft | A ceiling, so a busy sector cannot grow without bound. The longest-silent go first. |
+
+Below the table, **Coverage map: N hours gathered** says how much the coverage
+diagram holds, and **Reset…** clears it, on disk too, once confirmed with **Really delete** — for
+after an antenna change or a move.
 
 #### What is decoded, and what is believed
 
@@ -6418,9 +6827,16 @@ squawk column and the faster altitude updates without inventing aeroplanes. It
 is also why a squawk appears for some aircraft and not others: it depends on
 whether a radar is interrogating them where you can hear the answer.
 
-**No error correction.** Other decoders will flip a bit, or two, looking for a
-frame that checks out; it recovers some weak transmissions and it also invents
-aircraft, and an invented aircraft on a map looks exactly like a real one.
+**One-bit repair, for aircraft already on the table.** Other decoders will flip a
+bit, or two, looking for a frame that checks out; it recovers some weak
+transmissions and it also invents aircraft, and an invented aircraft on a map
+looks exactly like a real one. SDRoxide repairs a single wrong bit in an
+extended squitter only when the address — taken as received, never repaired —
+already belongs to an aircraft heard from a verified squitter. A repair can
+therefore add a position or a speed to an aircraft on the map, and can never
+put a new one there. Near the edge of reception that is about a quarter to a
+third more frames from the weak aircraft (measured on synthetic bursts in
+Gaussian noise, 2.4 Msps at 10–12 dB). Two wrong bits are not repaired.
 
 Two encodings are deliberately not decoded, and an aircraft using either shows no
 altitude rather than a wrong one: the 100-foot Gillham encoding, used above
@@ -6453,6 +6869,40 @@ SDROXIDE_ADSB_IQ=/path/to/dump1090_rs/test_iq \
 SDRoxide finds all fourteen messages in those three captures, and nothing the
 reference does not also find.
 
+#### Beast: aircraft from another receiver
+
+The panel can show the frames of another program instead of this receiver's.
+A Raspberry Pi with an RTL-SDR stick at the window, running `readsb` or
+`dump1090`, serves everything it decodes in the **Beast** format on port
+30005. A home network carries that easily — about 20 kbit/s for twenty
+aircraft — where it would never carry the raw I/Q.
+
+1. Open **SETUP** and enter the Pi's address under **Beast input**, for
+   example `192.168.1.20` (port 30005 is added when none is given).
+2. Click **BEAST** at the left of the panel header. **RADIO** goes back to
+   this receiver.
+
+The line under the header says where the frames come from and whether the
+link is up: `Beast · 192.168.1.20:30005 · connected`. When the Pi goes away
+the panel says so and reconnects by itself, after 2 seconds at first and at
+most every 30.
+
+On a Beast feed the receiver's dial, sample rate and antenna play no part:
+the **1090.000** button is dimmed, the rate warnings do not appear, and
+**preambles** and **bad CRC** show `—`, because the sender has already
+thrown those away. **frames** counts the frames that arrived and passed the
+same checks this decoder applies to its own. The table starts afresh when
+you switch, since the two sources keep time by different clocks.
+
+**Without any radio.** The panel belongs to a radio's window, so something
+has to be open. With no hardware at all, start with the built-in signal
+generator (`sdroxide --siggen`), choose **ADS-B** and then **BEAST**.
+
+Frames that arrive over Beast are only shown. They are never passed to this
+station's own Beast output ([§6.8.4](#684-mode-s-beast-output-ads-b)), so a
+station whose output is merged by the same Pi it reads from does not send its
+frames round in a circle.
+
 #### If nothing is decoding
 
 Record a few seconds and look at what the receiver actually heard:
@@ -6473,7 +6923,7 @@ capture is 10 dB above it, no decoder will find anything in it.
 
 ### 3.14 NAVTEX
 
-Choose **NAVTEX** from the DIGITAL row. It is the maritime safety broadcast
+Choose **NAVTEX** under **MONITOR › Sea**. It is the maritime safety broadcast
 every coast station in the world sends: navigational and meteorological
 warnings, search-and-rescue bulletins, ice reports, pilot notices.
 
@@ -6537,7 +6987,7 @@ tuning instruction for the service says.
 
 ### 3.15 VDL2 (what the aircraft are saying)
 
-Choose **VDL2** from the end of the **DIGITAL** row. VHF Data Link Mode 2 is the
+Choose **VDL2** under **MONITOR › Aviation**. VHF Data Link Mode 2 is the
 datalink airliners and ground stations exchange ACARS over — company messages,
 position reports, weather requests, fuel and arrival figures, and the link
 management that carries them — on fourteen 25 kHz channels between 136.650 and
@@ -6770,7 +7220,7 @@ silent while the others show bursts, what the others are showing is not VDL2.
 
 ### 3.16 AIS (ships on 162 MHz)
 
-Choose **AIS** from the end of the **DIGITAL** row. The Automatic Identification
+Choose **AIS** under **MONITOR › Sea**. The Automatic Identification
 System is what every ship of any size transmits about itself — its identity,
 position, course, speed, name, dimensions, draught and where it is going — on
 two 25 kHz channels either side of 162.000 MHz. The panel is a vessel list on
@@ -6915,7 +7365,7 @@ way at both ends agrees with itself.
 
 ### 3.17 AtCHAT NET
 
-Choose **ATCHAT** from the DIGITAL row. AtCHAT NET is a multi-station keyboard
+Choose **ATCHAT** under **HAM › Talk**. AtCHAT NET is a multi-station keyboard
 and file mode built out of nostalgia for the old packet-radio net: several
 stations share one channel, chat both openly and directly, and pass files and
 pictures around, all while the net itself works out who is in charge without
@@ -6998,7 +7448,7 @@ never collide.
 
 ACARS (Aircraft Communications Addressing and Reporting System) is the text datalink airliners and ground stations use on VHF airband. Aircraft send position reports, crew requests and company messages; ground stations answer with clearance data, gate assignments and weather. Every exchange is a short burst — a second or two of 2400-baud MSK (tones at 1200 and 2400 Hz) carried as the audio of an AM transmitter.
 
-**Where to listen.** ACARS lives on a handful of airband channels shared with voice. 131.550 MHz is the primary almost everywhere; Europe also works 131.525, 131.725 and 131.825 MHz, and North America 129.125, 130.025, 130.450, 131.125 and 136.700 MHz. Pick **ACARS** in the mode picker (or start with `--mode ACARS`) and put the dial on the channel: the mode demodulates the AM carrier itself, so the carrier belongs on the dial exactly as it does for listening to AM voice. The chips in the panel tune straight to those channels. A transceiver driven over CAT is put in AM, whatever the digital modes' sideband setting says.
+**Where to listen.** ACARS lives on a handful of airband channels shared with voice. 131.550 MHz is the primary almost everywhere; Europe also works 131.525, 131.725 and 131.825 MHz, and North America 129.125, 130.025, 130.450, 131.125 and 136.700 MHz. Pick **ACARS** under **MONITOR › Aviation** in the Band/Mode popup (or start with `--mode ACARS`) and put the dial on the channel: the mode demodulates the AM carrier itself, so the carrier belongs on the dial exactly as it does for listening to AM voice. The chips in the panel tune straight to those channels. A transceiver driven over CAT is put in AM, whatever the digital modes' sideband setting says.
 
 **What you see.** The panel lists messages newest first: the time (UTC), the aircraft registration (`F-GTAE`, `N12345`), the mode character, the two-character label that says what kind of message it is (`H1` to or from the crew, `Q0` a link test, `_d` a general response), the acknowledgement (`NAK` when there is none), the block identifier, and the text. Only messages whose block check matches are listed; a damaged one is counted in the header's **bad** figure instead. The level meter sits beside the counters — a channel with no ACARS traffic shows no messages, but the meter still moves with airband noise, so you know the passband is open.
 
@@ -7012,15 +7462,20 @@ ACARS is also carried over VDL2 on higher frequencies — see [3.15](#315-vdl2-w
 
 HFDL (High Frequency Data Link, ARINC 635) is the datalink airliners use where nothing else reaches: the oceans and the poles. A handful of ground stations spread around the world transmit on assigned shortwave channels between 2.8 and 22 MHz, aircraft answer on the same channel, and the exchange carries squitters, logons, position and performance reports, frequency data, and ACARS messages riding inside it. It is slow — 300 to 1800 bits per second of PSK on a 2.8 kHz single-sideband channel — and it is the only aircraft datalink you can hear from the other side of an ocean.
 
-Choose **HFDL** from the end of the **DIGITAL** row, or press the **HFDL** chip in the Display box, beside SKIM. The panel docks under the waterfall: the decode log on the left, an aircraft map on the right, with a draggable divider between them that is remembered with the rest of the layout.
+Choose **HFDL** under **MONITOR › Aviation**, or press the **HFDL** chip in the Display box, beside SKIM. The panel docks under the waterfall: the decode log on the left, an aircraft map on the right, with a draggable divider between them that is remembered with the rest of the layout.
 
-**One channel at a time, and you choose which.** This is the difference between HFDL and the other aircraft lanes. ADS-B has exactly one frequency and AIS and VDL2 cover all of their channels at once, because theirs sit next to each other. HFDL's do not — they are scattered across the whole shortwave spectrum — so the decoder listens to one 24 kHz lane and the frequency is yours to pick.
+**A handful of channels at a time, and you choose which.** This is the difference between HFDL and the other aircraft lanes. ADS-B has exactly one frequency and AIS and VDL2 cover all of their channels at once, because theirs sit next to each other. HFDL's do not — they are scattered across the whole shortwave spectrum, a few in each band — so the decoder listens to one lane and the channels in it are yours to pick.
+
+By default that is one channel: click a chip and the decoder listens to it alone, on the 24 kHz lane HFDL has always used. **Ctrl-click** a chip (**⌘-click** on a Mac) to decode it *as well*, and again to take it away; **+ NEARBY** adds, in one go, every channel close enough to the one in force to share its lane, nearest first; **×** goes back to the one channel. Up to eight channels can be decoded at once, as long as the lowest and the highest are no more than 200 kHz apart — HFDL's channels within a band are well inside that (13 264–13 351 kHz, for instance) — and all of them lie inside the receiver's window. A channel asked for that cannot be fitted in turns **amber**, and its tooltip says why; the one the dial is on is underlined. With more than one, a **CHANNELS** row under the chips gives each its decode count and level.
+
+Every channel decodes into the same log, station list, message list and aircraft table, each event marked with the channel it came in on. The cost is one more channel decoder on the HFDL worker for each channel: a mixer and filter at the lane's rate, then the demodulator. When a very strong burst on one channel also reaches the decoder of its neighbour, the copy that came in weaker is dropped, so a frame is filed only under the channel it was sent on.
 
 | Control | What it does |
 | --- | --- |
 | **LISTEN** | Switches the decoder on and off. It costs a downconverter and a worker thread whether the panel is on screen or not, so it starts off, and it is off again next time you start sdroxide. |
+| **AUTO** | Auto-follow: the decoder finds an open band by itself (below). Picking a channel by hand turns it off. |
 | The kHz field | The channel to listen on. Anything from 2 800 to 30 000 kHz. |
-| The frequency chips | The published assigned frequencies, one click each. **21.931 M** — Riverhead, covering the northern Atlantic and North America — is the default. Your own channels follow them: **+** saves the channel in force as a chip, a click tunes to one, a right-click removes it. They are kept per machine in `hfdl_channels.json`. |
+| The frequency chips | The assigned frequencies, one click each, a band at a time: the **MHz** row above them picks the band (2 to 21 MHz) whose channels are shown — it starts on, and follows, the band the dial is on; a band is green while a station is working one of its channels and underlined while one of its channels is being decoded. **21.931 M** — Riverhead, covering the northern Atlantic and North America — is the default. The chips are the channels the ground stations use, from the network's system table (see **STATIONS** below): a copy built into sdroxide (version 52, from the table dumphfdl distributes) until a newer one has been received over the air. A chip turns **green** while a station is known to be working that channel, and its tooltip names the stations that use it. Your own channels follow them: **+** saves the channel in force as a chip, a click tunes to one, a right-click removes it. They are kept per machine in `hfdl_channels.json`. |
 
 Changing the channel moves the dial with it, so the panadapter shows the signal the decoder is working on. The channel frequency is the *assigned* frequency, which is where the suppressed carrier of the upper-sideband channel sits; the decoder finds its own subcarrier 1440 Hz above that, so put the assigned frequency on the dial and do not offset it by hand.
 
@@ -7030,6 +7485,8 @@ Changing the channel moves the dial with it, so the panadapter shows the signal 
 
 **The right band for the time of day.** This is ordinary shortwave propagation and it matters more than anything in the panel. The higher channels — 17 and 21 MHz — are daytime paths; 5, 6 and 8 MHz are the night ones; 11 and 13 MHz work around the changes. A channel that is dead is usually dead because the band is closed, not because the decoder is failing.
 
+**AUTO does that choosing for you.** Every ground station sends a squitter on each of its channels about every 32 seconds, so an open band announces itself within a minute. With **AUTO** on, the decoder stays where it is as long as a station has been heard on one of its channels in the last two minutes; when none has been heard for a minute and forty seconds — about three squitter periods, so one lost to fading does not move it — it moves to the next band, taking *every* channel of that band that fits one lane at once (see *several channels* above), the one most stations share on the dial. Which band comes next: by the sun at your grid square (the digital-mode setup's locator; UTC without one), the higher bands by day, the lower ones by night and the middle around dawn and dusk — and before all of them, a band where some station's latest squitter says it is working a channel. A line under the chips says what it is doing: *13 MHz is open — Shannon heard 20 s ago* in green, or *listening on 8 MHz; the next band in 40 s* in yellow. It moves the dial, so on a radio whose tuning is shared with other listening, leave it off.
+
 #### What you see
 
 The strip along the top of the panel:
@@ -7038,7 +7495,7 @@ The strip along the top of the panel:
 | --- | --- |
 | **RUNNING** / **OFF** | Whether the decoder is switched on. |
 | dBFS | The level in the lane. It moves with band noise even when nothing is decoding, which is how you know the lane is actually fed. |
-| aircraft | How many aeroplanes are on the map. |
+| aircraft | Two counts, `20 (44) aircraft`: first those heard in the last 10 seconds, in brackets all on the list. The list keeps an aircraft a minute after its last frame, so the bracket answers a gain change only after that; the first count answers within seconds, which makes it the one to watch while tuning the gain. |
 | bursts | Blocks of the channel in which the demodulator found a transmission. |
 | decodes | Messages that came out of them whole. |
 
@@ -7046,13 +7503,88 @@ Below that, the log, newest first: the time (UTC), what kind of record it is, th
 
 **A squitter every 32 seconds is the first thing to look for.** Each ground station announces itself on its own schedule whether or not any aircraft are talking to it, so a channel that is open gives you something to see within a minute of switching **LISTEN** on. Aircraft traffic is much rarer than that.
 
+#### The ground stations
+
+The header of the left-hand pane has four chips, **DECODES**, **STATIONS**, **MESSAGES** and **AIRCRAFT**. **STATIONS** lists every ground station the decoder knows of, the one heard most recently first:
+
+- **When and how well it was heard** — how long ago, on which channel, its signal-to-noise figure, and how many squitters it has sent since you switched **LISTEN** on. It is green while that was within the last quarter of an hour. A station known only from the saved table says *not heard yet*.
+- **Its channels**, in kHz. A channel is green while the station is working it: the one it was just heard on, and any other its latest squitter lists as in use. Click a channel to tune to it; the channel you are on is underlined.
+
+The squitter says which channels are in use as a *bitmap* — bit by bit, the station's first channel, its second, and so on. What turns that into frequencies is the network's **system table**, which the stations broadcast only now and then, in several parts, over the air. sdroxide reassembles it when it hears one, keeps the latest in `hfdl_stations.json`, and starts the next session from it, so the channels are known from the first squitter after the first time. On a first run, before any table has been received, sdroxide starts from its built-in copy of version 52 — positions and channels for all sixteen stations — so the channels are known from the first squitter; a station missing from the table in use is listed with what it was heard on and *channels unknown*.
+
+Only the station's own transmissions count as hearing it: squitters, and the uplinks a station sends to aircraft. An aircraft's downlink names the station it is talking to, but that is the aircraft's signal, which a receiver can hear from much farther away than the station itself.
+
+The list does not roll like the decode log: a station stays on it for the session.
+
+#### The ACARS messages
+
+Airline ACARS messages ride inside HFDL exactly as they do inside VDL2 — the same ARINC 618 blocks, over shortwave. They are rarer than on VHF, and between squitters on a busy channel the decode log, which holds only the last 64 events, rolls past them within minutes. So they are also kept on the **MESSAGES** tab, the last 300, newest first.
+
+Each message shows:
+
+- the time, an arrow (**↓** from an aircraft, **↑** from a ground station), the aircraft's registration — or its flight, or its ICAO address, in that order, whichever the block carried — and the flight beside it;
+- the **label**, which says what kind of message it is (hover for its name where it is one of the few xng's decoder recognises: `H1` company messages, `A6`/`B6` ATS, `5Z`, `SA`, `MA`), the channel and the burst's signal-to-noise;
+- a cyan line when the message could be understood: an ADS-C report, a CPDLC message, an OOOI time such as `OUT 1204`, a position, the kind of a Q-series report;
+- the text itself on one line, line breaks shown as ⏎.
+
+**CRC** in amber means the message's own check sequence did not match, so some of the text may be wrong; the frame it rode in did pass its own check, which is why the message is shown at all. **more…** means one block of a longer message. The filter box above the list matches any of it — registration, flight, label, a word of the text.
+
+**SAVE** follows the tab. On **MESSAGES** it writes `sdroxide-hfdl-acars.csv`, one row per message with the oldest first, the text in one quoted field with its line breaks intact; on the other tabs it writes the decode log as before.
+
+The decode log's rows for the same messages now show the aircraft, the label and the start of the text instead of the link-layer envelope. The log also now lists its newest event at the top, as this section always said it did.
+
+#### The aircraft list
+
+**AIRCRAFT** is a table of every aircraft the decoder has heard from — including the ones that never sent a position, which the map cannot show. An aircraft is listed from its first downlink and stays for three hours after it was last heard. The table fills the left-hand pane, out to the divider between it and the map: the **LAST MESSAGE** column takes whatever width the others leave and cuts its text with an ellipsis where it runs out, so dragging the divider, or resizing the window, shows more or less of the message at once. The table scrolls sideways only when the pane is too narrow for the other columns and a usable stretch of message.
+
+| Column | What it holds |
+| --- | --- |
+| *(▸)* | Click to filter the decode log to this aircraft and switch to **DECODES**. |
+| **REG** | The registration, once an ACARS message has given it; until then the ICAO address, then the alias, in a dimmer tone. **Click it and the aircraft blinks on the map** (see below). Hover for the ICAO address. Struck through: the aircraft has logged off. |
+| **FLIGHT** | The flight, from a position report or an ACARS message. |
+| **HEARD** | How long ago it was last heard — green within five minutes. Hover for the UTC time. |
+| **STATION** | The ground station it is talking to, by its town. Hover for the full name. |
+| **MHz** | The channel it was last heard on. |
+| **dB** | The signal-to-noise figure of its latest burst that measured one. |
+| **MSGS** | How many events are attributed to it. |
+| **KM** | Distance from your grid square to its last reported position; empty with no position or no grid. Hover for the position, how long ago it was reported, and the bearing. |
+| **CALC TRK**, **CALC KT** | Course over the ground (degrees true) and ground speed (knots), *calculated* by sdroxide from the aircraft's last two position reports — marked **≈**, because HFDL's position reports carry neither, so this is the average between two fixes usually minutes apart, not what the aircraft reported. Timed by the aircraft's own clock in the reports where both carry it. Left empty when the two fixes are under 30 s or 2 km apart, implausibly fast (over 750 kt: a bad fix), or more than an hour apart. |
+| **LAST MESSAGE** | What its latest ACARS message said, as `[label] text` on one line, cut to the width the pane has (hover for the whole of it, up to 200 characters). A position report after it does not replace it. An aircraft that has sent no ACARS shows the kind of event last heard from it, dimmer — `performance-data`, `logon-confirm`. |
+
+Click a column heading to sort by it, and again to reverse; the arrow shows which. It starts on **HEARD**, newest first. An aircraft with nothing in the sorted column — no registration, no position — goes last whichever way it runs. The sort is remembered with the rest of the layout.
+
+**Blinking on the map.** The registration of an aircraft that has a plot on the map selects it and makes it blink for three seconds, a ring spreading from the square. If you had panned or zoomed it out of sight, the map goes back to framing every aircraft so the blink is on screen. An aircraft that never sent a position has no plot, and its tooltip says so.
+
+An HFDL aircraft has no name of its own on the air. It logs on to a ground station giving its ICAO address and is handed a short *alias*, good only on that station, which every later frame uses. Until a logon is heard — often the case, since a logon is heard only if you were tuned to that channel at that moment — an aircraft is listed under its alias and station, and it is *merged into one row with its ICAO address* the moment the logon confirmation arrives. Two aircraft with the same alias on different stations stay two rows. Squitters, and uplinks addressed to an alias whose logon was never heard, say nothing reliable about which aircraft they concern and are not counted.
+
+The **aircraft** figure in the status strip is still the number plotted on the map, so it can be lower than the list's length.
+
 #### The aircraft map
 
 Every position an aircraft has sent, over the same dotted continents the FT8, ADS-B and AIS maps use. Drag to pan, scroll to zoom, click a square to select it; the view eases to fit what it is holding. Your own station is placed from the grid square in the digital-mode setup, the same one those other maps use.
 
-**It is not ADS-B and it does not look like it.** A position arrives only when an aircraft sends a performance-data or frequency-data record — minutes apart at best, not twice a second — and the record carries latitude and longitude and nothing else. There is no altitude, no speed and no heading in it, so there is no leader line and no aeroplane symbol pointed anywhere: just a square, the flight number beside it, and the plot moved in place as later fixes arrive. An aircraft is dropped from the map after half an hour with nothing new, which is far longer than one stays in range of a single ground station.
+**It is not ADS-B and it does not look like it.** A position arrives only when an aircraft sends a performance-data or frequency-data record — minutes apart at best, not twice a second — and the record carries latitude and longitude and nothing else. There is no altitude, no speed and no heading in it, so there is no leader line and no aeroplane symbol pointed anywhere: just a square, the flight number beside it, and the plot moved in place as later fixes arrive. **The ground stations** are on the map too, as small triangles at the positions the system table gives: green and named while the station is being heard, dim and unnamed while it is known only from the table. Hover one for its name and when it was last heard.
+
+**The line to the station.** When you click an aircraft's registration in the **AIRCRAFT** table and it blinks, a great-circle line is drawn from it to the ground station it is talking to, and that station is marked and named at the line's end — for the three seconds of the blink, and only then, so the map is not covered in lines. The station is the one the aircraft's latest position report names, or else the one its latest frame was addressed to; an aircraft whose station is not in the table gets the blink without a line.
+
+**Where it has been.** Behind each square the map draws up to five dots, the positions the aircraft reported before its latest — the oldest the smallest and faintest — so which way it is going, and how fast, can be read from the picture. A position is left out of the trail when it sits within 2 km of the one after it (the same fix reported twice) or is over an hour old, so an aircraft that reports only every twenty minutes does not drag a trail across half a day. The dots build from what the log already holds the moment the decoder has two fixes for an aircraft, and they are on the map only; the aircraft table keeps just the latest position.
+
+An aircraft is dropped from the map after half an hour with nothing new, which is far longer than one stays in range of a single ground station.
 
 Where an aircraft is labelled by a number rather than a flight, the ground station had given it a short local alias and the logon that would resolve it to an ICAO address had not been heard. Catch that logon later in the session and the plot keeps its identity rather than splitting in two.
+
+#### Feeds
+
+**FEEDS**, in the top row, sends what is decoded somewhere besides this panel. Everything in it is off until you switch it on, because feeding a network sends your station ID and everything you decode to someone else.
+
+- **Station ID** — stamped on every frame sent. Airframes credits a feed to it and asks for one shaped `XX-YYYY-HFDL`: your initials, an airport code or locator, and the mode. Letters, digits, `-` and `_`, up to 32 characters.
+- **Feed Airframes** — sends every decoded frame to Airframes' HFDL ingest, `feed.airframes.io`, TCP port 5556 (a connection kept open and re-opened by itself, not datagrams), where it appears on airframes.io under your station ID. It is sent in dumphfdl's `decoded:json` format, one line per frame — the format that ingest reads — built field for field after dumphfdl's own, with these differences: the application is named `sdroxide`; the bit rate and slot are the burst's own, as in dumphfdl's every line; the signal and noise levels are this decoder's measurements; a frame carried in an *acknowledged* data LPDU is reported as unnumbered data; and frames dumphfdl would label an unknown protocol are not sent. Under the switch, a line says how many frames have gone, or why they are not going (no station ID, still connecting, the connection refused or lost). The count is of frames written to an open connection.
+
+- **Send the same JSON to** — any number of `host:port` targets, comma-separated, each sent the same lines as Airframes, one UDP datagram per frame, as dumphfdl's `decoded:json` UDP output sends them: for acarshub (whose HFDL input is usually port 5556), a logger, or a program of your own. No station ID is needed for these; when one is set it is included. A target that is not a `host:port` is named in amber and skipped; otherwise a line gives the count sent, or the first target that failed and why.
+
+- **BaseStation (SBS) port** — serves aircraft positions as BaseStation CSV over TCP for Virtual Radar Server, PlanePlotter and the like: the same line dumphfdl's `basestation` output writes, `MSG,3,1,1,<ICAO>,1,<date>,<time>,<date>,<time>,<flight>,,,,<lat>,<lon>,,0,,,,0`, stamped with the report's own time. Only positions from aircraft whose ICAO address is known are sent (the format has no other way to name one), and only while the report is under five minutes old; there is no altitude, speed or track in them, because an HFDL position report carries none — the table's calculated course and speed are estimates and are deliberately not sent, where a plotter would show them as reported. **0** is off; 30003 is BaseStation's usual port, so pick another if an ADS-B decoder on the same computer already serves it. It listens on this computer only unless **Let other computers connect** is on. A client that cannot take a line at once is dropped rather than waited for. A line under it gives the clients connected and positions sent, or why it is not listening (the port is taken).
+
+The sending happens on the decoder's own thread without ever waiting on the network: a frame that cannot go at once is dropped, never queued, and the name is looked up again every ten minutes on a thread of its own. The settings are kept in `hfdl_outputs.json`.
 
 **Receive only.** HFDL is an airline and air-traffic service. There is no transmit half of this panel, and there never will be.
 
@@ -7064,7 +7596,7 @@ It has **not** been watched working against live aircraft traffic. That capture 
 
 ### 3.20 PI4 (Next Generation Beacon)
 
-Choose **PI4** from the DIGITAL row. Like WSPR this is not a QSO mode — a PI4
+Choose **PI4** under **HAM › Digi modes**. Like WSPR this is not a QSO mode — a PI4
 transmission carries a callsign (occasionally a status string instead) and
 nothing else — but unlike WSPR it is **receive only** here: this is a decoder
 for the "Next Generation Beacon" propagation-beacon network
@@ -7303,7 +7835,7 @@ handshake and the panel decodes rather than sequences.
 
 ### 3.25 FSK441
 
-Choose **FSK441** from the DIGITAL row. FSK441 is the **original
+Choose **FSK441** under **HAM › Digi modes**. FSK441 is the **original
 meteor-scatter mode** — MSK144's older sibling — and it works the same way: the
 signal bounces off the brief ionised trail a meteor leaves about 100 km up,
 which lasts from a few milliseconds to a few hundred. It is the classic way to
@@ -7358,7 +7890,7 @@ the mode has always been.
 > **not yet off the air**. Treat a decode as worth a second look and a first
 > contact as a test.
 
-Choose **JTTY** from the DIGITAL row. JTTY is the **asynchronous keyboard
+Choose **JTTY** under **HAM › Talk**. JTTY is the **asynchronous keyboard
 mode** from the WSJT-X 3.2 release: it is worked like RTTY — either side types
 and sends whenever it likes — but carries forward error correction, so a signal
 that would be marginal and error-prone as 45.45-baud RTTY still copies. It is
@@ -7407,7 +7939,7 @@ tune where the station you want says it will be.
 > simulated channels inside sdroxide, but **not yet on the air** from here.
 > Treat a first contact as a test.
 
-**MERCURY** and **DATA2G** in the DIGITAL row are two open HF **ARQ data
+**MERCURY** and **DATA2G** under HAM › Data are two open HF **ARQ data
 modems**: connected-mode links where two stations hand-shake, then trade
 bursts and acknowledgements, with the speed climbing and falling with the path.
 Whatever is sent arrives complete and in order, or the link says it failed —
@@ -8035,7 +8567,8 @@ look like.
 
 ### 5.8 Radiosondes (400–406 MHz)
 
-The **RADIOSONDES** chip in the ISM window's header opens a window of its own
+The **RADIOSONDES** chip under **MONITOR › Probes** in the Band/Mode popup, or
+the one in the ISM window's header, opens a window of its own
 for the weather balloons launched twice a day from meteorological stations. Each
 carries a radiosonde that sends its GPS position, and often the air temperature,
 humidity and pressure, on a channel between 400 and 406 MHz. Fourteen kinds are
@@ -8601,7 +9134,7 @@ A few things to know:
   frequency all hold the receiver's numbers (135.1008 MHz). Once the offset is
   set those are read as dial frequencies and everything jumps 125 MHz. Re-enter
   them once and they stay right.
-- **RTL-SDR Blog V4 owners:** the V4 has an upconverter of its own that switches
+- **RTL-SDR Blog V4 and V4L owners:** both have an upconverter of their own that switches
   in below 28.8 MHz. A positive offset is fine — the converter's output lands
   well above that — but a *negative* offset that drops the hardware frequency
   below 28.8 MHz would be shifted a second time by the dongle.
@@ -8672,6 +9205,12 @@ selecting the transverter's antenna once on the band leaves it there
 ([6.2](#62-radio-choosing-and-configuring-the-rig)). On a Hermes-Lite 2 with an
 HL2IOBoard that means its **IO board RX input** — offered on the ANT control
 once the setting is moved off *Radio's own input* ([6.2.3](#623-hpsdr-network-radios)).
+
+The one exception is an **ELAD FDM-DUO**, whose 0 dBm RF OUT port is made for a
+transverter: there the table has an extra **RF OUT** column, and a ticked row
+sends transmit out of that port, and receive to the RX-only socket, while the
+dial is in its band. See the FDM-DUO's transverter port in
+[6.2.16](#6216-elad-fdm-duo--fdm-s-usb).
 
 **RX range** and **TX range**, below the offset, are where you tell sdroxide
 which frequencies this radio actually covers. They are **in megahertz**, written
@@ -8765,7 +9304,9 @@ airband keep their own. A band you have never set a gain on keeps whatever is
 in force. Only the gain stages are remembered, not AGC switches or a bias tee.
 The gain sliders on some radios' own setup pages (RTL-SDR, RX-888) show the
 figure saved there rather than the one in force; the gain controls on the strip
-show the live one. Untick it for one gain everywhere.
+show the live one — apart from an RX-888's tuner gain, which the strip reads
+from the saved setting like Settings does, so a gain this remembers for a VHF
+band is in force without either showing it. Untick it for one gain everywhere.
 
 **S-meter calibration** is added to this radio's S-meter reading, and applies as
 you drag it; see [2.9](#29-the-s-meter) for why an SDR needs it.
@@ -10209,7 +10750,7 @@ Receive only — there is no transmit path in this hardware.
   the same oscillator the tuner runs from, so correcting it corrects your
   frequency readout too.
 - **HF reception** — the tuner itself starts at 24 MHz. Below that:
-  - an **RTL-SDR Blog V4** upconverts in hardware, so HF simply works and the
+  - an **RTL-SDR Blog V4** or **V4L** upconverts in hardware, so HF simply works and the
     dial reads correctly with no offset to apply anywhere. On that path the
     tuner's own tracking filter is switched out of circuit: what reaches it is
     the upconverter's output, already filtered on the way in, so the
@@ -11519,7 +12060,11 @@ because it is the same radio; only these differ:
   server's own tuning call — and switches anything else to direct sampling below
   24 MHz. If your remote dongle is a *plain* R828D that hears nothing on HF,
   choose **Direct sampling (Q branch)** explicitly; that is always obeyed. The
-  second-Nyquist note above applies at the far end just the same.
+  second-Nyquist note above applies at the far end just the same. A **Blog
+  V4L** cannot be told apart either, and is worse placed: its R828S reports
+  itself as an R820T, so *Automatic* sends it to direct sampling, which it has
+  no wiring for. Over `rtl_tcp` a V4L is for 24 MHz and up; for HF, plug it in
+  over USB, where sdroxide reads its name and uses the upconverter.
 - **Bias tee** — feeds the coax at the far end, which may be out of sight and up
   a mast. sdroxide turns it off when the connection closes cleanly, and warns
   while it is on. Older servers do not implement the command at all; because the
@@ -12251,6 +12796,47 @@ with sdroxide not running is adopted rather than overridden. On an FDM-DUO
 reached through its receive cable alone the command still goes out, but nothing
 can be read back, so the setting shown is the one you last picked rather than one
 the radio confirmed.
+
+**Transverter port (FDM-DUO only).** The radio's third RF connector is the
+**RF OUT** SMA on the back: a 0 dBm (1 mW) transmit output for driving a
+transverter, selected at the front panel with menu 33 `TX OUT` and over CAT
+with `TT`. The two are either/or — on **PWR** transmit goes to the PA and the
+RTX socket and RF OUT is idle; on **0 dBm** transmit leaves by RF OUT and the
+RTX socket gets none. Receive is unaffected by it.
+
+sdroxide shows this as the **XVTR** chip in the main window's ANT row, beside
+the socket chip, read from the radio when the CAT port opens:
+
+- **Lit (yellow)**: transmit is going out of RF OUT. Lighting it also moves
+  receive to the **RX only** socket, which is where the transverter's I.F.
+  comes back, so the 5 W path is never connected to the transverter.
+- **Out**: transmit is back on the PA, and receive is back on the socket it was
+  on before.
+
+Wire it as RF OUT → the transverter's I.F. transmit input, and the
+transverter's I.F. receive output → the DUO's RX socket; the antenna for the
+higher band goes on the transverter, and the HF antenna stays on RTX for when
+the chip is out. A transverter with a single shared I.F. connector needs its
+own T/R switching. One that wants more than a milliwatt of drive is better
+driven from RTX at low power through an attenuator, with the chip out and the
+**max drive** of its Transverters row keeping the level down.
+
+The level at RF OUT follows **Drive** (or the TUNE %), up to about 0 dBm at
+full scale — measured on an FDM-DUO at 234 mV RMS into 50 Ω, about +0.4 dBm.
+The TX PWR buttons (menu 34) do **not** change it: they set the PA's ceiling
+only, so with XVTR lit, Drive and the Transverters row's **max drive** are the
+controls.
+
+The port is never switched during an over: sdroxide refuses the click while
+transmitting and says so, and the radio itself ignores `TT` then. It needs the
+CAT serial port — the receive cable alone cannot read the setting back, so the
+chip is not shown there.
+
+To have it follow the dial, tick **RF OUT** on the transverter's row in
+**Transverters** (an FDM-DUO adds that column, [6.2](#62-radio-choosing-and-configuring-the-rig)):
+entering that row's band lights XVTR, and leaving it puts it out, each waiting
+for the over to end. A chip you light by hand on a band no row covers is left as
+you set it.
 
 The same control is on the **CAT radios** tab for an FDM-DUO driven over CAT
 alone ([6.2.2](#622-cat-radios-serial-control--usb-audio)) — it is a rig
@@ -13058,7 +13644,9 @@ spoken announcements below them under `[speech]`:
   one of ten schemes after the editor palettes of the same names: **Nord**,
   **Nord dark**, **Gruvbox**, **Everforest**, **Solarized dark**, **Dracula** and
   **Catppuccin mocha** on dark grounds, and **Solarized**, **Catppuccin latte**
-  and **Modern minimalist** on bright ones. Where a palette's own accent would be
+  and **Modern minimalist** on bright ones, or **SimpleSDR** (flat charcoal
+  panels, one plain blue accent and grey window outlines, for the look of an
+  ordinary desktop application). Where a palette's own accent would be
   too faint to read on its panel it is lightened (or, on a bright ground,
   darkened) just far enough to be, so a scheme can differ a shade from the
   editor theme it is named after. The meters, scopes and maps take their
@@ -13450,8 +14038,8 @@ yet.
 
 Everything sdroxide can be told to do is an **action** — tune, PTT, change band,
 cycle noise reduction, open the logbook — and the **Controls** tab binds actions
-to whatever you would rather press or turn than click. The three sections of the
-tab (keyboard, mouse, MIDI) all draw on the same list of actions.
+to whatever you would rather press or turn than click. The sections of the
+tab (keyboard, mouse, MIDI, TMate 2) all draw on the same list of actions.
 
 Actions come in two kinds, and the *Step / mode* column changes to match. A
 **continuous** action (tuning, volume, filter width) takes a *step* — the amount
@@ -13557,6 +14145,91 @@ by itself when you plug it back in.
 > knob plugged into your laptop works just as well against a remote engine
 > (`--connect`, [8](#8-remote-operation)). Keyboard and mouse bindings work in
 > the browser client too; MIDI needs the native app.
+
+#### 6.4.4 ELAD TMate 2
+
+The **ELAD / WoodBoxRadio TMate 2** USB controller is supported directly. It
+needs no ELAD software or DLL, and it works with any radio sdroxide drives, not
+only ELAD's. Tick **Enable** in the **ELAD TMate 2** section of the Controls tab
+and the panel is found by itself when it is plugged in; the status line beside it
+names the connected panel. It needs the native app on Windows or Linux. On Linux,
+install `packaging/linux/60-sdroxide-tmate2.rules` (the .deb does this for you)
+so it can be opened without root. macOS is not supported yet.
+
+The default bindings are:
+
+| Control | Does |
+|---|---|
+| Main dial | Tune, 10 Hz per detent |
+| E1 dial | Volume |
+| E2 dial | Filter width |
+| Main dial push | Swap VFO A/B |
+| E1 push | Mute |
+| E2 push | Cycle noise reduction |
+| F1 / F2 | Band down / up |
+| F3 / F4 | Previous / next everyday mode (LSB, USB, CW, AM, NFM, DIGU, DIGL, FT8, FT4) |
+| F5 | Cycle AGC |
+| F6 | Noise blanker |
+
+Every row can be rebound to any action, and **Last control** names whatever you
+touched last. **+ Add TMate 2 control** adds a row and **Restore TMate 2
+defaults** puts the table above back.
+
+**The LCD** shows the active VFO's frequency, the mode, the A/B and RX/TX
+legends, and the NB, NR, AN, RIT and XIT legends. On receive the bargraph is the
+S-meter and the small digits show the signal in dBm. On transmit the bargraph is
+output power, and the small digits show the power in watts (or milliwatts below
+1 W). Where that power reading comes from depends on your station:
+
+- **With a Hardrock amplifier connected** ([2.23](#223-hardrock-amplifier)), it
+  is the amplifier's output, the same figure every other power display in
+  sdroxide shows.
+- **Without an amplifier**, it is the radio's own forward power, so an FDM-DUO on
+  its own reads its milliwatts or watts.
+- **A radio that reports only a PO percentage** shows the bargraph and the
+  percentage instead of watts.
+- **A radio that reports no transmit power at all** leaves the bargraph empty
+  while you transmit. Everything else on the LCD still works.
+
+None of this needs setting up.
+
+**REFL and SWR.** The small display can show reflected power or SWR instead of
+output power while you transmit; pick which under **Small display while
+transmitting** in the TMate 2 section, or bind **TMate 2 TX readout (PO / REFL /
+SWR)** to a button to step through them on the air. The bargraph stays on output
+power. The small display has no decimal point, so SWR reads ×10: `15` is 1.5:1.
+Both come from the same place as the power figure (the Hardrock when it is
+connected, otherwise the radio), and a reading the station does not report is
+left blank.
+
+**Tuning step and lock.** **TMate 2 tuning step up (1 Hz to 1 MHz)** steps
+the main dial's step through 1, 10 and 100 Hz, 1, 10 and 100 kHz and 1 MHz on
+each press, wrapping round, and saves it; **TMate 2 tuning step down** goes the
+other way. The digit the dial is
+stepping is underlined on the frequency display, as on ELAD's own software. **Tuning lock on/off**
+stops bound tuning controls (the TMate 2 dial, keys, MIDI and the panadapter
+mouse wheel) from moving the frequency and lights the TMate 2's LOCK LED;
+clicking the panadapter or a spot still tunes. The lock is not saved, so it is
+always off when sdroxide starts. Both can go on any TMate 2 button, key or MIDI
+pad.
+
+**Backlight and contrast.** Under **Backlight** in the TMate 2 section, pick
+a **Receive** and a **Transmit** colour for the LCD's backlight. Tick
+**Receive colour by mode** to give SSB, CW, AM and FM, and data modes a
+receive colour each. **Contrast** sets the LCD's contrast (0 to 63).
+**Default colours** puts back ELAD's own blue at contrast 40, with red for
+transmit. The colours change the moment the radio keys or the mode changes.
+
+**Switching VFOs after a transverter session.** The main-dial push tunes to
+whatever the other VFO last held, exactly as the on-screen A/B button does. If
+you last used VFO B with a transverter, that may be a VHF/UHF frequency the radio
+cannot receive on its own, and sdroxide pulls it back into range with a warning.
+Press A→B once to give VFO B the current frequency.
+
+A panel unplugged mid-QSO releases anything it was holding (PTT included) and
+reconnects by itself. Like MIDI, TMate 2 bindings live with the client, so the
+panel plugged into a remote laptop works against the radio over `--connect`
+([8](#8-remote-operation)).
 
 ### 6.5 Spots: spot feeds
 
@@ -13961,9 +14634,9 @@ Neither control protocol has any authentication, which is why both default to
 With more than one radio configured ([§2.17](#217-running-more-than-one-radio)),
 each radio has its own copy of this tab and its own servers — a client connects
 to a port and gets *that* radio, so two copies of WSJT-X on two ports can drive
-two radios at once. Additional radios start with the TCI server disabled, since
-its default port is already taken by the first radio's: enable it and pick a
-free port here.
+two radios at once. Additional radios start with the TCI server disabled, on a
+port of their own (50001 plus their place in the roster); the TCI section
+below has a radio picker to switch from one radio's server to the next.
 
 #### 6.8.1 Hamlib rigctld server
 
@@ -14032,13 +14705,23 @@ reported changes nothing.
 
 sdroxide also *is* a TCI server, so TCI-capable programs can use it as their
 radio: frequency and mode control, a wideband IQ stream, receive audio to
-decode, and transmit audio to put on the air. It is **on by default**.
+decode, and transmit audio to put on the air. It is **on by default** for the
+station radio; every further radio has a server of its own, off by default.
 
-- **Enable** — turn the whole server on or off.
+- **Radio** — shown with more than one radio. One chip per radio of the
+  station: its name behind ● (server on), ○ (off) or ⚠ (port could not be
+  bound); hovering shows the state with the port. The lit chip is the radio this section edits; click another to move
+  the Settings dialog to that radio, on this tab.
+- **Enable** — turn this radio's server on or off. Switching it on at a port
+  another radio's server already uses moves it to the first free port from
+  50001; the new port shows before you press **APPLY**.
 - **Listen on** — `127.0.0.1` (this machine only, the default) or `0.0.0.0`
   (reachable from your whole network).
-- **Port** — 50001 by default, the port TCI clients expect. The screenshot uses
-  50002 because ExpertSDR3 has 50001 on that machine.
+- **Port** — 50001 by default for the station radio, the port TCI clients
+  expect; 50002, 50003, … for further radios. If another radio's server is
+  set to the same port, an amber line names that radio and the next free
+  port: only one of the two can bind it. The screenshot uses 50002 because
+  ExpertSDR3 has 50001 on that machine.
 - **Device name** — what clients see in the connect handshake.
 - **Max clients** — how many programs may connect at once. They all see the same
   radio, and the last command wins.
@@ -14046,14 +14729,20 @@ decode, and transmit audio to put on the air. It is **on by default**.
   but never key the transmitter.
 - **TCI Client** — dial out to another TCI server and send this radio's VFO
   whenever you tune. It works the other way too: tune the far radio from its
-  own knob and the dial here follows. Control only: no audio, no IQ, and it
+  own knob and the dial here follows. When the link comes up the far radio
+  speaks first: the dial here goes to wherever that radio already is, so
+  starting sdroxide does not move it. Control only: no audio, no IQ, and it
   does not key the transmitter. Off by default. The address is `127.0.0.1:50001`, which is
   where 590Ctrl listens. Leave the server above off, or on another port, when
   590Ctrl is already using 50001.
 
 The green status line shows whether the server is listening, on which address,
 and **how many clients are connected right now**. Press **APPLY** to save and
-(re)bind.
+(re)bind; the same **APPLY** sits at the start of the status line and at the
+foot of the section. The form shows what this radio's server runs each time
+the dialog opens or the **Radio** chips move it to another radio. A change not
+yet applied is named in an amber line, *Not applied*; closing Settings
+discards it.
 
 Setting up WSJT-X: under *Settings → Radio*, choose the **TCI Client RX1** rig,
 put sdroxide's address in **TCI Server** (e.g. `127.0.0.1:50002`), set PTT to
@@ -14090,6 +14779,38 @@ A few things worth knowing:
   and one that runs ahead is not asked at all. When the client unkeys, the
   audio it has already handed over is played out before the transmitter stops,
   so the tail of a timed burst is not cut off. Nothing to set.
+- **Clients can label the waterfall.** A logger, cluster bridge or skimmer
+  that speaks TCI can put a callsign on the waterfall with `SPOT:`, exactly as
+  it would on ExpertSDR3's panorama:
+
+  ```
+  SPOT:RN6LHF,CW,7100000,16711680,ANY_TEXT;
+  ```
+
+  — callsign, mode, frequency in Hz, colour as a decimal ARGB number, and a
+  free text. The label appears at that frequency as a **TCI** spot, on the
+  waterfall of the radio whose server received it, in the SPOTS list, and
+  under its own **TCI** button there. It is drawn in the colour the client
+  sent (the alpha byte is ignored: the TCI specification's own example sends
+  red with alpha 0); a colour of 0 or one that is not a number gives the
+  TCI tint from **Spot label colours** instead. Point at the label to read
+  the text. A second `SPOT:` for the same callsign moves its label;
+  `SPOT_DELETE:RN6LHF;` removes it, and `SPOT_CLEAR;` removes every label
+  the clients of this server have placed. A spot without callsign,
+  frequency or colour is ignored, as the specification says.
+
+  Each label lasts **ten minutes** from the `SPOT:` that placed it — the
+  lifetime the TCI specification gives — fading over the last two and a
+  half. A client that wants a label kept sends it again. Labels stay up when
+  the client that placed them disconnects, so a logger that reconnects does
+  not blank your waterfall; they go when you turn the TCI server off or
+  move it to another address. sdroxide does not echo spot commands back:
+  the specification has no reply for them. The S/N label filter leaves TCI
+  labels alone: a client places one because it has decided the label matters,
+  often for a burst already gone or with no signal under it at all.
+  Clicking a TCI label tunes to it; a label whose callsign starts with `TCI-`
+  (a program's note, such as `TCI-DIAG` or a decoder's reading) does not open
+  a log entry, every other one does, as with the network spots.
 - **A client that mislabels its transmit audio is still understood.** The TCI
   header carries a channel count, and WSJT-X leaves it uninitialised — a
   different random number in every packet. Taken at face value that collapses
@@ -14165,6 +14886,37 @@ copy; two radios sending to one port arrive interleaved.
 
 It sends only while the radio is in CW with the panel decoding; the skimmer's
 spots are not part of it.
+
+#### 6.8.4 Mode-S Beast output (ADS-B)
+
+Below the TCI server. Serves every ADS-B frame this receiver decodes in the
+Beast format — the format `readsb`, `dump1090`, `tar1090`, `mlat-client` and
+the feeders speak — to any program that connects. Off until you enable it.
+
+| Field | Default | Meaning |
+|---|---|---|
+| Enable | off | Listen for Beast readers |
+| Listen | `0.0.0.0` (whole network) | The usual reader is on another machine; the stream carries no control |
+| Port | 30005 | The port every Beast reader expects |
+
+Press **APPLY**. The status line shows `● Listening on 0.0.0.0:30005 — 1 client`
+or the reason it could not bind — most often a `readsb` or `dump1090` on this
+same machine already holding 30005; choose another port then.
+
+To merge this receiver into a `readsb` on a Raspberry Pi, so that its
+`tar1090` map shows both, add to the Pi's `readsb` options (in
+`/etc/default/readsb`, `NET_OPTIONS`):
+
+```
+--net-connector <this computer's address>,30005,beast_in
+```
+
+What goes out: every frame the decoder believes, including those with one
+bit repaired ([§3.13](#313-ads-b-aircraft-on-1090-mhz), *What is decoded, and
+what is believed*), in their repaired form. Timestamps count samples at
+12 MHz, as the format asks, but they are not tied to GPS time: good for
+merging, of no use for multilateration (MLAT). Frames this station receives
+over a Beast input are never sent here.
 
 ### 6.10 TLE: satellites and their frequencies
 
@@ -15770,7 +16522,7 @@ row of menu buttons:
 | **RX** | Volume, front-end gain, AGC, squelch, the filter width and edges, NB, ANC, NR, BIN |
 | **VFO** | A↔B, A→B, 📋 (with more than one radio), SPLIT, SUB, and the RIT/XIT offsets |
 | **SUB** | The second receiver's frequency, mode, filter and level (only while it is running) |
-| **TX** | TUNE, the voice keyer, and the drive, tune and mic levels |
+| **TX** | TUNE, 2T (two-tone), the voice keyer, and the drive, tune and mic levels — in a **TRANSMIT** window you can drag clear of the S-meter, which stays open through an over until you close it or tap **TX** again |
 | **DISP** | FFT, SPEC, FIT, WIDE, CTR, HFDL, the panadapter boxes (the spectrum and waterfall switches, peak hold, their speeds and the detail), the skimmers, and the spectrum floor/ceiling and FFT size |
 | **SYS** | LOG, SPOTS, AWARDS, BANDS, SAT, ISM, PUBLIC SDR, MAIL, MEM, SCAN, SOLAR, SETTINGS, HELP |
 
@@ -15938,13 +16690,14 @@ Spots then appear two ways:
 
 - **On the panadapter** — colour-coded, clickable boxes along the bottom of the
   waterfall (DX = cyan, POTA = green, SOTA = amber, PSK = violet, FREEDV = pink,
-  BC = yellow-green — any of which you can retint under **Spot label colours**
+  BC = yellow-green, TCI = white or the colour the client sent — any of which
+  you can retint under **Spot label colours**
   on the UI tab, [§6.3](#63-ui-display-preferences-and-voice-announcements)),
   each with a leader line down to the spotted frequency. Located spots (POTA
   parks, PSK reporters, FreeDV stations, broadcast transmitters) also appear as
   dots on the FT8 world map.
 - **In the SPOTS window** — a filterable list (toggle **DX / POTA / SOTA / PSK /
-  FREEDV / BC**, or **IN VIEW** to show only spots inside the current panadapter
+  FREEDV / BC / TCI**, or **IN VIEW** to show only spots inside the current panadapter
   span). Each row
   shows the source, callsign, frequency, mode, age and reference/comment, and a
   green **NEW** flag when it is a DXCC entity you haven't worked yet. The row
@@ -15976,7 +16729,7 @@ Spots then appear two ways:
   dots (on to start with), **CITIES** the cities on this map; the status line says how many spots have no location and so no dot.
 
 Switching a category off hides it everywhere at once — the list, the panadapter
-labels and the world-map dots — and the six category buttons are remembered
+labels and the world-map dots — and the seven category buttons are remembered
 between sessions, so a category you have no use for stays off. (**IN VIEW** is
 not: it is a way to read a crowded band for a moment, not a standing
 preference.)
@@ -16138,6 +16891,11 @@ does not run daily, a day mask; the list is re-filtered against the clock every
 minute. Entries with no window — the longwave transmitters, the standard-time
 stations, the round-the-clock private shortwave stations — are always shown. Turn
 the whole category off with the **BC** button in the SPOTS window.
+
+The schedule lists a broadcast once per language and target area, so one
+frequency often carries several rows of the same station. The waterfall labels
+each name once per frequency; the SPOTS list keeps every row, with its language
+and target.
 
 A band is still busy at prime time (the 31 m band carries 50–95 transmissions at
 midday UTC), so zoom in or use **IN VIEW** when the labels crowd each other —
@@ -16630,6 +17388,12 @@ and not the station's.
 | `renderer-fallback.txt` | text | Written only when a panic came from the graphics driver: the next start renders through OpenGL and says so. Delete it to go back to the default renderer ([14](#14-troubleshooting)). |
 | `skimmer.json` | JSON | Skimmers: which of CW / PSK / RTTY run, and each one's spot squelch in dB. Restored at startup; a narrowband (audio-mode) radio still forces them off without disturbing what you picked. |
 | `adsb.json` | JSON | ADS-B decoder ([§3.13](#313-ads-b-aircraft-on-1090-mhz)): the two timeouts, how many history dots to keep, how far ahead the speed vectors reach, and the ceiling on the aircraft table. Restored at startup, and — like `ism.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
+| `adsb-routes/` | directory | ADS-B standing data ([§3.13](#313-ads-b-aircraft-on-1090-mhz)): the route, airline, aircraft and address-block files fetched from Virtual Radar Server, and `map-airports.csv` cut from OurAirports. Refetched after a week; safe to delete. |
+| `adsb-coverage/` | directory | The ADS-B coverage diagram, one file an hour, seven days. **Reset…** in the ADS-B setup empties it. |
+| `adsb-range.sqlite` | SQLite | The ADS-B range log: range by setup (receiver, antenna, position, version) and day, size-limited; the view `range_log` reads as a table. **INIT** under **Range log** in the ADS-B setup empties it. |
+| `adsb-log/` | directory | The ADS-B sighting log, one CSV file a day (`<date>.csv`), thirty days. |
+| `adsb-wx/` | directory | The last ADS-B weather radar picture per source (`dwd.png`, `usa.png`, `canada.png`, `world.png`), shown at start if less than two hours old. Safe to delete. |
+| `adsb-tracks/` | directory | ADS-B flight tracks, thinned to a point every 15 s or on a turn or climb, one CSV file a day, thirty days. |
 | `vdl2.json` | JSON | VDL2 decoder ([§3.15](#315-vdl2-what-the-aircraft-are-saying)): which of the fourteen channels to listen on, the burst threshold in dB, how much log and how many stations to keep, and how long a silent station stays on the list. Restored at startup, and — like `adsb.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
 | `ais.json` | JSON | AIS decoder ([§3.16](#316-ais-ships-on-162-mhz)): which of the two channels to listen on, the slot threshold in dB, the two timeouts, how many minutes of trail to keep, how far ahead the vectors reach, and the ceiling on the vessel table. Restored at startup, and — like `adsb.json` — a receiver that cannot feed the decoder forces it off without disturbing what you picked. |
 | `wxsat.json` | JSON | Weather-satellite decoder ([§2.16.2](#2162-weather-satellites-noaa-apt-and-meteor-lrpt)): whether it runs, which signal (APT or LRPT) and which channel. Restored at startup; a receiver that only hands over audio forces it off without disturbing what you picked. |
@@ -16644,12 +17408,15 @@ and not the station's.
 | `broadcast/` | CSV | The broadcasting season's schedule as downloaded from eibispace.de, one file per season. Managed by sdroxide: refetched when the season changes, and safe to delete. |
 | `sstv_messages.json` | JSON | The overlay message stored for each of the ten SSTV transmit slots. |
 | `hfdl_channels.json` | JSON | Your own HFDL frequency chips, in kHz ([§3.19](#319-hfdl-aircraft-on-shortwave)). |
+| `hfdl_outputs.json` | JSON | Where decoded HFDL is fed besides the panel: the station ID and which feeds are on ([§3.19](#319-hfdl-aircraft-on-shortwave)). All off until switched on. |
+| `hfdl_stations.json` | JSON | The HFDL system table — each ground station's position and channels — as the network last broadcast it. Managed by sdroxide: rewritten when a new version is received, and safe to delete. |
 | `filter_presets.json` | JSON | Your own receive filter presets: for each one, the mode, which built-in chip it replaces, its label and its two edges in Hz. |
 | `voice_names.json` | JSON | The label given to each of the ten voice-keyer slots. |
 | `voice/` | dir | The voice-keyer recordings (`slot1.wav`…`slot10.wav`), 48 kHz mono. Drop your own WAV in to replace a message. |
 | `speech_voices/` | dir | Extra voices for the spoken announcements: a Piper `.onnx` model and its `.onnx.json` config, side by side. Absent until you create it — the shipped voice lives with the program, not here. Note this is *not* `voice/`, which is the voice keyer. |
 | `sstv_tx/` | dir | The ten SSTV transmit-image slots (`slot0.png`…`slot9.png`). |
-| `sstv_rx/` | dir | Received SSTV and RIFP pictures, kept for the gallery. |
+| `sstv_rx/` | dir | Received SSTV and RIFP pictures, kept for the gallery (unless you chose another folder in Settings → Uploads). |
+| `picture_folders.json` | JSON | Where received SSTV pictures and weather charts are saved, if not in the default folders. Written by **Settings → Uploads → Received pictures folders**. Absent until you set one. |
 | `atchat_received/` | dir | Files received over AtCHAT NET ([§3.17](#317-atchat-net)), named `<transfer-id>_<filename>`. |
 | `wefax_rx/` | dir | Weather-fax charts received by an earlier version. Charts now go to `~/Pictures/sdroxide/wefax/`, but this is still read so an existing collection stays in the gallery. |
 | `solar/` | dir | Cached solar imagery, space-weather JSON and subscribed element-set listings for the 3D view, with an index of HTTP validators so refreshes stay cheap. Safe to delete; it is re-fetched on demand. |
@@ -17564,7 +18331,7 @@ All in [§6.2.6](#626-smartsdr-flexradio-network-radios):
 [§6.2.5](#625-rtl-sdr-usb-dongles) and, remotely,
 [§6.2.11](#6211-rtl-sdr-over-rtl_tcp-network-dongles):
 
-- **HF:** a Blog V4 upconverts in hardware — HF just works, no offset
+- **HF:** a Blog V4 or V4L upconverts in hardware — HF just works, no offset
   anywhere (and don't put one in Converter: below 28.8 MHz the dongle would
   shift it a second time). Any other dongle reaches HF by direct-sampling
   the Q branch — a V3's HF port — with `Automatic` switching at the tuner's
@@ -18135,8 +18902,10 @@ have are not offered.
 peaking at red with no white blow-out), `Neon`, `Synthwave`, `Matrix`, `Tron`,
 `Amber` (one warm phosphor family, to wear with the **Amber Phosphor** UI
 theme), `Rainbow` (the full spectrum in order, to wear with the **Rainbow**
-UI theme) and `Blue` — the traditional blue waterfall SDR# has used since the
+UI theme), `Blue` — the traditional blue waterfall SDR# has used since the
 beginning and SDR++ inherited: a navy floor rather than a black one, so the
 noise keeps its texture, and a top half that runs white, yellow, orange and two
-shades of red where the other ramps have already saturated. Chosen on the **UI**
+shades of red where the other ramps have already saturated — and `SimpleSDR`, a
+cool ramp on a charcoal floor: navy and blue for the noise, aqua for a signal,
+then yellow, orange and white for the strong ones, with no green step. Chosen on the **UI**
 tab of the Settings window ([6.3](#63-ui-display-preferences-and-voice-announcements)).

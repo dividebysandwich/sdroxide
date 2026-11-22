@@ -407,3 +407,61 @@ fn restart_rebinds_cleanly() {
     let cfg = TciServerConfig { port: 50058, ..TciServerConfig::default() };
     TciServerController::start(&cfg, &caps(), snapshot()).expect("port should be free again");
 }
+
+/// The latest spot book the server has handed the engine, waiting until one
+/// matching `want` arrives.
+fn spots_until(
+    srv: &TciServerController,
+    want: impl Fn(&[sdroxide_types::Spot]) -> bool,
+) -> Option<Vec<sdroxide_types::Spot>> {
+    wait_for(Duration::from_secs(3), || {
+        srv.poll().into_iter().rev().find_map(|r| match r {
+            ServerRequest::Spots(s) if want(&s) => Some(s),
+            _ => None,
+        })
+    })
+}
+
+/// `SPOT:` reaches the engine as a TCI label, is not echoed, survives its
+/// client's disconnect, and any client can delete or clear it — the spec has
+/// one panorama, not one per client.
+#[test]
+fn spots_reach_the_engine_and_outlive_their_client() {
+    let Some(srv) = serve(50063) else { return };
+    let mut a = RawClient::connect(50063);
+    let mut b = RawClient::connect(50063);
+    await_clients(&srv, 2);
+    a.collect(Duration::from_millis(200), 0);
+    b.collect(Duration::from_millis(200), 0);
+
+    // The spec's example, word for word, and a second spot in the same message.
+    a.send("SPOT:RN6LHF,CW,7100000,16711680,ANY_TEXT;spot:DL1ABC,FT8,14074000,-16711936,new;");
+    let spots = spots_until(&srv, |s| s.len() == 2).expect("both spots reach the engine");
+    let rn = spots.iter().find(|s| s.call == "RN6LHF").unwrap();
+    assert_eq!(rn.kind, sdroxide_types::SpotKind::Tci);
+    assert_eq!(
+        (rn.freq_hz, rn.color, rn.comment.as_str()),
+        (7_100_000.0, Some([255, 0, 0]), "ANY_TEXT")
+    );
+    assert_eq!(spots.iter().find(|s| s.call == "DL1ABC").unwrap().color, Some([0, 255, 0]));
+    let (lines, _, _) = b.collect(Duration::from_millis(200), 0);
+    assert!(!lines.iter().any(|l| l.to_lowercase().starts_with("spot")), "echoed: {lines:?}");
+
+    // A spot missing its colour is ignored, as the spec says.
+    a.send("spot:XX1XX,CW,7020000;");
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(srv.poll().iter().all(|r| !matches!(r, ServerRequest::Spots(_))));
+
+    // The placing client leaves; its spots stay.
+    drop(a);
+    await_clients(&srv, 1);
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(srv.poll().iter().all(|r| !matches!(r, ServerRequest::Spots(_))));
+
+    // The other client deletes one by callsign, in any case, then clears.
+    b.send("spot_delete:rn6lhf;");
+    let left = spots_until(&srv, |s| s.len() == 1).expect("delete reaches the engine");
+    assert_eq!(left[0].call, "DL1ABC");
+    b.send("SPOT_CLEAR;");
+    assert!(spots_until(&srv, |s| s.is_empty()).is_some(), "clear reaches the engine");
+}

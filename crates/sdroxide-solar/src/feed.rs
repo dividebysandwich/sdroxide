@@ -40,6 +40,15 @@ const IMAGE_LIMIT: u64 = 24 * 1024 * 1024;
 const CLOUD_LIMIT: u64 = 8 * 1024 * 1024;
 /// How long a request may take in total.
 const TIMEOUT: Duration = Duration::from_secs(25);
+
+/// Until when CCMC's own DONKI host is skipped in favour of the mirror, unix
+/// seconds. A dead host costs a full [`TIMEOUT`] per try, so after one failure
+/// it is left alone for [`CCMC_RETRY_S`] (#895).
+static CCMC_DOWN_UNTIL: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+const CCMC_RETRY_S: i64 = 6 * 3600;
+/// The mirror's `DEMO_KEY` allows ~50 requests a day per address: two
+/// sources hourly is 48.
+const MIRROR_PERIOD_S: i64 = 3600;
 /// Worker wake interval; individual sources have their own, longer, cadences.
 const TICK: Duration = Duration::from_secs(15);
 
@@ -507,11 +516,45 @@ fn refresh(
         ),
     };
 
-    match http_get(agent, &url, &cache.validators(&url), limit) {
+    // DONKI: CCMC first, NASA's API gateway when CCMC is down (#895).
+    let mirror = donki::mirror_url(&url);
+    let ccmc_down =
+        mirror.is_some() && CCMC_DOWN_UNTIL.load(std::sync::atomic::Ordering::Relaxed) > now;
+    let (url, fallback) = match mirror {
+        Some(m) if ccmc_down => {
+            // On the mirror, hourly at most: the demo key's quota is small.
+            let age = {
+                let d = shared.lock().unwrap_or_else(|e| e.into_inner());
+                d.status[src.index()].age_secs(now)
+            };
+            if age.is_some_and(|a| a < MIRROR_PERIOD_S) {
+                return false;
+            }
+            (m, None)
+        }
+        m => (url, m),
+    };
+    let mut result = http_get(agent, &url, &cache.validators(&url), limit);
+    let mut url = url;
+    if let (Err(e), Some(m)) = (&result, fallback) {
+        tracing::info!(
+            "solar feed: CCMC unreachable for {} ({e}); using api.nasa.gov for the next {} h",
+            src.label(),
+            CCMC_RETRY_S / 3600
+        );
+        CCMC_DOWN_UNTIL.store(now + CCMC_RETRY_S, std::sync::atomic::Ordering::Relaxed);
+        result = http_get(agent, &m, &cache.validators(&m), limit);
+        url = m;
+    }
+
+    match result {
         Ok(None) => {
             // 304: what we already have is current.
             cache.touch(&url, now);
             let mut d = shared.lock().unwrap_or_else(|e| e.into_inner());
+            if d.status[src.index()].consecutive_failures > 0 {
+                tracing::info!("solar feed: {} reachable again", src.label());
+            }
             d.status[src.index()].record_ok(now);
             false
         }
@@ -588,12 +631,23 @@ fn refresh(
                     return false;
                 }
             }
+            if d.status[src.index()].consecutive_failures > 0 {
+                tracing::info!("solar feed: {} reachable again", src.label());
+            }
             d.status[src.index()].record_ok(now);
             true
         }
         Err(e) => {
-            tracing::warn!("solar feed: {} fetch failed: {e}", src.label());
             let mut d = shared.lock().unwrap_or_else(|e| e.into_inner());
+            // Once per outage, not every cycle while a host stays down (#895).
+            if d.status[src.index()].consecutive_failures == 0 {
+                tracing::warn!(
+                    "solar feed: {} fetch failed: {e} (repeats are logged at debug level)",
+                    src.label()
+                );
+            } else {
+                tracing::debug!("solar feed: {} fetch failed again: {e}", src.label());
+            }
             d.status[src.index()].record_err(now, e);
             // The status line changed even though the data did not.
             true

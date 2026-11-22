@@ -274,6 +274,7 @@ impl PanadapterSource {
             agc_off_unavailable: false,
             // The transceiver's tuner, for the same reason.
             has_atu: ctrl.has_atu,
+            rx_antenna_is_xvtr: ctrl.rx_antenna_is_xvtr,
         }
     }
 
@@ -735,6 +736,11 @@ impl IqSource for PanadapterSource {
     /// is not in that path at all.
     fn adc_overload(&mut self) -> Option<bool> {
         self.rx.adc_overload()
+    }
+
+    /// The receiver's, for the same reason: its samples are the ones measured.
+    fn sample_full_scale(&self) -> f32 {
+        self.rx.sample_full_scale()
     }
 
     /// The *transceiver's*: predistortion corrects a transmitter, and the

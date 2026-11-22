@@ -28,6 +28,11 @@
 //!   still out of RTX. It is read once at open (`AN;`) and otherwise left
 //!   alone, because it is the operator's own front-panel setting (menu 31
 //!   `ANTENNAS`) and it survives a power cycle.
+//! * **The transmit output is `TT`.** `TT0;` sends the PA to the RTX socket,
+//!   `TT1;` sends a 0 dBm drive out of the RF OUT SMA for a transverter (menu
+//!   33 `TX OUT`). The rig refuses it while transmitting. It is read at open
+//!   beside `AN;` and reported as the receiving-antenna flag — see
+//!   [`tx_out_frame`].
 //!
 //! There is no DATA mode and no `DA` flag: `MD` has six positions and none of
 //! them is a data position. Digital modes therefore go out as plain USB or LSB,
@@ -227,6 +232,23 @@ pub fn read_antenna_frame() -> String {
     "AN;".to_string()
 }
 
+/// The `TT` frame that routes transmit to the 0 dBm RF OUT port (`true`) or
+/// to the PA on the RTX socket (`false`).
+///
+/// Only ever from the operator — the XVTR chip — and never while keyed: the
+/// engine refuses it during an over, and the rig itself ignores it then.
+/// Published to the rest of sdroxide through the receiving-antenna pair
+/// ([`Protocol::set_rx_antenna`], [`CatUpdate::RxAntenna`]) because that is the
+/// shape it has: one extra port, in or out, beside the socket selector.
+pub fn tx_out_frame(rf_out: bool) -> String {
+    if rf_out { "TT1;".to_string() } else { "TT0;".to_string() }
+}
+
+/// The frame that asks where the rig sends its transmit.
+pub fn read_tx_out_frame() -> String {
+    "TT;".to_string()
+}
+
 pub struct Elad {
     buf: String,
     /// Which input the rig should transmit from, asserted once when the port
@@ -409,7 +431,12 @@ impl Protocol for Elad {
     }
 
     fn poll_requests(&self) -> Vec<Vec<u8>> {
-        vec![b"FA;".to_vec(), b"MD;".to_vec()]
+        // The transmit output rides with the mode, on the slow half of the
+        // poll: menu 33 is a front-panel setting changed a few times an
+        // evening, but the XVTR chip has to follow it when it is, or the panel
+        // says the PA is in circuit when it is not. A read only, so harmless
+        // mid-over; the CAT loop forwards it only when it changes.
+        vec![b"FA;".to_vec(), b"MD;".to_vec(), read_tx_out_frame().into_bytes()]
     }
     /// `IF;`, the TS-480 status read the DUO keeps from Kenwood's set, so an
     /// over keyed at the radio — its microphone PTT — is known here. Whether
@@ -545,7 +572,16 @@ impl Protocol for Elad {
     }
 
     fn read_antenna(&self) -> Vec<Vec<u8>> {
-        vec![read_antenna_frame().into_bytes()]
+        // The transmit output rides along: it is the other half of what the
+        // ANT row shows, and like `AN` it is a front-panel setting that
+        // survives a power cycle, so it is adopted rather than asserted.
+        vec![read_antenna_frame().into_bytes(), read_tx_out_frame().into_bytes()]
+    }
+
+    fn set_rx_antenna(&mut self, on: bool) -> Vec<Vec<u8>> {
+        // The read follows the write, so the chip settles on what the rig
+        // actually did — which, if it was keyed after all, is nothing.
+        vec![tx_out_frame(on).into_bytes(), read_tx_out_frame().into_bytes()]
     }
 
     fn parse(&mut self, buf: &mut Vec<u8>) -> Vec<CatUpdate> {
@@ -597,6 +633,13 @@ impl Protocol for Elad {
                 // question as "which socket is the receiver on".
                 if let Some(a) = rest.chars().next().and_then(EladAntenna::from_digit) {
                     out.push(CatUpdate::Antenna(a.label()));
+                }
+            } else if let Some(rest) = msg.strip_prefix("TT") {
+                // Where the transmit goes: `1` is the 0 dBm RF OUT port.
+                match rest {
+                    "0" => out.push(CatUpdate::RxAntenna(false)),
+                    "1" => out.push(CatUpdate::RxAntenna(true)),
+                    _ => {}
                 }
             } else if let Some(rest) = msg.strip_prefix("RI") {
                 // Not reported, only logged. The manual gives P2 as the "RSSI
@@ -733,9 +776,28 @@ mod tests {
         let mut e = elad();
         assert_eq!(frames(e.set_antenna("RTX")), vec!["AN1;"]);
         assert_eq!(frames(e.set_antenna("RX only")), vec!["AN2;"]);
-        assert_eq!(frames(e.read_antenna()), vec!["AN;"]);
+        assert_eq!(frames(e.read_antenna()), vec!["AN;", "TT;"]);
         // Both sockets are offered, and by the names the rest of sdroxide uses.
         assert_eq!(e.antennas(), &["RTX", "RX only"]);
+    }
+
+    /// The XVTR chip: `TT1` sends transmit out of the 0 dBm RF OUT port, `TT0`
+    /// back to the PA, and each is followed by a read so the chip settles on
+    /// what the rig did rather than on what it was asked.
+    #[test]
+    fn the_transverter_port_is_tt_and_reads_back() {
+        let mut e = elad();
+        assert_eq!(frames(e.set_rx_antenna(true)), vec!["TT1;", "TT;"]);
+        assert_eq!(frames(e.set_rx_antenna(false)), vec!["TT0;", "TT;"]);
+        assert_eq!(parse_str(&mut e, "TT1;"), vec![CatUpdate::RxAntenna(true)]);
+        assert_eq!(parse_str(&mut e, "TT0;"), vec![CatUpdate::RxAntenna(false)]);
+        assert!(parse_str(&mut e, "TT2;").is_empty());
+        assert!(parse_str(&mut e, "TT;").is_empty());
+        // Re-read on the slow poll, so a change at the front panel shows.
+        assert!(frames(e.poll_requests()).contains(&"TT;".to_string()));
+        assert!(!frames(e.dial_requests()).contains(&"TT;".to_string()));
+        // `TP` is the power register, not the transmit output.
+        assert!(parse_str(&mut e, "TP09;").is_empty());
     }
 
     /// A name from another radio must not move an antenna relay. `session.json`

@@ -338,7 +338,7 @@ impl Calibration {
     /// puts the DUO's spectrum twenty-one decibels below the samplers' for the
     /// same signal.
     pub fn scale(&self, model: Model, rate_hz: u32, lp: bool, att: bool) -> f32 {
-        let duo_db = if model == Model::Duo { 21.4 } else { 0.0 };
+        let duo_db = if model == Model::Duo { 21.4 + duo_wide_db(rate_hz) } else { 0.0 };
         let db = duo_db
             + rate_rescale_db(rate_hz)
             + self.global_db
@@ -360,6 +360,24 @@ pub fn rate_rescale_db(rate_hz: u32) -> f32 {
         1_536_000 | 3_072_000 => 5.4,
         6_144_000 => -0.7,
         // 192 kHz, and any rate this driver does not know, sit at unity.
+        _ => 0.0,
+    }
+}
+
+/// The FDM-DUO's own level correction for its wide (remote) images, in dB.
+///
+/// Above 192 kHz the DUO loads a different FPGA image, and its samples come
+/// out hotter than the stand-alone image's for the same signal at the antenna.
+/// Measured on an FDM-DUO against its own S-meter at 192 kHz (WWV and a quiet
+/// spot on 30 m): +7 dB at 384 kHz, +15 dB at 768 to 3072 kHz and +25 dB at
+/// 6144 kHz. These take that back off, so the spectrum and the meter read the
+/// same at every span. Stand-alone 192 kHz, and any rate this driver does not
+/// know, are left alone.
+pub fn duo_wide_db(rate_hz: u32) -> f32 {
+    match rate_hz {
+        384_000 => -7.0,
+        768_000 | 1_536_000 | 3_072_000 => -15.0,
+        6_144_000 => -25.0,
         _ => 0.0,
     }
 }
@@ -668,6 +686,25 @@ mod tests {
         assert!((duo - s2 - 21.4).abs() < 1e-3);
         // And the rate term rides along with it.
         assert!((db(cal.scale(Model::S2, 384_000, false, false)) - 7.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_duos_wide_images_are_brought_down_to_the_standalone_level() {
+        let cal = Calibration { rate_correction_hz: 0, global_db: 0.0, lp_db: 0.0, att_db: 0.0 };
+        let db = |s: f32| 20.0 * s.log10();
+        for (rate, wide) in [
+            (192_000, 0.0),
+            (384_000, -7.0),
+            (768_000, -15.0),
+            (1_536_000, -15.0),
+            (3_072_000, -15.0),
+            (6_144_000, -25.0),
+        ] {
+            let duo = db(cal.scale(Model::Duo, rate, false, false));
+            let s2 = db(cal.scale(Model::S2, rate, false, false));
+            // Only the DUO carries it; the samplers keep the gr-elad scale.
+            assert!((duo - s2 - 21.4 - wide).abs() < 1e-3, "{rate}");
+        }
     }
 
     /// An unprogrammed EEPROM reads as `0xFF` bytes, which is a NaN. Letting one

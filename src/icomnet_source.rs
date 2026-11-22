@@ -173,6 +173,9 @@ pub struct IcomNetSource {
     key: String,
     audio: rtrb::Consumer<f32>,
     tx: Option<rtrb::Producer<f32>>,
+    /// The audio the radio buffers before it modulates, ms (the session's
+    /// `tx_buffer_ms`). Still to be played when our own ring is empty.
+    tx_latency_ms: u32,
     rate: f64,
     rx_source: IcomRxSource,
     /// Per-radio configured preference, never overwritten by a temporary AF fallback.
@@ -343,6 +346,7 @@ impl IcomNetSource {
             key,
             audio,
             tx,
+            tx_latency_ms: cfg.tx_latency_ms,
             rate: match rx_source {
                 IcomRxSource::Af => f64::from(cfg.sample_rate_hz),
                 IcomRxSource::If12k => IF_OUT_RATE,
@@ -1360,6 +1364,14 @@ impl IqSource for IcomNetSource {
             }
             std::thread::sleep(Duration::from_millis(2));
         }
+        // Our ring empties as fast as the network takes it, but the radio
+        // holds `tx_latency_ms` of that audio before it modulates, plus the
+        // engine's pacing head start. The unkey that follows goes out on the
+        // CI-V stream, which overtakes the audio stream, so without this wait
+        // the radio dropped PTT with the last ~200 ms still unplayed. For an
+        // APRS packet that is its checksum and closing flag: keyed, preamble
+        // on the air, nothing decodes (#907).
+        std::thread::sleep(Duration::from_millis(u64::from(self.tx_latency_ms) + 60));
     }
 
     fn tx_end(&mut self) -> Result<()> {

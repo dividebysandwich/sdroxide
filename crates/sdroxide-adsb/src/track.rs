@@ -68,6 +68,20 @@ struct Entry {
     verified: bool,
     /// Track angle and the stream time it was sampled, for the turn rate.
     turn_ref: Option<(f32, f64)>,
+    /// The last frames' carrier measurements, absolute Hz, newest last.
+    carriers: std::collections::VecDeque<f64>,
+}
+
+/// How many carrier measurements the median is taken over. A median rather
+/// than a mean: a weak frame's spectrum can peak on noise far from the line,
+/// and one such frame must not drag the aircraft off its trace.
+const CARRIER_FRAMES: usize = 9;
+
+/// The median of the measurements held, for [`AdsbAircraft::carrier_hz`].
+fn carrier_median(c: &std::collections::VecDeque<f64>) -> Option<f64> {
+    let mut v: Vec<f64> = c.iter().copied().collect();
+    v.sort_by(f64::total_cmp);
+    v.get(v.len() / 2).copied()
 }
 
 /// The table.
@@ -114,7 +128,15 @@ impl Tracker {
     /// `now` is unix seconds, for the ages the panel shows; `mono_s` is the
     /// stream clock, for the arithmetic that has to be monotonic and finer than
     /// a second.
-    pub fn absorb(&mut self, acc: &Accepted, bytes: &[u8], rssi_dbfs: f32, now: i64, mono_s: f64) {
+    pub fn absorb(
+        &mut self,
+        acc: &Accepted,
+        bytes: &[u8],
+        rssi_dbfs: f32,
+        carrier_hz: Option<f64>,
+        now: i64,
+        mono_s: f64,
+    ) {
         let icao = acc.icao();
         let verified = acc.is_verified();
         let home = self.home;
@@ -127,12 +149,20 @@ impl Tracker {
             fix_at: f64::NEG_INFINITY,
             verified: false,
             turn_ref: None,
+            carriers: std::collections::VecDeque::new(),
         });
+        if let Some(hz) = carrier_hz {
+            if e.carriers.len() == CARRIER_FRAMES {
+                e.carriers.pop_front();
+            }
+            e.carriers.push_back(hz);
+            e.ac.carrier_hz = carrier_median(&e.carriers);
+        }
         e.verified |= verified;
         e.ac.last_at = now;
         e.ac.frames = e.ac.frames.saturating_add(1);
         e.ac.rssi_dbfs = rssi_dbfs;
-        e.ac.source = if verified { AdsbSource::Squitter } else { AdsbSource::Reply };
+        e.ac.source = if acc.is_squitter() { AdsbSource::Squitter } else { AdsbSource::Reply };
         e.ac.raw_hex = bytes.iter().map(|b| format!("{b:02X}")).collect();
 
         match &acc.message().body {
@@ -245,6 +275,61 @@ fn absorb_es(
             }
             e.ac.emergency = emergency.map(|s| s.to_string());
         }
+        Es::Airspeed { heading_deg, airspeed_kt, tas, vertical_rate_fpm } => {
+            // Into fields of their own, never the track: see `message::airspeed`.
+            let av = &mut e.ac.avionics;
+            if heading_deg.is_some() {
+                av.heading_deg = *heading_deg;
+            }
+            if airspeed_kt.is_some() {
+                if *tas {
+                    av.tas_kt = *airspeed_kt;
+                } else {
+                    av.ias_kt = *airspeed_kt;
+                }
+            }
+            if vertical_rate_fpm.is_some() {
+                e.ac.vertical_rate_fpm = *vertical_rate_fpm;
+            }
+        }
+        Es::TargetState(t) => {
+            let av = &mut e.ac.avionics;
+            if t.selected_alt_ft.is_some() {
+                av.selected_alt_ft = t.selected_alt_ft;
+                av.selected_alt_fms = t.selected_alt_fms;
+            }
+            if t.qnh_hpa.is_some() {
+                av.qnh_hpa = t.qnh_hpa;
+            }
+            if t.selected_heading_deg.is_some() {
+                av.selected_heading_deg = t.selected_heading_deg;
+            }
+            if let Some(m) = t.modes {
+                av.autopilot = Some(m.autopilot);
+                av.tcas = Some(m.tcas);
+                av.modes =
+                    [(m.vnav, "VNAV"), (m.alt_hold, "ALT"), (m.approach, "APP"), (m.lnav, "LNAV")]
+                        .iter()
+                        .filter(|(on, _)| *on)
+                        .map(|(_, n)| (*n).to_string())
+                        .collect();
+            }
+            // Version 2 by definition of the subtype: TC 31 may not have
+            // been heard yet.
+            av.version.get_or_insert(2);
+            av.nac_p = Some(t.nac_p);
+            av.sil = Some(t.sil);
+        }
+        Es::OpStatus { version, nac_p, sil } => {
+            let av = &mut e.ac.avionics;
+            av.version = Some(*version);
+            if nac_p.is_some() {
+                av.nac_p = *nac_p;
+            }
+            if sil.is_some() {
+                av.sil = *sil;
+            }
+        }
         Es::Other => {}
     }
 }
@@ -351,7 +436,24 @@ mod tests {
     fn feed(t: &mut Tracker, s: &str, now: i64, mono: f64) {
         let b = hex(s);
         let a = accept(&b, |i| t.knows(i, now)).expect("the test vectors are all valid");
-        t.absorb(&a, &b, -20.0, now, mono);
+        t.absorb(&a, &b, -20.0, None, now, mono);
+    }
+
+    /// The carrier is the median of the last frames: one frame measured far
+    /// off — a weak one whose spectrum peaked on noise — does not move the
+    /// aircraft off its trace, and a frame with no measurement leaves it.
+    #[test]
+    fn the_carrier_is_the_median_of_the_last_frames() {
+        let mut t = Tracker::new(AdsbSettings::default());
+        let b = hex("8D40621D58C382D690C8AC2863A7");
+        let a = accept(&b, |_| false).unwrap();
+        for hz in
+            [1_090_175_200.0, 1_090_174_800.0, 1_090_640_000.0, 1_090_175_000.0, 1_090_175_100.0]
+        {
+            t.absorb(&a, &b, -20.0, Some(hz), 1_000, 0.0);
+        }
+        t.absorb(&a, &b, -20.0, None, 1_000, 0.0);
+        assert_eq!(t.snapshot()[0].carrier_hz, Some(1_090_175_100.0));
     }
 
     /// The published even/odd pair resolves to the published position, and the

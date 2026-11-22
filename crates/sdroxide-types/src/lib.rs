@@ -94,7 +94,7 @@ pub use access::{AUTH_BUSY, AUTH_REFUSED, AuthPhase, RemoteAccess, RemoteServer,
 pub use adsb::{
     ADSB_DROP_LIST_S, ADSB_DROP_MAP_S, ADSB_FREQ_HZ, ADSB_GOOD_RATE_HZ, ADSB_HISTORY_POINTS,
     ADSB_MAX_AIRCRAFT, ADSB_MAX_RATE_HZ, ADSB_MIN_RATE_HZ, ADSB_TRACK_MAX, ADSB_VECTOR_MINUTES,
-    AdsbAircraft, AdsbSettings, AdsbSource, AdsbStatus,
+    AdsbAircraft, AdsbAvionics, AdsbFeed, AdsbSettings, AdsbSource, AdsbStatus, BeastConfig,
 };
 pub use ais::{
     AIS_ALL_CHANNELS, AIS_BIT_RATE, AIS_CHANNEL_A_HZ, AIS_CHANNEL_B_HZ, AIS_CHANNEL_SPACING_HZ,
@@ -106,7 +106,8 @@ pub use ais::{
 pub use alert::{AlertEvent, AlertEvents, AlertReply, AlertRule, AlertSettings, AlertSound};
 pub use amp::{
     AMP_BAUD_RATES, AmpAction, AmpAlerts, AmpConfig, AmpGauge, AmpLevel, AmpLimits, AmpModel,
-    AmpReadings, AmpStatus, AtuNetwork, AtuReadout, AtuScale, amp_band_label,
+    AmpReadings, AmpStatus, AtuNetwork, AtuReadout, AtuScale, TUNE_HISTORY, TUNE_RESULT_BYPASSED,
+    TUNE_RESULT_TUNED, TuneRecord, amp_band_label,
 };
 pub use aprs::{
     APRS_MESSAGE_MAX, APRS_MSG_RETRIES, APRS_STATION_MAX, APRS_TRACK_MAX, APRS_TRAFFIC_MAX,
@@ -169,8 +170,14 @@ pub use geo::{
 };
 pub use hd::{HdAudioService, HdRadioStatus};
 pub use hfdl::{
-    HFDL_DEFAULT_HZ, HFDL_LANE_RATE_HZ, HFDL_LOG_DEPTH, HfdlDecode, HfdlFix, HfdlSettings,
-    HfdlStatus,
+    HFDL_ACARS_DEPTH, HFDL_ACTIVE_FRESH_S, HFDL_AIRCRAFT_KEEP_S, HFDL_AIRCRAFT_MAX,
+    HFDL_AIRFRAMES_HOST, HFDL_AIRFRAMES_PORT, HFDL_BUILTIN_STATIONS, HFDL_BUILTIN_TABLE_VERSION,
+    HFDL_DEFAULT_HZ, HFDL_LANE_MARGIN_HZ, HFDL_LANE_RATE_HZ, HFDL_LAST_TEXT_MAX, HFDL_LOG_DEPTH,
+    HFDL_MAX_CHANNELS, HFDL_MAX_SPAN_HZ, HfdlAcars, HfdlAircraft, HfdlChannelStatus, HfdlDecode,
+    HfdlFix, HfdlFollow, HfdlFollowState, HfdlLanePlan, HfdlMotion, HfdlOutputStatus, HfdlOutputs,
+    HfdlSettings, HfdlStation, HfdlStationFreq, HfdlStatus, hfdl_acars_label_name,
+    hfdl_builtin_plan_khz, hfdl_builtin_stations, hfdl_lane_plan, hfdl_motion, hfdl_nearby_khz,
+    hfdl_plan_khz, hfdl_stations_on, hfdl_target_ok, hfdl_utc_dt, hfdl_working_khz,
 };
 pub use ibp::{
     Active as IbpActive, BANDS as IBP_BANDS, BEACONS as IBP_BEACONS, Beacon as IbpBeacon,
@@ -180,7 +187,8 @@ pub use ibp::{
 pub use input::{
     Action, ActionInput, ActionKind, BindingTuning, ButtonMode, InputSettings, KeyBinding,
     KeyChord, MidiBinding, MidiMsg, MidiMsgKind, MidiSettings, MouseButton, MouseButtonBinding,
-    RelativeMode, WheelAction, WheelSettings,
+    RelativeMode, TMATE2_TUNE_STEPS, Tmate2Backlight, Tmate2Binding, Tmate2Control, Tmate2ModeKind,
+    Tmate2Settings, Tmate2TxReadout, WheelAction, WheelSettings,
 };
 pub use ism::{
     ISM_MAX_DEVICES_DEFAULT, ISM_THRESHOLD_DB_DEFAULT, IsmBurstClass, IsmChannelStatus, IsmFamily,
@@ -214,7 +222,7 @@ pub use pi4::{BURST_S as PI4_BURST_S, Pi4Spot, Pi4Status, SLOT_S as PI4_SLOT_S};
 pub use pictures::{
     IMAGE_NAME_MAX, IMAGE_PAGE_MAX, IMAGE_SLOT_THUMB_EDGE, IMAGE_SLOTS, IMAGE_SOURCE_MAX_EDGE,
     IMAGE_THUMB_EDGE, IMAGE_UPLOAD_MAX, ImageEntry, ImageKind, ImageListing, ImagePresets,
-    ImageSlotInfo, received_at, safe_name,
+    ImageSlotInfo, PictureFolders, received_at, safe_name,
 };
 pub use picupload::{
     FtpSecurity, PictureUploadConfig, PictureUploadStatus, TlsVerify, UploadFormat, UploadNaming,
@@ -301,17 +309,18 @@ pub use speech::{
     CallsignStyle, CategoryFlags, DecodeSpeech, FreqStyle, SpeechSettings, TextSpeech, TuneSpeech,
     Verbosity,
 };
-pub use spot::{Spot, SpotKind};
+pub use spot::{Spot, SpotKind, TCI_SPOT_LIFETIME_SECS};
 pub use sstv::{SstvMode, SstvStatus};
 pub use state::{
     AtuCommandError, AtuState, AtuStatus, CESSB_MAX_DB, FM_DECRACKLE_DEFAULT_DIP, FM_DECRACKLE_DIP_RANGE,
     MAX_DECIMATION, MAX_MANUAL_GAIN_DB, MIN_DECIMATED_RATE_HZ, OffsetState, RadioState, RxId,
-    RxState, SK_FILTER_BOOST_RANGE_DB, SK_FILTER_CLOSE_RANGE_S, SK_FILTER_DEFAULT_AFTER_NR,
-    SK_FILTER_DEFAULT_BOOST_DB, SK_FILTER_DEFAULT_CLOSE_S, SK_FILTER_DEFAULT_OPEN_S,
-    SK_FILTER_DEFAULT_TAU_S, SK_FILTER_DEFAULT_WIDTH, SK_FILTER_MAX_WIDTH, SK_FILTER_OPEN_RANGE_S,
-    SK_FILTER_TAU_RANGE_S, SQUELCH_CLOSED_DB, SQUELCH_OPEN_DB, SWR_LIMIT_MAX, SWR_LIMIT_MIN,
-    SWR_TUNE_LIMIT_SCALE, TxState, Vfo, ZOOM_LANE_MARGIN, max_decimation, panadapter_fft_ceiling,
-    swr_tune_limit, zoom_lane_decimation,
+    RxState, SAM_MRC_DEFAULT_TAU_S, SAM_MRC_TAU_CHOICES_S, SK_FILTER_BOOST_RANGE_DB,
+    SK_FILTER_CLOSE_RANGE_S, SK_FILTER_DEFAULT_AFTER_NR, SK_FILTER_DEFAULT_BOOST_DB,
+    SK_FILTER_DEFAULT_CLOSE_S, SK_FILTER_DEFAULT_OPEN_S, SK_FILTER_DEFAULT_TAU_S,
+    SK_FILTER_DEFAULT_WIDTH, SK_FILTER_MAX_WIDTH, SK_FILTER_OPEN_RANGE_S, SK_FILTER_TAU_RANGE_S,
+    SQUELCH_CLOSED_DB, SQUELCH_OPEN_DB, SWR_LIMIT_MAX, SWR_LIMIT_MIN, SWR_TUNE_LIMIT_SCALE,
+    SamSideband, TxState, Vfo, ZOOM_LANE_MARGIN, max_decimation, panadapter_fft_ceiling,
+    sam_mrc_tau_snap, swr_tune_limit, zoom_lane_decimation,
 };
 pub use station::StationConfig;
 pub use tciserver::TciServerConfig;

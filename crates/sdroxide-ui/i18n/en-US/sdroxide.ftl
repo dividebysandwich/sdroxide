@@ -34,6 +34,7 @@ ui-theme-dracula = Dracula
 ui-theme-catppuccin-mocha = Catppuccin mocha
 ui-theme-catppuccin-latte = Catppuccin latte
 ui-theme-modern-minimalist = Modern minimalist
+ui-theme-simplesdr = SimpleSDR
 
 chrome-style-angled = Angled
 chrome-style-rectangular = Rectangular
@@ -206,6 +207,9 @@ settings-band-low = Band low
 settings-band-high = Band high
 settings-offset = Offset
 settings-transmit = Transmit
+settings-xvtr-rf-out = RF OUT
+settings-xvtr-rf-out-hover =
+    On an ELAD FDM-DUO: while the dial is in this row's band, send transmit out of the 0 dBm RF OUT SMA instead of the PA, and receive on the RX-only socket. Both go back when the dial leaves the band. The XVTR chip in the ANT row lights while it is in use.
 settings-max-drive = Max drive
 settings-off-takes-transverter-out-line = Off takes this transverter out of the line without losing the row — the band goes back to whatever the radio reaches on its own.
 settings-t-2-m = 2 m
@@ -341,7 +345,7 @@ settings-antenna-somewhere-else-no-locator = The antenna is somewhere else and n
 settings-ranges-are-mhz-low-high = Ranges are in MHz, low-high, separated by commas: 144-146, 430-440 — that is 144000000-146000000 Hz and 430000000-440000000 Hz. They are dial frequencies: a converter offset does not move them. The converter offset above is the field in hertz. Leave a range empty to use whatever the device reports about itself; a device that reports nothing is taken at its word.
 settings-dwell-recentre = Centre the window on a resting dial
 settings-dwell-recentre-hover = After five seconds of rest more than a twentieth of the window off its middle, the I/Q window is centred on the dial, once per resting place. Off: the window stays where it is until the dial leaves it.
-settings-careful-rtl-sdr-blog-v4 = Careful on an RTL-SDR: the Blog V4 upconverts on its own below 28.8 MHz, so a negative offset that lands the hardware there shifts twice.
+settings-careful-rtl-sdr-blog-v4 = Careful on an RTL-SDR: the Blog V4/V4L upconverts on its own below 28.8 MHz, so a negative offset that lands the hardware there shifts twice.
 settings-transmit-audio = Transmit audio
 settings-use = in use
 settings-every-stage-off = every stage off
@@ -492,6 +496,11 @@ settings-switch-radio-dialog-follows-drag = Switch to this radio (the dialog fol
 settings-tx = ● TX
 settings-station-radio = Station:
 settings-station-radio-tip = The station radio. It runs the station's network services (spot feeds, rotator, amplifier, T/R switch) and takes the command line's settings, so it stays in the list. To rest it, switch it off with LINK; to use other hardware, choose another interface below.
+settings-tci-server-line-on = TCI server: on, port { $port }
+settings-tci-server-line-off = TCI server: off
+settings-tci-server-line-failed = TCI server: port { $port } failed to bind
+settings-tci-server-line-set = Set in Servers
+settings-tci-server-line-set-tip = Open Servers: TCI on/off, port
 settings-mute-radio-s-audio = Mute this radio's audio
 settings-link = LINK
 settings-close-radio-configuration-kept = Close this radio (its configuration is kept)
@@ -617,6 +626,23 @@ settings-controls-add-midi-control = + Add MIDI control
 settings-controls-clear-all = Clear all
 settings-controls-endless-jog-encoders-send-relative = Endless (jog) encoders send a relative step rather than a position, in one of three encodings that look alike from small movements. LEARN guesses from a clockwise turn; if the knob then tunes the wrong way, tick “rev”.
 settings-controls-none = — none —
+settings-controls-tmate2 = ELAD TMate 2
+settings-controls-tmate2-unsupported = The TMate 2 needs the native app on Windows or Linux.
+settings-controls-tmate2-intro = The ELAD / WoodBoxRadio TMate 2 USB controller: the main dial, the E1 and E2 dials with their push switches, and keys F1 to F6. It is found by itself when plugged in.
+settings-controls-tmate2-tx-readout = Small display while transmitting
+settings-controls-tmate2-backlight = Backlight
+settings-controls-tmate2-rx-colour = Receive
+settings-controls-tmate2-tx-colour = Transmit
+settings-controls-tmate2-by-mode = Receive colour by mode
+settings-controls-tmate2-ssb-colour = SSB
+settings-controls-tmate2-cw-colour = CW
+settings-controls-tmate2-am-fm-colour = AM and FM
+settings-controls-tmate2-data-colour = Data modes
+settings-controls-tmate2-contrast = Contrast
+settings-controls-tmate2-default-colours = Default colours
+settings-controls-tmate2-add = + Add TMate 2 control
+settings-controls-tmate2-defaults = Restore TMate 2 defaults
+settings-controls-tmate2-help = The TMate 2 speeds its dials up by itself on a fast turn, so the main dial's step can stay small. Close other programs that use the TMate 2 (SDR Console, ELAD's software) first. On Linux, install the udev rule for it so it can be opened without root.
 
 ## Settings window, General (src/app/settings/general.rs)
 
@@ -757,6 +783,13 @@ settings-picup-sstv-dir = SSTV dir
 settings-picup-weather-fax = Weather fax
 settings-picup-wefax-dir = WEFAX dir
 settings-picup-empty-login-directory = Empty is the login directory.
+settings-folders-heading = Received pictures folders
+settings-folders-explain = Where this station saves what it receives. The path is on the machine the radio is attached to, so a remote screen types it but cannot browse for it. Pictures already saved stay listed.
+settings-folders-sstv = SSTV folder
+settings-folders-wefax = WEFAX folder
+settings-folders-not-absolute = ⚠ Not an absolute path — ignored, the default is used.
+settings-folders-empty-default = Empty uses the default. If a folder cannot be created (a drive that is not plugged in), the default is used until it can.
+settings-folders-apply = APPLY
 settings-picup-file-names = File names
 settings-picup-format = Format
 settings-picup-add-extension = add extension
@@ -941,6 +974,17 @@ settings-servers-not-connected = Not connected.
 settings-servers-persist-re-connect-daemon = Persist and (re)connect to the daemon
 settings-servers-waiting-station-s-tci-server = Waiting for the station's TCI server configuration…
 settings-servers-built-tci-server = Built-in TCI server
+settings-servers-tci-radio = Radio:
+settings-servers-tci-radio-on = ● { $name }
+settings-servers-tci-radio-off = ○ { $name }
+settings-servers-tci-radio-failed = ⚠ { $name }
+settings-servers-tci-radio-state-on = TCI on, port { $port }
+settings-servers-tci-radio-state-off = TCI off
+settings-servers-tci-radio-state-failed = TCI port { $port } failed to bind
+settings-servers-tci-radio-own-tip = TCI server of this radio, edited below
+settings-servers-tci-radio-other-tip = Switch to radio; dialog follows on Servers
+settings-servers-tci-port-taken = ⚠ Port { $port } is also the TCI port of { $radios } — only one server can bind it. Free: { $free }.
+settings-servers-tci-not-applied = ⚠ Not applied — the server still runs as before. Press APPLY, or close Settings to discard.
 settings-servers-device-name = Device name
 settings-servers-off-leaves-control-receive-streams = Off leaves control and the receive streams working, but every key request is refused.
 settings-servers-tci-has-no-authentication-0 = ⚠ TCI has no authentication. On 0.0.0.0, anyone who can reach this port can tune and key your transmitter.
@@ -1421,7 +1465,7 @@ settings-radio-applies-immediately-no-reconnect-tuner = Applies immediately — 
 settings-radio-crystal-error-parts-per-million = Crystal error in parts per million. Run with RUST_LOG=sdroxide_rtlsdr=debug and the log prints the measured clock error after about 20 seconds — that is the number to enter. Applies immediately.
 settings-radio-hf-reception = HF reception
 settings-radio-tuner-itself-starts-24-mhz =
-    The tuner itself starts at 24 MHz. An RTL-SDR Blog V4 upconverts below that in hardware; other dongles reach HF only by sampling the ADC directly, through the V3's HF port. Automatic hands everything below 24 MHz to the ADC and everything above it to the tuner.
+    The tuner itself starts at 24 MHz. An RTL-SDR Blog V4/V4L upconverts below that in hardware; other dongles reach HF only by sampling the ADC directly, through the V3's HF port. Automatic hands everything below 24 MHz to the ADC and everything above it to the tuner.
 
     Direct sampling covers every HF band, 17 m and 15 m included — they arrive in the ADC's second Nyquist zone, the right way up. Nothing filters the ADC's input, though, so whatever is at 28.8 MHz minus the dial comes with them: 10.7 MHz under 17 m, 7.726 MHz under 15 m.
 
@@ -2051,6 +2095,8 @@ topbar-radio = RADIO
 topbar-tune-voice-keyer-drive-mic = Tune, the voice keyer, and the drive and mic levels
 topbar-transmit = TRANSMIT
 topbar-tune = {" "}TUNE{" "}
+topbar-two-tone = {" "}2T{" "}
+topbar-two-tone-hover = Two-tone test: transmits 700 Hz and 1900 Hz together at the Tune level, until clicked again. Its envelope swings from nothing to full, so it shows an amplifier's splatter plainly on a second receiver, and it is the signal PureSignal learns from fastest — a steady carrier only teaches it one point. Use a dummy load.
 topbar-panadapter-two-layers-their-speeds = The panadapter — its two layers, their speeds and detail, peak hold — plus waterfall contrast, FFT size and the skimmers
 topbar-display = DISPLAY
 topbar-logbook-spots-awards-memories-scanner = Logbook, spots, awards, memories, the scanner, settings and the manual
@@ -2108,6 +2154,15 @@ topbar-gain = Gain
 topbar-tuner-agc-owns-gain = Tuner AGC sets this stage; Manual in Settings → Radio.
 topbar-hackrf-amp-hint = HackRF RF amplifier, about +11 dB. Lit = on.
 topbar-rx888-vga-range-hint = VGA range (AD8370): AUTO by request, LOW up to ~+17 dB, HIGH with pre-amp from ~−8 dB.
+topbar-rx888-tuner-hint =
+    R828D tuner gain, dB; VHF input
+    HF stages ATT, VGA held on VHF
+topbar-rx888-tuner-auto-hint =
+    R828D tuner gain, dB; VHF input
+    Tuner AGC sets gain
+topbar-rx888-tuner-agc-hint =
+    R828D AGC: own LNA and mixer loops
+    Lit = on; manual tuner gain held
 topbar-plutosdr-s-own-agc-setting =
     {""}
 
@@ -2187,6 +2242,22 @@ topbar-fm-decrackle-hint = NFM: phase slips (crackle on weak signals) found and 
 topbar-fm-deemph = DE-EMPH
 topbar-fm-deemph-hint = De-emphasis 6 dB/octave above 300 Hz; off for transmitters without pre-emphasis
 topbar-fm-decrackle-sens-hint = Sensitivity: magnitude dip below this share of its mean; 0.2 default, higher repairs more
+topbar-sam-sideband = SAM
+topbar-sam-dsb = DSB
+topbar-sam-dsb-hint = Both sidebands weighted equally; classic SAM, no delay
+topbar-sam-mrc-chip = MRC
+topbar-sam-mrc-hint = USB and LSB combined per frequency by quality (maximal ratio), PLL gain follows carrier level
+    Usually the best choice against selective fading; ~27 ms delay
+topbar-sam-usb = USB
+topbar-sam-usb-hint = Upper sideband only, synchronously detected; against interference below the carrier
+    PLL gain follows carrier level; ~27 ms delay
+topbar-sam-lsb = LSB
+topbar-sam-lsb-hint = Lower sideband only, synchronously detected; against interference above the carrier
+    PLL gain follows carrier level; ~27 ms delay
+topbar-sam-tau-short = 0.2 s
+topbar-sam-tau-mid = 0.5 s
+topbar-sam-tau-long = 1 s
+topbar-sam-tau-hint = MRC averaging time of sideband quality; shorter follows fast fading, longer is steadier
 topbar-nr-filters = FILTERS
 topbar-sk-filter-hint = SK post-filter refines neural or other noise removal: penalises unwanted noise
     (the filter resonates, leading to echo) · filter by HDZ
@@ -2223,6 +2294,10 @@ topbar-radio-s-separate-receiving-antenna =
     The radio's separate receiving antenna, switched into the receive path or out of it — its own RX ANT setting. The aerial on the main socket stays on transmit either way.
 
     The radio remembers this per band itself, so sdroxide reads it back after every band change rather than putting back what it last saw: clicking here is the only thing that moves it.
+topbar-elad-xvtr =
+    The FDM-DUO's transverter port (menu 33 TX OUT). Lit, the radio sends its transmit out of the 0 dBm RF OUT SMA instead of the PA, and receive moves to the RX-only socket where the transverter's IF comes back. Out, transmit returns to the PA on RTX and receive to the socket it was on.
+
+    Connect RF OUT to the transverter's IF input and its IF output to the RX socket. It can't be switched while transmitting.
 topbar-radio-s-own-power-switch =
     The radio's own power switch, over the control link, and the one true on/off in the program — not sdroxide's LINK switch, which closes sdroxide's end and leaves the radio running.
 
@@ -2370,7 +2445,76 @@ topbar-recent = RECENT
 topbar-recent-empty =
     Fills after 3 s on a place
 topbar-mode = MODE
-topbar-digital = DIGITAL
+# The two halves of DIGITAL in the band/mode menu: modes for working other
+# stations, and services one listens to.
+topbar-ham = HAM
+topbar-monitor = MONITOR
+# Small headings over the groups inside HAM and MONITOR.
+topbar-digi-talk = Talk
+topbar-digi-modes = Digi modes
+topbar-digi-image = Image
+topbar-digi-data = Data
+topbar-digi-aviation = Aviation
+topbar-digi-sea = Sea
+topbar-digi-probes = Probes
+# One line per mode, shown when the pointer rests on its chip in the
+# Band/Mode menu.
+mode-tip-lsb = Lower sideband voice; usual below 10 MHz
+mode-tip-usb = Upper sideband voice; usual from 10 MHz and on VHF
+mode-tip-cw = Morse telegraphy; narrow filter, tone offset
+mode-tip-am = Amplitude modulation; broadcast, airband
+mode-tip-sam = Synchronous AM; carrier-locked, less fading distortion
+mode-tip-nfm = Narrow FM; repeaters, PMR, CB, VHF/UHF
+mode-tip-wfm = Wide FM; FM broadcast with RDS
+mode-tip-drm = Digital Radio Mondiale; digital broadcast on LW, MW, SW
+mode-tip-hdradio = HD Radio (NRSC-5); digital sidebands of US FM broadcast
+mode-tip-digu = Upper sideband, flat audio; for external digital-mode software
+mode-tip-digl = Lower sideband, flat audio; for external digital-mode software
+mode-tip-dsb = Double sideband, carrier suppressed
+mode-tip-isb = Independent sidebands; two services on one carrier, one per ear
+mode-tip-spec = Spectrum only; no demodulation, no audio
+mode-tip-psk = PSK31 and relatives; narrow keyboard QSO
+mode-tip-rtty = Radioteletype, Baudot FSK; contests, keyboard QSO
+mode-tip-rttyfm = RTTY on an FM carrier; VHF/UHF
+mode-tip-olivia = MFSK with strong FEC; readable below the noise
+mode-tip-contestia = Olivia variant; faster, less robust
+mode-tip-thor = IFK+ with FEC, DominoEX family; robust keyboard mode
+mode-tip-dominoex = Incremental frequency keying; tolerant of drift and multipath
+mode-tip-mfsk = MFSK16 and relatives; robust keyboard mode
+mode-tip-mt63 = 64 tones, wide, heavy interleaving; robust, emergency nets
+mode-tip-fsq = Fast Simple QSO; directed calls (FSQCALL), NVIS
+mode-tip-jtty = Asynchronous keyboard mode from WSJT-X 3.2; RTTY-like, with FEC
+mode-tip-hell = Hellschreiber; text painted as a picture
+mode-tip-atchat = AtCHAT NET; multi-station keyboard net
+mode-tip-rade = FreeDV RADE; digital voice
+mode-tip-ft8 = 15 s slots, automatic QSO; most-used weak-signal mode
+mode-tip-ft4 = 7.5 s slots, automatic QSO; contests
+mode-tip-ft2 = Faster than FT4, automatic QSO
+mode-tip-js8 = FT8 waveform, free text; keyboard chat, relaying
+mode-tip-wspr = Beacon, 2 min slots; propagation paths, no QSO
+mode-tip-pi4 = VHF/microwave beacon mode; receive only
+mode-tip-fst4 = T/R 15–300 s; weak signal on LF, MF, HF
+mode-tip-q65 = 65 tones; EME, ionoscatter, rain scatter
+mode-tip-jt65 = 1 min slots; EME, HF weak signal
+mode-tip-jt9 = 1 min slots, narrow; LF/HF weak signal
+mode-tip-msk144 = Meteor scatter; VHF
+mode-tip-fsk441 = Meteor scatter, original WSJT mode; VHF
+mode-tip-sstv = Slow-scan TV; pictures over SSB
+mode-tip-sstvfm = SSTV on an FM carrier; VHF/UHF, ISS
+mode-tip-rifp = Packetised image protocol (RIFP); pictures in packets
+mode-tip-rfpaint = Transmit only; picture painted into the waterfall
+mode-tip-packet = AX.25 packet, 1200 Bd AFSK; VHF
+mode-tip-packethf = AX.25 packet, 300 Bd; HF
+mode-tip-aprs = Positions, messages, weather on a map; 144.800 MHz in Europe
+mode-tip-mercury = Open HF ARQ data modem; connected link, adaptive speed
+mode-tip-data2g = Open HF ARQ data modem; connected link, adaptive speed
+mode-tip-adsb = Aircraft on 1090 MHz; positions, radar map
+mode-tip-vdl2 = VHF Data Link Mode 2; airline datalink around 136 MHz
+mode-tip-acars = Airline text datalink, AM; 131.550 MHz
+mode-tip-hfdl = HF Data Link; aircraft messages and positions over HF
+mode-tip-ais = Ships on 162 MHz; positions, map
+mode-tip-navtex = Maritime safety text; 518 and 490 kHz
+mode-tip-wefax = Weather charts by radio fax; e.g. DWD Pinneberg
 
 ## Top bar: the System box's window chips.
 
@@ -3082,7 +3226,25 @@ amp-band-up = Band up
 amp-tuner = TUNER
 amp-tuned = Tuned
 amp-tune = TUNE
-amp-start-tune-then-key-steady = Start a tune — then key a steady carrier (CW, FM or RTTY). Press again to stop.
+amp-start-tune-then-key-steady = Start a tune — then key a steady carrier (CW, FM or RTTY). Press again to stop. The tuner aims for 1.3:1 and keeps the best match it has seen.
+amp-tuned-without-tuner = Tuned: under 1.3:1 without the tuner
+amp-tuned-without-tuner-hover = The load was already better than 1.3:1, so the tuner left it bypassed. A load that close is rarely improved by the tuner's steps: this is expected, not a failure.
+amp-tune-swr-above = SWR above 6:1: check the antenna
+amp-tune-swr-above-hover = The tuner doesn't try above about 6:1: it stays bypassed. Check the antenna and the feed line.
+amp-tune-lo-power = Lo power: key a steady carrier
+amp-tune-lo-power-hover = The tuner saw under 0.5 W. Keep a steady carrier of a few watts for the whole tune.
+amp-tune-no-match = Failed (above 2:1): try again
+amp-tune-no-match-hover = The tuner found no match under 2:1. Try again, or check the antenna.
+amp-tune-power-high = Power too high: lower the drive
+amp-tune-power-high-hover = The tuner tunes on low power. Lower the drive and tune again.
+amp-tuner-swr = The tuner's own SWR, from its own coupler. The amplifier's SWR reading comes from the coupler on its low-pass filter board, so the two can differ by up to about 0.2. The tuner aims for 1.3:1 and keeps the best match it finds. After a tune, the SWR it started from is shown in brackets.
+amp-tuner-swr-from = { $now } (from { $from })
+amp-tuner-load-swr = The load's own SWR, measured by the tuner's coupler at the start of the tune. It was already under 1.3:1, so the tuner left its network out.
+amp-tuner-state-hover = The tuner aims for 1.3:1 and always keeps the best match it has seen, so a tune never ends worse than it started. A load already under 1.3:1 is left bypassed. The tuner's SWR comes from its own coupler, so it can differ from the SWR tile by up to about 0.2.
+amp-last-tunes = LAST TUNES
+amp-last-tunes-hover = Each tune as the tuner reported it when it ended: the time, the band, the SWR before and after from the tuner's own coupler, and the network it left in (L and C steps, and ANT or TX for the capacitor's side; no side when no capacitor is in). Each tune is also written to the log.
+amp-tune-row-swr = { $from } to { $to }
+amp-tune-row-bypassed = bypassed
 amp-put-tuner-line-bypass = Put the tuner in line, or bypass it
 amp-tuning = Tuning…
 amp-bottom = BOTTOM
@@ -3093,7 +3255,7 @@ amp-forward-power = Forward power
 amp-reflected-power-measured-radio-amplifier = Reflected power, measured by the radio: the amplifier reports none in OFF
 amp-reflected-power-worked-out-fwd = Reflected power, worked out from FWD and the SWR: the amplifier reports none in OFF
 amp-reflected-power = Reflected power
-amp-standing-wave-ratio-red-past = Standing wave ratio: red at or past the tune limit (Settings → General). Check the antenna
+amp-standing-wave-ratio-red-past = Standing wave ratio: red at or past the tune limit (Settings → General). On an HR500 with its tuner it is red from 6.1:1 at the latest, just past the 6:1 where the tuner stops trying, unless the SWR limit itself is higher. Check the antenna
 amp-standing-wave-ratio-measured-radio = Standing wave ratio, measured by the radio: the amplifier reports none in OFF
 amp-standing-wave-ratio = Standing wave ratio
 amp-drive-radio = Drive from the radio
@@ -4231,7 +4393,6 @@ scanner-move-don-t-stop-channel = Move on, and don't stop on this channel again
 adsb-starting-ads-b-decoder = starting the ADS-B decoder…
 adsb-ads-b = ADS-B
 adsb-t-1090-mhz-mode-s = 1090 MHz Mode S
-adsb-tune-receiver-1090-000-mhz = Tune the receiver to 1090.000 MHz, the worldwide ADS-B downlink. There is only one channel.
 adsb-setup = SETUP
 adsb-timeouts-trail-length-how-far = Timeouts, trail length and how far ahead the speed vectors reach
 adsb-aircraft = AIRCRAFT
@@ -4248,9 +4409,11 @@ adsb-last-frame-accepted-aircraft = The last frame accepted from this aircraft
 adsb-ads-b-setup = ADS-B Setup
 adsb-drop-map-after = Drop from map after
 adsb-without-position-report = without a position report
-adsb-past-aircraft-comes-off-map = Past this the aircraft comes off the map and its row greys. It is not faded: a dim square at a stale position is still a claim about where an aeroplane is, in the same ink as the true ones.
+adsb-past-aircraft-comes-off-map = Past this the aircraft comes off the map and its row greys. It is not faded: a dim symbol at a stale position is still a claim about where an aeroplane is, in the same ink as the true ones.
 adsb-drop-list-after = Drop from list after
 adsb-nothing-heard-all = with nothing heard at all
+adsb-online-lookups = Online lookups
+adsb-online-lookups-hint = routes, airlines, registrations and airports from the internet
 adsb-trail-length = Trail length
 adsb-points = {" "}points
 adsb-history-dots-behind-each-target = history dots behind each target
@@ -4263,6 +4426,197 @@ adsb-aircraft-ground-are-placed-against = Aircraft on the ground are placed agai
 adsb-call = CALL
 adsb-icao = ICAO
 adsb-v-s = V/S
+adsb-route-col = ROUTE
+adsb-places-col = FROM › TO
+adsb-airline-col = AIRLINE
+adsb-type-col = TYPE
+adsb-military = military
+adsb-row-registration = Registration
+adsb-row-type = Model
+adsb-row-operator = Operator
+adsb-row-built = Built
+adsb-row-country = Country (address block)
+adsb-map-window = ADS-B map
+adsb-chip-cities = CITIES
+adsb-chip-cities-tip = City names on this map
+adsb-source-open = Open source and licence
+adsb-lic-ccby = CC BY 4.0
+adsb-lic-pd = public domain
+adsb-lic-ogl = Open Government Licence – Canada
+adsb-lic-nasa = NASA, free
+adsb-chip-clouds = CLOUDS
+adsb-chip-clouds-tip = Cloud cover from satellites, hourly, worldwide
+  NOAA/NESDIS via nowCOAST, public domain · right-click: source
+adsb-chip-storms = STORMS
+adsb-chip-storms-tip = Thunderstorm cells, estimated from cold cloud tops, hourly
+  NOAA/NESDIS via nowCOAST, public domain · right-click: source
+adsbmap-clouds-credit = Clouds: NOAA/NESDIS satellite mosaic, { $time }
+adsbmap-clouds-loading = Clouds: NOAA/NESDIS, loading …
+adsbmap-storm = Thunderstorm: tops { $top } km, ~{ $rate } flashes/min
+adsb-chip-wx = WEATHER
+adsb-chip-wx-tip = Precipitation: { $src }
+  { $lic } · right-click: source
+adsbmap-wx-credit = Radar: Deutscher Wetterdienst, { $time }
+adsbmap-wx-loading = Radar: loading …
+adsbmap-wx-credit-us = Radar: NOAA NWS NEXRAD via Iowa Environmental Mesonet, { $time }
+adsbmap-wx-credit-ca = Radar: Environment and Climate Change Canada, { $time }
+adsbmap-wx-credit-world = Satellite precipitation: NASA GPM IMERG via GIBS, { $time }
+adsb-wx-ca = CANADA
+adsb-wx-ca-tip = ECCC radar, Canada
+  Open Government Licence – Canada · right-click: source
+adsb-wx-world = WORLD
+adsb-wx-world-tip = Satellite precipitation, 60° N to 60° S, hours late
+  NASA GPM IMERG, free · right-click: source
+adsb-wx-source = Weather radar
+adsb-map-stamp = Map stamp, bottom right
+adsb-map-stamp-tip = Source, aircraft on the map, UTC time
+  for screenshots
+adsb-alt-planes = With ALT: aircraft in altitude colour (off: white)
+adsb-alt-planes-tip = Symbol colour with ALT: colour of the altitude now, or white
+  selected, pointer and emergency stay highlighted
+adsb-wx-auto = AUTO
+adsb-wx-auto-tip = By location: DWD, US, Canada; else satellite (WORLD)
+adsb-wx-dwd = DWD
+adsb-wx-dwd-tip = Deutscher Wetterdienst, Germany and neighbours
+  CC BY 4.0 · right-click: source
+adsb-wx-us = USA
+adsb-wx-us-tip = NOAA NEXRAD via Iowa Environmental Mesonet, US
+  public domain · right-click: source
+adsb-tune-gains-tip = Click: tune to 1090 MHz and set the gains: { $gains }
+  now: { $now } · right-click: save or forget
+adsb-tune-gains-none-tip = Click: tune to 1090 MHz (no gain preset yet)
+  right-click → save: { $now }
+adsb-gains-save = Save current gains as the ADS-B preset
+adsb-gains-now = now:   { $gains }
+adsb-gains-stored = saved: { $gains }
+adsb-gains-saved = ✓ preset saved
+adsb-gains-recalled = ✓ preset set
+adsb-gains-none = device reports no gain values
+adsb-gains-forget = Forget preset
+adsb-coverage-kept = Coverage map: { $hours } hours gathered
+adsb-coverage-reset = Reset…
+adsb-coverage-reset-tip = Clear the coverage map, on disk too
+  after an antenna change or a move
+adsb-coverage-reset-sure = Really delete
+adsb-coverage-reset-keep = Keep
+adsb-range-log = Range log
+adsb-range-log-tip = Range per setup and day, kept in adsb-range.sqlite
+    Setup = receiver, antenna, home; versions per receiver
+adsb-range-summary = Range log { $size } · { $n } setups
+adsb-range-limit = Limit
+adsb-range-limit-tip = Over the limit, oldest days go first, across all setups
+adsb-range-init = INIT
+adsb-range-init-sure = INIT — SURE?
+adsb-range-init-tip = Delete every setup and give the space back
+adsb-range-init-warning = Deletes { $n } setups, { $size }. Limit stays.
+adsb-range-cancel = Cancel
+adsb-range-now = Logging to { $setup }
+adsb-range-no-home = Set home (grid square) to log range
+adsb-range-waiting = Next position starts a setup for { $instrument }
+adsb-range-antenna = Antenna
+adsb-range-antenna-hint = roof dipole, window, plastic case …
+adsb-range-new = NEW SETUP
+adsb-range-new-tip = Close current setup, start next version with this label
+    Old version stays for comparison
+adsb-range-name = NAME
+adsb-range-name-tip = Give current setup this label
+adsb-range-empty = Nothing logged yet
+adsb-range-col-setup = SETUP
+adsb-range-col-antenna = ANTENNA
+adsb-range-col-when = DAYS FROM–TO
+adsb-range-col-days = DAYS
+adsb-range-col-km = MAX KM
+adsb-range-col-size = SIZE
+adsb-range-open-days = Show days
+adsb-range-delete = DELETE
+adsb-range-delete-sure = SURE?
+adsb-range-delete-tip = Delete setup and its days
+adsb-range-day-positions = { $n } positions
+adsb-range-day-sectors = { $n }/{ $all } sectors
+adsb-range-day-far = Median over sectors { $median } km
+    Farthest at { $bearing }°
+adsb-range-db-error = Range log: { $err }
+adsb-chip-log = LOG
+adsb-chip-log-tip = Sighting log: aircraft heard, one line each a day
+  Daily file adsb-log/<date>.csv in the config folder, 30 days
+adsb-log-today = today { $n } aircraft
+adsb-log-farthest = farthest { $km } km ({ $call })
+adsb-log-dests = destinations
+adsb-log-types = types
+adsb-log-empty = Nothing heard yet today.
+adsb-log-time = TIME
+adsb-log-today-word = today
+adsb-log-on-day = { $day }: { $n } aircraft
+adsb-log-shown = { $n } shown
+adsb-log-day-tip = Day of the log, { $n } day files
+  right end = today
+adsb-chip-live = LIVE
+adsb-chip-live-tip = Only aircraft in the table now
+adsb-log-empty-day = No file for this day.
+adsb-log-none = No line passes the filters.
+adsb-log-day-label = { $wd } { $m }/{ $d }
+adsb-log-span-day = 1 D
+adsb-log-span-day-tip = One day
+adsb-log-span-week = 7 D
+adsb-log-span-week-tip = Seven days ending with the chosen day
+adsb-log-week-label = { $from } – { $to }
+adsb-chip-map = MAP
+adsb-chip-map-tip = Map on the right
+adsb-chip-plots = PLOTS
+adsb-chip-plots-tip = Bar chart of the log's lines on the right
+adsb-plot-x = X axis
+adsb-plot-daytime = Daytime (h)
+adsb-plot-height = Height (FL)
+adsb-plot-distance = Distance (km)
+adsb-plot-airline = Airline
+adsb-plot-type = Plane type
+adsb-plot-daytime-note = Aircraft heard per hour, local time; one aircraft counts in every hour it was heard
+adsb-plot-height-note = Aircraft by highest altitude, 2,000 ft bins
+adsb-plot-distance-note = Aircraft by farthest position, 10 km bins: where the bars stop, reception stops
+adsb-plot-airline-note = Aircraft by airline code in the callsign
+adsb-plot-type-note = Aircraft by type, guessed types included
+adsb-plot-count = { $n } aircraft-days
+adsb-plot-missing = { $pct } % missing data
+adsb-plot-more = { $n } more not shown ({ $lines })
+adsb-wd-mo = Mon
+adsb-wd-tu = Tue
+adsb-wd-we = Wed
+adsb-wd-th = Thu
+adsb-wd-fr = Fri
+adsb-wd-sa = Sat
+adsb-wd-su = Sun
+adsb-chip-airports = AIRPORTS
+adsb-chip-airports-tip = Airports with code, more as you zoom in
+  OurAirports, public domain · right-click: source
+adsb-chip-range = RANGE
+adsb-chip-range-tip = Reception per 5° and 10 km, continuous tracks only (gap ≤ 20 s).
+adsb-chip-alt = ALT
+adsb-chip-alt-tip = Trail coloured by altitude, legend at the bottom
+  points of the flight tracks, last 10 min
+    Brightness = signal, line = outermost steady reception
+adsb-chip-range-no-home = Needs a position: locator in the digimode setup
+adsb-chip-pointer = CURSOR
+adsb-chip-pointer-tip = Pointer details: bearing, distance, coverage cell
+  and the airport under the pointer
+adsb-range-1h = 1 H
+adsb-range-24h = 24 H
+adsb-range-7d = 7 D
+adsb-map-out-tip = Map into its own window
+adsb-map-reload-tip = Fetch weather, clouds and storms again now
+  the pictures on the map go until the new ones arrive
+adsb-copy-callsign = Copy callsign { $call }
+adsb-copy-icao = Copy ICAO { $icao }
+adsb-link-planespotters = View aircraft on planespotters.net …
+adsb-link-adsbx-trace = Track of { $day } on ADS-B Exchange
+adsb-link-flightaware = Flight history on FlightAware ({ $call })
+adsb-link-adsbx = View aircraft on adsbexchange.com …
+adsb-link-adsblol = View aircraft on adsb.lol …
+adsb-link-opensky = View aircraft on opensky-network.org …
+adsb-link-fr24 = View flight on flightradar24.com …
+adsb-link-vrs-edit = Add to the VRS database …
+adsb-link-vrs-edit-tip = Source of route, airline, type (CC0).
+    ICAO copied to the clipboard
+adsb-show-on-map = Show on map
 
 ## drm (src/app/drm.rs)
 
@@ -4580,6 +4934,9 @@ spots-sota = SOTA
 spots-freedv = FREEDV
 spots-spots = SPOTS
 spots-longwave-shortwave-broadcast-stations-air = Longwave & shortwave broadcast stations on air now
+spots-tci-tip =
+    Labels TCI clients set with SPOT
+    Each lives 10 min
 spots-view = IN VIEW
 spots-only-spots-inside-panadapter-span = Only spots inside the panadapter span
 spots-view-list = LIST
@@ -4923,6 +5280,12 @@ solarstate-dwarf-planets = DWARF PLANETS
 ## adsbmap (src/adsb_map.rs)
 
 adsbmap-double-click-reframe = double-click to reframe
+adsbmap-stamp = SDR Oxide · { $n } planes · { $time } UTC
+adsbmap-cell = cell: { $n } positions, mean { $rssi } dBFS
+adsbmap-cell-empty = cell: no reception
+adsbmap-cell-outside = beyond the { $km } km diagram
+adsbmap-reach = range this way: { $km } km
+adsbmap-reach-none = range this way: none yet
 
 ## aprsmap (src/aprs_map.rs)
 
@@ -5005,11 +5368,20 @@ morse-playback-available-desktop-build = Playback is available in the desktop bu
 
 adsb-row-altitude = altitude
 adsb-row-track = track
+adsb-row-heading = heading
+adsb-row-airspeed = airspeed
+adsb-row-selected-alt = selected altitude
+adsb-row-selected-heading = selected heading
+adsb-row-autopilot = autopilot
+adsb-on = on
+adsb-off = off
+adsb-row-route = route
 adsb-row-turning = turning
 adsb-row-squawk = squawk
 adsb-row-range = range
 adsb-row-position = position
 adsb-row-signal = signal
+adsb-row-carrier = carrier
 adsb-row-frames = frames
 rade-transmitting = transmitting
 decodes-odd = ODD
@@ -5182,7 +5554,9 @@ acars-mode = mode { $mode }
 
 ## adsb: messages with values (src/app/panels/adsb.rs)
 
-adsb-aircraft-3 = { $aircraft } aircraft
+adsb-aircraft-active = { $active } ({ $aircraft }) aircraft
+adsb-aircraft-active-tip = Heard in the last { $s } s (on the list)
+    First number follows gain changes within seconds
 adsb-frames = { $frames } frames
 adsb-preambles = { $preambles } preambles
 adsb-bad-crc = { $bad_crc } bad CRC
@@ -6392,3 +6766,121 @@ textmodem-psk-coded-hint =
         }, { $code }, { $bw } Hz wide
 textmodem-psk-rx-only = receive only
 textmodem-psk-rx-only-hint = This bank receives — fldigi's recording of it reads — but our own transmission of it does not read back through the same receiver yet, so transmit is refused rather than putting an unproven signal on the air.
+
+## Mode-S Beast in and out
+adsb-feed-radio = RADIO
+adsb-feed-radio-tip = Frames from this receiver, tuned to 1090 MHz
+adsb-feed-beast = BEAST
+adsb-feed-beast-tip = Frames from another program's Beast output (readsb, dump1090); needs no receiver here
+adsb-feed-state = Beast · { $state }
+adsb-beast-input = Beast input
+adsb-beast-input-tip = host:port of a Beast output, e.g. readsb on a Raspberry Pi. Port 30005 if left out. Frames from here are shown, never sent on.
+settings-servers-beast-out = Mode-S Beast output (ADS-B)
+settings-servers-beast-waiting = Waiting for the station's Beast configuration…
+settings-servers-beast-port-tip = 30005: the port every Beast reader expects
+settings-servers-beast-about = Serves every ADS-B frame this receiver decodes in Beast format, for readsb, tar1090 and the feeders. In readsb add --net-connector <this machine>,30005,beast_in. Timestamps count samples, not GPS time: good for merging, useless for MLAT. Frames received from a Beast input are never sent here.
+adsb-beast-out-on = Own Beast server running on port { $port } · { $clients }
+adsb-beast-out-off = Own Beast server off
+adsb-beast-out-failed = Own Beast server failed: { $error }
+
+## hfdl: ground stations (src/app/hfdl.rs)
+
+hfdl-stations = STATIONS
+hfdl-no-station-heard-yet = No ground station heard yet. A station's squitter repeats every ~32 s on the channels it uses; the list also fills from the network's system table once that has been received.
+hfdl-station-heard = heard { $age } ago on { $mhz } MHz
+hfdl-station-squitters = { $n } squitters
+hfdl-station-not-heard = not heard yet
+hfdl-station-channel-hint = Tune to { $mhz } MHz. Green: the station is working this channel now.
+hfdl-station-channels-unknown = Channels unknown until the network broadcasts its system table.
+hfdl-chip-stations = Used by { $stations }
+hfdl-chip-working = { $station } is working this channel — heard { $age } ago
+
+## hfdl: ACARS messages (src/app/hfdl.rs)
+
+hfdl-messages = MESSAGES
+hfdl-no-acars-yet = No ACARS message yet. Airline messages ride inside the data link between the squitters, far less often than they do on VHF; the ones heard are kept here after the decode log has rolled past them.
+hfdl-save-hfdl-acars-messages-csv = Save the ACARS messages to a CSV file
+hfdl-acars-downlink = Aircraft to ground
+hfdl-acars-uplink = Ground to aircraft
+hfdl-acars-crc-bad = CRC
+hfdl-acars-crc-bad-hint = The message's own check sequence did not match, so some of the text may be wrong. The data link frame it rode in did pass its own check.
+hfdl-acars-more = more…
+hfdl-acars-more-hint = One part of a longer message — further blocks follow.
+
+## hfdl: aircraft list (src/app/hfdl.rs)
+
+hfdl-aircraft-list = AIRCRAFT
+hfdl-no-aircraft-heard-yet = No aircraft heard yet. An aircraft shows here from its first downlink — a logon, a position report, an ACARS message — whether or not it ever sends a position for the map.
+hfdl-aircraft-position = at { $lat }, { $lon } · { $age } ago
+hfdl-aircraft-from-you = { $km } km, { $bearing }° from you
+hfdl-aircraft-logged-off = logged off
+hfdl-aircraft-no-position-hint = No position reported yet, so there is nothing to blink on the map
+hfdl-aircraft-filter-hint = Show only this aircraft's decodes: sets the filter and opens DECODES
+hfdl-col-reg = REG
+hfdl-col-flight = FLIGHT
+hfdl-col-heard = HEARD
+hfdl-col-station = STATION
+hfdl-col-mhz = MHz
+hfdl-col-snr = dB
+hfdl-col-msgs = MSGS
+hfdl-col-dist = KM
+hfdl-col-last = LAST MESSAGE
+hfdl-aircraft-sort-hint = Sort by this column; click again to reverse
+hfdl-aircraft-blink-hint = Blink this aircraft on the map
+
+## hfdl: several channels at once (src/app/hfdl.rs)
+
+hfdl-chip-multi-hint = Click to listen to this channel alone; Ctrl-click (⌘-click on a Mac) to decode it alongside the others.
+hfdl-left-out-hint = Asked for but not decoded: too far from the other channels to share their lane (200 kHz at most), or outside the receiver's window.
+hfdl-nearby = + NEARBY
+hfdl-nearby-hint = Also decode every channel close enough to share one lane with the one in force — within 200 kHz of each other and inside the receiver's window, eight at most.
+hfdl-nearby-none-hint = No other channel can share the lane: none is close enough, all eight places are taken, or the receiver's window is too narrow.
+hfdl-single-hint = Back to the one channel the dial is on
+hfdl-lane-label = CHANNELS
+
+## hfdl: auto-follow (src/app/hfdl.rs)
+
+hfdl-auto = AUTO
+hfdl-auto-hint = Find an open band by itself: stay while ground stations are heard on it, and when none has been for about a minute and a half, move to the next band — the higher ones by day and the lower ones by night at your grid square, a band some station says it is working before any other — taking all of that band's channels at once. Picking a channel by hand turns it off.
+hfdl-follow-starting = AUTO · waiting for the decoder…
+hfdl-follow-parked = AUTO · { $mhz } MHz is open — { $station } heard { $age } ago
+hfdl-follow-listening = AUTO · listening on { $mhz } MHz; the next band in { $secs } s if nothing is heard
+
+## hfdlmap: ground stations (src/hfdl_map.rs)
+
+hfdlmap-gs-heard = heard { $age } ago
+hfdlmap-gs-not-heard = not heard lately — known from the system table
+
+## hfdl: channels by band (src/app/hfdl.rs)
+
+hfdl-band-label = MHz
+hfdl-band-hint = Show the { $mhz } MHz channels. Green: a station is working one of them now; underlined: one of them is being decoded.
+
+## hfdl: calculated course and speed (src/app/hfdl.rs)
+
+hfdl-col-calc-trk = CALC TRK
+hfdl-col-calc-kt = CALC KT
+hfdl-col-calc-hint = Calculated from the aircraft's last two position reports — course over the ground and average ground speed between them. Not reported by the aircraft: HFDL's position reports carry neither.
+
+## hfdl: feeds (src/app/hfdl.rs)
+
+hfdl-feeds = FEEDS
+hfdl-feeds-hint = Send what is decoded somewhere besides this panel — to Airframes, or to programs of your own. Everything is off until you switch it on.
+hfdl-station-id = Station ID
+hfdl-station-id-hint = Stamped on every frame sent. Airframes credits your feed to it and asks for one shaped XX-YYYY-HFDL: your initials, an airport code or locator, and the mode. Letters, digits, - and _, up to 32.
+hfdl-station-id-bad = Letters, digits, - and _ only, up to 32 characters.
+hfdl-feed-airframes = Feed Airframes (feed.airframes.io)
+hfdl-feed-airframes-hint = Send every decoded frame — squitters, positions, ACARS messages — with your station ID to Airframes' HFDL ingest (TCP, port 5556), in dumphfdl's JSON, the format it reads. Your feed then appears on airframes.io under that ID. Nothing is sent while this is off.
+hfdl-feed-needs-id = Not sending: give a station ID first.
+hfdl-feed-sent = { $n } frames sent
+hfdl-feed-json = Send the same JSON to (UDP host:port, comma-separated)
+hfdl-feed-json-hint = Programs of your own that read dumphfdl's JSON — acarshub (whose HFDL input is usually UDP port 5556), a logger, a script. One datagram per frame to each, as dumphfdl's decoded:json UDP output sends them. No station ID needed. Applied when you leave the field.
+hfdl-feed-json-bad = Not a host:port: { $targets }
+hfdl-feed-sbs = BaseStation (SBS) port
+hfdl-feed-sbs-hint = Serve aircraft positions as BaseStation lines on this TCP port, for Virtual Radar Server, PlanePlotter and the like — the same lines dumphfdl's basestation output writes. 0 is off. 30003 is the usual BaseStation port; pick another if an ADS-B decoder on this computer already serves it. Applied when you leave the field.
+hfdl-feed-sbs-lan = Let other computers connect
+hfdl-feed-sbs-lan-hint = Off: only programs on this computer can connect. On: any computer that can reach this one on the network can.
+hfdl-feed-sbs-status = { $clients ->
+        [one] 1 client
+       *[other] { $clients } clients
+    } connected · { $n } positions sent

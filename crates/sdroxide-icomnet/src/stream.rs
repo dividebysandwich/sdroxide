@@ -52,6 +52,10 @@ pub(crate) struct Stream {
 
     /// Highest sequence the peer has reached, if it has sent anything.
     rx_high: Option<u16>,
+    /// Packets in a row that arrived far behind `rx_high` without being asked
+    /// for. A run of them is a peer that restarted its sequence lower down,
+    /// not stray duplicates; see [`Stream::accept`].
+    behind_run: u8,
     /// Sequences we have not seen yet, and how many times we have asked.
     missing: BTreeMap<u16, u8>,
 
@@ -108,6 +112,7 @@ impl Stream {
             send_seq: 0,
             tx_buf: VecDeque::with_capacity(timing::TX_BUFFER),
             rx_high: None,
+            behind_run: 0,
             missing: BTreeMap::new(),
             ping_seq: 0,
             last_rx: now,
@@ -292,6 +297,9 @@ impl Stream {
         };
         // Signed distance, so a wrap at 0xFFFF reads as +1 and not -65535.
         let ahead = seq.wrapping_sub(high) as i16;
+        if ahead > 0 || self.missing.contains_key(&seq) {
+            self.behind_run = 0;
+        }
         if ahead > 0 {
             if ahead as usize > timing::MAX_MISSING {
                 // Not a gap — a restarted peer or a link that dropped a burst
@@ -313,7 +321,30 @@ impl Stream {
         } else {
             // At or behind the high-water mark: only interesting if we asked
             // for it.
-            self.missing.remove(&seq).is_some()
+            if self.missing.remove(&seq).is_some() {
+                return true;
+            }
+            // Far behind, and again and again: the peer started its sequence
+            // over lower down (a wfview server restarting its audio does,
+            // #904). The jump forward above resynchronises; this is its mirror
+            // image, and without it every packet was dropped as a duplicate
+            // until the new sequence climbed past the old mark — minutes of
+            // silence with the CI-V stream still running. One stray old packet
+            // is not enough to move the mark.
+            if usize::from(ahead.unsigned_abs()) > timing::MAX_MISSING {
+                self.behind_run += 1;
+                if self.behind_run >= 3 {
+                    self.trace.note(format!(
+                        "{}: sequence went back {:#06x} → {:#06x}, resynchronising",
+                        self.tag, high, seq
+                    ));
+                    self.behind_run = 0;
+                    self.missing.clear();
+                    self.rx_high = Some(seq);
+                    return true;
+                }
+            }
+            false
         }
     }
 
@@ -449,6 +480,27 @@ mod tests {
         // Two packets missing across the wrap, not the whole space.
         let missing: Vec<u16> = s.missing.keys().copied().collect();
         assert_eq!(missing, vec![0x0000, 0xffff], "sorted, so the wrap reads low-first");
+    }
+
+    /// A peer that starts its sequence over lower down is followed once it
+    /// has done so for a few packets; one stray old packet moves nothing.
+    #[test]
+    fn a_sequence_that_restarts_lower_is_followed() {
+        let mut s = a_stream();
+        for q in 3000..3010 {
+            assert!(s.accept(q));
+        }
+        // A single far-behind packet is a stray: dropped, mark kept.
+        assert!(!s.accept(100));
+        assert!(s.accept(3010));
+        assert_eq!(s.rx_high, Some(3010));
+        // A run of them is a restart.
+        assert!(!s.accept(1));
+        assert!(!s.accept(2));
+        assert!(s.accept(3));
+        assert_eq!(s.rx_high, Some(3));
+        assert!(s.accept(4));
+        assert!(s.missing.is_empty());
     }
 
     #[test]

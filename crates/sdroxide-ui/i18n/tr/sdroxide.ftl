@@ -34,6 +34,7 @@ ui-theme-dracula = Dracula
 ui-theme-catppuccin-mocha = Catppuccin mocha
 ui-theme-catppuccin-latte = Catppuccin latte
 ui-theme-modern-minimalist = Modern minimalist
+ui-theme-simplesdr = SimpleSDR
 
 chrome-style-angled = Köşeli
 chrome-style-rectangular = Dikdörtgen
@@ -329,7 +330,7 @@ settings-added-radio-s-s-meter =
 settings-t-0-db = 0 dB
 settings-antenna-somewhere-else-no-locator = Anten başka bir yerde ve lokatör ayarlanmamış; bu yüzden bu radyonun duyduğu hiçbir şey PSK Reporter, WSPRnet ya da FreeDV Reporter'a bildirilmez. Oradan bildirmek için alıcının lokatörünü yukarıya yazın.
 settings-ranges-are-mhz-low-high = Aralıklar MHz cinsindendir, alt-üst, virgülle ayrılmış: 144-146, 430-440 — yani 144000000-146000000 Hz ve 430000000-440000000 Hz. Skala frekanslarıdır: bir dönüştürücü kayması bunları taşımaz. Yukarıdaki dönüştürücü kayması, hertz cinsinden alandır. Aygıtın kendisi hakkında bildirdiğini kullanmak için bir aralığı boş bırakın; hiçbir şey bildirmeyen bir aygıtın sözü alınır.
-settings-careful-rtl-sdr-blog-v4 = Bir RTL-SDR'de dikkatli olun: Blog V4, 28,8 MHz'in altında kendi başına yukarı dönüştürür; donanımı oraya düşüren negatif bir kayma iki kez kayar.
+settings-careful-rtl-sdr-blog-v4 = Bir RTL-SDR'de dikkatli olun: Blog V4/V4L, 28,8 MHz'in altında kendi başına yukarı dönüştürür; donanımı oraya düşüren negatif bir kayma iki kez kayar.
 settings-transmit-audio = Yayın sesi
 settings-use = kullanımda
 settings-every-stage-off = her kademe kapalı
@@ -1404,7 +1405,7 @@ settings-radio-applies-immediately-no-reconnect-tuner = Hemen uygulanır — yen
 settings-radio-crystal-error-parts-per-million = Milyonda kısım cinsinden kristal hatası. RUST_LOG=sdroxide_rtlsdr=debug ile çalıştırın; günlük, yaklaşık 20 saniye sonra ölçülen saat hatasını yazar — girilecek sayı budur. Hemen uygulanır.
 settings-radio-hf-reception = HF alımı
 settings-radio-tuner-itself-starts-24-mhz =
-    Tuner kendisi 24 MHz'de başlar. Bir RTL-SDR Blog V4 bunun altını donanımda yukarı dönüştürür; diğer dongle'lar HF'e yalnızca ADC'yi doğrudan örnekleyerek, V3'ün HF portu üzerinden ulaşır. Otomatik, 24 MHz'in altındaki her şeyi ADC'ye, üstündekini tuner'a verir.
+    Tuner kendisi 24 MHz'de başlar. Bir RTL-SDR Blog V4/V4L bunun altını donanımda yukarı dönüştürür; diğer dongle'lar HF'e yalnızca ADC'yi doğrudan örnekleyerek, V3'ün HF portu üzerinden ulaşır. Otomatik, 24 MHz'in altındaki her şeyi ADC'ye, üstündekini tuner'a verir.
 
     Doğrudan örnekleme, 17 m ve 15 m dahil her HF bandını kapsar — ADC'nin ikinci Nyquist bölgesinde, doğru yönde gelirler. Ancak ADC'nin girişini hiçbir şey filtrelemez; bu yüzden 28,8 MHz eksi skala neyse, onlarla birlikte gelir: 17 m'nin altında 10,7 MHz, 15 m'nin altında 7,726 MHz.
 
@@ -2024,6 +2025,8 @@ topbar-radio = RADYO
 topbar-tune-voice-keyer-drive-mic = Ayar, sesli keyer ve sürüş ve mikrofon seviyeleri
 topbar-transmit = YAYIN
 topbar-tune = {" "}AYAR{" "}
+topbar-two-tone = {" "}2T{" "}
+topbar-two-tone-hover = İki ton testi: 700 Hz ve 1900 Hz'i Ayar seviyesinde birlikte, tekrar tıklanana kadar gönderir. Zarfı sıfırdan tama salındığı için bir yükselticinin taşmasını ikinci bir alıcıda açıkça gösterir ve PureSignal'in en hızlı öğrendiği sinyaldir — sabit bir taşıyıcı ona yalnızca bir nokta öğretir. Yapay yük kullanın.
 topbar-panadapter-two-layers-their-speeds = Panadaptör — iki katmanı, hızları ve ayrıntısı, tepe tutma — artı şelale kontrastı, FFT boyutu ve skimmer'lar
 topbar-display = EKRAN
 topbar-logbook-spots-awards-memories-scanner = Günlük, spotlar, ödüller, hafızalar, tarayıcı, ayarlar ve kılavuz
@@ -2283,7 +2286,6 @@ topbar-recent = SON
 topbar-recent-empty =
     Bir yerde 3 sn sonra dolar
 topbar-mode = MOD
-topbar-digital = DİJİTAL
 
 ## Üst çubuk: Sistem kutusunun pencere çipleri.
 
@@ -4080,7 +4082,6 @@ scanner-move-don-t-stop-channel = Devam edin ve bu kanalda bir daha durmayın
 adsb-starting-ads-b-decoder = ADS-B çözücüsü başlatılıyor…
 adsb-ads-b = ADS-B
 adsb-t-1090-mhz-mode-s = 1090 MHz Mode S
-adsb-tune-receiver-1090-000-mhz = Alıcıyı dünya çapındaki ADS-B aşağı bağlantısı olan 1090,000 MHz'e ayarlayın. Yalnızca bir kanal vardır.
 adsb-setup = KURULUM
 adsb-timeouts-trail-length-how-far = Zaman aşımları, iz uzunluğu ve hız vektörlerinin ne kadar ileriye uzandığı
 adsb-aircraft = UÇAKLAR
@@ -4097,7 +4098,7 @@ adsb-last-frame-accepted-aircraft = Bu uçaktan kabul edilen son çerçeve
 adsb-ads-b-setup = ADS-B Kurulumu
 adsb-drop-map-after = Haritadan şundan sonra düşür
 adsb-without-position-report = konum raporu olmadan
-adsb-past-aircraft-comes-off-map = Bundan sonra uçak haritadan çıkar ve satırı griye döner. Soluk değildir: eski bir konumdaki soluk bir kare, hâlâ bir uçağın nerede olduğu iddiasıdır, gerçek olanlarla aynı mürekkeple.
+adsb-past-aircraft-comes-off-map = Bundan sonra uçak haritadan çıkar ve satırı griye döner. Soluk değildir: eski bir konumdaki soluk bir simge, hâlâ bir uçağın nerede olduğu iddiasıdır, gerçek olanlarla aynı mürekkeple.
 adsb-drop-list-after = Listeden şundan sonra düşür
 adsb-nothing-heard-all = hiçbir şey duyulmadan
 adsb-trail-length = İz uzunluğu
@@ -5004,7 +5005,6 @@ acars-mode = mod { $mode }
 
 ## adsb: değerli iletiler (src/app/panels/adsb.rs)
 
-adsb-aircraft-3 = { $aircraft } uçak
 adsb-frames = { $frames } çerçeve
 adsb-preambles = { $preambles } ön ek
 adsb-bad-crc = { $bad_crc } hatalı CRC
@@ -6035,3 +6035,104 @@ textmodem-psk-coded-hint =
 topbar-sk-filter-after-nr-hint = SK, RNN/DFNR'den sonra — dolayısıyla AGC'den de sonra: filtrenin aldığı geri gelmez (yanındaki güçlendirmeye bak); kapalı: seviyeyi geri getiren AGC'den önce
 topbar-sk-filter-boost-hint = SK filtresinden sonra güçlendirme, 0–18 dB (5 dB), tam ölçeğin altında yumuşak sınırlı: NR'den sonra filtrenin aldığı seviyeyi kimse geri getirmez
 topbar-sk-filter-boost-before-nr = NR'den önce AGC seviyeyi geri getirir; güçlendirme yalnızca NR'den sonra çalışır
+
+## hfdl: yer istasyonları (src/app/hfdl.rs)
+
+hfdl-stations = İSTASYONLAR
+hfdl-no-station-heard-yet = Henüz hiçbir yer istasyonu duyulmadı. Bir istasyonun squitter'ı, kullandığı kanallarda yaklaşık 32 sn'de bir tekrarlanır; liste, ağın sistem tablosu alındığında da dolar.
+hfdl-station-heard = { $mhz } MHz'de { $age } önce duyuldu
+hfdl-station-squitters = { $n } squitter
+hfdl-station-not-heard = henüz duyulmadı
+hfdl-station-channel-hint = { $mhz } MHz'e ayarlayın. Yeşil: istasyon şu anda bu kanalda çalışıyor.
+hfdl-station-channels-unknown = Ağ sistem tablosunu yayınlayana kadar kanallar bilinmiyor.
+hfdl-chip-stations = Kullanan: { $stations }
+hfdl-chip-working = { $station } bu kanalda çalışıyor — { $age } önce duyuldu
+
+## hfdl: ACARS iletileri (src/app/hfdl.rs)
+
+hfdl-messages = İLETİLER
+hfdl-no-acars-yet = Henüz ACARS iletisi yok. Havayolu iletileri squitter'lar arasındaki veri bağlantısının içinde taşınır; bu, VHF'dekine göre çok daha seyrektir. Duyulanlar, çözüm günlüğü onları geride bıraktıktan sonra burada saklanır.
+hfdl-save-hfdl-acars-messages-csv = ACARS iletilerini bir CSV dosyasına kaydedin
+hfdl-acars-downlink = Uçaktan yere
+hfdl-acars-uplink = Yerden uçağa
+hfdl-acars-crc-bad = CRC
+hfdl-acars-crc-bad-hint = İletinin kendi denetim dizisi eşleşmedi, bu yüzden metnin bir kısmı yanlış olabilir. İletinin taşındığı veri bağlantısı çerçevesi ise kendi denetimini geçti.
+hfdl-acars-more = devamı…
+hfdl-acars-more-hint = Daha uzun bir iletinin bir parçası — devam eden bloklar var.
+
+## hfdl: uçak listesi (src/app/hfdl.rs)
+
+hfdl-aircraft-list = UÇAKLAR
+hfdl-no-aircraft-heard-yet = Henüz hiçbir uçak duyulmadı. Bir uçak, ilk aşağı bağlantısından — bir oturum açma, bir konum raporu, bir ACARS iletisi — itibaren burada görünür; haritaya hiç konum göndermese de.
+hfdl-aircraft-position = { $lat }, { $lon } konumunda · { $age } önce
+hfdl-aircraft-from-you = { $km } km, sizden { $bearing }°
+hfdl-aircraft-logged-off = oturumu kapatıldı
+hfdl-aircraft-no-position-hint = Henüz konum bildirilmedi, bu yüzden haritada yanıp sönecek bir şey yok
+hfdl-aircraft-filter-hint = Yalnızca bu uçağın çözümlerini gösterir: filtreyi ayarlar ve ÇÖZÜMLER'i açar
+hfdl-col-reg = TESCİL
+hfdl-col-flight = UÇUŞ
+hfdl-col-heard = DUYULDU
+hfdl-col-station = İSTASYON
+hfdl-col-mhz = MHz
+hfdl-col-snr = dB
+hfdl-col-msgs = İLT.
+hfdl-col-dist = KM
+hfdl-col-last = SON İLETİ
+hfdl-aircraft-sort-hint = Bu sütuna göre sırala; tersine çevirmek için yeniden tıklayın
+hfdl-aircraft-blink-hint = Bu uçağı haritada yanıp söndür
+
+## hfdl: aynı anda birden çok kanal (src/app/hfdl.rs)
+
+hfdl-chip-multi-hint = Yalnızca bu kanalı dinlemek için tıklayın; diğerleriyle birlikte çözmek için Ctrl-tıklama (Mac'te ⌘-tıklama) yapın.
+hfdl-left-out-hint = İstendi ama çözülmedi: diğer kanallarla şeridi paylaşamayacak kadar uzak (en fazla 200 kHz) ya da alıcının penceresinin dışında.
+hfdl-nearby = + YAKIN
+hfdl-nearby-hint = Geçerli kanalla bir şeridi paylaşacak kadar yakın olan her kanalı da çözün — birbirlerinden 200 kHz'den az uzakta ve alıcının penceresi içinde, en fazla sekiz tane.
+hfdl-nearby-none-hint = Hiçbir başka kanal şeridi paylaşamaz: hiçbiri yeterince yakın değil, sekiz yerin hepsi dolu ya da alıcının penceresi çok dar.
+hfdl-single-hint = Kadranın üzerinde olduğu tek kanala geri dön
+hfdl-lane-label = KANALLAR
+
+## hfdl: otomatik izleme (src/app/hfdl.rs)
+
+hfdl-auto = AUTO
+hfdl-auto-hint = Açık bir bandı kendi kendine bulun: üzerinde yer istasyonları duyulduğu sürece orada kalır; yaklaşık bir buçuk dakikadır hiçbiri duyulmadığında, bir sonraki banda geçer — gündüz daha yüksek, gece daha alçak olanlara, kareniz esas alınarak; bir istasyonun çalıştığını bildirdiği bant ise diğerlerinden önce gelir — ve o bandın tüm kanallarını birden alır. Elle bir kanal seçmek bunu kapatır.
+hfdl-follow-starting = AUTO · çözücü bekleniyor…
+hfdl-follow-parked = AUTO · { $mhz } MHz açık — { $station } { $age } önce duyuldu
+hfdl-follow-listening = AUTO · { $mhz } MHz'de dinleniyor; hiçbir şey duyulmazsa { $secs } sn sonra sonraki bant
+
+## hfdlmap: yer istasyonları (src/hfdl_map.rs)
+
+hfdlmap-gs-heard = { $age } önce duyuldu
+hfdlmap-gs-not-heard = son zamanlarda duyulmadı — sistem tablosundan biliniyor
+
+## hfdl: banda göre kanallar (src/app/hfdl.rs)
+
+hfdl-band-label = MHz
+hfdl-band-hint = { $mhz } MHz kanallarını göster. Yeşil: bunlardan birinde şu anda bir istasyon çalışıyor; altı çizili: bunlardan biri çözülüyor.
+
+## hfdl: hesaplanan rota ve hız (src/app/hfdl.rs)
+
+hfdl-col-calc-trk = HES. ROTA
+hfdl-col-calc-kt = HES. KT
+hfdl-col-calc-hint = Uçağın son iki konum raporundan hesaplanır — yer üzerindeki rota ve ikisi arasındaki ortalama yer hızı. Uçak tarafından bildirilmez: HFDL konum raporları ikisini de içermez.
+
+## hfdl: akışlar (src/app/hfdl.rs)
+
+hfdl-feeds = AKIŞLAR
+hfdl-feeds-hint = Çözülenleri bu panel dışında başka bir yere gönderin — Airframes'e ya da kendi programlarınıza. Siz açana kadar hepsi kapalıdır.
+hfdl-station-id = İstasyon kimliği
+hfdl-station-id-hint = Gönderilen her çerçeveye eklenir. Airframes akışınızı bu kimliğe atfeder ve XX-YYYY-HFDL biçiminde bir kimlik ister: baş harfleriniz, bir havalimanı kodu ya da yer belirteci ve mod. Harfler, rakamlar, - ve _, en fazla 32.
+hfdl-station-id-bad = Yalnızca harfler, rakamlar, - ve _, en fazla 32 karakter.
+hfdl-feed-airframes = Airframes'e gönder (feed.airframes.io)
+hfdl-feed-airframes-hint = Çözülen her çerçeveyi — squitter'ları, konumları, ACARS iletilerini — istasyon kimliğinizle birlikte Airframes'in HFDL girişine (TCP, 5556 numaralı bağlantı noktası) dumphfdl'in okuduğu biçimde, dumphfdl'in JSON'u olarak gönderir. Akışınız bu kimlikle airframes.io'da görünür. Bu kapalıyken hiçbir şey gönderilmez.
+hfdl-feed-needs-id = Gönderilmedi: önce bir istasyon kimliği girin.
+hfdl-feed-sent = { $n } çerçeve gönderildi
+hfdl-feed-json = Aynı JSON'u şuraya gönder (UDP host:port, virgülle ayrılmış)
+hfdl-feed-json-hint = dumphfdl'in JSON'unu okuyan kendi programlarınız — acarshub (HFDL girişi genellikle 5556 numaralı UDP bağlantı noktasıdır), bir kayıt aracı, bir betik. Her birine çerçeve başına bir datagram, dumphfdl'in decoded:json UDP çıktısının gönderdiği gibi. İstasyon kimliği gerekmez. Alanı terk ettiğinizde uygulanır.
+hfdl-feed-json-bad = Bir host:port değil: { $targets }
+hfdl-feed-sbs = BaseStation bağlantı noktası (SBS)
+hfdl-feed-sbs-hint = Uçak konumlarını bu TCP bağlantı noktasında BaseStation satırları olarak sunar; Virtual Radar Server, PlanePlotter ve benzerleri için — dumphfdl'in basestation çıktısının yazdığı satırların aynısı. 0 kapalıdır. 30003, her zamanki BaseStation bağlantı noktasıdır; bu bilgisayardaki bir ADS-B çözücü onu zaten sunuyorsa başka bir tane seçin. Alanı terk ettiğinizde uygulanır.
+hfdl-feed-sbs-lan = Diğer bilgisayarların bağlanmasına izin ver
+hfdl-feed-sbs-lan-hint = Kapalı: yalnızca bu bilgisayardaki programlar bağlanabilir. Açık: bu bilgisayara ağ üzerinden ulaşabilen herhangi bir bilgisayar bağlanabilir.
+hfdl-feed-sbs-status = { $clients ->
+       *[other] { $clients } istemci bağlı
+    } · { $n } konum gönderildi

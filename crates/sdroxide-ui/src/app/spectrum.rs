@@ -87,6 +87,9 @@ const FIT_DRIFT_DB: f32 = 3.0;
 /// so a stalled decoder (dead band, band change) doesn't leave labels pinned to
 /// the waterfall for good.
 const FT8_LABEL_MAX_AGE_SECS: i64 = 45;
+/// How long an aircraft's label stays on its carrier trace after its last
+/// frame, fading from five seconds on.
+const ADSB_LABEL_FADE_SECS: i64 = 30;
 
 /// Stable per-callsign id for the FT8 overlay boxes (keeps a station's box in
 /// place across slots).
@@ -251,6 +254,27 @@ const SNR_LABEL_REACH_HZ: f64 = 2_000.0;
 fn snr_label_off_db(on: f32) -> f32 {
     on - (on / 2.0).clamp(0.0, 1.5)
 }
+/// The spots to label, one per name and frequency: the first of each stays.
+///
+/// The broadcast schedule lists a transmission once per language, target area
+/// or day mask, and several of those rows are often on the air at once. Each
+/// becomes a spot with the same name on the same frequency, and they stacked
+/// as identical labels over one signal. Measured on EiBi B26 at 07:50 UTC:
+/// 55 frequencies with a repeated name, 79 labels too many, "VFF Iqaluit
+/// Radio" on 4363 kHz seven times. The twins carry nothing the first does
+/// not show. "Same frequency" is the 100 Hz bucket `Spot::make_id` uses;
+/// "same text" is the label's text, byte for byte. The SPOTS list keeps all
+/// rows: there the language and target column tell them apart.
+// Why: HDZ 2026-11-18: "die Schilder kurz ausmisten … die mit gleicher
+//      Frequenz und textuell gleichem Inhalt".
+fn one_label_each<'a>(spots: impl Iterator<Item = &'a Spot>) -> impl Iterator<Item = &'a Spot> {
+    let mut seen = std::collections::HashSet::new();
+    // Per kind: a cluster and a POTA spot of one call on one frequency are
+    // two reports, and each kind has its own age cut and colour.
+    spots
+        .filter(move |s| seen.insert((s.kind, s.call.as_str(), (s.freq_hz / 100.0).round() as i64)))
+}
+
 /// How often the labels are decided anew, seconds.
 const SNR_LABEL_RECHECK_S: f32 = 2.0;
 /// How long a label takes to fade in or out, seconds.
@@ -782,6 +806,47 @@ impl SdroxideApp {
         (spots, alpha)
     }
 
+    /// In ADS-B, one box per aircraft on its carrier trace: the callsign (or
+    /// the address until one has arrived) where the transponder's carrier
+    /// sits, solid while it is being heard and fading over half a minute
+    /// after. Off with the LABELS switch, like every other label.
+    pub(in crate::app) fn adsb_overlay(&self) -> (Vec<SkimmerSpot>, Vec<f32>) {
+        let mut spots = Vec::new();
+        let mut alpha = Vec::new();
+        if !self.view.spot_labels {
+            return (spots, alpha);
+        }
+        let Some(st) = self.adsb_status.as_ref() else {
+            return (spots, alpha);
+        };
+        let now = now_unix();
+        for a in &st.aircraft {
+            let Some(hz) = a.carrier_hz else { continue };
+            let age = (now - a.last_at).max(0);
+            if age > ADSB_LABEL_FADE_SECS {
+                continue;
+            }
+            let call = a.callsign.trim();
+            let label = if call.is_empty() { format!("{:06X}", a.icao) } else { call.to_string() };
+            spots.push(SkimmerSpot {
+                id: u64::from(a.icao),
+                kind: SkimmerKind::Cw,
+                freq_hz: hz,
+                callsign: Some(label),
+                text: String::new(),
+                snr_db: a.rssi_dbfs.round() as i16,
+                wpm: 0,
+                active: age <= 5,
+            });
+            alpha.push(if age <= 5 {
+                1.0
+            } else {
+                (1.0 - (age - 5) as f32 / (ADSB_LABEL_FADE_SECS - 5) as f32).max(0.15)
+            });
+        }
+        (spots, alpha)
+    }
+
     /// Reuse the skimmer overlay to mark FT8/FT4 stations: one box per decoded
     /// callsign at its audio frequency (`dial + audio_hz`). The newest slot is
     /// solid; the previous slot is dimmed. Clicking a box sets the audio offset.
@@ -979,18 +1044,29 @@ impl SdroxideApp {
         if !self.view.spot_labels {
             return (spots, alpha);
         }
-        for s in self.all_spots() {
-            if !self.spot_visible(s) {
-                continue;
-            }
+        // One label per name and frequency (see `one_label_each`), picked
+        // before the S/N judgement so a shared id's fade is not stepped once
+        // per twin.
+        for s in one_label_each(self.all_spots().filter(|s| self.spot_visible(s))) {
             let carrier = ["AM", "CW"].iter().any(|m| s.mode.eq_ignore_ascii_case(m));
-            let snr_alpha = self.snr_label_alpha(s.id, s.freq_hz, carrier, recheck, step);
+            // A TCI label is placed by a program that has already decided it
+            // matters — a decoder's result for a burst long gone, or a note to
+            // the operator with no signal under it at all. Judging it by the S/N
+            // at its frequency would hide nearly every one of them.
+            let snr_alpha = if s.kind == SpotKind::Tci {
+                1.0
+            } else {
+                self.snr_label_alpha(s.id, s.freq_hz, carrier, recheck, step)
+            };
             if snr_alpha < 0.15 {
                 continue;
             }
             // A scheduled broadcast station has no age: the fade and the
             // max-age cut are both about how stale a *report* is, and a
             // transmitter that is on the air now is not a stale report.
+            // A kind with a lifetime of its own (TCI's ten minutes) fades over
+            // the last quarter of that instead of the feeds' max age.
+            let max_age = s.kind.lifetime_secs().unwrap_or(max_age);
             let a = if s.kind == SpotKind::Broadcast {
                 1.0
             } else {
@@ -1392,6 +1468,40 @@ fn focus_hz(mode: Mode, dial_hz: f64, audio_hz: f32, cw_qrg: bool) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    /// One label per name and frequency: three rows of one broadcaster on one
+    /// channel (other language, other target) give one label; the same name
+    /// 5 kHz up, another name on the same channel and a twin 30 Hz off (one
+    /// 100 Hz bucket) are told apart as they should be. Order is kept.
+    #[test]
+    fn twins_on_one_frequency_give_one_label() {
+        let st = |name: &str, khz: f64, lang: &str| {
+            serde_json::from_value::<sdroxide_types::BroadcastStation>(serde_json::json!({
+                "name": name, "freq_khz": khz, "lang": lang,
+            }))
+            .unwrap()
+            .to_spot(0)
+        };
+        let spots = [
+            st("China Radio International", 7345.0, "E"),
+            st("China Radio International", 7345.0, "F"),
+            st("Radio Romania", 7345.0, "E"),
+            st("China Radio International", 7345.0, "R"),
+            st("China Radio International", 7350.0, "E"),
+            st("Radio Romania", 7345.03, "D"),
+        ];
+        let kept: Vec<(&str, f64, &str)> = super::one_label_each(spots.iter())
+            .map(|s| (s.call.as_str(), s.freq_hz, s.comment.as_str()))
+            .collect();
+        assert_eq!(
+            kept,
+            vec![
+                ("China Radio International", 7_345_000.0, "E"),
+                ("Radio Romania", 7_345_000.0, "E"),
+                ("China Radio International", 7_350_000.0, "E"),
+            ]
+        );
+    }
+
     /// The S/N filter's reading of the guide: a carrier 6 dB up 1 kHz off the
     /// spot is found, plain noise reads 0 dB, and a guide with too few frames
     /// gives no verdict yet.

@@ -132,13 +132,18 @@ pub fn page(mut all: Vec<Raw>, offset: u32, count: u32) -> (Vec<Raw>, u32) {
 
 /// Every directory a kind is read from, the one it is written to first.
 fn read_dirs(kind: ImageKind) -> Vec<PathBuf> {
+    // After the current store, the built-in one when the operator has moved the
+    // store elsewhere: what was received before the move has to stay visible, or
+    // choosing a folder looks like data loss to the person who did it.
+    let moved = sdroxide_config::picture_default_rx_dir(kind);
     match kind {
-        ImageKind::Sstv => sdroxide_config::image_rx_dir("sstv").into_iter().collect(),
+        ImageKind::Sstv => sdroxide_config::image_rx_dir("sstv").into_iter().chain(moved).collect(),
         // The legacy directory is read and never written. A collection saved
         // before charts moved to the pictures directory has to stay visible, or
         // the move looks like data loss to the person it happened to.
         ImageKind::Wefax => sdroxide_config::wefax_rx_dir()
             .into_iter()
+            .chain(moved)
             .chain(sdroxide_config::wefax_legacy_rx_dir())
             .collect(),
     }

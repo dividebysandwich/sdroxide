@@ -1322,4 +1322,33 @@ pub enum Command {
     /// [`Command::ScanNext`], and turns it back upwards). Appended: postcard
     /// numbers variants by position.
     ScanBack,
+    /// Mode-S Beast in and out: the output server and the panel's feed. Kept
+    /// in `beast.json`, answered by [`crate::RadioEvent::BeastStatus`] and the
+    /// station config. Appended last, for the usual reason.
+    SetBeastConfig(crate::BeastConfig),
+
+    /// Which sidebands SAM hears for a receiver, and MRC's averaging time
+    /// (see `RxState::sam_sideband`, `RxState::sam_mrc_tau_s`). Appended:
+    /// postcard numbers variants by position.
+    SetSamSideband {
+        rx: RxId,
+        sideband: crate::SamSideband,
+        tau_s: f32,
+    },
+
+    /// Where decoded HFDL is fed besides the panel. Kept in
+    /// `hfdl_outputs.json`, echoed back in [`crate::RadioState::hfdl_outputs`].
+    /// Appended last, for the usual reason.
+    SetHfdlOutputs(crate::HfdlOutputs),
+
+    /// Where the station saves received SSTV pictures and weather charts
+    /// (`picture_folders.json`) — a path on the machine the engine runs on.
+    /// Echoed back in [`crate::StationConfig::picture_folders`]. Appended last,
+    /// for the usual reason.
+    SetPictureFolders(Box<crate::PictureFolders>),
+
+    /// Make TUNE send the two-tone test signal (`true`) or a steady carrier
+    /// (`false`) — see [`crate::TxState::two_tone`]. Does not key anything by
+    /// itself: [`Command::SetTune`] does that. Appended for the usual reason.
+    SetTuneTwoTone(bool),
 }

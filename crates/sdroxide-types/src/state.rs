@@ -165,6 +165,66 @@ pub struct RxState {
     /// a phase jump to count as a slip. Higher repairs more.
     #[serde(default = "fm_decrackle_default_dip")]
     pub fm_decrackle_dip: f32,
+    /// What SAM hears after its carrier loop: both sidebands as always, the
+    /// two combined frequency by frequency against selective fading (MRC, the
+    /// start), or one sideband alone against an interferer on the other side.
+    /// Ignored outside SAM.
+    #[serde(default)]
+    pub sam_sideband: SamSideband,
+    /// How long MRC averages each sideband's quality, in seconds: one of
+    /// [`SAM_MRC_TAU_CHOICES_S`]. Shorter follows fast fading, longer is
+    /// steadier. Ignored by DSB, USB and LSB.
+    #[serde(default = "sam_mrc_default_tau")]
+    pub sam_mrc_tau_s: f32,
+}
+
+/// MRC's averaging times on offer, and the one to start with.
+// Why three steps, not a field: HDZ 2026-11-16, after a τ field from 0.05 to
+//      1 s: "der Zeitregler hat kaum Auswirkungen, 0.2 sek wäre universell",
+//      then "die Zeiten kannst du mit 0.2 sek und 0.5 und 1 sek togglebar
+//      machen". On the bench 0.1 to 0.25 s lay within 0.23 dB of each other.
+pub const SAM_MRC_TAU_CHOICES_S: [f32; 3] = [0.2, 0.5, 1.0];
+pub const SAM_MRC_DEFAULT_TAU_S: f32 = 0.2;
+
+fn sam_mrc_default_tau() -> f32 {
+    SAM_MRC_DEFAULT_TAU_S
+}
+
+/// The offered averaging time nearest to `tau_s` (the start for NaN).
+pub fn sam_mrc_tau_snap(tau_s: f32) -> f32 {
+    if !tau_s.is_finite() {
+        return SAM_MRC_DEFAULT_TAU_S;
+    }
+    SAM_MRC_TAU_CHOICES_S
+        .into_iter()
+        .min_by(|a, b| (a - tau_s).abs().total_cmp(&(b - tau_s).abs()))
+        .unwrap_or(SAM_MRC_DEFAULT_TAU_S)
+}
+
+/// SAM's sidebands after the carrier loop. All but [`SamSideband::Both`] go
+/// through the per-frequency combiner and the level-steered carrier loop
+/// (`sdroxide_dsp` `sam_mrc`), about 27 ms of delay; `Both` is plain SAM, the
+/// unchanged detector.
+//
+// Why the four: HDZ 2026-11-16: "neben SAM MRC noch SAM USB und SAM LSB, damit
+//      wir da alle SAM-Varianten haben".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum SamSideband {
+    /// Both sidebands with equal weight: plain SAM.
+    Both,
+    /// Both, combined per frequency by how well each came through.
+    #[default]
+    Mrc,
+    /// The upper sideband alone.
+    Upper,
+    /// The lower sideband alone.
+    Lower,
+}
+
+impl SamSideband {
+    /// Display order of the picker.
+    pub const ALL: [SamSideband; 4] =
+        [SamSideband::Both, SamSideband::Mrc, SamSideband::Upper, SamSideband::Lower];
 }
 
 /// FM-Decrackle sensitivity: the bench optimum, and the range the NR menu
@@ -267,6 +327,8 @@ impl RxState {
             fm_decrackle: true,
             fm_deemph: true,
             fm_decrackle_dip: FM_DECRACKLE_DEFAULT_DIP,
+            sam_sideband: SamSideband::Mrc,
+            sam_mrc_tau_s: SAM_MRC_DEFAULT_TAU_S,
         }
     }
 }
@@ -325,6 +387,18 @@ pub struct TxState {
     /// sends a wild figure gets a sane one back.
     #[serde(default)]
     pub cessb_db: f32,
+    /// TUNE sends the classic two-tone test signal — 700 Hz and 1900 Hz of
+    /// equal amplitude in the sideband the dial is on — instead of a steady
+    /// carrier (issue #525).
+    ///
+    /// The signal amplifier linearity is judged with: its envelope swings from
+    /// zero to full every beat, so every point on the amplifier's curve is
+    /// visited, and the intermodulation products land at known spacings either
+    /// side. It is also what PureSignal needs to learn from — a steady carrier
+    /// has one amplitude and so teaches it one point. Keyed and levelled
+    /// exactly as TUNE is; this only chooses the waveform.
+    #[serde(default)]
+    pub two_tone: bool,
 }
 
 /// The most controlled-envelope compression the control offers, in decibels.
@@ -675,6 +749,10 @@ pub struct RadioState {
     /// postcard numbers fields by position.
     #[serde(default)]
     pub sonde: crate::SondeSettings,
+    /// Where decoded HFDL is fed besides the panel (Airframes, …). Kept in
+    /// `hfdl_outputs.json`. Appended last: postcard numbers fields by position.
+    #[serde(default)]
+    pub hfdl_outputs: crate::HfdlOutputs,
 }
 
 /// Where a radio's built-in antenna tuner stands, as the radio reports it.
@@ -785,6 +863,7 @@ impl Default for RadioState {
             playback: None,
             wxsat: crate::WxsatSettings::default(),
             sonde: crate::SondeSettings::default(),
+            hfdl_outputs: crate::HfdlOutputs::default(),
         }
     }
 }

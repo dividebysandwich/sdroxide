@@ -252,7 +252,17 @@ impl Cli {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Colour only where it is drawn as colour. A console started minimised on
+    // Windows is the legacy conhost, which prints the escape codes as text
+    // unless they are switched on, and a log redirected to a file wants none
+    // (#914).
+    #[cfg(windows)]
+    let ansi = std::io::IsTerminal::is_terminal(&std::io::stdout())
+        && nu_ansi_term::enable_ansi_support().is_ok();
+    #[cfg(not(windows))]
+    let ansi = std::io::IsTerminal::is_terminal(&std::io::stdout());
     tracing_subscriber::fmt()
+        .with_ansi(ansi)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
@@ -404,12 +414,19 @@ fn boot_radios(cli: &mut Cli, settings: &Settings) -> anyhow::Result<Vec<RadioBo
         if let Some(&owner) = owners.get(&slot.id) {
             let mut c = secondary_cli(cli);
             let initial_mode = c.apply_session(store.load_session());
-            tracing::info!("radio {} is radio {}'s panadapter receiver", slot.id + 1, owner + 1);
+            tracing::info!(
+                "radio {} is the panadapter receiver of {}",
+                slot.id + 1,
+                radio_label(owner)
+            );
             radios.push(RadioBoot {
                 id: slot.id,
                 name: slot.name.clone(),
                 enabled: slot.enabled,
-                source: Box::new(null_source::NullSource::attached(c.center_hz(), owner)),
+                source: Box::new(null_source::NullSource::attached(
+                    c.center_hz(),
+                    &radio_label(owner),
+                )),
                 // Says which radio has it, so the shell can keep this one off
                 // the tab strip and name the borrower.
                 caps: DeviceCaps { lent_to: Some(owner), ..synthetic_caps("Panadapter receiver") },
@@ -569,7 +586,7 @@ fn reopen_factory_for(
         match lent_answer(panadapter_owners().get(&id).copied(), &mut was_lent) {
             Some(Ok(owner)) => {
                 return Ok((
-                    Box::new(null_source::NullSource::attached(c.center_hz(), owner))
+                    Box::new(null_source::NullSource::attached(c.center_hz(), &radio_label(owner)))
                         as Box<dyn IqSource>,
                     DeviceCaps { lent_to: Some(owner), ..synthetic_caps("Panadapter receiver") },
                 ));
@@ -614,7 +631,7 @@ fn lent_answer(owner: Option<u32>, was_lent: &mut bool) -> Option<Result<u32, St
         return None;
     };
     if std::mem::replace(was_lent, true) {
-        Some(Err(format!("this radio is radio {}'s panadapter receiver", owner + 1)))
+        Some(Err(format!("this radio is the panadapter receiver of {}", radio_label(owner))))
     } else {
         Some(Ok(owner))
     }
@@ -1290,6 +1307,7 @@ fn converter_plan(radio: &RadioConfig) -> sdroxide_radio::ConverterPlan {
             tx_offset_hz: tx_offset,
             // A ceiling of 1.0 is no ceiling; anything less is one.
             tx_drive: (x.tx_drive < 1.0).then(|| x.tx_drive.clamp(0.0, 1.0)),
+            rf_out: x.elad_rf_out,
         });
         tracing::info!(
             "transverter {}: {:.3}–{:.3} MHz on the dial, hardware {:.6} MHz {}; transmit {}",
@@ -1324,6 +1342,7 @@ fn converter_plan(radio: &RadioConfig) -> sdroxide_radio::ConverterPlan {
             rx_offset_hz: offset,
             tx_offset_hz: tx_offset,
             tx_drive: None,
+            rf_out: false,
         });
     }
     sdroxide_radio::ConverterPlan::from_steps(steps)
@@ -1395,6 +1414,21 @@ fn open_paired_source(
 /// Read once at boot from every scope's `radio.json`. Such a radio does not
 /// open its own device — the radio that borrowed it does — so it comes up on
 /// the stand-in source instead, with a tab that says as much.
+/// A radio as the operator knows it, for messages: the name they gave it, or
+/// "radio N" by its place in the tab order when it has none. The roster id is
+/// never shown on its own: ids are not positions, and a station whose ids run
+/// 0, 5, 6, 7 read "radio 7" for the sixth radio (#913).
+fn radio_label(id: u32) -> String {
+    let roster = sdroxide_config::load_radios();
+    if let Some(slot) = roster.radios.iter().find(|s| s.id == id) {
+        if !slot.name.trim().is_empty() {
+            return format!("\"{}\"", slot.name.trim());
+        }
+    }
+    let place = roster.radios.iter().position(|s| s.id == id).map_or(id, |p| p as u32);
+    format!("radio {}", place + 1)
+}
+
 fn panadapter_owners() -> std::collections::HashMap<u32, u32> {
     let roster = sdroxide_config::load_radios();
     let mut owners = std::collections::HashMap::new();
@@ -1796,29 +1830,8 @@ fn open_rx888_source(
 /// clock the two do not meet, and the gap is published rather than papered over
 /// — see `sdroxide_rx888::band::freq_ranges`.
 fn rx888_caps(src: &rx888_source::Rx888Source) -> DeviceCaps {
-    use sdroxide_types::{Direction, GainElement, Rx888Config};
     let rate = src.sample_rate_hz();
-    let mut gains = vec![
-        // The AD8370's vernier is linear in voltage, so the dB step
-        // varies; a request is snapped to the nearest code and reported
-        // back, which makes a fine slider honest enough.
-        GainElement::db(Rx888Config::VGA_ELEMENT, Direction::Rx, -6.0, 34.0, 0.5),
-        GainElement::db(Rx888Config::ATT_ELEMENT, Direction::Rx, -31.5, 0.0, 0.5),
-    ];
-    // Only offer the tuner's gain on a receiver that has one, so the control
-    // does not appear on a board where it would do nothing.
-    if src.vhf_capable() {
-        gains.push(
-            // 29 discrete steps, snapped and reported back like the two above.
-            GainElement::db(
-                Rx888Config::TUNER_GAIN_ELEMENT,
-                Direction::Rx,
-                0.0,
-                Rx888Config::TUNER_GAIN_MAX_DB,
-                0.1,
-            ),
-        );
-    }
+    let gains = src.rx_gain_elements();
     DeviceCaps {
         driver: "rx888".into(),
         label: src.describe(),
@@ -1924,6 +1937,7 @@ fn elad_caps(src: &elad_source::EladSource) -> DeviceCaps {
     DeviceCaps {
         driver: "elad".into(),
         label: src.describe(),
+        rx_antenna_is_xvtr: true,
         rx_channels: 1,
         tx_channels: usize::from(tx),
         // Only when the operator has asked to hear their own signal: the DDC
@@ -2881,6 +2895,7 @@ fn cat_caps(radio: &RadioConfig) -> DeviceCaps {
     DeviceCaps {
         driver: "cat".into(),
         label: format!("{} (CAT)", radio.cat.family.label()),
+        rx_antenna_is_xvtr: radio.cat.family == sdroxide_types::CatFamily::Elad,
         rx_channels: 1,
         tx_channels: 1,
         audio_mode: demod,
@@ -2983,6 +2998,7 @@ mod tests {
             rx_offset_hz: -116_000_000.0,
             tx_offset_hz: Some(-116_000_000.0),
             tx_drive: Some(0.02),
+            rf_out: false,
         }]);
         let converted = plan_caps(caps, &plan, &[], &[]);
         assert!(converted.may_tx_hz(146_820_000.0 - 600_000.0));

@@ -691,6 +691,13 @@ impl IqSource for EladSource {
         self.label.clone()
     }
 
+    /// The samples arrive multiplied by the radio's calibration scale, so a
+    /// full-scale converter sample is that scale, not 1.0 — without this the
+    /// overload meter lit OVL at a raw −12 to −23 dBFS on an FDM-DUO.
+    fn sample_full_scale(&self) -> f32 {
+        self.handle.sample_full_scale()
+    }
+
     /// The attenuator, plus a pseudo-element carrying the pre-selection filter
     /// switch.
     ///
@@ -758,6 +765,34 @@ impl IqSource for EladSource {
             return String::new();
         }
         self.antenna.label().to_string()
+    }
+
+    /// The transverter port (menu 33 `TX OUT`): `Some(true)` while the rig
+    /// sends its transmit out of the 0 dBm RF OUT SMA instead of the PA.
+    ///
+    /// Carried as the receiving-antenna flag because it is one more port, in
+    /// or out, beside the socket selector — the panel shows it as the XVTR
+    /// chip. Only with a CAT serial port: the gateway path cannot read the
+    /// setting back, and a chip that cannot say where the power is going is
+    /// worse than none. `None` until the rig has answered `TT;`.
+    fn rx_antenna(&self) -> Option<bool> {
+        match &self.control {
+            Control::Serial(cat) => cat.rx_antenna(),
+            _ => None,
+        }
+    }
+
+    fn set_rx_antenna(&mut self, on: bool) -> Result<()> {
+        if let Control::Serial(cat) = &self.control {
+            cat.set_rx_antenna(on);
+        }
+        Ok(())
+    }
+
+    fn reread_rx_antenna(&mut self) {
+        if let Control::Serial(cat) = &self.control {
+            cat.reread_antenna();
+        }
     }
 
     // ── Rig control ──────────────────────────────────────────────────────────
@@ -850,19 +885,19 @@ impl IqSource for EladSource {
                     sdroxide_elad::set_transmitting(on || self.keyed);
                     out.push(ControlUpdate::RigTx(on))
                 }
+                // Where the transmit goes — the PA, or the 0 dBm RF OUT port
+                // for a transverter. See `rx_antenna` for why it travels as
+                // this flag.
+                sdroxide_cat::CatUpdate::RxAntenna(on) => out.push(ControlUpdate::RxAntenna(on)),
                 // The meters arrive on their own telemetry channels, not here;
                 // and the ELAD dialect has no squelch command, so that read is
                 // never asked for either.
-                //
-                // Nor has an FDM-DUO a separate receiving antenna: its two
-                // sockets are a choice between them, which is `Antenna` above.
                 sdroxide_cat::CatUpdate::Swr(_)
                 | sdroxide_cat::CatUpdate::Alc(_)
                 | sdroxide_cat::CatUpdate::Po(_)
                 | sdroxide_cat::CatUpdate::FwdW(_)
                 | sdroxide_cat::CatUpdate::RflW(_)
                 | sdroxide_cat::CatUpdate::Squelch(_)
-                | sdroxide_cat::CatUpdate::RxAntenna(_)
                 | sdroxide_cat::CatUpdate::Signal(_) => {}
             }
         }
@@ -1060,10 +1095,21 @@ impl IqSource for EladSource {
         // a needle standing. With no serial link there is no meter, and the
         // engine falls back to measuring the I/Q itself, which for this
         // interface is a perfectly good answer.
+        //
+        // Read every time, so the answers don't pile up, but used only at the
+        // DUO's stand-alone 192 kHz. On a wide image (384 kHz and up) the
+        // DUO's own `SM` is not the passband being listened to: AJ3G found
+        // the S-meter and the TMate 2 reading something else in the band at
+        // 1.5 MHz, "vastly different" from stand-alone (17 Nov 2026). There
+        // the engine measures its own receiver after its filter instead, as
+        // Hardrock Panel does (its decision 138).
         if let Control::Serial(cat) = &self.control
             && let Some(dbm) = cat.poll_signal()
         {
             self.last_signal = Some((std::time::Instant::now(), dbm));
+        }
+        if !rig_meter_is_the_passband(self.handle.sample_rate_hz) {
+            return None;
         }
         self.last_signal.filter(|(at, _)| at.elapsed() < self.signal_max_age).map(|(_, dbm)| dbm)
     }
@@ -1117,5 +1163,25 @@ impl IqSource for EladSource {
         // every open, so a SPAN change put it up again each time and held up
         // the switch behind it (AJ3G). Settings → Radio already says it.
         (!parts.is_empty()).then(|| parts.join(" — "))
+    }
+}
+
+/// Whether the DUO's own S-meter (`SM`) measures what is being listened to:
+/// only on its stand-alone image. A wide image is read by sdroxide's own
+/// receiver, which measures its passband itself.
+fn rig_meter_is_the_passband(rate_hz: f64) -> bool {
+    rate_hz <= f64::from(sdroxide_elad::remote::STANDALONE_RATE_HZ)
+}
+
+#[cfg(test)]
+mod meter_tests {
+    use super::rig_meter_is_the_passband;
+
+    #[test]
+    fn the_rigs_s_meter_is_used_only_at_192k() {
+        assert!(rig_meter_is_the_passband(192_000.0));
+        for wide in [384_000.0, 768_000.0, 1_536_000.0] {
+            assert!(!rig_meter_is_the_passband(wide), "{wide}");
+        }
     }
 }

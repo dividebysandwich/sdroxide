@@ -1093,9 +1093,13 @@ fn draw_ism_box(p: &egui::Painter, b: &IsmBox, label: &IsmLabel, hovered: bool) 
     p.galley(pos2(b.rect.left() + ISM_PAD_X, b.rect.top() + ISM_PAD_Y), b.galley.clone(), border);
 }
 
-/// Kind tint, brightened on hover.
+/// How much of a TCI spot's text its hover label shows: one line that fits
+/// a narrow waterfall. The SPOTS list carries the rest.
+const TCI_TIP_CHARS: usize = 60;
+
+/// The spot's colour (its own, or its kind's tint), brightened on hover.
 fn net_spot_color(spot: &Spot, hovered: bool) -> Color32 {
-    let (r, g, b) = crate::theme::spot_color(spot.kind);
+    let (r, g, b) = crate::theme::spot_rgb(spot);
     if hovered { Color32::from_rgb(r, g, b) } else { Color32::from_rgba_unmultiplied(r, g, b, 225) }
 }
 
@@ -1204,13 +1208,33 @@ fn draw_net_box(p: &egui::Painter, b: &NetBox, spot: &Spot, hovered: bool, alpha
 /// moves onto the spot, and a radio that tunes with its dial comes along
 /// exactly as it does for the readout (see the command's docs for why it no
 /// longer stays put).
-fn tune_to_net_spot(spot: &Spot, state: &RadioState, cmds: &mut Vec<Command>) {
+///
+/// Already in the spot's mode, the mode is not sent again: the engine sets a
+/// mode's default filter whenever a mode is set, and that threw away the
+/// operator's own width (#916, as #821 was for skimmer spots). CW lands on the
+/// operator's own pitch when there is one, as a skimmer spot does.
+fn tune_to_net_spot(
+    spot: &Spot,
+    state: &RadioState,
+    cursor_hz: Option<f32>,
+    cmds: &mut Vec<Command>,
+) {
+    let set_mode = |m: Mode, cmds: &mut Vec<Command>| {
+        if state.rx[0].mode != m {
+            cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
+        }
+    };
     match spot.radio_mode() {
         Some(Mode::Cw) => {
-            let (lo, hi) = Mode::Cw.default_filter();
-            let pitch = ((lo + hi) * 0.5) as f64;
+            let pitch = cursor_hz
+                .filter(|_| state.rx[0].mode == Mode::Cw)
+                .map(f64::from)
+                .unwrap_or_else(|| {
+                    let (lo, hi) = Mode::Cw.default_filter();
+                    ((lo + hi) * 0.5) as f64
+                });
             cmds.push(Command::TuneInSpan { vfo: state.active_vfo, hz: spot.freq_hz - pitch });
-            cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Cw });
+            set_mode(Mode::Cw, cmds);
         }
         Some(m) if m.holds_standard_tones() => {
             let af = m.standard_tone_offset_hz().unwrap_or_default();
@@ -1218,12 +1242,12 @@ fn tune_to_net_spot(spot: &Spot, state: &RadioState, cmds: &mut Vec<Command>) {
                 vfo: state.active_vfo,
                 hz: spot.freq_hz - f64::from(af),
             });
-            cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
+            set_mode(m, cmds);
             cmds.push(Command::SetDigiAudioFreq(af));
         }
         Some(m) => {
             cmds.push(Command::TuneInSpan { vfo: state.active_vfo, hz: spot.freq_hz });
-            cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
+            set_mode(m, cmds);
         }
         None => cmds.push(Command::TuneInSpan { vfo: state.active_vfo, hz: spot.freq_hz }),
     }
@@ -2120,7 +2144,7 @@ pub fn show_ext(
                         let factor = 0.998f64.powf(scroll as f64 * 2.0 * rate);
                         zoom_about(view, pos.x, &rect, factor, dev_span);
                     }
-                    WheelAction::Tune if detents != 0.0 => {
+                    WheelAction::Tune if detents != 0.0 && !view.tune_locked => {
                         // Onto the step grid, not one step from wherever the
                         // dial was left: dragging the panadapter tunes
                         // continuously, and the fraction of a step it leaves
@@ -2200,12 +2224,16 @@ pub fn show_ext(
                     // Network spot: tune + set mode, and hand the spot back so the
                     // app can pre-fill a log entry (and optionally look it up).
                     let spot = &net_spots[nb.idx];
-                    tune_to_net_spot(spot, state, cmds);
+                    tune_to_net_spot(spot, state, cursor_hz, cmds);
                     *clicked_spot = Some(spot.clone());
                 } else if let Some(sb) = spot_boxes.iter().find(|b| b.rect.contains(pos)) {
                     let spot = &skimmer[sb.idx];
                     let spot_hz = spot.freq_hz;
-                    if click_sets_offset {
+                    if state.rx[0].mode == Mode::Adsb {
+                        // An aircraft's label on its carrier trace: a label and
+                        // nothing else. Tuning onto it would move the decoder's
+                        // window off 1090 MHz and lose every other aircraft.
+                    } else if click_sets_offset {
                         // FT8 station box. Moving our transmit onto the station
                         // is what Auto TX FRQ exists to avoid — they transmit in
                         // the period opposite ours, so their frequency says
@@ -2998,6 +3026,7 @@ pub fn show_ext(
 
     // Network spot boxes (bottom-anchored lanes) — DX cluster / POTA / SOTA /
     // PSK. A vertical tick over the signal, a leader up/down to the box.
+    let mut net_tip: Option<(Pos2, String, Color32)> = None;
     for b in &net_boxes {
         let spot = &net_spots[b.idx];
         let a = net_alpha.get(b.idx).copied().unwrap_or(1.0).clamp(0.0, 1.0);
@@ -3023,6 +3052,19 @@ pub fn show_ext(
         );
         painter.circle_filled(pos2(b.sig_x, cy), 1.8, fade(border, a));
         draw_net_box(&painter, b, spot, hovered, a);
+        // A TCI spot's text — a logger's "new DXCC", a bridge's cluster
+        // comment — has no room in the box, and the box is all a TCI spot has
+        // on the waterfall; so the pointer on it shows the text beside it.
+        if hovered && spot.kind == sdroxide_types::SpotKind::Tci && !spot.comment.is_empty() {
+            let line_h = 11.0 * crate::theme::panadapter_font_scale() + 6.0;
+            let y = if view.waterfall_flip { b.rect.bottom() + 2.0 } else { b.rect.top() - line_h };
+            let text: String = spot.comment.chars().take(TCI_TIP_CHARS).collect();
+            net_tip = Some((pos2(b.rect.left(), y), text, border));
+        }
+    }
+    // After every box, so no later box is painted over it.
+    if let Some((at, text, col)) = net_tip {
+        label_box(&painter, at, &text, col, rect);
     }
 
     // ISM device labels. No fade: a device that has stopped transmitting is
@@ -3805,6 +3847,50 @@ mod axis_tests {
 
 #[cfg(test)]
 mod tests {
+
+    fn cw_spot() -> Spot {
+        Spot {
+            id: 1,
+            kind: sdroxide_types::SpotKind::DxCluster,
+            freq_hz: 14_025_000.0,
+            call: "DL1ABC".into(),
+            spotter: String::new(),
+            mode: "CW".into(),
+            comment: String::new(),
+            reference: None,
+            grid: None,
+            loc: None,
+            when_utc: 0,
+            snr_db: None,
+            color: None,
+        }
+    }
+
+    /// Clicking a cluster spot while already in CW keeps the operator's
+    /// filter and pitch: re-sending the mode would reset the width (#916).
+    #[test]
+    fn a_cluster_spot_in_the_same_mode_keeps_the_filter() {
+        let mut state = RadioState::default();
+        state.rx[0].mode = Mode::Cw;
+        let mut cmds = Vec::new();
+        tune_to_net_spot(&cw_spot(), &state, Some(700.0), &mut cmds);
+        assert!(!cmds.iter().any(|c| matches!(c, Command::SetMode { .. })), "{cmds:?}");
+        assert!(
+            cmds.iter().any(
+                |c| matches!(c, Command::TuneInSpan { hz, .. } if (*hz - 14_024_300.0).abs() < 0.5)
+            ),
+            "{cmds:?}"
+        );
+
+        // From another mode it still switches to CW.
+        state.rx[0].mode = Mode::Usb;
+        let mut cmds = Vec::new();
+        tune_to_net_spot(&cw_spot(), &state, None, &mut cmds);
+        assert!(
+            cmds.iter().any(|c| matches!(c, Command::SetMode { mode: Mode::Cw, .. })),
+            "{cmds:?}"
+        );
+    }
 
     /// WELCH's trace smoothing leaves an even spectrum as it is and takes
     /// most of the zigzag out of a speckled one.

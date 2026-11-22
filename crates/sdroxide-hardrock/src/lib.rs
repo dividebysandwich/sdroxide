@@ -36,6 +36,9 @@ pub enum Error {
     Timeout(Command),
     /// No port and rate answered `HRAA;`.
     NotFound,
+    /// A tuner pass-through (`HRTM…`) that isn't a read, refused before it
+    /// was sent (interlock #5).
+    Refused(String),
 }
 
 impl std::fmt::Display for Error {
@@ -47,6 +50,10 @@ impl std::fmt::Display for Error {
             Error::NotFound => {
                 f.write_str("no Hardrock amplifier answered on any port or baud rate")
             }
+            Error::Refused(frame) => write!(
+                f,
+                "{frame} not sent: only reads may be passed through to the tuner (interlock #5)"
+            ),
         }
     }
 }
@@ -66,6 +73,9 @@ impl From<serialport::Error> for Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// Frames that answered nothing, kept for [`Amp::listen`].
+const UNSOLICITED_KEEP: usize = 64;
 
 /// An amplifier on a byte stream — a serial port in use, anything `Read +
 /// Write` in tests.
@@ -122,7 +132,16 @@ impl<P: Read + Write> Amp<P> {
 
     /// Send a command that gets no answer.
     pub fn send(&mut self, cmd: &Command) -> Result<()> {
-        self.port.write_all(cmd.encode().as_bytes())?;
+        let frame = cmd.encode();
+        // SAFETY INTERLOCK (docs/hardrock/safety-interlocks.md, #5): every
+        // frame, `Raw` included, goes through here, so a tuner pass-through
+        // that could set, store or wipe anything, or switch the tuner's
+        // coupler in line where full power can damage it, never reaches the
+        // amplifier. Only reads pass.
+        if !protocol::passthrough_allowed(&frame) {
+            return Err(Error::Refused(frame));
+        }
+        self.port.write_all(frame.as_bytes())?;
         self.port.flush()?;
         Ok(())
     }
@@ -153,6 +172,12 @@ impl<P: Read + Write> Amp<P> {
                 let r = Response::parse(&frame);
                 if answers {
                     return Ok(r);
+                }
+                // Nothing in the panel's link reads these, so only the
+                // latest few are kept: an amplifier left running for hours
+                // must not grow this without end.
+                if self.unsolicited.len() >= UNSOLICITED_KEEP {
+                    self.unsolicited.remove(0);
                 }
                 self.unsolicited.push(r);
             }
@@ -275,5 +300,16 @@ mod tests {
         amp.set_frequency(14_074_000).unwrap();
         amp.set_mode(KeyMode::Off).unwrap();
         assert_eq!(amp.into_inner().written, b"HRBN5;FA00014074000;HRMD0;");
+    }
+
+    #[test]
+    fn a_tuner_write_is_refused_before_it_is_sent() {
+        let mut amp = fake(&[]);
+        let e = amp.send(&Command::Raw("HRTMD1".into())).unwrap_err();
+        assert!(matches!(e, Error::Refused(ref f) if f == "HRTMD1;"), "{e:?}");
+        assert!(e.to_string().contains("interlock #5"));
+        // A read still goes.
+        amp.send(&Command::Raw("HRTMF".into())).unwrap();
+        assert_eq!(amp.into_inner().written, b"HRTMF;");
     }
 }

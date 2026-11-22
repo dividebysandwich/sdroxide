@@ -16,7 +16,7 @@ use crate::tuner;
 use crate::usb::UsbDev;
 // The tuner driver itself lives in `sdroxide-r82xx`, shared with the RX-888
 // backend — the same chip family, reached over a different bus.
-use sdroxide_r82xx::{Chip, GainSetting, R82xx};
+use sdroxide_r82xx::{Board, Chip, GainSetting, R82xx};
 
 /// The bottom of the R82xx's own tuning range, and so where the automatic
 /// crossover to direct sampling belongs: below this the tuner cannot lock at
@@ -76,7 +76,8 @@ impl Device {
     /// Open, initialise and configure a dongle from persisted settings.
     pub fn open(cfg: &RtlSdrConfig, center_hz: f64) -> Result<Device> {
         let usb = UsbDev::open(cfg.serial.as_deref())?;
-        let descriptor_v4 = usb.is_blog_v4();
+        let descriptor_board = usb.board();
+        let product_known = usb.product_known();
         let usb_label = usb.label().to_string();
 
         let mut rtl = Rtl2832::new(usb);
@@ -90,21 +91,31 @@ impl Device {
         let chip = probed?;
         closed?;
 
-        // Settle what the descriptors could not. Every V4 is an R828D, so the
-        // tuner has a veto: the upconverter offset and the 28.8 MHz reference
-        // would wreck an R820T that merely claimed the name. A dongle that
-        // already named itself needs no second opinion, which reserves the
-        // EEPROM round trip for the case that needs rescuing — a V4 on a host
-        // that did not hand us its USB strings.
+        // Settle what the descriptors could not. Every V4 is an R828D and
+        // every V4L an R820T (its R828S reads as one), so the tuner has a veto:
+        // the upconverter offset and input switching would wreck a stick that
+        // merely claimed the name. A dongle that already named itself needs no
+        // second opinion, which reserves the EEPROM round trip for the cases
+        // that need rescuing — a V4 or V4L on a host that did not hand us its
+        // USB strings. An R820T whose product string came through and was not
+        // "Blog V4L" is not one, so the thousands of plain R820T sticks open
+        // without the extra read.
         //
         // This is upstream's order too: `librtlsdr` probes the tuner, then
         // reads the EEPROM, then initialises, so the pause between the R828D's
         // reset pulse and its init is one a V4 already tolerates.
-        let is_blog_v4 = chip == Chip::R828D && (descriptor_v4 || rtl.usb().reads_as_blog_v4());
+        let named = if descriptor_board != Board::Plain {
+            descriptor_board
+        } else if chip == Chip::R828D || !product_known {
+            rtl.usb().reads_board()
+        } else {
+            Board::Plain
+        };
+        let board = named.confirmed_by(chip);
 
         // Initialise the tuner, repeater open throughout.
         rtl.i2c_repeater(true)?;
-        let tuner = tuner::open(&rtl, chip, is_blog_v4, cfg.ppm);
+        let tuner = tuner::open(&rtl, chip, board, cfg.ppm);
         rtl.i2c_repeater(false)?;
         let tuner = tuner?;
 
@@ -113,8 +124,10 @@ impl Device {
         // the tuner. What must happen here is the low-IF configuration.
         rtl.configure_for_r82xx()?;
 
-        let label =
-            format!("{usb_label} ({}{})", chip.name(), if is_blog_v4 { ", Blog V4" } else { "" });
+        let label = match board.name() {
+            Some(b) => format!("{usb_label} ({}, {b})", chip.name()),
+            None => format!("{usb_label} ({})", chip.name()),
+        };
 
         let mut dev = Device {
             rtl,
@@ -156,8 +169,8 @@ impl Device {
 
     /// Whether this dongle can receive below the tuner's 24 MHz floor.
     ///
-    /// A Blog V4 always can, through its upconverter. Anything else depends on
-    /// the HF port being wired to the ADC's Q branch, which is a board
+    /// A Blog V4 or V4L always can, through its upconverter. Anything else
+    /// depends on the HF port being wired to the ADC's Q branch, which is a board
     /// property we cannot detect — so this reports what the *configuration*
     /// allows rather than a hardware fact.
     pub fn hf_capable(&self) -> bool {
@@ -252,7 +265,7 @@ impl Device {
     /// Decide whether this frequency needs the direct-sampling path, and
     /// switch if so.
     ///
-    /// A Blog V4 never does — it upconverts in hardware, inside
+    /// A Blog V4 or V4L never does — it upconverts in hardware, inside
     /// [`R82xx::set_freq`]. For everything else, below the crossover the tuner
     /// simply cannot reach, so the choice is direct sampling or nothing.
     fn apply_hf_path(&mut self, hz: f64) -> Result<()> {
@@ -349,8 +362,8 @@ impl Device {
         }
         if self.tuner.is_blog_v4() && mode == RtlSdrHfMode::DirectQ {
             return Err(Error::Unsupported(
-                "a Blog V4 upconverts HF in hardware and has no direct-sampling \
-                 path — leave HF reception on Automatic"
+                "a Blog V4 or V4L upconverts HF in hardware and has no \
+                 direct-sampling path — leave HF reception on Automatic"
                     .into(),
             ));
         }

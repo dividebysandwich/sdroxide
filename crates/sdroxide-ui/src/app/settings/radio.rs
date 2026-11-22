@@ -88,7 +88,9 @@ fn radio_rx_antenna_row(
     rx_antenna: bool,
     cmds: &mut Vec<Command>,
 ) {
-    if !caps.is_some_and(|c| c.has_rx_antenna) {
+    // On an ELAD the same switch is the XVTR chip (transmit out of RF OUT),
+    // not a receiving antenna.
+    if !caps.is_some_and(|c| c.has_rx_antenna && !c.rx_antenna_is_xvtr) {
         return;
     }
     ui.label(tr!("settings-radio-receive-antenna"))

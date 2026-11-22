@@ -48,6 +48,11 @@ const LINK_GAP: f32 = 4.0;
 /// What the RIG box's receiving-antenna chip says, in the one place the width
 /// measurement and the chip itself both read it from.
 const RX_ANT_LABEL: &str = "RX ANT";
+/// What the same chip says on an ELAD FDM-DUO, where the extra port is the
+/// 0 dBm RF OUT for a transverter rather than a receiving antenna.
+const XVTR_LABEL: &str = "XVTR";
+/// The ELAD receive socket a transverter's IF comes back on.
+const XVTR_RX_SOCKET: &str = "RX only";
 /// What the RIG box's antenna-tuner chips say, read by the width measurement
 /// and the chips alike. The tune chip wears the second while a tune runs, so
 /// the box is measured against the wider of the two.
@@ -866,7 +871,7 @@ impl SdroxideApp {
                 _ => false,
             }),
             MenuChip::Sub => true,
-            MenuChip::Tx => self.state.tx.tune,
+            MenuChip::Tx => self.state.tx.tune || self.show_tx_window,
             // Nothing here reads back: the socket is a name rather than an
             // on/off, and a radio that is switched off answers nothing at all.
             MenuChip::Rig | MenuChip::Rx | MenuChip::Disp | MenuChip::Sys => false,
@@ -1083,8 +1088,9 @@ impl SdroxideApp {
                 let cell2 = egui::vec2(plan.cell2_w, chip_h);
                 ui.horizontal(|ui| {
                     if tx_capable {
-                        let btn = crate::chrome::chip_sized(ui, self.state.tx.tune, "TX", cell2);
-                        self.tx_menu(ui, btn, cmds);
+                        let lit = self.state.tx.tune || self.show_tx_window;
+                        let btn = crate::chrome::chip_sized(ui, lit, "TX", cell2);
+                        self.tx_menu(btn);
                     }
                     let btn = crate::chrome::chip_sized(ui, false, "DISP", cell2);
                     self.disp_menu(ui, btn, cmds);
@@ -1246,7 +1252,7 @@ impl SdroxideApp {
                 MenuChip::Div => self.div_menu(ui, btn, cmds),
                 MenuChip::Sub => self.sub_menu(ui, btn, cmds),
                 MenuChip::Rig => self.rig_menu(ui, btn, cmds),
-                MenuChip::Tx => self.tx_menu(ui, btn, cmds),
+                MenuChip::Tx => self.tx_menu(btn),
                 MenuChip::Disp => self.disp_menu(ui, btn, cmds),
                 MenuChip::Sys => self.sys_menu(ui, btn, cmds),
             }
@@ -1326,26 +1332,58 @@ impl SdroxideApp {
         });
     }
 
-    /// The TX menu: tune, the voice keyer, and the drive and mic levels.
-    fn tx_menu(&mut self, ui: &mut egui::Ui, btn: egui::Response, cmds: &mut Vec<Command>) {
+    /// The TX chip: opens and closes the TRANSMIT window — tune, the voice
+    /// keyer, and the drive and mic levels.
+    ///
+    /// A window rather than the drop-down the other menu chips open, because
+    /// the drop-down hangs from the chip straight over the S-meter, and the
+    /// S-meter is exactly what an operator is watching while they set drive
+    /// and tune (issue #525). A window can be dragged clear of it, and stays
+    /// open through an over instead of closing at the first click elsewhere.
+    fn tx_menu(&mut self, btn: egui::Response) {
         let btn = btn.on_hover_text(tr!("topbar-tune-voice-keyer-drive-mic"));
-        crate::chrome::menu_popup(ui, &btn, |ui| {
-            crate::chrome::menu_caption(ui, &tr!("topbar-transmit"));
-            // PTT is on the strip already; TUNE rides with the levels it is
-            // set up with.
-            self.tx_controls(ui, cmds, true);
-            if crate::chrome::chip_accent(
-                ui,
-                self.state.tx.tune,
-                RichText::new(tr!("topbar-tune")).size(15.0),
-                crate::theme::YELLOW(),
-                crate::theme::INK_ON_CYAN(),
-            )
-            .clicked()
-            {
-                cmds.push(Command::SetTune(!self.state.tx.tune));
-            }
-        });
+        if btn.clicked() {
+            self.show_tx_window = !self.show_tx_window;
+        }
+    }
+
+    /// The TRANSMIT window the TX chip opens. See [`Self::tx_menu`].
+    pub(in crate::app) fn tx_window(&mut self, ctx: &egui::Context, cmds: &mut Vec<Command>) {
+        if !self.show_tx_window {
+            return;
+        }
+        let mut open = self.show_tx_window;
+        let resp = egui::Window::new(tr!("topbar-transmit"))
+            .id(crate::layout::salted_id(ctx, "TRANSMIT"))
+            .open(&mut open)
+            .frame(crate::chrome::window_frame())
+            .resizable(false)
+            .collapsible(true)
+            .show(ctx, |ui| {
+                crate::chrome::window_body_bg(ui);
+                // PTT is on the strip already; TUNE rides with the levels it
+                // is set up with.
+                self.tx_controls(ui, cmds, true);
+                ui.horizontal(|ui| {
+                    let tx = self.state.tx;
+                    if crate::chrome::chip_accent(
+                        ui,
+                        tx.tune && !tx.two_tone,
+                        RichText::new(tr!("topbar-tune")).size(15.0),
+                        crate::theme::YELLOW(),
+                        crate::theme::INK_ON_CYAN(),
+                    )
+                    .clicked()
+                    {
+                        tune_clicked(tx, false, cmds);
+                    }
+                    self.tx_two_tone_chip(ui, cmds);
+                });
+            });
+        if let Some(r) = &resp {
+            crate::chrome::paint_window_border(ctx, &r.response);
+        }
+        self.show_tx_window = open;
     }
 
     /// The DISP menu: waterfall, spectrum and skimmer controls.
@@ -2426,6 +2464,7 @@ impl SdroxideApp {
         let here = (Band::containing(state.active_freq_hz()), mode);
         let popup_id = egui::Popup::default_response_id(&btn);
         let mut dock = false;
+        let mut probes = self.probe_row();
         crate::chrome::fading_menu_popup(ui, &btn, &mut self.mode_popup_since, |ui| {
             if can_dock
                 && crate::chrome::chip(ui, false, tr!("topbar-dock"))
@@ -2436,8 +2475,22 @@ impl SdroxideApp {
             }
             ui.add_space(2.0);
             crate::app::workplaces::workplace_rows(ui, recent, here, state.active_vfo, cmds);
-            band_mode_menu(ui, mode, state, caps.as_ref(), stated, conditions, daylight, cmds);
+            band_mode_menu(
+                ui,
+                mode,
+                state,
+                caps.as_ref(),
+                stated,
+                conditions,
+                daylight,
+                &mut probes,
+                cmds,
+            );
         });
+        if let Some(p) = probes.picked {
+            self.open_probe(p);
+            egui::Popup::close_id(ui.ctx(), popup_id);
+        }
         if dock {
             self.band_docked = true;
             self.band_dock_visible = true;
@@ -2460,6 +2513,7 @@ impl SdroxideApp {
             self.state.active_vfo,
             cmds,
         );
+        let mut probes = self.probe_row();
         band_mode_menu(
             ui,
             mode,
@@ -2468,8 +2522,58 @@ impl SdroxideApp {
             stated,
             self.band_conditions.as_ref(),
             self.daylight,
+            &mut probes,
             cmds,
         );
+        if let Some(p) = probes.picked {
+            self.open_probe(p);
+        }
+    }
+
+    /// Which PROBES chips in the band/mode menu are lit: the window is open,
+    /// or its decoder is running with the window closed — the same rule the
+    /// SAT and ISM chips in the system row follow.
+    fn probe_row(&self) -> ProbeRow {
+        let qo100_page = self.show_sat && self.sat_tab == crate::app::sat::SatTab::Qo100;
+        let lit = Probe::ALL
+            .into_iter()
+            .filter(|p| match p {
+                Probe::Ism => self.show_ism || self.state.ism.any_enabled(),
+                Probe::Sondes => self.sonde.show || self.state.sonde.enabled,
+                Probe::Sat => (self.show_sat && !qo100_page) || self.sat_track.is_some(),
+                Probe::WxSat => self.wxsat.show || self.state.wxsat.enabled,
+                Probe::Qo100 => qo100_page || self.state.qo100.enabled,
+            })
+            .collect();
+        ProbeRow { lit, picked: None }
+    }
+
+    /// A PROBES chip was clicked: open its window, or close it if it is
+    /// already the one showing. QO-100 and SAT share the SATELLITE window and
+    /// differ by its page, so each one opens the window on its own page.
+    pub(in crate::app) fn open_probe(&mut self, p: Probe) {
+        use crate::app::sat::SatTab;
+        match p {
+            Probe::Ism => self.show_ism = !self.show_ism,
+            Probe::Sondes => self.sonde.show = !self.sonde.show,
+            Probe::WxSat => self.wxsat.show = !self.wxsat.show,
+            Probe::Sat => {
+                if self.show_sat && self.sat_tab != SatTab::Qo100 {
+                    self.show_sat = false;
+                } else {
+                    self.show_sat = true;
+                    self.sat_tab = SatTab::Satellites;
+                }
+            }
+            Probe::Qo100 => {
+                if self.show_sat && self.sat_tab == SatTab::Qo100 {
+                    self.show_sat = false;
+                } else {
+                    self.show_sat = true;
+                    self.sat_tab = SatTab::Qo100;
+                }
+            }
+        }
     }
 
     /// The band/mode selector docked as a column beside the panadapter: the
@@ -2548,8 +2652,9 @@ impl SdroxideApp {
     /// [`rx_rows`] against this radio: what the front end offers, what the
     /// AGC is set to, and what mode the receiver is in.
     fn rx_rows(&self, ui: &egui::Ui) -> RxRows {
+        let stages = self.rx_gains().len();
         let rails: Vec<String> =
-            self.bar_gains().iter().map(|g| gain_label(&g.name, self.bar_gains().len())).collect();
+            self.bar_gains().iter().map(|g| gain_label(&g.name, stages)).collect();
         let mut front: Vec<&[&str]> = self.front_chips().iter().map(|c| c.labels).collect();
         // The ELAD SPAN chip rides the same row, priced at its widest label.
         if self.elad_bw_applies() {
@@ -2615,12 +2720,16 @@ impl SdroxideApp {
     //      the first stage; "bringen wir drei unter?".
     fn bar_gains(&self) -> Vec<GainElement> {
         let mut g = self.rx_gains();
-        // An RX-888's VHF tuner gain does nothing on HF, where the bar is
-        // used; it stays in Settings → Radio with the rest of the VHF path.
+        // An RX-888 answers to different stages on its two inputs: ATT and
+        // VGA act on HF and are held on VHF, the tuner gain acts on VHF and
+        // does nothing on HF. The bar carries the set for the band the
+        // receiver reports — see [`Rx888Panel`].
         // Why: HDZ 2026-11-09: "RF hat gar keine Möglichkeit was zu setzen
         //      für RX888, kann der weg?"
-        if self.caps.as_ref().is_some_and(|c| c.driver == "rx888") {
-            g.retain(|e| e.name != sdroxide_types::Rx888Config::TUNER_GAIN_ELEMENT);
+        //      HDZ 2026-11-15: „wenn der Modus umschaltet, dann muss ein
+        //      anderer Regler ins Bedienpanel“
+        if let Some(panel) = self.rx888_panel() {
+            g.retain(|e| panel.carries(&e.name));
         }
         g.sort_by_key(|e| e.max_db > 0.0);
         g.truncate(BAR_GAIN_STAGES);
@@ -2632,24 +2741,85 @@ impl SdroxideApp {
     // Why: HDZ 2026-11-09: "rx gain als chip mit toggle und die drei Regler,
     //      mit Amp".
     fn front_chips(&self) -> Vec<FrontChip> {
+        if let Some(panel) = self.rx888_panel() {
+            return vec![panel.chip()];
+        }
         match self.caps.as_ref().map(|c| c.driver.as_str()) {
             Some("hackrf") => vec![FrontChip::HACKRF_AMP],
-            Some("rx888") => vec![FrontChip::RX888_VGA_RANGE],
             _ => Vec::new(),
         }
+    }
+
+    /// Which of an RX-888's two control sets the receive row carries, from the
+    /// band the receiver reports beside its gains; `None` on any other front
+    /// end.
+    fn rx888_panel(&self) -> Option<Rx888Panel> {
+        self.caps
+            .as_ref()
+            .is_some_and(|c| c.driver == "rx888")
+            .then(|| Rx888Panel::for_band(sdroxide_types::Rx888Config::on_vhf(&self.state.gains)))
+    }
+
+    /// Whether `element` is an RX-888 tuner setting, which the bar reads from
+    /// and writes to the radio's config rather than the reported gains — see
+    /// [`Self::rx888_tuner_value`].
+    fn is_rx888_tuner(&self, element: &str) -> bool {
+        use sdroxide_types::Rx888Config as R;
+        self.rx888_panel().is_some()
+            && (element == R::TUNER_GAIN_ELEMENT || element == R::TUNER_AGC_ELEMENT)
+    }
+
+    /// The RX-888 tuner's gain or AGC switch as Settings → Radio holds it.
+    ///
+    /// The tuner's two settings live in the radio's config, where the
+    /// Settings page edits them, and the receiver does not report them back.
+    /// The bar reads and writes the same fields, so both places show one
+    /// number whichever of them moved it last.
+    fn rx888_tuner_value(&mut self, element: &str) -> Option<f64> {
+        if self.radio_cfg.is_none() {
+            self.radio_cfg = self.ctrl.radio_config();
+        }
+        let t = &self.radio_cfg.as_ref()?.rx888;
+        Some(match element {
+            sdroxide_types::Rx888Config::TUNER_AGC_ELEMENT => f64::from(u8::from(t.tuner_agc)),
+            _ => t.tuner_gain_db,
+        })
+    }
+
+    /// Set an RX-888 tuner setting the way Settings → Radio does: into the
+    /// radio's config, which is saved, and to the receiver as `SetGain`.
+    fn set_rx888_tuner(&mut self, cmds: &mut Vec<Command>, element: &str, db: f64) {
+        if let Some(cfg) = self.radio_cfg.as_mut() {
+            match element {
+                sdroxide_types::Rx888Config::TUNER_AGC_ELEMENT => cfg.rx888.tuner_agc = db >= 0.5,
+                _ => cfg.rx888.tuner_gain_db = db,
+            }
+            self.ctrl.set_radio_config(cfg.clone());
+        }
+        cmds.push(Command::SetGain { dir: Direction::Rx, element: element.into(), db });
     }
 
     /// One [`FrontChip`]: lit while it is anything but its first setting
     /// (the amplifier on, a VGA range forced), a click steps it on.
     fn front_chip(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, c: &FrontChip) {
-        let v = self.state.gains.iter().find(|(n, _)| n == c.element).map_or(0.0, |(_, v)| *v);
+        let tuner = self.is_rx888_tuner(c.element);
+        let v = if tuner {
+            self.rx888_tuner_value(c.element).unwrap_or(0.0)
+        } else {
+            self.state.gains.iter().find(|(n, _)| n == c.element).map_or(0.0, |(_, v)| *v)
+        };
         let i = (v.round().max(0.0) as usize).min(c.labels.len() - 1);
         let hint = match c.element {
             sdroxide_types::Rx888Config::VGA_RANGE_ELEMENT => tr!("topbar-rx888-vga-range-hint"),
+            sdroxide_types::Rx888Config::TUNER_AGC_ELEMENT => tr!("topbar-rx888-tuner-agc-hint"),
             _ => tr!("topbar-hackrf-amp-hint"),
         };
         if crate::chrome::chip(ui, i != 0, c.labels[i]).on_hover_text(hint).clicked() {
             let next = ((i + 1) % c.labels.len()) as f64;
+            if tuner {
+                self.set_rx888_tuner(cmds, c.element, next);
+                return;
+            }
             match self.state.gains.iter_mut().find(|(n, _)| n == c.element) {
                 Some((_, d)) => *d = next,
                 None => self.state.gains.push((c.element.to_string(), next)),
@@ -2664,6 +2834,7 @@ impl SdroxideApp {
     fn hardware_agc_owns(&self, element: &str) -> bool {
         use sdroxide_types::{RtlSdrAgc, RtlSdrConfig as R};
         self.pluto_agc_owns_gain(element)
+            || self.rx888_tuner_agc_owns(element)
             || (self.caps.as_ref().is_some_and(|c| c.driver == "rtlsdr")
                 && [
                     R::TUNER_GAIN_ELEMENT,
@@ -2675,6 +2846,15 @@ impl SdroxideApp {
                 && self.state.gains.iter().any(|(n, v)| {
                     n == R::AGC_ELEMENT && RtlSdrAgc::from_code(*v as u8).tuner_auto()
                 }))
+    }
+
+    /// Whether `element` is an RX-888's tuner gain while the R828D runs its own
+    /// LNA and mixer loops, which overwrite a manual gain. Read from the
+    /// radio's config, like the rail itself ([`Self::rx888_tuner_value`]).
+    fn rx888_tuner_agc_owns(&self, element: &str) -> bool {
+        element == sdroxide_types::Rx888Config::TUNER_GAIN_ELEMENT
+            && self.rx888_panel().is_some()
+            && self.radio_cfg.as_ref().is_some_and(|r| r.rx888.tuner_agc)
     }
 
     /// Whether `element` is a PlutoSDR's receive gain while the AD9361's own
@@ -2880,6 +3060,34 @@ impl SdroxideApp {
                 cmds.push(Command::SetVolume { rx: RxId::Main, v: vol });
             }
             for g in &bar_gains {
+                // An RX-888's tuner gain is read from and written to where
+                // Settings → Radio keeps it ([`Self::rx888_tuner_value`]), and
+                // carries a hint of its own.
+                let tuner = self.is_rx888_tuner(&g.name);
+                let mut db = tuner
+                    .then(|| self.rx888_tuner_value(&g.name))
+                    .flatten()
+                    .or_else(|| {
+                        self.state.gains.iter().find(|(n, _)| *n == g.name).map(|(_, d)| *d)
+                    })
+                    .unwrap_or(g.min_db);
+                // A PlutoSDR in one of its attack modes owns its own gain
+                // register: the AD9361 ignores a gain written while its AGC
+                // runs, so the rail is drawn inert and says why rather than
+                // looking broken (issue #417).
+                let hardware_agc = self.hardware_agc_owns(&g.name);
+                if tuner {
+                    let hint = if hardware_agc {
+                        tr!("topbar-rx888-tuner-auto-hint")
+                    } else {
+                        tr!("topbar-rx888-tuner-hint")
+                    };
+                    let label = gain_label(&g.name, rx_gains.len());
+                    if gain_rail(ui, narrow, g, &label, &hint, hardware_agc, &mut db) {
+                        self.set_rx888_tuner(cmds, &g.name, db);
+                    }
+                    continue;
+                }
                 let mut hint = tr!("topbar-rx-gain-hint", stage = g.name.to_string());
                 // A stage counted in steps rather than decibels — an RSP's
                 // LNA state, an Airspy's place on its gain curve, a
@@ -2894,20 +3102,6 @@ impl SdroxideApp {
                 if rx_gains.len() > bar_gains.len() {
                     hint.push_str(&tr!("topbar-rx-gain-stages", n = rx_gains.len()));
                 }
-                ui.label(gain_label(&g.name, bar_gains.len())).on_hover_text(&hint);
-                let mut db = self
-                    .state
-                    .gains
-                    .iter()
-                    .find(|(n, _)| *n == g.name)
-                    .map(|(_, d)| *d)
-                    .unwrap_or(g.min_db);
-                let step = if g.step_db > 0.0 { g.step_db } else { 1.0 };
-                // A PlutoSDR in one of its attack modes owns its own gain
-                // register: the AD9361 ignores a gain written while its AGC
-                // runs, so the rail is drawn inert and says why rather than
-                // looking broken (issue #417).
-                let hardware_agc = self.hardware_agc_owns(&g.name);
                 if hardware_agc {
                     hint.push('\n');
                     hint.push_str(&if self.pluto_agc_owns_gain(&g.name) {
@@ -2916,41 +3110,8 @@ impl SdroxideApp {
                         tr!("topbar-tuner-agc-owns-gain")
                     });
                 }
-                // Every gain rail at one pinned length, a little shorter than
-                // volume and squelch, which take the box's stretch (HDZ
-                // 2026-11-09: "Länge … gleich", then "Lautstärke und Squelch
-                // müssen etwas länger"); in a menu `control_row` sizes them.
-                // The readout is a bare number — the unit is in the hint — so
-                // the field stays small.
-                let resp = ui
-                    .scope(|ui| {
-                        if !narrow {
-                            ui.spacing_mut().slider_width = STRIP_RAIL_W;
-                        }
-                        ui.add_enabled_ui(!hardware_agc, |ui| {
-                            crate::chrome::slider_wheel(
-                                crate::chrome::slider_readout(
-                                    ui,
-                                    value_field_w(ui, RAIL_READOUT),
-                                    // A bare number: three rails fit the strip only
-                                    // without a unit on each readout. The unit is in
-                                    // the hint — and a stage counted in steps says so
-                                    // there — so no step index reads as "dB".
-                                    Slider::new(&mut db, g.min_db..=g.max_db)
-                                        .step_by(step)
-                                        .fixed_decimals(usize::from(step.fract() != 0.0)),
-                                ),
-                                &mut db,
-                                g.min_db..=g.max_db,
-                                step,
-                            )
-                        })
-                        .inner
-                    })
-                    .inner
-                    .on_hover_text(&hint)
-                    .on_disabled_hover_text(&hint);
-                if resp.changed() {
+                let label = gain_label(&g.name, rx_gains.len());
+                if gain_rail(ui, narrow, g, &label, &hint, hardware_agc, &mut db) {
                     // Optimistic echo so the knob tracks the drag instead
                     // of snapping back until the engine answers.
                     match self.state.gains.iter_mut().find(|(n, _)| *n == g.name) {
@@ -4425,6 +4586,57 @@ impl SdroxideApp {
                 }
             });
         });
+
+        // SAM's sidebands: its own row, one of four, greyed out outside SAM.
+        // Why: HDZ 2026-11-16: "die SAM-Implementation ist nicht gut, machst du
+        //      das als Toggle-Knopf"; "das MRC klang gut"; later the same day
+        //      "neben SAM MRC noch SAM USB und SAM LSB, damit wir da alle SAM-
+        //      Varianten haben", and τ fixed ("0.2 sek wäre universell").
+        crate::chrome::menu_caption(ui, &tr!("topbar-sam-sideband"));
+        let sam = self.state.rx[0].mode == Mode::Sam;
+        ui.add_enabled_ui(sam, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                use sdroxide_types::SamSideband as S;
+                let (now, tau) = (self.state.rx[0].sam_sideband, self.state.rx[0].sam_mrc_tau_s);
+                let mut want = None;
+                for sb in S::ALL {
+                    let (label, hint) = match sb {
+                        S::Both => (tr!("topbar-sam-dsb"), tr!("topbar-sam-dsb-hint")),
+                        S::Mrc => (tr!("topbar-sam-mrc-chip"), tr!("topbar-sam-mrc-hint")),
+                        S::Upper => (tr!("topbar-sam-usb"), tr!("topbar-sam-usb-hint")),
+                        S::Lower => (tr!("topbar-sam-lsb"), tr!("topbar-sam-lsb-hint")),
+                    };
+                    if crate::chrome::chip(ui, now == sb, label).on_hover_text(hint).clicked()
+                        && now != sb
+                    {
+                        want = Some((sb, tau));
+                    }
+                }
+                // MRC's averaging time, three steps, live only in MRC.
+                ui.separator();
+                ui.add_enabled_ui(now == S::Mrc, |ui| {
+                    for (t, label) in sdroxide_types::SAM_MRC_TAU_CHOICES_S.into_iter().zip([
+                        tr!("topbar-sam-tau-short"),
+                        tr!("topbar-sam-tau-mid"),
+                        tr!("topbar-sam-tau-long"),
+                    ]) {
+                        if crate::chrome::chip(ui, tau == t, label)
+                            .on_hover_text(tr!("topbar-sam-tau-hint"))
+                            .clicked()
+                            && tau != t
+                        {
+                            want = Some((now, t));
+                        }
+                    }
+                });
+                if let Some((sideband, tau_s)) = want {
+                    let r = &mut self.state.rx[0]; // optimistic echo
+                    r.sam_sideband = sideband;
+                    r.sam_mrc_tau_s = tau_s;
+                    cmds.push(Command::SetSamSideband { rx: RxId::Main, sideband, tau_s });
+                }
+            });
+        });
     }
 
     /// The sub-audible readout: the CTCSS tone or DCS code being received, and a
@@ -4574,6 +4786,65 @@ impl SdroxideApp {
         }
     }
 
+    /// Whether the radio's "receiving antenna" flag is really its transverter
+    /// port, as on an ELAD FDM-DUO — see [`Self::xvtr_chip`].
+    fn rx_ant_is_xvtr(&self) -> bool {
+        self.caps.as_ref().is_some_and(|c| c.rx_antenna_is_xvtr)
+    }
+
+    /// The label the extra-port chip wears on this radio.
+    fn rx_ant_label(&self) -> &'static str {
+        if self.rx_ant_is_xvtr() { XVTR_LABEL } else { RX_ANT_LABEL }
+    }
+
+    /// The FDM-DUO's transverter port. Lit — in the warning colour, because
+    /// the PA is then out of circuit and HF has no power — while the rig sends
+    /// its transmit out of the 0 dBm RF OUT SMA (`TT1`).
+    ///
+    /// Lighting it also moves receive to the RX-only socket, where the
+    /// transverter's IF comes back, so the 5 W path is never on the
+    /// transverter; putting it out returns transmit to the PA and the receiver
+    /// to the socket it was on before. The engine refuses either while keyed.
+    fn xvtr_chip(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, on: bool, ants: &[String]) {
+        let clicked = crate::chrome::chip_accent(
+            ui,
+            on,
+            XVTR_LABEL,
+            crate::theme::YELLOW(),
+            crate::theme::INK_ON_BRIGHT(),
+        )
+        .on_hover_text(tr!("topbar-elad-xvtr"))
+        .clicked();
+        if !clicked {
+            return;
+        }
+        // Mid-over the engine refuses the switch and says why; the receive
+        // socket must not move on its own either.
+        if self.state.tx.ptt || self.state.tx.tune {
+            cmds.push(Command::SetRxAntenna(!on));
+            return;
+        }
+        let rx_only = ants.iter().any(|a| a == XVTR_RX_SOCKET);
+        if !on {
+            if rx_only && self.state.antenna_rx != XVTR_RX_SOCKET {
+                self.xvtr_prev_ant = Some(self.state.antenna_rx.clone());
+                self.state.antenna_rx = XVTR_RX_SOCKET.to_string(); // optimistic echo
+                cmds.push(Command::SetAntenna { dir: Direction::Rx, name: XVTR_RX_SOCKET.into() });
+            }
+            self.state.rx_antenna = true;
+            cmds.push(Command::SetRxAntenna(true));
+        } else {
+            self.state.rx_antenna = false;
+            cmds.push(Command::SetRxAntenna(false));
+            if let Some(prev) = self.xvtr_prev_ant.take()
+                && ants.contains(&prev)
+            {
+                self.state.antenna_rx = prev.clone();
+                cmds.push(Command::SetAntenna { dir: Direction::Rx, name: prev });
+            }
+        }
+    }
+
     /// Whether the radio's own power switch can be reached from here.
     fn rig_power(&self) -> bool {
         self.caps.as_ref().is_some_and(|c| c.commands_rig_power)
@@ -4641,7 +4912,7 @@ impl SdroxideApp {
             top += gap + widest;
         }
         if self.rig_rx_antenna().is_some() {
-            top += gap + crate::chrome::chip_width(ui, RX_ANT_LABEL, None);
+            top += gap + crate::chrome::chip_width(ui, self.rx_ant_label(), None);
         }
         if top > 0.0 {
             top += crate::chrome::text_width(ui, "ANT", body.clone());
@@ -4740,13 +5011,16 @@ impl SdroxideApp {
                 // it is — an extra input switched into the receive path, with
                 // the main aerial left on transmit throughout. Lit while it is
                 // in circuit, like every other chip that names a state.
-                if let Some(on) = rx_ant
-                    && crate::chrome::chip(ui, on, RX_ANT_LABEL)
+                if let Some(on) = rx_ant {
+                    if self.rx_ant_is_xvtr() {
+                        self.xvtr_chip(ui, cmds, on, &ants);
+                    } else if crate::chrome::chip(ui, on, RX_ANT_LABEL)
                         .on_hover_text(tr!("topbar-radio-s-separate-receiving-antenna"))
                         .clicked()
-                {
-                    self.state.rx_antenna = !on; // optimistic echo
-                    cmds.push(Command::SetRxAntenna(!on));
+                    {
+                        self.state.rx_antenna = !on; // optimistic echo
+                        cmds.push(Command::SetRxAntenna(!on));
+                    }
                 }
                 if let Some(atu) = self.rig_atu()
                     && self.atu_in_ant_row()
@@ -5197,7 +5471,7 @@ impl SdroxideApp {
         let tx = self.state.tx;
         if crate::chrome::chip_accent_sized(
             ui,
-            tx.tune,
+            tx.tune && !tx.two_tone,
             RichText::new(tr!("topbar-tune")).size(15.0),
             crate::theme::YELLOW(),
             crate::theme::INK_ON_CYAN(),
@@ -5205,7 +5479,28 @@ impl SdroxideApp {
         )
         .clicked()
         {
-            cmds.push(Command::SetTune(!tx.tune));
+            tune_clicked(tx, false, cmds);
+        }
+        self.tx_two_tone_chip(ui, cmds);
+    }
+
+    /// The two-tone chip beside TUNE (issue #525): one click keys the
+    /// two-tone test signal at the tune level, another unkeys it — what other
+    /// SDR programs call their "Tone" button. Lit only while that is what is
+    /// on the air, so it and TUNE never both read as keyed.
+    fn tx_two_tone_chip(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>) {
+        let tx = self.state.tx;
+        if crate::chrome::chip_accent(
+            ui,
+            tx.tune && tx.two_tone,
+            RichText::new(tr!("topbar-two-tone")).size(15.0),
+            crate::theme::YELLOW(),
+            crate::theme::INK_ON_CYAN(),
+        )
+        .on_hover_text(tr!("topbar-two-tone-hover"))
+        .clicked()
+        {
+            tune_clicked(tx, true, cmds);
         }
     }
 
@@ -7316,6 +7611,19 @@ pub(in crate::app) const SOLAR_CHIP: &str = "SOLAR";
 /// The caption under the FDM-DUO's power presets (AJ3G, 18 Oct 2026).
 const DUO_PRESETS_CAPTION: &str = "ELAD FDM-DUO TX PWR";
 
+/// What a click on TUNE (`two_tone` false) or on the two-tone chip (`true`)
+/// sends. Clicking the one that is lit unkeys; clicking the other keys with
+/// that waveform — switching over without unkeying if TUNE was already down,
+/// since the waveform is all that differs.
+fn tune_clicked(tx: sdroxide_types::TxState, two_tone: bool, cmds: &mut Vec<Command>) {
+    if tx.tune && tx.two_tone == two_tone {
+        cmds.push(Command::SetTune(false));
+    } else {
+        cmds.push(Command::SetTuneTwoTone(two_tone));
+        cmds.push(Command::SetTune(true));
+    }
+}
+
 /// The keying chips' shared size: PTT and TUNE drawn to the wider of the two
 /// labels, so the chips match and the level blocks beside them start on the
 /// same column.
@@ -7337,7 +7645,8 @@ fn tx_rows_fixed_w(ui: &egui::Ui, keyer: bool) -> (f32, f32) {
         |s: &str| crate::chrome::text_width(ui, s, egui::TextStyle::Body.resolve(ui.style()));
     let keyer_w = if keyer { crate::chrome::chip_width(ui, " ▶ ", Some(15.0)) + g } else { 0.0 };
     let row1 = key_w + g + keyer_w + label(&tr!("topbar-drive")) + g + g + TX_SLIDER_VALUE_W;
-    let row2 = key_w + g + label(&tr!("topbar-tune-2")) + g + g + TX_SLIDER_VALUE_W;
+    let two_tone_w = crate::chrome::chip_width(ui, &tr!("topbar-two-tone"), Some(15.0)) + g;
+    let row2 = key_w + g + two_tone_w + label(&tr!("topbar-tune-2")) + g + g + TX_SLIDER_VALUE_W;
     (row1, row2)
 }
 
@@ -7654,6 +7963,56 @@ fn readout_rail_w(ui: &egui::Ui) -> f32 {
     STRIP_RAIL_W + MODULE_ROW_SPACING + value_field_w(ui, RAIL_READOUT)
 }
 
+/// One front-end gain stage on the receive row: its label and its rail,
+/// inert while a hardware AGC owns the stage. Returns whether the
+/// operator moved it this frame, with the new figure in `db`.
+fn gain_rail(
+    ui: &mut egui::Ui,
+    narrow: bool,
+    g: &GainElement,
+    label: &str,
+    hint: &str,
+    hardware_agc: bool,
+    db: &mut f64,
+) -> bool {
+    ui.label(label).on_hover_text(hint);
+    let step = if g.step_db > 0.0 { g.step_db } else { 1.0 };
+    // Every gain rail at one pinned length, a little shorter than
+    // volume and squelch, which take the box's stretch (HDZ
+    // 2026-11-09: "Länge … gleich", then "Lautstärke und Squelch
+    // müssen etwas länger"); in a menu `control_row` sizes them.
+    // The readout is a bare number — the unit is in the hint — so
+    // the field stays small.
+    ui.scope(|ui| {
+        if !narrow {
+            ui.spacing_mut().slider_width = STRIP_RAIL_W;
+        }
+        ui.add_enabled_ui(!hardware_agc, |ui| {
+            crate::chrome::slider_wheel(
+                crate::chrome::slider_readout(
+                    ui,
+                    value_field_w(ui, RAIL_READOUT),
+                    // A bare number: three rails fit the strip only
+                    // without a unit on each readout. The unit is in
+                    // the hint — and a stage counted in steps says so
+                    // there — so no step index reads as "dB".
+                    Slider::new(&mut *db, g.min_db..=g.max_db)
+                        .step_by(step)
+                        .fixed_decimals(usize::from(step.fract() != 0.0)),
+                ),
+                db,
+                g.min_db..=g.max_db,
+                step,
+            )
+        })
+        .inner
+    })
+    .inner
+    .on_hover_text(hint)
+    .on_disabled_hover_text(hint)
+    .changed()
+}
+
 /// The widest figure a rail's readout shows: a gain or attenuation to a
 /// tenth, without the unit.
 const RAIL_READOUT: &str = "-88.8";
@@ -7731,6 +8090,56 @@ impl FrontChip {
         element: sdroxide_types::Rx888Config::VGA_RANGE_ELEMENT,
         labels: &["AUTO", "LOW", "HIGH"],
     };
+    /// The R828D's own gain loops, lit while they run. AUTO, the word
+    /// Settings → Radio uses for the same switch.
+    const RX888_TUNER_AGC: FrontChip = FrontChip {
+        element: sdroxide_types::Rx888Config::TUNER_AGC_ELEMENT,
+        labels: &["AUTO", "AUTO"],
+    };
+}
+
+/// Which of an RX-888's two control sets the receive row carries.
+///
+/// The receiver has two inputs on one ADC, and each answers to its own
+/// stages: on HF the step attenuator and the VGA, which the driver holds at a
+/// fixed setting while the R828D tuner feeds the ADC; on VHF the tuner's gain,
+/// which does nothing on HF. A bar showing one set on both bands leaves a dead
+/// control on the other, so the set follows the band the receiver reports —
+/// and the automatic crossover moves that with the dial.
+// Why: HDZ 2026-11-15: „wenn der Modus umschaltet, dann muss ein anderer
+//      Regler ins Bedienpanel“
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::app) enum Rx888Panel {
+    /// ATT and VGA rails, the VGA range chip.
+    Hf,
+    /// The tuner gain rail and its AUTO chip.
+    Vhf,
+}
+
+impl Rx888Panel {
+    /// The set for the band the receiver reports. HF while it reports none —
+    /// before its first state, or from a server that predates the report —
+    /// which is what the bar always showed.
+    pub(in crate::app) fn for_band(on_vhf: Option<bool>) -> Rx888Panel {
+        if on_vhf == Some(true) { Rx888Panel::Vhf } else { Rx888Panel::Hf }
+    }
+
+    /// Whether the gain stage `name` is drawn as a rail in this set.
+    pub(in crate::app) fn carries(self, name: &str) -> bool {
+        let tuner = name == sdroxide_types::Rx888Config::TUNER_GAIN_ELEMENT;
+        match self {
+            Rx888Panel::Hf => !tuner,
+            Rx888Panel::Vhf => tuner,
+        }
+    }
+
+    /// The switch drawn as a chip beside the rails.
+    pub(in crate::app) fn chip(self) -> FrontChip {
+        match self {
+            Rx888Panel::Hf => FrontChip::RX888_VGA_RANGE,
+            Rx888Panel::Vhf => FrontChip::RX888_TUNER_AGC,
+        }
+    }
 }
 
 /// A chip on the RX box's chip run: everything that follows the SQL rail, in
@@ -8663,6 +9072,8 @@ fn band_mode_menu(
     // solar window has been opened once, and colours nothing.
     conditions: Option<&sdroxide_solar::BandConditions>,
     daylight: bool,
+    // The PROBES row: lit chips in, the clicked one out.
+    probes: &mut ProbeRow,
     cmds: &mut Vec<Command>,
 ) {
     crate::chrome::menu_caption(ui, &tr!("topbar-band"));
@@ -8769,7 +9180,7 @@ fn band_mode_menu(
             let resp = crate::chrome::chip_enabled(ui, why.is_none(), mode == m, m.label());
             let resp = match why {
                 Some(why) => resp.on_disabled_hover_text(why),
-                None => resp,
+                None => late_mode_tip(resp, m),
             };
             if resp.clicked() {
                 cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
@@ -8777,26 +9188,284 @@ fn band_mode_menu(
         }
     });
     ui.add_space(6.0);
-    crate::chrome::menu_caption(ui, &tr!("topbar-digital"));
-    ui.horizontal_wrapped(|ui| {
-        // ADS-B, VDL2, AIS and HFDL ride along at the end of this row rather
-        // than in [`Mode::DIGITAL`] itself: that list is what the digi engine
-        // decodes and transmits, and none of these is — each has its own lane,
-        // no QSO and no transmitter. They are digital signals all the same, and
-        // this is where an operator looks for one.
-        for m in Mode::DIGITAL.into_iter().chain([Mode::Adsb, Mode::Vdl2, Mode::Ais, Mode::Hfdl]) {
-            if crate::chrome::chip(ui, mode == m, m.label()).clicked() {
-                if mode == m {
-                    // Clicked again: leave it. The curtain falls and the mode
-                    // before it comes back (see `frame::curtain_drop_id`).
-                    ui.ctx()
-                        .data_mut(|d| d.insert_temp(crate::app::frame::curtain_drop_id(), true));
-                } else {
-                    cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
+    // DIGITAL, sorted by what the operator is after rather than in one row of
+    // forty: HAM for the modes one works other stations in, MONITOR for the
+    // services one listens to (HDZ 17.11.: „mich nervt das Bedienchaos“). The
+    // groups are a table here, not an order in [`Mode::DIGITAL`] — that list
+    // is serialised, and its order is the wire's, not the menu's.
+    for (family, groups) in [(DigiFamily::Ham, HAM_GROUPS), (DigiFamily::Monitor, MONITOR_GROUPS)] {
+        crate::chrome::menu_caption(ui, &family.caption());
+        for &(group, modes) in groups {
+            digi_group_caption(ui, &group.caption());
+            ui.horizontal_wrapped(|ui| {
+                for &m in modes {
+                    if late_mode_tip(crate::chrome::chip(ui, mode == m, m.label()), m).clicked() {
+                        if mode == m {
+                            // Clicked again: leave it. The curtain falls and the
+                            // mode before it comes back (see
+                            // `frame::curtain_drop_id`).
+                            ui.ctx().data_mut(|d| {
+                                d.insert_temp(crate::app::frame::curtain_drop_id(), true)
+                            });
+                        } else {
+                            cmds.push(Command::SetMode { rx: RxId::Main, mode: m });
+                        }
+                    }
                 }
-            }
+            });
         }
-    });
+        if family == DigiFamily::Monitor {
+            // Probes are windows, not modes: each decoder there sets its own
+            // receiver up, so the chip opens the window and the window does
+            // the rest. Here so that radiosondes are no longer only behind
+            // the ISM window's header and weather satellites only behind the
+            // SAT window's (HDZ: „Satelliten sind Sonden“).
+            digi_group_caption(ui, &tr!("topbar-digi-probes"));
+            ui.horizontal_wrapped(|ui| {
+                for p in Probe::ALL {
+                    let lit = probes.lit.contains(&p);
+                    if crate::chrome::chip(ui, lit, p.label()).on_hover_text(p.hint()).clicked() {
+                        probes.picked = Some(p);
+                    }
+                }
+            });
+        }
+        ui.add_space(4.0);
+    }
+}
+
+/// How long the pointer rests on a mode chip before its tooltip shows.
+/// Longer than the general tooltip delay on purpose: these chips are pressed
+/// many times a session, and a tooltip on every pass would cover the next
+/// chip (HDZ 17.11.: tooltips on the modes, „wenigstens nach 3 sek“).
+const MODE_TIP_DELAY_S: f32 = 3.0;
+
+/// A mode chip's tooltip, once the pointer has rested on it for
+/// [`MODE_TIP_DELAY_S`]. Asks for the one repaint that shows it, since a
+/// resting pointer sends no events.
+fn late_mode_tip(resp: egui::Response, m: Mode) -> egui::Response {
+    if !resp.hovered() {
+        return resp;
+    }
+    let still = resp.ctx.input(|i| i.pointer.time_since_last_movement());
+    if still >= MODE_TIP_DELAY_S {
+        resp.on_hover_text(mode_tip(m))
+    } else {
+        resp.ctx
+            .request_repaint_after(std::time::Duration::from_secs_f32(MODE_TIP_DELAY_S - still));
+        resp
+    }
+}
+
+/// One line on what a mode is and where it is used. Exhaustive on purpose: a
+/// mode added to [`Mode`] does not compile until it has its line.
+fn mode_tip(m: Mode) -> String {
+    match m {
+        Mode::Lsb => tr!("mode-tip-lsb"),
+        Mode::Usb => tr!("mode-tip-usb"),
+        Mode::Cw => tr!("mode-tip-cw"),
+        Mode::Am => tr!("mode-tip-am"),
+        Mode::Sam => tr!("mode-tip-sam"),
+        Mode::Nfm => tr!("mode-tip-nfm"),
+        Mode::Wfm => tr!("mode-tip-wfm"),
+        Mode::Drm => tr!("mode-tip-drm"),
+        Mode::HdRadio => tr!("mode-tip-hdradio"),
+        Mode::Digu => tr!("mode-tip-digu"),
+        Mode::Digl => tr!("mode-tip-digl"),
+        Mode::Dsb => tr!("mode-tip-dsb"),
+        Mode::Isb => tr!("mode-tip-isb"),
+        Mode::Spec => tr!("mode-tip-spec"),
+        Mode::Psk => tr!("mode-tip-psk"),
+        Mode::Rtty => tr!("mode-tip-rtty"),
+        Mode::RttyFm => tr!("mode-tip-rttyfm"),
+        Mode::Olivia => tr!("mode-tip-olivia"),
+        Mode::Contestia => tr!("mode-tip-contestia"),
+        Mode::Thor => tr!("mode-tip-thor"),
+        Mode::DominoEx => tr!("mode-tip-dominoex"),
+        Mode::Mfsk => tr!("mode-tip-mfsk"),
+        Mode::Mt63 => tr!("mode-tip-mt63"),
+        Mode::Fsq => tr!("mode-tip-fsq"),
+        Mode::Jtty => tr!("mode-tip-jtty"),
+        Mode::Hell => tr!("mode-tip-hell"),
+        Mode::AtChat => tr!("mode-tip-atchat"),
+        Mode::Rade => tr!("mode-tip-rade"),
+        Mode::Ft8 => tr!("mode-tip-ft8"),
+        Mode::Ft4 => tr!("mode-tip-ft4"),
+        Mode::Ft2 => tr!("mode-tip-ft2"),
+        Mode::Js8 => tr!("mode-tip-js8"),
+        Mode::Wspr => tr!("mode-tip-wspr"),
+        Mode::Pi4 => tr!("mode-tip-pi4"),
+        Mode::Fst4 => tr!("mode-tip-fst4"),
+        Mode::Q65 => tr!("mode-tip-q65"),
+        Mode::Jt65 => tr!("mode-tip-jt65"),
+        Mode::Jt9 => tr!("mode-tip-jt9"),
+        Mode::Msk144 => tr!("mode-tip-msk144"),
+        Mode::Fsk441 => tr!("mode-tip-fsk441"),
+        Mode::Sstv => tr!("mode-tip-sstv"),
+        Mode::SstvFm => tr!("mode-tip-sstvfm"),
+        Mode::Rifp => tr!("mode-tip-rifp"),
+        Mode::RfPaint => tr!("mode-tip-rfpaint"),
+        Mode::Packet => tr!("mode-tip-packet"),
+        Mode::PacketHf => tr!("mode-tip-packethf"),
+        Mode::Aprs => tr!("mode-tip-aprs"),
+        Mode::Mercury => tr!("mode-tip-mercury"),
+        Mode::Data2g => tr!("mode-tip-data2g"),
+        Mode::Adsb => tr!("mode-tip-adsb"),
+        Mode::Vdl2 => tr!("mode-tip-vdl2"),
+        Mode::Acars => tr!("mode-tip-acars"),
+        Mode::Hfdl => tr!("mode-tip-hfdl"),
+        Mode::Ais => tr!("mode-tip-ais"),
+        Mode::Navtex => tr!("mode-tip-navtex"),
+        Mode::Wefax => tr!("mode-tip-wefax"),
+    }
+}
+
+/// The two halves of DIGITAL in the band/mode menu.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum DigiFamily {
+    /// Modes for working other stations: conversation, weak-signal, pictures, data.
+    Ham,
+    /// Services one listens to: aircraft, ships, probes.
+    Monitor,
+}
+
+impl DigiFamily {
+    fn caption(self) -> String {
+        match self {
+            DigiFamily::Ham => tr!("topbar-ham"),
+            DigiFamily::Monitor => tr!("topbar-monitor"),
+        }
+    }
+}
+
+/// A small heading over one group of chips in DIGITAL.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum DigiGroup {
+    Talk,
+    DigiModes,
+    Image,
+    Data,
+    Aviation,
+    Sea,
+}
+
+impl DigiGroup {
+    fn caption(self) -> String {
+        match self {
+            DigiGroup::Talk => tr!("topbar-digi-talk"),
+            DigiGroup::DigiModes => tr!("topbar-digi-modes"),
+            DigiGroup::Image => tr!("topbar-digi-image"),
+            DigiGroup::Data => tr!("topbar-digi-data"),
+            DigiGroup::Aviation => tr!("topbar-digi-aviation"),
+            DigiGroup::Sea => tr!("topbar-digi-sea"),
+        }
+    }
+}
+
+/// HAM: the digital modes for working other stations. Every mode of
+/// [`Mode::DIGITAL`] and the four lanes of their own (ADS-B, VDL2, AIS, HFDL)
+/// is in exactly one group of HAM or MONITOR — see
+/// `every_digital_mode_is_in_exactly_one_group`.
+const HAM_GROUPS: &[(DigiGroup, &[Mode])] = &[
+    // Keyboard conversation: text in, text out, a QSO at typing speed.
+    (
+        DigiGroup::Talk,
+        &[
+            Mode::Psk,
+            Mode::Rtty,
+            Mode::RttyFm,
+            Mode::Olivia,
+            Mode::Contestia,
+            Mode::Thor,
+            Mode::DominoEx,
+            Mode::Mfsk,
+            Mode::Mt63,
+            Mode::Fsq,
+            Mode::Jtty,
+            Mode::Hell,
+            Mode::AtChat,
+            Mode::Rade,
+        ],
+    ),
+    // Structured weak-signal modes: fixed messages in timed slots.
+    (
+        DigiGroup::DigiModes,
+        &[
+            Mode::Ft8,
+            Mode::Ft4,
+            Mode::Ft2,
+            Mode::Js8,
+            Mode::Wspr,
+            Mode::Pi4,
+            Mode::Fst4,
+            Mode::Q65,
+            Mode::Jt65,
+            Mode::Jt9,
+            Mode::Msk144,
+            Mode::Fsk441,
+        ],
+    ),
+    (DigiGroup::Image, &[Mode::Sstv, Mode::SstvFm, Mode::Rifp, Mode::RfPaint]),
+    (DigiGroup::Data, &[Mode::Packet, Mode::PacketHf, Mode::Aprs, Mode::Mercury, Mode::Data2g]),
+];
+
+/// MONITOR: services one listens to. WEFAX and NAVTEX are here rather than
+/// under HAM because what they carry is the maritime weather and safety
+/// service (DWD Pinneberg, the coast stations), not other amateurs.
+const MONITOR_GROUPS: &[(DigiGroup, &[Mode])] = &[
+    (DigiGroup::Aviation, &[Mode::Adsb, Mode::Vdl2, Mode::Acars, Mode::Hfdl]),
+    (DigiGroup::Sea, &[Mode::Ais, Mode::Navtex, Mode::Wefax]),
+];
+
+/// A group heading inside DIGITAL: smaller and dimmer than the section
+/// captions, so HAM and MONITOR still read as the two sections.
+fn digi_group_caption(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(1.0);
+    ui.label(RichText::new(text).color(crate::theme::TEXT()).size(8.5));
+}
+
+/// The PROBES row of MONITOR: windows rather than modes. The menu only says
+/// which was picked; opening it is the caller's, who owns the windows.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(in crate::app) enum Probe {
+    Ism,
+    Sondes,
+    Sat,
+    WxSat,
+    Qo100,
+}
+
+impl Probe {
+    pub(in crate::app) const ALL: [Probe; 5] =
+        [Probe::Ism, Probe::Sondes, Probe::Sat, Probe::WxSat, Probe::Qo100];
+
+    fn label(self) -> String {
+        match self {
+            Probe::Ism => tr!("topbar-chip-ism"),
+            Probe::Sondes => tr!("ism-sonde-chip"),
+            Probe::Sat => tr!("topbar-chip-sat"),
+            Probe::WxSat => tr!("sat-wxsat"),
+            Probe::Qo100 => "QO-100".to_string(),
+        }
+    }
+
+    fn hint(self) -> String {
+        match self {
+            Probe::Ism => tr!("topbar-ism-band-devices-weather-sensors"),
+            Probe::Sondes => tr!("ism-sonde-chip-hover"),
+            Probe::Sat => tr!("topbar-satellite-doppler-tracking-qo-100"),
+            Probe::WxSat => tr!("sat-wxsat-hint"),
+            Probe::Qo100 => tr!("topbar-satellite-qo-100-beacon-calibration"),
+        }
+    }
+}
+
+/// What the PROBES row needs from its caller and gives back: which chips to
+/// light, and which one was clicked this frame.
+#[derive(Default)]
+pub(in crate::app) struct ProbeRow {
+    pub(in crate::app) lit: Vec<Probe>,
+    pub(in crate::app) picked: Option<Probe>,
 }
 
 /// The VFO A/B selector chips. In the frequency box on a desktop, in the VFO
@@ -9008,6 +9677,33 @@ mod tests {
     }
 
     use super::*;
+
+    /// An RX-888's bar carries the stages that act on the band it reports: ATT
+    /// and VGA with the range chip on HF, the tuner gain with its AUTO on VHF,
+    /// and HF's set while no band has been reported.
+    // Why: HDZ 2026-11-15: „wenn der Modus umschaltet, dann muss ein anderer
+    //      Regler ins Bedienpanel“
+    #[test]
+    fn an_rx888s_bar_carries_the_stages_of_its_band() {
+        use sdroxide_types::Rx888Config as R;
+        let stages = [R::VGA_ELEMENT, R::ATT_ELEMENT, R::TUNER_GAIN_ELEMENT];
+        let carried =
+            |p: Rx888Panel| stages.into_iter().filter(|n| p.carries(n)).collect::<Vec<_>>();
+
+        let hf = Rx888Panel::for_band(Some(false));
+        assert_eq!(carried(hf), [R::VGA_ELEMENT, R::ATT_ELEMENT]);
+        assert_eq!(hf.chip(), FrontChip::RX888_VGA_RANGE);
+
+        let vhf = Rx888Panel::for_band(Some(true));
+        assert_eq!(carried(vhf), [R::TUNER_GAIN_ELEMENT]);
+        assert_eq!(vhf.chip().element, R::TUNER_AGC_ELEMENT);
+
+        assert_eq!(Rx888Panel::for_band(None), hf, "no band reported: today's HF controls");
+
+        // The one rail VHF leaves is named as a stage of a three-stage front
+        // end, not as the generic "Gain" of a receiver that has only one.
+        assert_eq!(gain_label(R::TUNER_GAIN_ELEMENT, 3), "RF");
+    }
 
     /// The real-world bug this exists to catch: minutes and seconds computed
     /// from two different roundings of the same elapsed time disagreed —
@@ -10027,6 +10723,13 @@ mod tests {
                             crate::theme::INK_ON_CYAN(),
                             size,
                         );
+                        crate::chrome::chip_accent(
+                            ui,
+                            false,
+                            RichText::new(tr!("topbar-two-tone")).size(15.0),
+                            crate::theme::YELLOW(),
+                            crate::theme::INK_ON_CYAN(),
+                        );
                         ui.label("Tune");
                         crate::chrome::slider_readout(
                             ui,
@@ -10705,7 +11408,17 @@ mod tests {
         let (ctx, input) = desktop_ctx();
         let draw = |input: egui::RawInput, cmds: &mut Vec<Command>| {
             ctx.run_ui(input, |ui| {
-                band_mode_menu(ui, state.rx[0].mode, state, None, false, None, true, cmds);
+                band_mode_menu(
+                    ui,
+                    state.rx[0].mode,
+                    state,
+                    None,
+                    false,
+                    None,
+                    true,
+                    &mut ProbeRow::default(),
+                    cmds,
+                );
             })
         };
         let first = draw(input.clone(), &mut Vec::new());
@@ -10804,6 +11517,7 @@ mod tests {
                     false,
                     None,
                     true,
+                    &mut ProbeRow::default(),
                     &mut Vec::new(),
                 );
             });
@@ -10914,6 +11628,125 @@ mod tests {
         assert_eq!(band_chip_dial(Mode::Lsb, Band::M20, None), None);
     }
 
+    /// DIGITAL is sorted into groups by a table in the UI, apart from the
+    /// serialised [`Mode::DIGITAL`]. A mode added there and forgotten here
+    /// would vanish from the menu, and one listed twice would light two
+    /// chips — so every digital mode, and the four lanes of their own, is in
+    /// exactly one group.
+    #[test]
+    fn every_digital_mode_is_in_exactly_one_group() {
+        let grouped: Vec<Mode> = HAM_GROUPS
+            .iter()
+            .chain(MONITOR_GROUPS)
+            .flat_map(|(_, modes)| modes.iter().copied())
+            .collect();
+        let wanted: Vec<Mode> = Mode::DIGITAL
+            .into_iter()
+            .chain([Mode::Adsb, Mode::Vdl2, Mode::Ais, Mode::Hfdl])
+            .collect();
+        for m in &wanted {
+            let n = grouped.iter().filter(|g| *g == m).count();
+            assert_eq!(n, 1, "{} is in {n} groups", m.label());
+        }
+        assert_eq!(grouped.len(), wanted.len(), "a group holds a mode DIGITAL does not");
+    }
+
+    /// Every chip in the menu has its line, and the line stays a line: one
+    /// row of a tooltip, not a paragraph (the manual has the paragraphs).
+    #[test]
+    fn every_mode_chip_has_a_one_line_tip() {
+        let menu = Mode::DIGITAL.into_iter().chain([
+            Mode::Adsb,
+            Mode::Vdl2,
+            Mode::Ais,
+            Mode::Hfdl,
+            Mode::Lsb,
+            Mode::Usb,
+            Mode::Cw,
+            Mode::Am,
+            Mode::Sam,
+            Mode::Nfm,
+            Mode::Wfm,
+            Mode::Drm,
+            Mode::HdRadio,
+            Mode::Digu,
+            Mode::Digl,
+            Mode::Dsb,
+            Mode::Isb,
+            Mode::Spec,
+        ]);
+        for m in menu {
+            let tip = mode_tip(m);
+            assert!(!tip.is_empty() && !tip.starts_with("mode-tip-"), "{}: no tip", m.label());
+            assert!(tip.chars().count() <= 72 && !tip.contains('\n'), "{}: {tip}", m.label());
+        }
+    }
+
+    /// A mode chip inside a group still sets the mode, and a PROBES chip asks
+    /// for its window rather than for a mode.
+    #[test]
+    fn grouped_chips_set_modes_and_probes_open_windows() {
+        let state = RadioState::default();
+        assert!(
+            click_in_band_mode_menu(&state, "FT8")
+                .iter()
+                .any(|c| matches!(c, Command::SetMode { mode: Mode::Ft8, .. }))
+        );
+        assert!(
+            click_in_band_mode_menu(&state, "NAVTEX")
+                .iter()
+                .any(|c| matches!(c, Command::SetMode { mode: Mode::Navtex, .. }))
+        );
+
+        let (ctx, input) = desktop_ctx();
+        let mut picked = None;
+        let draw = |input: egui::RawInput, picked: &mut Option<Probe>| {
+            ctx.run_ui(input, |ui| {
+                let mut probes = ProbeRow::default();
+                let mut cmds = Vec::new();
+                band_mode_menu(
+                    ui,
+                    Mode::Usb,
+                    &state,
+                    None,
+                    false,
+                    None,
+                    true,
+                    &mut probes,
+                    &mut cmds,
+                );
+                assert!(cmds.is_empty(), "a probe chip sent {cmds:?}");
+                if probes.picked.is_some() {
+                    *picked = probes.picked;
+                }
+            })
+        };
+        let first = draw(input.clone(), &mut picked);
+        let label = tr!("ism-sonde-chip");
+        let at = first
+            .shapes
+            .iter()
+            .find_map(|c| match &c.shape {
+                egui::Shape::Text(t) if t.galley.text() == label => {
+                    Some(t.pos + t.galley.rect.center().to_vec2())
+                }
+                _ => None,
+            })
+            .expect("RADIOSONDES is in the menu");
+        first.drop_without_applying_deltas();
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        for events in [vec![egui::Event::PointerMoved(at), button(true)], vec![button(false)]] {
+            draw(egui::RawInput { events, ..input.clone() }, &mut picked)
+                .drop_without_applying_deltas();
+        }
+        assert_eq!(picked, Some(Probe::Sondes));
+    }
+
     /// The longest menu in the program, on the smallest screens it opens on.
     ///
     /// A popup is not laid out inside a panel: egui moves one that lands off an
@@ -10993,10 +11826,11 @@ mod tests {
     fn the_condensed_rx_box_fits_its_rows() {
         // No front-end gain, the one stage, and the multi-stage shapes with
         // the chips that ride beside them (RX-888, HackRF, RTL-SDR).
-        let shapes: [(&[&str], &[&[&str]]); 5] = [
+        let shapes: [(&[&str], &[&[&str]]); 6] = [
             (&[], &[]),
             (&["Gain"], &[]),
             (&["ATT", "VGA"], &[FrontChip::RX888_VGA_RANGE.labels]),
+            (&["RF"], &[FrontChip::RX888_TUNER_AGC.labels]),
             (&["LNA", "VGA"], &[FrontChip::HACKRF_AMP.labels]),
             (&["LNA", "MIX", "IF"], &[]),
         ];

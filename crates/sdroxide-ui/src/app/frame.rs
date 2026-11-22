@@ -1061,6 +1061,7 @@ impl eframe::App for SdroxideApp {
         self.hd_window(&ctx, &mut cmds);
         self.voice_window(&ctx, &mut cmds);
         self.tx_audio_window(&ctx, &mut cmds);
+        self.tx_window(&ctx, &mut cmds);
         self.settings_window(&ctx, &mut cmds);
         self.digi_settings_window(&ctx, &mut cmds);
         self.logbook_window(&ctx, &mut cmds);
@@ -1417,8 +1418,13 @@ impl SdroxideApp {
         };
         // FT8 station callsign boxes. Only the slotted modes have them — SSTV /
         // RF Paint share the digi path but must not inherit FT8's overlay.
-        let (skimmer, alpha) =
-            if mode.is_slotted() { self.ft8_overlay() } else { (Vec::new(), Vec::new()) };
+        let (skimmer, alpha) = if mode.is_slotted() {
+            self.ft8_overlay()
+        } else if mode == Mode::Adsb {
+            self.adsb_overlay()
+        } else {
+            (Vec::new(), Vec::new())
+        };
         PanadapterInputs {
             // A click sets the tone offset in the modes that park on an agreed
             // dial and pick a signal inside the sub-band. Not in RTTY: its tone
@@ -2006,7 +2012,39 @@ impl SdroxideApp {
                 RadioEvent::Recordings(listing) => self.playback.accept(listing),
                 RadioEvent::WxsatStatus(st) => self.wxsat.accept(st),
                 RadioEvent::SondeStatus(st) => self.sonde.accept(st),
-                RadioEvent::AdsbStatus(st) => self.adsb_status = Some(st),
+                RadioEvent::AdsbStatus(st) => {
+                    // Counted as the table arrives, not as the panel draws, so
+                    // the diagram keeps filling while another pane is up.
+                    let home = self.adsb_home();
+                    self.adsb_coverage.note(home, &st.aircraft, crate::time::now_unix());
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let instrument = self.adsb_instrument();
+                        self.adsb_range.note(
+                            &instrument,
+                            home,
+                            &st.aircraft,
+                            crate::time::now_unix(),
+                        );
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.adsb_tracks.note(&st.aircraft, crate::time::now_unix());
+                    let routes = &mut self.adsb_routes;
+                    self.adsb_log.note(
+                        home,
+                        &st.aircraft,
+                        |a| crate::adsb_log::Known {
+                            kind: routes.aircraft(a.icao).map(|x| x.type_code).unwrap_or_default(),
+                            route: routes
+                                .route(&a.callsign)
+                                .map(|r| crate::adsb_route::short(&r))
+                                .unwrap_or_default(),
+                            country: routes.country(a.icao).map(|c| c.0).unwrap_or_default(),
+                        },
+                        crate::time::now_unix(),
+                    );
+                    self.adsb_status = Some(st);
+                }
                 RadioEvent::Vdl2Status(st) => self.vdl2_status = Some(st),
                 RadioEvent::AisStatus(st) => self.ais_status = Some(st),
                 RadioEvent::Qo100Status(st) => self.qo100_status = Some(st),
@@ -2061,6 +2099,7 @@ impl SdroxideApp {
                     self.spots_gen += 1;
                     self.adopted_spots_gen = None;
                 }
+                RadioEvent::TciSpots(s) => self.tci_spots = s,
                 RadioEvent::NetStatus(s) => {
                     self.net_status = s;
                     self.spots_gen += 1;
@@ -2081,6 +2120,16 @@ impl SdroxideApp {
                         error,
                         client_connected,
                         client_error,
+                    });
+                }
+                RadioEvent::BeastStatus { running, addr, clients, error } => {
+                    self.beast_status = Some(TciServerStatus {
+                        running,
+                        addr,
+                        clients,
+                        error,
+                        client_connected: false,
+                        client_error: None,
                     });
                 }
                 RadioEvent::RigctldStatus { running, addr, clients, error } => {
@@ -2123,10 +2172,16 @@ impl SdroxideApp {
                         self.rigctld_edit = c.rigctld.clone();
                         self.rigctld_seeded = true;
                     }
+                    if !self.beast_seeded {
+                        self.beast_edit = c.beast.clone();
+                        self.beast_seeded = true;
+                    }
                     if !self.tci_srv_seeded {
                         self.tci_srv_edit = c.tci_server.clone();
                         self.tci_srv_seeded = true;
                     }
+                    // The applied truth, every time — see `tci_srv_cfg`.
+                    self.tci_srv_cfg = Some(c.tci_server.clone());
                     if !self.wsjtx_seeded {
                         self.wsjtx_edit = c.wsjtx.clone();
                         self.wsjtx_seeded = true;
@@ -2134,6 +2189,10 @@ impl SdroxideApp {
                     if !self.picup_seeded {
                         self.picup_edit = c.picture_upload.clone();
                         self.picup_seeded = true;
+                    }
+                    if !self.folders_seeded {
+                        self.folders_edit = c.picture_folders.clone();
+                        self.folders_seeded = true;
                     }
                     if !self.sat_cfg_seeded {
                         self.sat_cfg_edit = c.sat.clone();
@@ -2370,7 +2429,16 @@ impl SdroxideApp {
         input.poll_pointer_and_keys(ctx, state, &mut sink, cmds);
         #[cfg(not(target_arch = "wasm32"))]
         input.poll_midi(ctx, state, &mut sink, cmds);
+        #[cfg(not(target_arch = "wasm32"))]
+        input.poll_tmate2(ctx, state, &mut sink, cmds);
         drop(sink);
+        #[cfg(not(target_arch = "wasm32"))]
+        input.tmate2_display(
+            state,
+            self.meters.as_ref(),
+            self.amp_status.readings.as_ref(),
+            view.tune_locked,
+        );
         for act in speech_acts {
             self.apply_speech_action(act, now);
         }
@@ -2457,7 +2525,10 @@ impl SdroxideApp {
                     self.speech.announcer.say_sample(now);
                 }
             }
-            // `apply_action` only ever collects the four above.
+            Tmate2TxReadoutCycle => self.input.tmate2_next_readout(),
+            Tmate2StepCycle => self.input.tmate2_next_step(true),
+            Tmate2StepCycleDown => self.input.tmate2_next_step(false),
+            // `apply_action` only ever collects the seven above.
             _ => {}
         }
     }

@@ -253,7 +253,10 @@ fn build() -> Vec<SatFreqs> {
         SatFreqs::new(
             59051,
             "METEOR-M2 4",
-            vec![down("LRPT", "QPSK / LRPT 72k", P::at(137.100)).note("polar, ~101 min")],
+            // 137.900 like M2-3 (WMO OSCAR, SatNOGS). 137.100 is its second
+            // transmitter, switched on now and then; it was listed here as the
+            // only one, so the decoder sat on a silent channel (#890).
+            vec![down("LRPT", "QPSK / LRPT 72k", P::at(137.900)).note("polar, ~101 min")],
         ),
     ]
 }
@@ -330,6 +333,7 @@ mod tests {
         assert_eq!(builtin_for(33591).unwrap().links[0].downlink, Some(Passband::at(137.100)));
         // And the Meteor LRPT pair the weather-satellite decoder also reads.
         assert_eq!(builtin_for(57166).unwrap().links[0].downlink, Some(Passband::at(137.900)));
+        assert_eq!(builtin_for(59051).unwrap().links[0].downlink, Some(Passband::at(137.900)));
         assert!(builtin_for(59051).unwrap().links[0].mode.contains("LRPT"));
     }
 

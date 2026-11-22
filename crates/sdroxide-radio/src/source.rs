@@ -434,6 +434,14 @@ pub trait IqSource: Send {
     fn tx_drive_ceiling(&self) -> Option<f32> {
         None
     }
+    /// Whether the station wants the radio's low-power transverter port in use
+    /// on the band the dial is in — a Transverters row that says so. The engine
+    /// follows it between overs on a radio that has such a port (an ELAD
+    /// FDM-DUO's `TT`), and only on a change, so a port the operator set by
+    /// hand on a band no row covers is left alone.
+    fn transverter_port(&self) -> bool {
+        false
+    }
     /// Tell the source where the *dial* is, when that is not where the hardware
     /// is tuned.
     ///
@@ -492,6 +500,16 @@ pub trait IqSource: Send {
     /// answer and the meter simply says nothing. Default: none.
     fn pa_temp_c(&mut self) -> Option<f32> {
         None
+    }
+    /// What a full-scale converter sample arrives as in the samples this source
+    /// delivers, for the engine's overload meter (`Meters::adc_clip`).
+    ///
+    /// 1.0 for nearly every backend, whose samples are the converter's own
+    /// scaled to ±1. A backend that multiplies its samples by a calibration
+    /// factor says so here, or the meter judges its headroom against the wrong
+    /// rail. Default: 1.0.
+    fn sample_full_scale(&self) -> f32 {
+        1.0
     }
     /// The front end's own converter-overflow flag, where the radio reports one.
     ///
@@ -1067,6 +1085,7 @@ impl ConvertedSource {
                 rx_offset_hz: offset_hz,
                 tx_offset_hz,
                 tx_drive: None,
+                rf_out: false,
             }),
         )
     }
@@ -1132,6 +1151,10 @@ pub struct ConverterStep {
     /// A ceiling on transmit drive while this step is selected, 0.0–1.0.
     /// `None` is no ceiling — the radio's own bands.
     pub tx_drive: Option<f32>,
+    /// Whether the radio sends its transmit out of a low-power transverter
+    /// port while this step is selected — the ELAD FDM-DUO's 0 dBm RF OUT
+    /// (`TT1`). See [`IqSource::transverter_port`].
+    pub rf_out: bool,
 }
 
 impl ConverterStep {
@@ -1141,6 +1164,7 @@ impl ConverterStep {
         self.rx_offset_hz == 0.0
             && self.tx_offset_hz == Some(0.0)
             && self.tx_drive.is_none()
+            && !self.rf_out
             && self.band.is_none()
     }
 
@@ -1457,6 +1481,10 @@ impl IqSource for ConvertedSource {
         self.step.tx_drive
     }
 
+    fn transverter_port(&self) -> bool {
+        self.step.rf_out
+    }
+
     fn describe(&self) -> String {
         let boxes = self.plan.steps().len();
         if boxes > 1 {
@@ -1693,6 +1721,9 @@ impl IqSource for ConvertedSource {
     }
     fn adc_overload(&mut self) -> Option<bool> {
         self.inner.adc_overload()
+    }
+    fn sample_full_scale(&self) -> f32 {
+        self.inner.sample_full_scale()
     }
     fn puresignal(&mut self) -> Option<sdroxide_types::PsMeter> {
         self.inner.puresignal()

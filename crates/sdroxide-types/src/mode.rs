@@ -442,6 +442,20 @@ const PHONE_LSB_BANDS: [(f64, f64); 3] =
     [(1_800_000.0, 2_000_000.0), (3_500_000.0, 4_000_000.0), (7_000_000.0, 7_300_000.0)];
 
 impl Mode {
+    /// The modes a hardware mode key steps through: voice, CW and the two
+    /// digital modes most stations live on. See [`crate::Action::ModeNextEveryday`].
+    pub const EVERYDAY: [Mode; 9] = [
+        Mode::Lsb,
+        Mode::Usb,
+        Mode::Cw,
+        Mode::Am,
+        Mode::Nfm,
+        Mode::Digu,
+        Mode::Digl,
+        Mode::Ft8,
+        Mode::Ft4,
+    ];
+
     /// Every mode, in the order they cycle and appear in the picker — which is
     /// deliberately *not* the enum's declaration order (see [`Mode::Hell`]).
     pub const ALL: [Mode; 56] = [
@@ -1146,6 +1160,8 @@ impl Mode {
             squelch_db: Some(crate::SQUELCH_OPEN_DB),
             noise_reduction: Some(NrLevel::Off),
             auto_notch: Some(false),
+            sam_sideband: Some(crate::SamSideband::Mrc),
+            sam_mrc_tau_s: Some(crate::SAM_MRC_DEFAULT_TAU_S),
             wfm_stereo: Some(true),
             fm_decrackle: Some(true),
             fm_deemph: Some(true),

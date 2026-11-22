@@ -29,7 +29,7 @@ use std::time::Duration;
 use sdroxide_radio::{Complex32, ControlUpdate, IqSource, Result};
 use sdroxide_rx888::band::{self, Band, BandState};
 use sdroxide_rx888::{Rx888Handle, Settings};
-use sdroxide_types::Rx888Config;
+use sdroxide_types::{Direction, GainElement, Rx888Config};
 
 /// How long the receiver may deliver nothing before the link counts as dead.
 /// Matches the RTL-SDR backend: this is a local USB device, so there is no
@@ -175,6 +175,39 @@ impl Rx888Source {
     pub fn freq_ranges(&self) -> Vec<(f64, f64)> {
         sdroxide_rx888::band::freq_ranges(self.adc_rate_hz(), self.vhf_capable())
     }
+
+    /// The receive gain stages this receiver offers: the HF chain's VGA and
+    /// attenuator, and the R828D's gain where there is a tuner.
+    ///
+    /// Published once in the capabilities and again after every retune
+    /// ([`IqSource::learned_rx_gains`]). The list itself never changes with
+    /// the band; what the retune answer buys is the engine re-reading
+    /// [`IqSource::current_gains`], which carries the band the dial has just
+    /// moved the receiver onto.
+    pub fn rx_gain_elements(&self) -> Vec<GainElement> {
+        let mut gains = vec![
+            // The AD8370's vernier is linear in voltage, so the dB step
+            // varies; a request is snapped to the nearest code and reported
+            // back, which makes a fine slider honest enough.
+            GainElement::db(Rx888Config::VGA_ELEMENT, Direction::Rx, -6.0, 34.0, 0.5),
+            GainElement::db(Rx888Config::ATT_ELEMENT, Direction::Rx, -31.5, 0.0, 0.5),
+        ];
+        // Only offer the tuner's gain on a receiver that has one, so the control
+        // does not appear on a board where it would do nothing.
+        if self.vhf_capable() {
+            gains.push(
+                // 29 discrete steps, snapped and reported back like the two above.
+                GainElement::db(
+                    Rx888Config::TUNER_GAIN_ELEMENT,
+                    Direction::Rx,
+                    0.0,
+                    Rx888Config::TUNER_GAIN_MAX_DB,
+                    0.1,
+                ),
+            );
+        }
+        gains
+    }
 }
 
 impl IqSource for Rx888Source {
@@ -287,6 +320,16 @@ impl IqSource for Rx888Source {
         Ok(())
     }
 
+    /// Asked by the engine after every retune. The list is the one the
+    /// capabilities carry; answering at all is what makes the engine re-read
+    /// [`Self::current_gains`] there, and with it the band the automatic
+    /// HF/VHF crossover may just have switched to.
+    // Why: HDZ 2026-11-15: „wenn der Modus umschaltet, dann muss ein anderer
+    //      Regler ins Bedienpanel“
+    fn learned_rx_gains(&self) -> Option<Vec<GainElement>> {
+        Some(self.rx_gain_elements())
+    }
+
     fn current_gains(&self) -> Vec<(String, f64)> {
         vec![
             // What the hardware is programmed with, since both stages
@@ -305,6 +348,13 @@ impl IqSource for Rx888Source {
             ),
             (Rx888Config::ATT_ELEMENT.to_string(), att_db_for(att_code_for(self.att_db))),
             (Rx888Config::VGA_RANGE_ELEMENT.to_string(), self.vga_range.code()),
+            // The front end in force, so the top bar can show the stages that
+            // act on it: ATT and VGA on HF, the tuner gain on VHF. From the
+            // band mirror the centre report already trusts.
+            (
+                Rx888Config::VHF_ELEMENT.to_string(),
+                f64::from(u8::from(self.band_state.band == Band::Vhf)),
+            ),
         ]
     }
 
