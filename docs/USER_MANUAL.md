@@ -14086,6 +14086,12 @@ back to receive rather than transmitting your office.
   to the next point in the direction you turn on the first detent: from
   14.262.500 one 1 kHz step up is 14.263.000, and one down is 14.262.000. The
   keyboard's tuning keys work the same way (issue #431).
+- **Smooth scrolling per step** — how much smooth scrolling is worth one step,
+  in points. This is for scrolling that has no notches: a trackpad, a
+  free-running thumb wheel, a wheel whose driver reports a notch in pieces.
+  Smaller is faster. A wheel with notches is one step a notch whatever this
+  says — on a Mac that includes a wheel macOS accelerates, where one click used
+  to be worth a third of a step at rest and several when spun.
 - **Zoom rate** — scales how far one detent zooms.
 - **Click-tune rounding** — the step click-to-tune snaps to.
 - **Invert wheel direction** — flips both wheel actions.
@@ -14094,6 +14100,12 @@ back to receive rather than transmitting your office.
   dial being turned.
 - **Scroll a digit on the frequency readout to tune it** — the wheel over a digit
   of the VFO readout steps that digit.
+- **Side wheel tunes in tenths of the step** — sideways scrolling over the
+  panadapter (a thumb wheel, a tilt wheel, two fingers across a trackpad) tunes
+  a tenth of the **Tune step** at a time, on a grid ten times as fine, whatever
+  the wheel itself is set to. With a 1 kHz step the wheel moves 1 kHz a notch
+  and the side wheel 100 Hz. Shift + wheel is not a side wheel: it keeps its own
+  action.
 - **Restore mouse defaults** puts the whole section back.
 
 **Mouse buttons** binds the buttons themselves. The left and right buttons are

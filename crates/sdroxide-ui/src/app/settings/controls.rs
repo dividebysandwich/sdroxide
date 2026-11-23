@@ -211,6 +211,11 @@ pub(in crate::app) fn settings_controls_tab(
         );
         ui.end_row();
 
+        ui.label(tr!("settings-controls-points-per-step"))
+            .on_hover_text(tr!("settings-controls-points-per-step-hover"));
+        ui.add(egui::DragValue::new(&mut w.points_per_step).speed(1.0).range(1.0..=1_000.0));
+        ui.end_row();
+
         ui.label(tr!("settings-controls-zoom-rate"));
         ui.add(egui::DragValue::new(&mut w.zoom_rate).speed(0.05).range(0.1..=5.0));
         ui.end_row();
@@ -237,6 +242,8 @@ pub(in crate::app) fn settings_controls_tab(
         &mut w.digit_wheel,
         tr!("settings-controls-scroll-digit-frequency-readout-tune"),
     );
+    crate::chrome::checkbox(ui, &mut w.side_wheel_fine, tr!("settings-controls-side-wheel-fine"))
+        .on_hover_text(tr!("settings-controls-side-wheel-fine-hover"));
     if w.wheel == WheelAction::Tune && w.wheel_shift == WheelAction::Tune {
         ui.label(
             RichText::new(tr!("settings-controls-both-wheel-actions-are-tune"))

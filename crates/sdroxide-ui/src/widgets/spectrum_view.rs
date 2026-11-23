@@ -2124,15 +2124,36 @@ pub fn show_ext(
             // Zooming rides the smoothed points, which is what makes it ramp;
             // tuning counts whole notches instead, so it needs a bank kept
             // across frames. See `wheel_detents`.
-            let detents = if act == WheelAction::Tune {
+            let fine_wheel = wheel.side_wheel_fine && !shift;
+            let (detents, fine) = if act == WheelAction::Tune || fine_wheel {
                 let acc_id = ui.id().with("wheel-acc");
-                let mut acc = ui.data(|d| d.get_temp::<f32>(acc_id)).unwrap_or(0.0);
-                let n = super::wheel_detents(ui, shift, &mut acc);
-                ui.data_mut(|d| d.insert_temp(acc_id, acc));
-                if wheel.invert { -n } else { n }
+                let mut bank =
+                    ui.data(|d| d.get_temp::<super::WheelBank>(acc_id)).unwrap_or_default();
+                let n = super::wheel_steps(ui, shift, &mut bank);
+                ui.data_mut(|d| d.insert_temp(acc_id, bank));
+                let sign = if wheel.invert { -1.0 } else { 1.0 };
+                (
+                    if act == WheelAction::Tune { sign * n.main } else { 0.0 },
+                    if fine_wheel { sign * n.side } else { 0.0 },
+                )
             } else {
-                0.0
+                (0.0, 0.0)
             };
+            // The side wheel is the fine dial: a tenth of the step, on a grid
+            // ten times as fine, whatever the main wheel is doing. Nothing
+            // else on the panadapter reads sideways scrolling, so it costs no
+            // gesture anyone had.
+            let fine_step = wheel.tune_step_hz / 10.0;
+            if fine != 0.0 && fine_step > 0.0 && !view.tune_locked {
+                fling = None;
+                let hz = crate::input::step_on_grid(state.active_freq_hz(), fine as f64, fine_step)
+                    .max(0.0);
+                match state.active_vfo {
+                    Vfo::A => state.vfo_a_hz = hz, // optimistic echo
+                    Vfo::B => state.vfo_b_hz = hz,
+                }
+                cmds.push(Command::SetVfo { vfo: state.active_vfo, hz });
+            }
             if scroll.abs() > 0.1 || detents != 0.0 {
                 // Zooming or wheel-tuning is a fresh command to the dial; a coast
                 // still running would fight it.
