@@ -1889,6 +1889,8 @@ settings-radio-lets-if-gain-reduction-go = IF kazanç azaltmasının 20 dB'nin a
 settings-radio-allow-if-gain-reduction-below = IF kazanç azaltmasına 20 dB'nin altında izin ver
 settings-radio-front-end-attenuation-steps-0 = Adımlarla ön uç zayıflatması: 0 maksimum kazançtır, yukarı her adım daha fazla zayıflatma devreye alır. Bazı bantların daha az adımı vardır — sürücü sınırlar ve seçiminizi, geri ayar yaptığınızda kullanılmak üzere saklar; buradaki kaydırıcı, radyonun olduğu bandın alacağı yerde biter. Başka bir bantta yapılan daha yüksek bir seçim korunur ve yanında hâlâ gösterilir. Hemen uygulanır.
 settings-radio-t-0-max-gain = 0 = maksimum kazanç
+settings-radio-sdrplay-auto-lna = Otomatik LNA
+settings-radio-sdrplay-auto-lna-hover = Alıcının LNA kademesini kendisinin seçmesini sağlar. Çevirici aşırı yüklenmişken veya IF AGC sınırına dayanmışken zayıflatma ekler, mümkün olduğunda geri alır. Yukarıdaki LNA kademesi, kullanabileceği en yüksek kazanç olur. Ana penceredeki LNA etiketine tıklamakla aynıdır. Hemen uygulanır.
 settings-radio-reference-error-parts-per-million-2 = Milyonda kısım cinsinden referans hatası; aygıtın kendisi tarafından uygulanır. Hemen uygulanır.
 settings-radio-radio-s-tuner = Bu radyonun tuner'ı
 settings-radio-tuner = Tuner
@@ -2076,6 +2078,9 @@ topbar-counted-steps-not-decibels-what =
 
     Adımla sayılır, desibelle değil: bir adımın ne değerinde olduğu alıcının kendi işidir ve SDRplay'de bant da buna dahildir. Doğrusu yine daha fazla kazançtır.
 topbar-gain = Kazanç
+topbar-sdrplay-auto-lna-hint =
+    Otomatik için LNA’ya tıklayın: alıcı LNA kademesini kendisi seçer
+    Yanıyor = açık; sürgü o zaman kullanılabilecek en yüksek kazancı belirler
 topbar-plutosdr-s-own-agc-setting =
     {""}
 

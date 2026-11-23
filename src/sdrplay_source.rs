@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use sdroxide_dsp::Diversity;
 use sdroxide_radio::{Complex32, IqSource, Result, lo_offset_for};
+use sdroxide_sdrplay::auto_lna::{self, AutoLna};
 use sdroxide_sdrplay::{DuoMode, SdrPlayDevice, SdrPlayHandle};
 use sdroxide_types::{
     Direction, DiversityMode, GainElement, SdrPlayAgc, SdrPlayConfig, SdrPlayDuo, SdrPlayDuoTuner,
@@ -40,6 +41,11 @@ const SILENCE_BEFORE_REOPEN: Duration = Duration::from_secs(3);
 
 /// How often the diversity filter's achieved null depth reaches the log.
 const DEPTH_LOG_INTERVAL: Duration = Duration::from_secs(10);
+/// How often the automatic LNA looks at the receiver.
+const AUTO_LNA_LOOK: Duration = Duration::from_millis(100);
+/// A retune this far is another band as far as the front end is concerned:
+/// what the automatic LNA learned about the old one no longer applies.
+const AUTO_LNA_NEW_BAND_HZ: f64 = 1e6;
 
 pub struct SdrPlaySource {
     handle: SdrPlayHandle,
@@ -73,6 +79,23 @@ pub struct SdrPlaySource {
     aux_scratch: Vec<f32>,
     aux_buf: Vec<Complex32>,
     last_depth_log: Instant,
+    /// The automatic LNA is running — [`SdrPlayConfig::auto_lna`].
+    auto_lna: bool,
+    /// The LNA state the operator set. With the loop off it is simply the
+    /// state; with it on it is the lowest state the loop may use.
+    lna_floor: u8,
+    lna_loop: AutoLna,
+    /// The service reported an overload at some point since the loop last
+    /// looked. Latched, because a receiver on the threshold toggles the report
+    /// several times a second and a look every 100 ms would miss most of them.
+    overload_seen: bool,
+    last_lna_look: Instant,
+    /// The engine has stopped reading for a transmission; the loop stands
+    /// still, since whatever the receiver hears then is our own transmitter.
+    rx_paused: bool,
+    /// What [`IqSource::rx_gains_moved`] last answered for.
+    reported_lna: u8,
+    gains_dirty: bool,
 }
 
 impl SdrPlaySource {
@@ -168,6 +191,14 @@ impl SdrPlaySource {
             aux_scratch: Vec::new(),
             aux_buf: Vec::new(),
             last_depth_log: Instant::now(),
+            auto_lna: cfg.auto_lna,
+            lna_floor: cfg.lna_state,
+            lna_loop: AutoLna::default(),
+            overload_seen: false,
+            last_lna_look: Instant::now(),
+            rx_paused: false,
+            reported_lna: cfg.lna_state,
+            gains_dirty: false,
             handle,
         };
         // A radio that did not open the board still has to have its own way
@@ -254,6 +285,59 @@ impl SdrPlaySource {
         }
     }
 
+    /// The highest LNA state the band this source is tuned to has.
+    fn max_lna(&self) -> u8 {
+        let hiz = self.model().antenna_is_hiz(&self.antenna);
+        self.model().max_lna_state_on(self.center, hiz, self.hdr)
+    }
+
+    /// One look by the automatic LNA — see [`sdroxide_sdrplay::auto_lna`].
+    ///
+    /// Called from every read, which is several hundred times a second; it
+    /// notes the overload report each time and does the rest ten times a
+    /// second. Only the main tuner: a pair's second aerial has gains of its
+    /// own and no report of its own to steer them by.
+    fn look_after_lna(&mut self) {
+        if !self.auto_lna {
+            return;
+        }
+        self.overload_seen |= self.handle.overloaded();
+        let now = Instant::now();
+        if now.duration_since(self.last_lna_look) < AUTO_LNA_LOOK {
+            return;
+        }
+        self.last_lna_look = now;
+        let overload = std::mem::take(&mut self.overload_seen);
+        if self.rx_paused {
+            return;
+        }
+        // Under AGC the IF gain says how hard the loop is working; without a
+        // report yet there is nothing to go on, and a guess would be a step.
+        let if_gr = match self.agc {
+            SdrPlayAgc::Off => None,
+            _ => match self.handle.effective_if_gr_db() {
+                Some(gr) => Some((gr, SdrPlayConfig::IF_GR_MAX)),
+                None => return,
+            },
+        };
+        let lna = self.handle.lna_state();
+        let inputs = auto_lna::Inputs {
+            overload,
+            lna,
+            floor: self.lna_floor,
+            max_lna: self.max_lna(),
+            if_gr,
+        };
+        if let Some((state, why)) = self.lna_loop.step(now, inputs) {
+            tracing::info!(
+                "{}: automatic LNA: state {lna} to {state} ({})",
+                self.label,
+                why.describe()
+            );
+            self.handle.set_lna_state(state);
+        }
+    }
+
     /// Say how the filter is doing, occasionally.
     ///
     /// The null depth is the one number that separates "the second aerial
@@ -301,6 +385,7 @@ impl IqSource for SdrPlaySource {
     /// reported as an overrun or as the ordinary cost of an over. See
     /// [`IqSource::set_rx_paused`].
     fn set_rx_paused(&mut self, paused: bool) {
+        self.rx_paused = paused;
         self.handle.set_rx_paused(paused);
     }
 
@@ -317,6 +402,9 @@ impl IqSource for SdrPlaySource {
     }
 
     fn set_center_hz(&mut self, hz: f64) -> Result<()> {
+        if (hz - self.center).abs() >= AUTO_LNA_NEW_BAND_HZ {
+            self.lna_loop.reset();
+        }
         self.center = hz;
         self.handle.set_center_hz(hz);
         Ok(())
@@ -346,6 +434,7 @@ impl IqSource for SdrPlaySource {
     /// tuner having stopped, in which case the block goes through uncombined
     /// rather than combined against silence.
     fn read(&mut self, buf: &mut [Complex32]) -> Result<usize> {
+        self.look_after_lna();
         let need = buf.len() * 2;
         if self.rx_scratch.len() < need {
             self.rx_scratch.resize(need, 0.0);
@@ -415,7 +504,23 @@ impl IqSource for SdrPlaySource {
             }
             SdrPlayConfig::LNA_ELEMENT => {
                 let state = (-db).round().clamp(0.0, 255.0) as u8;
+                // With the automatic LNA running this is also where it may
+                // come back down to, and a fresh start for it: the operator
+                // has just said where the receiver should be.
+                self.lna_floor = state;
+                self.lna_loop.reset();
                 self.handle.set_lna_state(state);
+            }
+            SdrPlayConfig::AUTO_LNA_ELEMENT => {
+                self.auto_lna = db >= 0.5;
+                self.lna_loop.reset();
+                self.overload_seen = false;
+                self.gains_dirty = true;
+                // Switched off, the receiver goes back to the state that was
+                // set rather than staying wherever the loop had got to.
+                if !self.auto_lna {
+                    self.handle.set_lna_state(self.lna_floor);
+                }
             }
             SdrPlayConfig::AGC_ELEMENT => {
                 self.agc = SdrPlayAgc::from_code(db);
@@ -537,7 +642,22 @@ impl IqSource for SdrPlaySource {
         vec![
             (SdrPlayConfig::LNA_ELEMENT.to_string(), -(self.handle.lna_state() as f64)),
             (SdrPlayConfig::IF_GAIN_ELEMENT.to_string(), -(gr as f64)),
+            // Not a gain and not in the capabilities, so nothing draws a rail
+            // for it: the main window's LNA label reads it from here.
+            (SdrPlayConfig::AUTO_LNA_ELEMENT.to_string(), f64::from(u8::from(self.auto_lna))),
         ]
+    }
+
+    /// The LNA state when the automatic loop has moved it, and the loop's own
+    /// switch — see [`IqSource::rx_gains_moved`]. Not the IF gain: under AGC
+    /// that moves many times a second, and republishing the radio's state at
+    /// that rate to redraw one rail is not a trade worth making.
+    fn rx_gains_moved(&mut self) -> bool {
+        let lna = self.handle.lna_state();
+        let moved = self.gains_dirty || lna != self.reported_lna;
+        self.reported_lna = lna;
+        self.gains_dirty = false;
+        moved
     }
 
     /// What the API says is between the antenna socket and the converter, so

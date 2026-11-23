@@ -2799,6 +2799,36 @@ impl SdroxideApp {
         cmds.push(Command::SetGain { dir: Direction::Rx, element: element.into(), db });
     }
 
+    /// Whether an RSP's automatic LNA is running, when `element` is the stage
+    /// it drives; `None` for every other rail. Read from the gains the source
+    /// publishes, where it reports the switch beside the LNA state.
+    fn sdrplay_auto_lna(&self, element: &str) -> Option<bool> {
+        use sdroxide_types::SdrPlayConfig as S;
+        (element == S::LNA_ELEMENT && self.caps.as_ref().is_some_and(|c| c.driver == "sdrplay"))
+            .then(|| self.state.gains.iter().any(|(n, v)| n == S::AUTO_LNA_ELEMENT && *v >= 0.5))
+    }
+
+    /// Switch an RSP's automatic LNA the way Settings → Radio does: into the
+    /// radio's config, which is saved so it is still on after a restart, and
+    /// to the receiver as `SetGain`.
+    fn set_sdrplay_auto_lna(&mut self, cmds: &mut Vec<Command>, on: bool) {
+        let element = sdroxide_types::SdrPlayConfig::AUTO_LNA_ELEMENT;
+        if self.radio_cfg.is_none() {
+            self.radio_cfg = self.ctrl.radio_config();
+        }
+        if let Some(cfg) = self.radio_cfg.as_mut() {
+            cfg.sdrplay.auto_lna = on;
+            self.ctrl.set_radio_config(cfg.clone());
+        }
+        let db = f64::from(u8::from(on));
+        // Optimistic echo, so the label lights on the click.
+        match self.state.gains.iter_mut().find(|(n, _)| n == element) {
+            Some((_, d)) => *d = db,
+            None => self.state.gains.push((element.to_string(), db)),
+        }
+        cmds.push(Command::SetGain { dir: Direction::Rx, element: element.into(), db });
+    }
+
     /// One [`FrontChip`]: lit while it is anything but its first setting
     /// (the amplifier on, a VGA range forced), a click steps it on.
     fn front_chip(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, c: &FrontChip) {
@@ -3083,7 +3113,7 @@ impl SdroxideApp {
                         tr!("topbar-rx888-tuner-hint")
                     };
                     let label = gain_label(&g.name, rx_gains.len());
-                    if gain_rail(ui, narrow, g, &label, &hint, hardware_agc, &mut db) {
+                    if gain_rail(ui, narrow, g, &label, &hint, hardware_agc, None, &mut db).moved {
                         self.set_rx888_tuner(cmds, &g.name, db);
                     }
                     continue;
@@ -3110,8 +3140,27 @@ impl SdroxideApp {
                         tr!("topbar-tuner-agc-owns-gain")
                     });
                 }
+                // An RSP's LNA label is also the switch for its automatic
+                // LNA: a click turns the loop on or off, and the label is lit
+                // while it runs. The rail stays live either way — it shows the
+                // state the loop is in, and moving it sets the most gain the
+                // loop may use.
+                // Why: KC2RGW 2026-11-23: "Instead of the Auto button can it
+                //      be a click on LNA to activate, highlight LNA when
+                //      active".
+                let auto_lna = self.sdrplay_auto_lna(&g.name);
+                if auto_lna.is_some() {
+                    hint.push('\n');
+                    hint.push_str(&tr!("topbar-sdrplay-auto-lna-hint"));
+                }
                 let label = gain_label(&g.name, rx_gains.len());
-                if gain_rail(ui, narrow, g, &label, &hint, hardware_agc, &mut db) {
+                let rail = gain_rail(ui, narrow, g, &label, &hint, hardware_agc, auto_lna, &mut db);
+                if rail.label_clicked
+                    && let Some(on) = auto_lna
+                {
+                    self.set_sdrplay_auto_lna(cmds, !on);
+                }
+                if rail.moved {
                     // Optimistic echo so the knob tracks the drag instead
                     // of snapping back until the engine answers.
                     match self.state.gains.iter_mut().find(|(n, _)| *n == g.name) {
@@ -7929,9 +7978,22 @@ fn readout_rail_w(ui: &egui::Ui) -> f32 {
     STRIP_RAIL_W + MODULE_ROW_SPACING + value_field_w(ui, RAIL_READOUT)
 }
 
+/// What the operator did to a [`gain_rail`] this frame.
+struct RailEdit {
+    /// The rail was moved; the new figure is in `db`.
+    moved: bool,
+    /// The label was clicked — only ever true for a label that is a switch.
+    label_clicked: bool,
+}
+
 /// One front-end gain stage on the receive row: its label and its rail,
-/// inert while a hardware AGC owns the stage. Returns whether the
-/// operator moved it this frame, with the new figure in `db`.
+/// inert while a hardware AGC owns the stage. Says whether the operator
+/// moved it this frame, with the new figure in `db`.
+///
+/// `switch` makes the label a switch as well: `Some(on)` draws it clickable,
+/// lit like a selected chip while `on`, and reports the click. The label keeps
+/// the size of a plain one, so the row is as wide as it was measured to be.
+#[allow(clippy::too_many_arguments)]
 fn gain_rail(
     ui: &mut egui::Ui,
     narrow: bool,
@@ -7939,9 +8001,45 @@ fn gain_rail(
     label: &str,
     hint: &str,
     hardware_agc: bool,
+    switch: Option<bool>,
     db: &mut f64,
-) -> bool {
-    ui.label(label).on_hover_text(hint);
+) -> RailEdit {
+    let label_clicked = match switch {
+        None => {
+            ui.label(label).on_hover_text(hint);
+            false
+        }
+        Some(on) => {
+            // Reserved first so the lit backing lands behind the text.
+            let backing = ui.painter().add(egui::Shape::Noop);
+            let text = if on {
+                RichText::new(label).color(crate::theme::INK_ON_CYAN())
+            } else {
+                RichText::new(label)
+            };
+            let resp = ui
+                .add(egui::Label::new(text).selectable(false).sense(egui::Sense::click()))
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(hint);
+            if on {
+                ui.painter().set(
+                    backing,
+                    egui::Shape::rect_filled(
+                        resp.rect.expand2(egui::vec2(3.0, 1.0)),
+                        3.0,
+                        crate::theme::CYAN(),
+                    ),
+                );
+            } else if resp.hovered() {
+                ui.painter().hline(
+                    resp.rect.x_range(),
+                    resp.rect.bottom(),
+                    (1.0, ui.visuals().text_color()),
+                );
+            }
+            resp.clicked()
+        }
+    };
     let step = if g.step_db > 0.0 { g.step_db } else { 1.0 };
     // Every gain rail at one pinned length, a little shorter than
     // volume and squelch, which take the box's stretch (HDZ
@@ -7949,34 +8047,36 @@ fn gain_rail(
     // müssen etwas länger"); in a menu `control_row` sizes them.
     // The readout is a bare number — the unit is in the hint — so
     // the field stays small.
-    ui.scope(|ui| {
-        if !narrow {
-            ui.spacing_mut().slider_width = STRIP_RAIL_W;
-        }
-        ui.add_enabled_ui(!hardware_agc, |ui| {
-            crate::chrome::slider_wheel(
-                crate::chrome::slider_readout(
-                    ui,
-                    value_field_w(ui, RAIL_READOUT),
-                    // A bare number: three rails fit the strip only
-                    // without a unit on each readout. The unit is in
-                    // the hint — and a stage counted in steps says so
-                    // there — so no step index reads as "dB".
-                    Slider::new(&mut *db, g.min_db..=g.max_db)
-                        .step_by(step)
-                        .fixed_decimals(usize::from(step.fract() != 0.0)),
-                ),
-                db,
-                g.min_db..=g.max_db,
-                step,
-            )
+    let moved = ui
+        .scope(|ui| {
+            if !narrow {
+                ui.spacing_mut().slider_width = STRIP_RAIL_W;
+            }
+            ui.add_enabled_ui(!hardware_agc, |ui| {
+                crate::chrome::slider_wheel(
+                    crate::chrome::slider_readout(
+                        ui,
+                        value_field_w(ui, RAIL_READOUT),
+                        // A bare number: three rails fit the strip only
+                        // without a unit on each readout. The unit is in
+                        // the hint — and a stage counted in steps says so
+                        // there — so no step index reads as "dB".
+                        Slider::new(&mut *db, g.min_db..=g.max_db)
+                            .step_by(step)
+                            .fixed_decimals(usize::from(step.fract() != 0.0)),
+                    ),
+                    db,
+                    g.min_db..=g.max_db,
+                    step,
+                )
+            })
+            .inner
         })
         .inner
-    })
-    .inner
-    .on_hover_text(hint)
-    .on_disabled_hover_text(hint)
-    .changed()
+        .on_hover_text(hint)
+        .on_disabled_hover_text(hint)
+        .changed();
+    RailEdit { moved, label_clicked }
 }
 
 /// The widest figure a rail's readout shows: a gain or attenuation to a

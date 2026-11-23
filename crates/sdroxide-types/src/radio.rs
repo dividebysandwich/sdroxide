@@ -6041,6 +6041,16 @@ pub struct SdrPlayConfig {
     /// use. Turning it on also lifts the AGC set-point ceiling to 0 dBFS.
     #[serde(default)]
     pub extended_if_gr: bool,
+    /// Let the receiver choose its own LNA state: more attenuation while the
+    /// service reports the converter overloaded or the IF AGC has run out of
+    /// reduction, less again once neither is true — never less than
+    /// [`Self::lna_state`], which becomes the most front-end gain the loop may
+    /// use rather than the state the receiver sits in.
+    ///
+    /// Off by default, like the Hermes-Lite's overload loop and for its
+    /// reason: it moves a control the operator set.
+    #[serde(default)]
+    pub auto_lna: bool,
     /// RSPduo only: run the other tuner too — combined with this one, or as a
     /// radio of its own. Read from `radio.json` under either name: the block
     /// was called `diversity` when combining was all it could do.
@@ -6089,6 +6099,7 @@ impl Default for SdrPlayConfig {
             hdr: false,
             hdr_bw: SdrPlayHdrBw::default(),
             extended_if_gr: false,
+            auto_lna: false,
             duo: SdrPlayDuo::default(),
             low_if: true,
         }
@@ -6216,6 +6227,11 @@ impl SdrPlayConfig {
     pub const HDR_BW_ELEMENT: &'static str = "HDRBW";
     /// Whether the IF gain reduction may go below the API's 20 dB floor.
     pub const EXTENDED_IF_GR_ELEMENT: &'static str = "EXTGR";
+    /// Whether the LNA state is chosen automatically — [`Self::auto_lna`].
+    /// Unlike the switches above, the source reports this one back beside its
+    /// gains, because the main window carries it on the LNA rail's label,
+    /// which is lit while the loop runs and has to show how the receiver stands.
+    pub const AUTO_LNA_ELEMENT: &'static str = "AUTOLNA";
     /// The RSPduo's second tuner and the diversity filter, through the same
     /// door — the filter's names being the shared ones ([`DIV_MODE_ELEMENT`]
     /// and friends). The two gains are carried negated, like the main

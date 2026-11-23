@@ -25,6 +25,7 @@
 //! Must never be a dependency of any wasm-targeted crate.
 
 mod api;
+pub mod auto_lna;
 mod device;
 mod error;
 mod ffi;

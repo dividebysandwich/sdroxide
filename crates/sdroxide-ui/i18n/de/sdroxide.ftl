@@ -1922,6 +1922,8 @@ settings-radio-lets-if-gain-reduction-go = Lässt die ZF-Verstärkungsreduktion 
 settings-radio-allow-if-gain-reduction-below = ZF-Verstärkungsreduktion unter 20 dB erlauben
 settings-radio-front-end-attenuation-steps-0 = Frontstufen-Dämpfung in Schritten: 0 ist maximale Verstärkung, jeder Schritt nach oben schaltet mehr Dämpfung ein. Manche Bänder haben weniger Schritte — der Treiber begrenzt und behält Ihre Wahl für die Rückkehr zur Abstimmung, und der Regler hier endet bei dem, was das Band, auf dem das Funkgerät liegt, zulässt. Eine höhere Wahl, die auf einem anderen Band getroffen wurde, bleibt erhalten und wird daneben weiter angezeigt. Wirkt sofort.
 settings-radio-t-0-max-gain = 0 = maximale Verstärkung
+settings-radio-sdrplay-auto-lna = Automatische LNA
+settings-radio-sdrplay-auto-lna-hover = Der Empfänger wählt seine LNA-Stufe selbst. Er schaltet Dämpfung zu, solange der Wandler übersteuert oder die ZF-AGC am Anschlag ist, und nimmt sie wieder weg, sobald es geht. Die LNA-Stufe darüber ist dann die höchste Verstärkung, die er nutzen darf. Entspricht einem Klick auf die Beschriftung LNA im Hauptfenster. Wirkt sofort.
 settings-radio-reference-error-parts-per-million-2 = Referenzfehler in Teilen pro Million, vom Gerät selbst angewendet. Wirkt sofort.
 settings-radio-radio-s-tuner = Der Tuner dieses Funkgeräts
 settings-radio-tuner = Tuner
@@ -2121,6 +2123,9 @@ topbar-rx888-tuner-auto-hint =
 topbar-rx888-tuner-agc-hint =
     R828D-AGC: eigene LNA- und Mischerschleifen
     Leuchtet = an; manuelle Tunerverstärkung ruht
+topbar-sdrplay-auto-lna-hint =
+    Klick auf LNA für Automatik: der Empfänger wählt die LNA-Stufe selbst
+    Leuchtet = an; der Regler gibt dann die höchste erlaubte Verstärkung vor
 topbar-plutosdr-s-own-agc-setting =
     {""}
 

@@ -1890,6 +1890,8 @@ settings-radio-lets-if-gain-reduction-go = Laat de IF-gainreductie onder 20 dB g
 settings-radio-allow-if-gain-reduction-below = IF-gainreductie onder 20 dB toestaan
 settings-radio-front-end-attenuation-steps-0 = Front-endverzwakking in stappen: 0 is maximale gain, elke stap omhoog schakelt meer verzwakking in. Sommige banden hebben minder stappen — de driver begrenst en houdt je keuze vast voor wanneer je weer terugstemt, en de schaal hier eindigt bij wat de band waarop de radio staat aankan. Een hogere keuze op een andere band blijft bewaard en wordt er naast getoond. Werkt meteen.
 settings-radio-t-0-max-gain = 0 = maximale gain
+settings-radio-sdrplay-auto-lna = Automatische LNA
+settings-radio-sdrplay-auto-lna-hover = Laat de ontvanger zelf zijn LNA-stand kiezen. Hij schakelt demping bij zolang de omzetter overstuurd is of de MF-AGC aan zijn grens zit, en haalt die weer weg zodra het kan. De LNA-stand hierboven wordt de hoogste versterking die hij mag gebruiken. Hetzelfde als een klik op het label LNA in het hoofdvenster. Werkt direct.
 settings-radio-reference-error-parts-per-million-2 = Referentiefout in delen per miljoen, toegepast door het apparaat zelf. Werkt meteen.
 settings-radio-radio-s-tuner = De tuner van deze radio
 settings-radio-tuner = Tuner
@@ -2077,6 +2079,9 @@ topbar-counted-steps-not-decibels-what =
 
     Geteld in stappen, niet in decibel: wat één stap waard is, is de eigen zaak van de ontvanger, en op een SDRplay hangt het ook van de band af. Rechts is nog steeds meer gain.
 topbar-gain = Gain
+topbar-sdrplay-auto-lna-hint =
+    Klik op LNA voor automatisch: de ontvanger kiest zelf de LNA-stand
+    Verlicht = aan; de regelaar bepaalt dan de hoogste versterking die hij mag gebruiken
 topbar-plutosdr-s-own-agc-setting =
     {""}
 

@@ -5296,6 +5296,7 @@ fn engine_thread(
         engine.poll_rigctld();
         engine.poll_band_change();
         engine.poll_gain_slot();
+        engine.poll_source_gains();
         engine.wsjtx_heartbeat();
         engine.poll_spots();
         engine.poll_winlink();
@@ -16927,6 +16928,21 @@ impl Engine {
         }
         if touched {
             self.state.gains = self.source.current_gains();
+            let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
+        }
+    }
+
+    /// Republish the receive gains when the front end has moved one by itself
+    /// — an RSP's automatic LNA stepping the state the Gain rail shows. Not
+    /// remembered as a setting: what the loop arrived at is not what the
+    /// operator asked for, and the next start should begin from the latter.
+    fn poll_source_gains(&mut self) {
+        if !self.source.rx_gains_moved() {
+            return;
+        }
+        let now = self.source.current_gains();
+        if now != self.state.gains {
+            self.state.gains = now;
             let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
         }
     }

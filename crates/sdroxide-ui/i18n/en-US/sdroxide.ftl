@@ -1959,6 +1959,8 @@ settings-radio-lets-if-gain-reduction-go = Lets the IF gain reduction go below 2
 settings-radio-allow-if-gain-reduction-below = Allow IF gain reduction below 20 dB
 settings-radio-front-end-attenuation-steps-0 = Front-end attenuation in steps: 0 is maximum gain, each step up switches more attenuation in. Some bands have fewer steps — the driver clamps and keeps your choice for when you tune back, and the rail here ends at what the band the radio is on will take. A higher choice made on another band is kept and still shown beside it. Applies immediately.
 settings-radio-t-0-max-gain = 0 = max gain
+settings-radio-sdrplay-auto-lna = Automatic LNA
+settings-radio-sdrplay-auto-lna-hover = Let the receiver choose its own LNA state. It adds attenuation while the converter is overloaded or the IF AGC has run out of range, and takes it off again when it can. The LNA state above becomes the most gain it may use. Also a click on the LNA label on the main window. Applies immediately.
 settings-radio-reference-error-parts-per-million-2 = Reference error in parts per million, applied by the device itself. Applies immediately.
 settings-radio-radio-s-tuner = This radio's tuner
 settings-radio-tuner = Tuner
@@ -2163,6 +2165,9 @@ topbar-rx888-tuner-auto-hint =
 topbar-rx888-tuner-agc-hint =
     R828D AGC: own LNA and mixer loops
     Lit = on; manual tuner gain held
+topbar-sdrplay-auto-lna-hint =
+    Click LNA for automatic: the receiver picks the LNA state by itself
+    Lit = on; the rail then sets the most gain it may use
 topbar-plutosdr-s-own-agc-setting =
     {""}
 
