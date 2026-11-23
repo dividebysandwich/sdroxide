@@ -4722,6 +4722,8 @@ speech-browser-client-cannot-speak-yet = ブラウザのクライアントはま
 ## 周波数表示（src/widgets/freq_display.rs）
 
 freqdisplay-double-click-type-frequency = ダブルクリックで周波数を入力
+freqdisplay-right-click-sets-step = 右クリックでこの桁を同調ステップにする
+freqdisplay-shift-right-click-zeros = Shift + 右クリックまたは中クリックで、この桁とその右側をゼロにする
 freqdisplay-tap-type-frequency = タップして周波数を入力
 
 ## 太陽の状態（src/solar3d/state.rs）

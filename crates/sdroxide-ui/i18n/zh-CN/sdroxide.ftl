@@ -4714,6 +4714,8 @@ speech-browser-client-cannot-speak-yet = 浏览器客户端尚无法发声
 ## 频率显示（src/widgets/freq_display.rs）
 
 freqdisplay-double-click-type-frequency = 双击以输入频率
+freqdisplay-right-click-sets-step = 右键单击，以此位为调谐步进
+freqdisplay-shift-right-click-zeros = Shift + 右键单击或中键单击，将此位及其右侧各位清零
 freqdisplay-tap-type-frequency = 点按以输入频率
 
 ## 太阳系状态（src/solar3d/state.rs）

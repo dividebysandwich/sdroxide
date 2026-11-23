@@ -4755,6 +4755,8 @@ speech-browser-client-cannot-speak-yet = il client nel browser non può ancora p
 ## freqdisplay (src/widgets/freq_display.rs)
 
 freqdisplay-double-click-type-frequency = Doppio clic per scrivere una frequenza
+freqdisplay-right-click-sets-step = Clic destro per sintonizzare a passi di questa cifra
+freqdisplay-shift-right-click-zeros = Maiusc + clic destro o clic centrale per azzerare questa cifra e quelle alla sua destra
 freqdisplay-tap-type-frequency = Tocca per scrivere una frequenza
 
 ## solarstate (src/solar3d/state.rs)

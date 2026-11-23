@@ -4749,6 +4749,8 @@ speech-browser-client-cannot-speak-yet = браузерный клиент по�
 ## Поле частоты (src/widgets/freq_display.rs)
 
 freqdisplay-double-click-type-frequency = Двойной клик, чтобы ввести частоту
+freqdisplay-right-click-sets-step = Правый клик — настраивать шагами этого разряда
+freqdisplay-shift-right-click-zeros = Shift + правый клик или средний клик — обнулить этот разряд и все справа от него
 freqdisplay-tap-type-frequency = Коснитесь, чтобы ввести частоту
 
 ## Состояние Солнечной системы (src/solar3d/state.rs)
