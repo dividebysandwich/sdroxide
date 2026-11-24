@@ -291,6 +291,11 @@ pub(in crate::app) fn settings_ui_tab(
         ui.label(tr!("settings-ui-cities")).on_hover_text(tr!("settings-ui-cities", "hint"));
         crate::chrome::checkbox(ui, &mut cfg.map_cities, tr!("settings-ui-cities-show"));
         ui.end_row();
+
+        ui.label(tr!("settings-ui-warnings"));
+        crate::chrome::checkbox(ui, &mut cfg.quiet_off_radios, tr!("settings-ui-quiet-off-radios"))
+            .on_hover_text(tr!("settings-ui-quiet-off-radios", "hint"));
+        ui.end_row();
     });
 
     // Native only: the check is about *this binary* being out of date, and

@@ -773,6 +773,30 @@ impl<'de> Deserialize<'de> for UiLanguage {
     }
 }
 
+/// What a radio that is switched off says in its banner, word for word.
+///
+/// One string in one place because two ends need it: the stand-in source that
+/// says it (`NullSource::off` in the binary) and the screen that may leave it
+/// out ([`UiSettings::quiet_off_radios`]). Compared whole, line by line, so
+/// any other warning sent alongside it is never caught by the filter.
+pub const RADIO_OFF_NOTICE: &str = "This radio is switched off — its interface is not open. \
+    Switch it back on with the rings on its tab, or in Settings → Radio. A session with one \
+    radio has them above the A/B selector (in the VFO menu on a compact layout).";
+
+/// The banner text to show, given the operator's choice about radios that are
+/// switched off. `None` when nothing is left to say.
+///
+/// Only the switched-off line is dropped: a notice is several lines joined
+/// when the engine has more than one thing to report at start-up (a settings
+/// file that failed to load rides in the same banner), and those stay.
+pub fn notice_to_show(notice: &str, quiet_off_radios: bool) -> Option<String> {
+    if !quiet_off_radios {
+        return Some(notice.to_string());
+    }
+    let kept: Vec<&str> = notice.lines().filter(|l| l.trim() != RADIO_OFF_NOTICE).collect();
+    (!kept.is_empty()).then(|| kept.join("\n"))
+}
+
 /// User display preferences. All have defaults so a missing `[ui]` table loads.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -988,6 +1012,15 @@ pub struct UiSettings {
     /// operator's. The 3D globe is untouched — its cities are night-side lights
     /// rather than markers, and nothing is written across a contact there.
     pub map_cities: bool,
+    /// Leave out the warning banner of a radio that is switched off.
+    ///
+    /// A radio switched off on purpose still says so above its panadapter at
+    /// every start, one banner per tab, although the rings on its tab already
+    /// show it is off. With this on, that banner is not drawn and not read
+    /// out. Every other warning is untouched: a device that will not open, a
+    /// missing sound card, a failed recording. Off by default, so nothing
+    /// changes for an operator who has not asked.
+    pub quiet_off_radios: bool,
     /// Whose licence-free channel plans the waterfall marks — see
     /// [`Country`](crate::region::Country). This screen's preference: it
     /// follows the computer's country unless the operator picks one.
@@ -1160,6 +1193,7 @@ impl Default for UiSettings {
             decode_cq_only: false,
             decode_new_only: false,
             map_cities: true,
+            quiet_off_radios: false,
             country: Default::default(),
             panadapter_clock: true,
             solar3d_window: None,
@@ -1436,5 +1470,33 @@ mod workspace_tests {
         );
         let json = serde_json::to_string(&ws).unwrap();
         assert_eq!(serde_json::from_str::<Workspace>(&json).unwrap(), ws);
+    }
+}
+
+#[cfg(test)]
+mod off_radio_notice {
+    use super::*;
+
+    #[test]
+    fn left_alone_unless_asked() {
+        assert_eq!(notice_to_show(RADIO_OFF_NOTICE, false).as_deref(), Some(RADIO_OFF_NOTICE));
+        assert!(!UiSettings::default().quiet_off_radios);
+    }
+
+    #[test]
+    fn the_switched_off_line_goes_and_nothing_else() {
+        assert_eq!(notice_to_show(RADIO_OFF_NOTICE, true), None);
+        let both = format!("{RADIO_OFF_NOTICE}\nradios.json could not be read");
+        assert_eq!(notice_to_show(&both, true).as_deref(), Some("radios.json could not be read"));
+        let other = "Audio input unavailable";
+        assert_eq!(notice_to_show(other, true).as_deref(), Some(other));
+    }
+
+    /// An older settings file, written before the switch existed, still loads.
+    #[test]
+    fn an_older_ui_table_loads_with_it_off() {
+        let ui: UiSettings = serde_json::from_str(r#"{"map_cities":false}"#).unwrap();
+        assert!(!ui.quiet_off_radios);
+        assert!(!ui.map_cities);
     }
 }

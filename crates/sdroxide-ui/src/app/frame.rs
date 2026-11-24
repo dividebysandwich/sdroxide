@@ -451,7 +451,13 @@ impl eframe::App for SdroxideApp {
         // A persistent radio-audio warning (input unavailable / mono-for-IQ)
         // rides above the panadapter with a dismiss button, so a silent RX
         // failure is explained rather than reading as "waiting for spectrum".
-        if let Some(notice) = self.radio_notice.clone() {
+        // A radio switched off on purpose can be left without its banner — the
+        // rings on its tab already say it is off (`UiSettings::quiet_off_radios`).
+        let shown = self
+            .radio_notice
+            .as_deref()
+            .and_then(|n| sdroxide_types::notice_to_show(n, self.ui_settings.quiet_off_radios));
+        if let Some(notice) = shown {
             let (wash, rule, mark, ink) = notice_banner_colors();
             egui::Frame::new()
                 .fill(wash)
@@ -1815,7 +1821,10 @@ impl SdroxideApp {
                 RadioEvent::WavelogBatch(b) => self.on_wavelog_batch(*b),
                 RadioEvent::Notice(n) => {
                     if self.focused {
-                        self.speech.announcer.on_notice(n.as_deref(), now);
+                        let spoken = n.as_deref().and_then(|t| {
+                            sdroxide_types::notice_to_show(t, self.ui_settings.quiet_off_radios)
+                        });
+                        self.speech.announcer.on_notice(spoken.as_deref(), now);
                     }
                     self.radio_notice = n;
                 }
