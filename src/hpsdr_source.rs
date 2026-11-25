@@ -529,7 +529,8 @@ impl HpsdrSource {
 
         // Only a fresh 0xEE status authorises the host to transmit.
         // Every other status withdraws the request.
-        self.atu_rf_requested = status == 0xEE;
+        self.atu_rf_requested = status == 0xEE
+            && self.atu_operation == Some(AtuOperation::Tune);
 
         self.observe_atu_status(status);
     }
