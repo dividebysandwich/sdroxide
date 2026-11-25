@@ -678,6 +678,15 @@ fn default_detached() -> [DetachedState; DetachableModule::COUNT] {
     [DetachedState::default(); DetachableModule::COUNT]
 }
 
+/// Write a fixed-size array as a list. RON (the browser's storage format) writes
+/// an array as a tuple `(..)`, but the lenient readers below ask for a list
+/// `[..]` and fail on a tuple, which reset every setting on each browser start.
+/// JSON and TOML make no difference between the two, so `config.toml` is
+/// unchanged.
+fn as_list<T: Serialize, S: serde::Serializer>(a: &[T], s: S) -> Result<S::Ok, S::Error> {
+    a.serialize(s)
+}
+
 /// Read [`UiSettings::detached`] at any length. A config written by a build with
 /// fewer (or more) modules carries a shorter (or longer) list, and a derived
 /// array deserializer would reject the whole file over it — which would reset
@@ -854,7 +863,7 @@ pub struct UiSettings {
     /// This screen's preference, like the theme: the spots themselves are the
     /// station's, but what colour they are painted is the operator's, and a
     /// remote client picks its own.
-    #[serde(default = "default_spot_colors", deserialize_with = "spot_colors")]
+    #[serde(default = "default_spot_colors", deserialize_with = "spot_colors", serialize_with = "as_list")]
     pub spot_colors: [[u8; 3]; SpotKind::COUNT],
     /// The shade each band-plan class wears on the strip along the bottom of
     /// the waterfall, indexed by [`BandplanKind::index`]. Starts at
@@ -863,7 +872,7 @@ pub struct UiSettings {
     /// This screen's preference, like the spot tints above: the plan itself is
     /// the station's, but what colour an allocation is shaded is whatever the
     /// operator looking at it can read (issue #145).
-    #[serde(default = "default_bandplan_colors", deserialize_with = "bandplan_colors")]
+    #[serde(default = "default_bandplan_colors", deserialize_with = "bandplan_colors", serialize_with = "as_list")]
     pub bandplan_colors: [[u8; 3]; BandplanKind::COUNT],
     /// Which layout the window wears, or `Auto` to pick from the viewport.
     pub layout: LayoutMode,
@@ -1027,7 +1036,7 @@ pub struct UiSettings {
     /// **Native only.** The browser has no second window and keeps every module
     /// in-window, so the flags are ignored there. Machine-local: where a window
     /// sits is a property of this screen.
-    #[serde(default = "default_detached", deserialize_with = "detached_slots")]
+    #[serde(default = "default_detached", deserialize_with = "detached_slots", serialize_with = "as_list")]
     pub detached: [DetachedState; DetachableModule::COUNT],
     /// The first-start welcome has been answered with "done", so it is not
     /// shown again. It only ever appears to a station with no callsign, which
@@ -1401,6 +1410,18 @@ mod serde_tests {
         // A config written before the field existed loads with the system's.
         let ui: UiSettings = serde_json::from_str("{}").unwrap();
         assert!(ui.language.is_system());
+    }
+
+    /// The browser keeps `UiSettings` as RON. It has to read back what it wrote:
+    /// the lenient array readers ask for a list, and RON writes a plain array as
+    /// a tuple, so before `as_list` the whole struct failed to load and every
+    /// setting went back to its default on each start.
+    #[test]
+    fn ui_settings_round_trip_through_ron() {
+        let ui = UiSettings { tune_step_round_first: true, ..UiSettings::default() };
+        let text = ron::ser::to_string(&ui).unwrap();
+        let back: UiSettings = ron::from_str(&text).unwrap();
+        assert_eq!(back, ui);
     }
 }
 

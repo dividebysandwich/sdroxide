@@ -6099,6 +6099,7 @@ name = "sdroxide-types"
 version = "1.7.3"
 dependencies = [
  "postcard",
+ "ron",
  "serde",
  "serde_json",
 ]
