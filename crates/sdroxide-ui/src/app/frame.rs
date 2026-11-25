@@ -253,6 +253,9 @@ impl eframe::App for SdroxideApp {
         // before anything draws, so a change in Settings → UI reaches the
         // needle and the waterfall on the same frame it reaches the scheduler.
         crate::repaint::set_frame_period_ms(1000 / u64::from(self.ui_settings.fps().max(1)));
+        // How much smooth scrolling is one step, for every control the wheel
+        // steps — the panadapter, the readout's digits, the ribbon sliders.
+        crate::widgets::set_wheel_points_per_step(&ctx, self.input.cfg.wheel.points_per_step);
         // Which radio the ids minted below belong to. Split view draws several
         // apps per frame; each declares itself before it draws anything.
         crate::layout::set_radio_salt(&ctx, self.radio_id);
