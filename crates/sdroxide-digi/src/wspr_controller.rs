@@ -94,6 +94,67 @@ pub struct WsprController {
     spots_last_slot: u32,
     status_dirty: bool,
     clock: ClockMonitor,
+    /// Every station decoded outright, which an OSD decode has to name before
+    /// it is believed — see [`KnownCalls`].
+    known: KnownCalls,
+}
+
+/// The stations this receiver has heard, kept the way `wsprd` keeps its
+/// `hashtab`/`loctab` pair: a callsign, and for a plain Type-1 message the
+/// grid it came with.
+///
+/// It exists for one rule of `wsprd`'s (`wsprd.c`, right after `osdwspr_`): an
+/// ordered-statistics decode is accepted only when its callsign is already in
+/// that table — with the same grid, for a Type-1 message — and a Type-3 one
+/// never is. OSD returns a valid codeword for whatever it is handed, so a
+/// callsign it reports that nobody has heard outright is far more likely
+/// invented from noise than heard; without this rule a receiver lists, and
+/// uploads, stations like `30O/RY3T` that WSJT-X beside it never shows
+/// (issue #946).
+///
+/// Keyed by callsign rather than by `wsprd`'s fifteen-bit hash, which this
+/// station cannot compute (see [`wspr::hashes`]); the test `wsprd` makes on
+/// the slot it finds is an exact comparison against the callsign either way.
+/// Unlike `wsprd`'s it starts empty rather than from `hashtable.txt`, which
+/// only makes it stricter for the first slots after a start.
+#[derive(Default)]
+struct KnownCalls(std::collections::HashMap<String, Option<String>>);
+
+impl KnownCalls {
+    /// `wsprd`'s table has 32768 slots. A receiver left running for months
+    /// keeps no more than that here either: past it the table starts over,
+    /// which costs a few OSD decodes until the band is heard again.
+    const CAPACITY: usize = 32_768;
+
+    /// Whether `d` is reported, learning its callsign if so.
+    fn admit(&mut self, d: &WsprDecode) -> bool {
+        let ok = !d.from_osd
+            || match &d.message {
+                WsprMessage::Type1 { callsign, grid, .. } => {
+                    self.0.get(callsign).is_some_and(|g| g.as_deref() == Some(grid.as_str()))
+                }
+                WsprMessage::Type2 { callsign, .. } => self.0.contains_key(callsign),
+                WsprMessage::Type3 { .. } => false,
+            };
+        if !ok {
+            return false;
+        }
+        if self.0.len() >= Self::CAPACITY {
+            self.0.clear();
+        }
+        // What `unpk_` writes: Type 1 the call and its grid, Type 2 the
+        // compound call alone, Type 3 nothing — its callsign is the unknown.
+        match &d.message {
+            WsprMessage::Type1 { callsign, grid, .. } => {
+                self.0.insert(callsign.clone(), Some(grid.clone()));
+            }
+            WsprMessage::Type2 { callsign, .. } => {
+                self.0.entry(callsign.clone()).or_insert(None);
+            }
+            WsprMessage::Type3 { .. } => {}
+        }
+        true
+    }
 }
 
 impl WsprController {
@@ -136,6 +197,7 @@ impl WsprController {
             spots_last_slot: 0,
             status_dirty: true,
             clock: ClockMonitor::default(),
+            known: KnownCalls::default(),
         }
     }
 
@@ -329,13 +391,17 @@ impl DigiEngine for WsprController {
             match self.res_rx.try_recv() {
                 Ok(res) => {
                     self.pending.remove(&res.slot_utc);
-                    let spots: Vec<WsprSpot> = res
-                        .decodes
+                    // In decode order, as `wsprd` fills its table: a station
+                    // Fano finds early in the slot vouches for an OSD decode
+                    // of it later in the same one.
+                    let heard: Vec<&WsprDecode> =
+                        res.decodes.iter().filter(|d| self.known.admit(d)).collect();
+                    let spots: Vec<WsprSpot> = heard
                         .iter()
                         .map(|d| self.to_spot(d, res.slot_utc, res.dial_hz))
                         .collect();
                     self.spots_last_slot = spots.len() as u32;
-                    self.clock.observe_dts(res.decodes.iter().map(|d| d.dt_sec));
+                    self.clock.observe_dts(heard.iter().map(|d| d.dt_sec));
                     self.status_dirty = true;
                     if !spots.is_empty() {
                         actions.push(DigiAction::WsprSpots(spots));
@@ -744,11 +810,49 @@ mod tests {
             snr_db: -22.0,
             drift_hz: 0.0,
             fit: 0.5,
+            from_osd: false,
         };
         let s = c.to_spot(&d, 0, 14_095_600.0);
         assert_eq!(s.call, "<#00a3f>");
         assert!(!wspr::is_resolved(&s.call), "a placeholder passed as a callsign");
         assert_eq!(s.grid.as_deref(), Some("FN42aa"), "the grid was in the clear");
+    }
+
+    /// `wsprd`'s rule for the ordered-statistics fallback: it only confirms a
+    /// station already heard outright, with the same grid, and never names a
+    /// hashed one. A Fano decode needs no such introduction (issue #946).
+    #[test]
+    fn an_osd_decode_is_believed_only_for_a_station_already_heard() {
+        let at = |message: WsprMessage, from_osd: bool| WsprDecode {
+            message,
+            freq_hz: 1500.0,
+            dt_sec: 0.0,
+            snr_db: -28.0,
+            drift_hz: 0.0,
+            fit: 0.5,
+            from_osd,
+        };
+        let t1 = |grid: &str| WsprMessage::Type1 {
+            callsign: "K1ABC".into(),
+            grid: grid.into(),
+            power_dbm: 37,
+        };
+        let t2 = || WsprMessage::Type2 { callsign: "30O/RY3T".into(), power_dbm: 40 };
+        let t3 = || WsprMessage::Type3 {
+            callsign_hash: 0x029d9,
+            grid6: "JO41QF".into(),
+            power_dbm: 30,
+        };
+        let mut k = KnownCalls::default();
+
+        assert!(!k.admit(&at(t1("FN42"), true)), "OSD named a station nobody has heard");
+        assert!(!k.admit(&at(t2(), true)), "nor a compound one");
+        assert!(k.admit(&at(t1("FN42"), false)), "Fano needs no introduction");
+        assert!(k.admit(&at(t1("FN42"), true)), "and then vouches for OSD");
+        assert!(!k.admit(&at(t1("FN31"), true)), "but only at the grid it was heard from");
+
+        assert!(!k.admit(&at(t3(), true)), "OSD never names a hashed station");
+        assert!(k.admit(&at(t3(), false)), "a Fano Type 3 is still reported");
     }
 
     /// A compound callsign carries no grid. Reporting one would be fabricating
@@ -763,6 +867,7 @@ mod tests {
             snr_db: -18.0,
             drift_hz: 0.0,
             fit: 0.5,
+            from_osd: false,
         };
         let s = c.to_spot(&d, 0, 14_095_600.0);
         assert_eq!(s.call, "PJ4/K1ABC");
@@ -786,6 +891,7 @@ mod tests {
             snr_db: -20.0,
             drift_hz: 0.0,
             fit: 0.5,
+            from_osd: false,
         };
         let s = c.to_spot(&d, 0, 7_038_600.0);
         assert!(
