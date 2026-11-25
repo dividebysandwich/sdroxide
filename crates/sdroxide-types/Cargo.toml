@@ -13,3 +13,5 @@ serde_json = "1"
 [dev-dependencies]
 # Round-trip tests for the types that ride the wire.
 postcard.workspace = true
+# The browser stores UiSettings as RON; the version eframe uses.
+ron = "0.12"
