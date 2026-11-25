@@ -282,6 +282,15 @@ impl Diversity {
                     self.reset();
                     return;
                 }
+                // The running `Σ|aux|²` below is kept by adding and
+                // subtracting in f32, and is only repaired when it goes
+                // negative. After a burst near full scale — the rig keying
+                // beside the aerial — the rounding left over from those large
+                // terms can sit far above a quiet band's true energy, and the
+                // step size divides by it: the filter then barely adapts until
+                // a Restart. Recomputing it here costs `taps` multiplies every
+                // few hundred samples.
+                self.energy = self.hist.iter().map(|h| h.norm_sqr()).sum();
             }
             let x = aux[i];
             let m = main[i];
