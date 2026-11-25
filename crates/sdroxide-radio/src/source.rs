@@ -323,6 +323,17 @@ pub trait IqSource: Send {
     /// Not an assertion: what comes back is adopted. Free on a front end with
     /// nothing to ask.
     fn reread_rx_antenna(&mut self) {}
+    /// Whether this source reports the lifecycle of tuner operations through
+    /// `ControlUpdate::AtuState`.
+    ///
+    /// The engine uses this capability to apply the operation-wide transmit
+    /// interlock only to sources that report operation completion.
+    ///
+    /// Default: false. Sources should return true only when they report both
+    /// RF permission and the completion or failure of each tuner operation.
+    fn reports_atu_operation_state(&self) -> bool {
+        false
+    }
     /// Whether this radio has a built-in antenna tuner sdroxide can drive, and
     /// what it is doing.
     ///
@@ -1621,6 +1632,9 @@ impl IqSource for ConvertedSource {
     }
     /// The tuner sits between the radio and its aerial, behind any converter
     /// on the receive side, so it is the inner radio's.
+    fn reports_atu_operation_state(&self) -> bool {
+        self.inner.reports_atu_operation_state()
+    }
     fn atu(&self) -> Option<sdroxide_types::AtuState> {
         self.inner.atu()
     }

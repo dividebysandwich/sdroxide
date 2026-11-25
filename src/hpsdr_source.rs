@@ -877,6 +877,10 @@ impl IqSource for HpsdrSource {
         self.atu_rf_requested = false;
     }
 
+    fn reports_atu_operation_state(&self) -> bool {
+        true
+    }
+
     fn atu(&self) -> Option<sdroxide_types::AtuState> {
         self.atu_state
     }
