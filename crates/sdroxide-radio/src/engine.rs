@@ -11965,8 +11965,13 @@ impl Engine {
         // sound card hands over demodulated audio, not a 1.5 MHz span. Correcting
         // the state means the UI says so instead of showing a request the engine
         // quietly dropped.
+        // The operator's own preference survives being overruled: `state.ism`
+        // is what the panel reads, `ism_cfg` is what they chose, so a swap back
+        // to a wideband front end brings the decoder back as it was left.
         if self.audio_mode {
             self.state.ism = sdroxide_types::IsmSettings::OFF;
+        } else {
+            self.state.ism = self.ism_cfg;
         }
         let want = self.state.ism.any_enabled();
         match (want, self.ism.is_some()) {
@@ -18061,9 +18066,12 @@ impl Engine {
 
         // Re-establish mode-dependent chains for the fresh state.
         self.sync_digi_mode();
+        // Outside the wideband-only block: on an audio-mode front end it is
+        // what switches the decoder off, rather than leaving the old one's
+        // chain standing and its chip lit.
+        self.sync_ism();
         if !self.audio_mode {
             self.sync_skimmer();
-            self.sync_ism();
             self.sync_adsb();
             self.sync_vdl2();
             self.sync_ais();
