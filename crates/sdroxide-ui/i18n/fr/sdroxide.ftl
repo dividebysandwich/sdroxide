@@ -1894,6 +1894,8 @@ settings-radio-lets-if-gain-reduction-go = Permet à la réduction de gain FI de
 settings-radio-allow-if-gain-reduction-below = Autoriser la réduction de gain FI sous 20 dB
 settings-radio-front-end-attenuation-steps-0 = Atténuation d'entrée par pas : 0 est le gain maximal, chaque pas vers le haut enclenche davantage d'atténuation. Certaines bandes ont moins de pas — le pilote borne la valeur et conserve votre choix pour quand vous revenez accorder ; la réglette ici s'arrête à ce que la bande où se trouve la radio accepte. Un choix plus élevé fait sur une autre bande est conservé et reste affiché à côté. Applique immédiatement.
 settings-radio-t-0-max-gain = 0 = gain maximal
+settings-radio-sdrplay-auto-lna = LNA automatique
+settings-radio-sdrplay-auto-lna-hover = Laisse le récepteur choisir lui-même son état de LNA. Il ajoute de l’atténuation tant que le convertisseur sature ou que l’AGC FI est en butée, et la retire dès qu’il le peut. L’état de LNA ci-dessus devient le gain maximal qu’il peut utiliser. C’est aussi un clic sur le libellé LNA dans la fenêtre principale. S’applique immédiatement.
 settings-radio-reference-error-parts-per-million-2 = Erreur de référence en parties par million, appliquée par le périphérique lui-même. Applique immédiatement.
 settings-radio-radio-s-tuner = L'accord de cette radio
 settings-radio-tuner = Accord
@@ -2085,6 +2087,9 @@ topbar-counted-steps-not-decibels-what =
 
     Compté en pas, non en décibels : ce que vaut un pas relève du récepteur lui-même, et sur un SDRplay cela dépend aussi de la bande. Le bon réglage reste plus de gain.
 topbar-gain = Gain
+topbar-sdrplay-auto-lna-hint =
+    Cliquez sur LNA pour l’automatique : le récepteur choisit lui-même l’état de LNA
+    Allumé = actif ; le curseur fixe alors le gain maximal utilisable
 topbar-plutosdr-s-own-agc-setting =
     {""}
 

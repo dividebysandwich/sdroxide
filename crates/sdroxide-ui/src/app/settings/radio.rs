@@ -5902,6 +5902,25 @@ pub(in crate::app) fn settings_sdrplay_tab(
         }
         ui.end_row();
 
+        ui.label(tr!("settings-radio-sdrplay-auto-lna"))
+            .on_hover_text(tr!("settings-radio-sdrplay-auto-lna-hover"));
+        {
+            let mut on = cfg.sdrplay.auto_lna;
+            if ui
+                .checkbox(&mut on, tr!("settings-radio-enable"))
+                .on_hover_text(tr!("settings-radio-sdrplay-auto-lna-hover"))
+                .changed()
+            {
+                cfg.sdrplay.auto_lna = on;
+                cmds.push(Command::SetGain {
+                    dir: Direction::Rx,
+                    element: SdrPlayConfig::AUTO_LNA_ELEMENT.to_string(),
+                    db: if on { 1.0 } else { 0.0 },
+                });
+            }
+        }
+        ui.end_row();
+
         ui.label(tr!("settings-radio-frequency-correction"))
             .on_hover_text(tr!("settings-radio-reference-error-parts-per-million-2"));
         let mut ppm = cfg.sdrplay.ppm;

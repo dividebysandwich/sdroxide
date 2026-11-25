@@ -1896,6 +1896,8 @@ settings-radio-lets-if-gain-reduction-go = Deixa a redução de ganho de F.I. de
 settings-radio-allow-if-gain-reduction-below = Permitir redução de ganho de F.I. abaixo de 20 dB
 settings-radio-front-end-attenuation-steps-0 = Atenuação do front end em passos: 0 é o ganho máximo, cada passo acima acrescenta mais atenuação. Algumas faixas têm menos passos — o driver limita e mantém a sua escolha para quando você sintonizar de volta, e a barra aqui termina no que a faixa em que o rádio está aceitará. Uma escolha mais alta feita em outra faixa é mantida e continua mostrada ao lado. Vale imediatamente.
 settings-radio-t-0-max-gain = 0 = ganho máximo
+settings-radio-sdrplay-auto-lna = LNA automático
+settings-radio-sdrplay-auto-lna-hover = Deixa o receptor escolher sozinho o estado do LNA. Ele acrescenta atenuação enquanto o conversor está sobrecarregado ou o AGC de FI chegou ao limite, e a retira quando pode. O estado do LNA acima passa a ser o ganho máximo que ele pode usar. É o mesmo que um clique no rótulo LNA na janela principal. Aplica-se imediatamente.
 settings-radio-reference-error-parts-per-million-2 = Erro de referência em partes por milhão, aplicado pelo próprio dispositivo. Vale imediatamente.
 settings-radio-radio-s-tuner = O sintonizador deste rádio
 settings-radio-tuner = Sintonizador
@@ -2089,6 +2091,9 @@ topbar-counted-steps-not-decibels-what =
 topbar-gain = Ganho
 
 
+topbar-sdrplay-auto-lna-hint =
+    Clique em LNA para automático: o receptor escolhe sozinho o estado do LNA
+    Aceso = ligado; o controle define então o ganho máximo que ele pode usar
 topbar-plutosdr-s-own-agc-setting =
     {""}
 

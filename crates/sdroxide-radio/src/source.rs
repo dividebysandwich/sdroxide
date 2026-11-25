@@ -531,6 +531,19 @@ pub trait IqSource: Send {
     fn adc_overload(&mut self) -> Option<bool> {
         None
     }
+
+    /// Whether a gain this source reports in [`Self::current_gains`] has moved
+    /// by itself since the last time this was asked — an automatic front-end
+    /// loop stepping a stage the operator also has a rail for. The engine asks
+    /// on every pass and republishes the gains on a yes, so the rail follows
+    /// the loop instead of showing where it was last put by hand.
+    ///
+    /// Asked for rather than polled by comparing: the comparison would build
+    /// the whole gain list several hundred times a second to learn, nearly
+    /// always, that nothing happened. Default: never.
+    fn rx_gains_moved(&mut self) -> bool {
+        false
+    }
     /// What this radio's adaptive-predistortion loop is doing, where it runs
     /// one — see [`sdroxide_types::PsMeter`].
     ///
@@ -1729,6 +1742,9 @@ impl IqSource for ConvertedSource {
     }
     fn adc_overload(&mut self) -> Option<bool> {
         self.inner.adc_overload()
+    }
+    fn rx_gains_moved(&mut self) -> bool {
+        self.inner.rx_gains_moved()
     }
     fn sample_full_scale(&self) -> f32 {
         self.inner.sample_full_scale()

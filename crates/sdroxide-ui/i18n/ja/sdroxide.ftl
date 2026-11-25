@@ -1870,6 +1870,8 @@ settings-radio-lets-if-gain-reduction-go = IF のゲイン減衰を 20 dB より
 settings-radio-allow-if-gain-reduction-below = IF のゲイン減衰を 20 dB より下にも許可
 settings-radio-front-end-attenuation-steps-0 = フロントエンドの減衰を段階で指定します。0 が最大ゲインで、段階を上げるとより多くの減衰が入ります。バンドによっては段階が少ないものもあります。ドライバーは範囲内に収め、あなたの選択は、同調し直したときのために保持します。ここのスライダーは、無線機があるバンドが受け付ける上限で止まります。別のバンドで選んだより高い値は保持され、その横に表示されます。即座に適用されます。
 settings-radio-t-0-max-gain = 0 = 最大ゲイン
+settings-radio-sdrplay-auto-lna = LNA 自動
+settings-radio-sdrplay-auto-lna-hover = 受信機が LNA ステートを自分で選びます。コンバーターが過負荷のあいだ、または IF AGC が調整範囲を使い切ったときに減衰を増やし、可能になれば戻します。上の LNA ステートは、使用できる最大ゲインになります。メインウィンドウの LNA ラベルをクリックするのと同じ設定です。すぐに反映されます。
 settings-radio-reference-error-parts-per-million-2 = 基準の誤差（百万分率）で、デバイス自身が適用します。即座に適用されます。
 settings-radio-radio-s-tuner = この無線機のチューナー
 settings-radio-tuner = チューナー
@@ -2061,6 +2063,9 @@ topbar-counted-steps-not-decibels-what =
 
     デシベルではなく段階で数えます。1 段階の値は受信機自身の問題で、SDRplay ではバンドにも依存します。それでも、大きいほどゲインが多くなります。
 topbar-gain = ゲイン
+topbar-sdrplay-auto-lna-hint =
+    LNA をクリックで自動：受信機が LNA ステートを自動で選択
+    点灯 = オン。スライダーは使用できる最大ゲインを決めます
 topbar-plutosdr-s-own-agc-setting =
     {""}
 

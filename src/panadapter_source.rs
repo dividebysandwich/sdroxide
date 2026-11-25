@@ -738,6 +738,10 @@ impl IqSource for PanadapterSource {
         self.rx.adc_overload()
     }
 
+    fn rx_gains_moved(&mut self) -> bool {
+        self.rx.rx_gains_moved()
+    }
+
     /// The receiver's, for the same reason: its samples are the ones measured.
     fn sample_full_scale(&self) -> f32 {
         self.rx.sample_full_scale()

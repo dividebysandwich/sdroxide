@@ -1867,6 +1867,8 @@ settings-radio-lets-if-gain-reduction-go = 允许中频增益衰减低于 20 dB�
 settings-radio-allow-if-gain-reduction-below = 允许中频增益衰减低于 20 dB
 settings-radio-front-end-attenuation-steps-0 = 分步的前端衰减：0 为最大增益，每向上一步就多切入一级衰减。某些频段的步进较少——驱动程序会将其钳位，并保留你的选择，供你调回时使用；此处的滑轨止于电台所在频段所能接受的最大值。在另一个频段上做出的更高选择会被保留，并仍显示在其旁边。立即生效。
 settings-radio-t-0-max-gain = 0 = 最大增益
+settings-radio-sdrplay-auto-lna = 自动 LNA
+settings-radio-sdrplay-auto-lna-hover = 让接收机自行选择 LNA 档位。转换器过载或中频 AGC 调到尽头时增加衰减，条件允许时再减回去。上面的 LNA 档位成为它可以使用的最大增益。与点击主窗口的 LNA 标签是同一个开关。立即生效。
 settings-radio-reference-error-parts-per-million-2 = 参考误差，单位为百万分之一，由设备自身应用。立即生效。
 settings-radio-radio-s-tuner = 此电台的调谐器
 settings-radio-tuner = 调谐器
@@ -2058,6 +2060,9 @@ topbar-counted-steps-not-decibels-what =
 
     按步进计数，而非分贝：每一步的价值是接收机自己的事情，在 SDRplay 上它还取决于频段。数值越大，增益仍然越大。
 topbar-gain = 增益
+topbar-sdrplay-auto-lna-hint =
+    点击 LNA 切换自动：接收机自行选择 LNA 档位
+    亮起 = 开启；此时滑块设定可使用的最大增益
 topbar-plutosdr-s-own-agc-setting =
     {""}
 

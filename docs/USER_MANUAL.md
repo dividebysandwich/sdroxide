@@ -11490,6 +11490,34 @@ unplug the receiver and plug it back in.
   which no amount of IF gain reduction can undo. This is also the control
   behind the main window's **Gain** slider — the IF gain belongs to the
   hardware AGC whenever a loop is running, the LNA is always yours.
+- **Automatic LNA** — let the receiver choose its own LNA state. **Off by
+  default**, because it moves a control you set.
+
+  The rule is the one you would follow by hand: as much front-end gain as the
+  receiver will take, and no more. The state goes **up** (more attenuation)
+  while the service reports the converter overloaded, or while the AGC above is
+  at maximum IF gain reduction and has nothing left to give. It comes back
+  **down** when neither is true and the AGC has room to take up the step. Up is
+  quick, a step every 300 ms during an overload; down is a step every two
+  seconds, and only after twenty seconds without trouble. A state that
+  overloads again as soon as it is tried is left alone for longer each time, up
+  to ten minutes, so the loop settles instead of hunting. A retune of 1 MHz or
+  more starts it afresh, since what it learned belonged to the other band.
+
+  **The LNA state you set is the most gain it may use.** The loop never goes
+  below it. Set it to 0 to hand the whole ladder over; leave it higher if you
+  know your aerial needs it. Moving the slider — here or on the main window —
+  sets that limit and restarts the loop from it, and switching the loop off
+  puts the receiver back on it.
+
+  The main window's **LNA** rail shows the state the loop is in, so you can
+  watch it work, and the rail's label is the same switch as this one: **click
+  the word LNA** to turn the loop on or off. It is lit while the loop runs, and
+  either place saves it. Every step is in the log with the reason for it. With the AGC
+  off the loop has only the overload report to go on, which is enough to protect
+  the converter but says nothing about a band that is merely strong. On an
+  RSPduo running both tuners it looks after this radio's tuner only. It stands
+  still while you transmit.
 - **Frequency correction** — reference error in parts per million, applied by
   the device itself.
 - **FM broadcast / DAB notch** — hardware notch filters over 88–108 MHz and
@@ -11526,7 +11554,8 @@ unplug the receiver and plug it back in.
 > or a preamplifier powered from somewhere else on the other end of the cable.
 
 If the service reports the ADC **overloaded**, sdroxide shows it on screen and
-in the log: raise the LNA state, lower the IF gain, or turn the AGC on. If the
+in the log: raise the LNA state, lower the IF gain, or turn the AGC on — or
+turn **Automatic LNA** on and let the receiver do the first of those. If the
 RSP is unplugged — or the service restarted under sdroxide — it notices within
 a few seconds and reconnects by itself when the device returns.
 

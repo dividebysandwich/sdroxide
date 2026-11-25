@@ -1900,6 +1900,8 @@ settings-radio-lets-if-gain-reduction-go = Lascia che la riduzione del guadagno 
 settings-radio-allow-if-gain-reduction-below = Consenti la riduzione del guadagno IF sotto 20 dB
 settings-radio-front-end-attenuation-steps-0 = Attenuazione del front-end a passi: 0 è il guadagno massimo, ogni passo in più inserisce più attenuazione. Alcune bande hanno meno passi — il driver li limita e conserva la tua scelta per quando risintonizzi, e il cursore qui finisce dove arriva la banda su cui è la radio. Una scelta più alta fatta su un'altra banda viene conservata e mostrata accanto. Ha effetto subito.
 settings-radio-t-0-max-gain = 0 = guadagno massimo
+settings-radio-sdrplay-auto-lna = LNA automatico
+settings-radio-sdrplay-auto-lna-hover = Lascia che il ricevitore scelga da sé lo stato dell’LNA. Aggiunge attenuazione finché il convertitore è in sovraccarico o l’AGC di FI è a fine corsa, e la toglie quando può. Lo stato LNA qui sopra diventa il guadagno massimo che può usare. È lo stesso di un clic sull’etichetta LNA nella finestra principale. Si applica subito.
 settings-radio-reference-error-parts-per-million-2 = Errore di riferimento in parti per milione, applicato dal dispositivo stesso. Ha effetto subito.
 settings-radio-radio-s-tuner = Il sintonizzatore di questa radio
 settings-radio-tuner = Sintonizzatore
@@ -2091,6 +2093,9 @@ topbar-counted-steps-not-decibels-what =
 
     Contato in passi, non in decibel: quanto valga un passo è affare del ricevitore, e su un SDRplay dipende anche dalla banda. Il verso giusto resta più guadagno.
 topbar-gain = Guadagno
+topbar-sdrplay-auto-lna-hint =
+    Clic su LNA per l’automatico: il ricevitore sceglie da sé lo stato dell’LNA
+    Acceso = attivo; il cursore fissa allora il guadagno massimo utilizzabile
 topbar-plutosdr-s-own-agc-setting =
     {""}
 
