@@ -33,24 +33,27 @@
 //! # The loop
 //!
 //! 1. [`PureSignal::predistort`] bends the outgoing block and keeps a copy of
-//!    what was *wanted* — the reference.
+//!    what was *wanted* — the reference — and of the gain each sample was
+//!    actually sent with.
 //! 2. The feedback arrives later, by however long the transmit FIFO, the
 //!    converters, the amplifier and the receive FIFO take.
 //!    [`PureSignal::feed_back`] finds that delay by correlating envelopes, and
 //!    then holds it: at a fixed sample rate the two streams differ by a
-//!    constant, so it is measured once per over and re-checked, not searched
-//!    for every block.
-//! 3. Each aligned pair updates the table towards the inverse of what was
-//!    measured, damped by the adaptation rate so noise on one block cannot move
-//!    it far.
+//!    constant, so it is found once per over and re-checked on every block.
+//! 3. Each aligned block measures the *amplifier* — what came out for each
+//!    level that went in — and that curve is averaged over blocks.
+//! 4. In cycles, after the manner of WDSP's PureSignal (Warren Pratt, NR0V):
+//!    the table is worked out from the curve, and the next cycle's
+//!    measurements start only with samples sent under the new table, so
+//!    however long the loop is, the table never chases its own history.
 //!
 //! # It cannot make the transmitter louder
 //!
 //! Two properties hold whatever the feedback says, because the failure mode of
 //! a correction loop fed rubbish must not be an over-driven amplifier:
 //!
-//! * The table is **normalised at the top** — the largest amplitude keeps unit
-//!   gain and everything below it is pulled *down* — so a compressing amplifier
+//! * The table is **normalised at the top** — the largest amplitude being sent
+//!   keeps unit gain and everything below it is pulled *down* — so a compressing amplifier
 //!   is linearised by reducing small-signal gain rather than by asking for more
 //!   than full scale.
 //! * Every entry is then clamped so that `|x| · |G(|x|)|` cannot exceed full
@@ -74,6 +77,18 @@ use crate::Complex32;
 /// beyond this is not a nonlinearity, it is a broken feedback path.
 pub const MAX_CORRECTION: f32 = 4.0;
 
+/// Slice length for measuring how the loop gain turns across a block. Short
+/// enough that the turn between two slices stays under half a cycle for a
+/// residual LO error up to `rate / (2 · K_SLICE)` (1.2 kHz at 2.5 Msps), long
+/// enough that each slice's estimate is not mostly noise.
+const K_SLICE: usize = 1024;
+
+/// The spread in one block's estimate of an entry at which that block is
+/// trusted half as much. A tenth: corrections worth making are a few percent
+/// to a few tens of percent, and an estimate wandering by more than that is
+/// mostly the receiver's noise.
+const TRUST_SPREAD: f32 = 0.1;
+
 /// Envelope decimation for the coarse delay search. The envelope of a
 /// modulated signal has nothing in it above a few tens of kilohertz, so
 /// throwing away 63 of every 64 samples costs the correlation nothing and
@@ -88,8 +103,39 @@ const MIN_BLOCK: usize = 1024;
 /// amplifier and a receiver scores well above this.
 const LOCK_THRESHOLD: f32 = 0.5;
 
+/// Envelope match a block needs before the table learns from it, higher than
+/// what holds the lock. A block that only just matches is usually one whose
+/// alignment has slipped (a gap in either stream moves the delay), and
+/// learning from it writes the misalignment into the table as a curve. Held
+/// alignments on a PlutoSky R2 match at 0.9 and up.
+const LEARN_THRESHOLD: f32 = 0.85;
+
+/// Feedback blocks measured at one table before it is changed: a correction
+/// cycle. Eight 16k blocks is about 50 ms at 2.5 Msps, on top of the loop's
+/// own delay before they start.
+const CYCLE_BLOCKS: u32 = 8;
+
+/// The most residual LO difference believed. Two synthesisers on one
+/// reference come out within a few hertz of the offset spun out (a PlutoSky
+/// R2 reads 0-10 Hz); a block reading tens is misaligned, and rotating it by
+/// that figure writes nonsense into the table. Seen on that radio: -1112 Hz
+/// and then 231 Hz on blocks after a stall, and the table scattered.
+const MAX_RESIDUAL_HZ: f32 = 50.0;
+
 /// How many samples of full-rate refinement either side of the coarse answer.
 const REFINE: usize = ENV_DECIM;
+
+/// How far either side of a held alignment the periodic re-check looks, in
+/// samples. Enough for a delay that creeps; a delay that jumps further is
+/// found again by the full search.
+const NEAR: usize = 2 * REFINE;
+
+/// How far either side of the last held alignment, in envelope samples, a
+/// search after a loss of lock looks before falling back to the whole history.
+/// A gap in the transmission moves the delay by the length of the gap, which is
+/// tens of milliseconds at most; this covers about ±50 ms at 2.5 Msps for a
+/// small fraction of the full search.
+const HINT_ENV: usize = 2048;
 
 /// A bin needs this many samples in a block before that block is allowed to
 /// move it. Amplitude histograms of speech are steep: the top bins see very
@@ -100,6 +146,16 @@ const MIN_BIN_HITS: u32 = 32;
 pub struct PureSignal {
     /// The correction table: complex gain against `|x|` from 0 to full scale.
     table: Vec<Complex32>,
+    /// Which entries the feedback has reached. The top one that has is the
+    /// anchor [`PureSignal::normalise`] pins at unity: an entry above every
+    /// amplitude being sent has learned nothing, so pinning *it* would leave
+    /// the overall level of the learned part free to wander.
+    learned: Vec<bool>,
+    /// The sample rate, for reporting [`PureSignal::residual_hz`].
+    sample_rate: f64,
+    /// What was left of the LO difference in the last block learned from,
+    /// in Hz, after the nominal offset was spun out.
+    residual_hz: f32,
     /// How hard each block moves the table, 0..1.
     alpha: f32,
     frozen: bool,
@@ -107,6 +163,20 @@ pub struct PureSignal {
     /// Everything recently asked for, oldest first. `base` is the absolute
     /// index of `refs[0]`.
     refs: Vec<Complex32>,
+    /// The gain each sample of `refs` was actually sent with, in step with
+    /// it. The feedback describes the table as it stood when the sample went
+    /// out, which on a radio with a long loop is many updates ago.
+    sent: Vec<Complex32>,
+    /// The amplifier's measured complex gain against its input amplitude,
+    /// averaged over blocks, relative to the loop's overall gain.
+    model: Vec<Complex32>,
+    /// Which levels of `model` have been measured.
+    seen: Vec<bool>,
+    /// Index, in the reference's running count, of the first sample sent
+    /// with the table now in force.
+    changed_at: u64,
+    /// Blocks learned from since the table last changed.
+    cycle: u32,
     /// The decimated envelope of `refs`, one entry per [`ENV_DECIM`] samples.
     env: Vec<f32>,
     base: u64,
@@ -126,6 +196,16 @@ pub struct PureSignal {
     check_every: u64,
     /// How much history to keep, which bounds the delay that can be found.
     keep: usize,
+    /// Feedback samples since the last search for the alignment while there
+    /// is none, and how many must pass between searches. A search costs the
+    /// whole history times the block, so searching on *every* block while
+    /// unlocked — fine over a tenth of a second of history — is a gigaflop a
+    /// second over the second of history a networked radio needs.
+    since_locate: u64,
+    locate_every: u64,
+    /// The last alignment held this over, kept after a loss of lock so the
+    /// search that follows can look near it first — see [`HINT_ENV`].
+    hint: Option<i64>,
 
     /// De-rotation and envelope scratch, kept to avoid allocating per block.
     scratch: Vec<Complex32>,
@@ -137,17 +217,43 @@ impl PureSignal {
     /// `sample_rate_hz` sizes the reference history: the loop delay is mostly
     /// the transmit FIFO, so the history has to span it.
     pub fn new(bins: usize, rate: f32, sample_rate_hz: f64) -> PureSignal {
-        let bins = bins.clamp(4, 256);
         // A tenth of a second of history, bounded so a fast device does not
         // cost eight megabytes: the transmit FIFO is what the delay is made
         // of, and the engine paces the over to keep it at tens of
         // milliseconds.
         let keep = ((sample_rate_hz * 0.1) as usize).clamp(1 << 16, 1 << 19);
+        Self::with_keep(bins, rate, sample_rate_hz, keep)
+    }
+
+    /// The same, for a radio whose loop delay is longer than a tenth of a
+    /// second — one reached over a network, where the samples pass through a
+    /// host ring, the device's own DMA buffers and back again before the
+    /// feedback arrives (a Pluto, issue #525). `history_s` is how far back the
+    /// alignment may look; past what it covers the loop simply never locks.
+    pub fn with_history(bins: usize, rate: f32, sample_rate_hz: f64, history_s: f64) -> PureSignal {
+        let keep = ((sample_rate_hz * history_s.max(0.1)) as usize).clamp(1 << 16, 1 << 22);
+        Self::with_keep(bins, rate, sample_rate_hz, keep)
+    }
+
+    fn with_keep(bins: usize, rate: f32, sample_rate_hz: f64, keep: usize) -> PureSignal {
+        let bins = bins.clamp(4, 256);
+        let check_every = (sample_rate_hz * 0.5) as u64;
+        // Eight tries a second while unlocked: quick enough that an over is
+        // found within its first syllable, rare enough to cost nothing.
+        let locate_every = (check_every / 4).max(1);
         PureSignal {
             table: vec![Complex32::new(1.0, 0.0); bins],
+            learned: vec![false; bins],
+            sample_rate: sample_rate_hz,
+            residual_hz: 0.0,
             alpha: Self::alpha_for_rate(rate),
             frozen: false,
             refs: Vec::new(),
+            sent: Vec::new(),
+            model: vec![Complex32::new(1.0, 0.0); bins],
+            seen: vec![false; bins],
+            changed_at: 0,
+            cycle: 0,
             env: Vec::new(),
             base: 0,
             ref_total: 0,
@@ -156,8 +262,12 @@ impl PureSignal {
             score: 0.0,
             since_check: 0,
             // Twice a second at any rate people transmit at.
-            check_every: (sample_rate_hz * 0.5) as u64,
+            check_every,
             keep,
+            // So that the very first block is searched at once.
+            since_locate: locate_every,
+            locate_every,
+            hint: None,
             scratch: Vec::new(),
             fenv: Vec::new(),
         }
@@ -215,10 +325,21 @@ impl PureSignal {
         if lo <= 0.0 || hi <= 0.0 { 0.0 } else { 20.0 * (hi / lo).log10() }
     }
 
+    /// What was left of the LO difference in the last block learned from, in
+    /// Hz: how far the two synthesisers really are from the offset that was
+    /// spun out. Taken out inside the loop; reported because a figure that
+    /// stays large says the offset given to [`PureSignal::feed_back`] is wrong.
+    pub fn residual_hz(&self) -> f32 {
+        self.residual_hz
+    }
+
     /// Forget the table and the alignment. What a new over does, and what the
     /// operator's Restart does.
     pub fn reset(&mut self) {
         self.table.fill(Complex32::new(1.0, 0.0));
+        self.learned.fill(false);
+        self.model.fill(Complex32::new(1.0, 0.0));
+        self.seen.fill(false);
         self.unlock();
     }
 
@@ -227,13 +348,19 @@ impl PureSignal {
     /// feedback sits relative to the reference has.
     pub fn unlock(&mut self) {
         self.refs.clear();
+        self.sent.clear();
         self.env.clear();
         self.base = 0;
         self.ref_total = 0;
+        self.changed_at = 0;
+        self.cycle = 0;
         self.fb_total = 0;
         self.offset = None;
+        self.hint = None;
         self.score = 0.0;
         self.since_check = 0;
+        // Search on the first feedback block of the new over, not a slot later.
+        self.since_locate = self.locate_every;
     }
 
     /// Bend one block on its way to the transmitter, and keep what was wanted.
@@ -247,7 +374,9 @@ impl PureSignal {
         }
         self.push_reference(x);
         for s in x.iter_mut() {
-            *s *= self.gain_at(s.norm());
+            let g = self.gain_at(s.norm());
+            self.sent.push(g);
+            *s *= g;
         }
     }
 
@@ -275,6 +404,7 @@ impl PureSignal {
             let drop = self.refs.len().saturating_sub(self.keep);
             let drop = drop - drop % ENV_DECIM; // keep the envelope in step
             self.refs.drain(..drop);
+            self.sent.drain(..drop);
             self.env.drain(..drop / ENV_DECIM);
             self.base += drop as u64;
         }
@@ -308,22 +438,36 @@ impl PureSignal {
             return false;
         }
         // Spin out the known LO difference.
-        self.scratch.clear();
-        self.scratch.reserve(y.len());
         let step = -std::f64::consts::TAU * offset_hz / sample_rate_hz;
-        for (n, s) in y.iter().enumerate() {
-            let ph = (step * n as f64) as f32;
-            self.scratch.push(*s * Complex32::from_polar(1.0, ph));
-        }
+        derotate(y, step, &mut self.scratch);
         let m = self.scratch.len();
         let start = self.fb_total;
         self.fb_total += m as u64;
 
         self.since_check += m as u64;
-        let recheck = self.since_check >= self.check_every;
-        if self.offset.is_none() || recheck {
+        self.since_locate += m as u64;
+        // Locked, the alignment is confirmed on every block, not now and
+        // then: a gap in either stream moves the delay at once, and every
+        // block learned from between the jump and the next check writes the
+        // misalignment into the table. On a networked Pluto whose link stalls
+        // for 300 ms a few times a minute, half a second of that was enough to
+        // put a 12 dB bump in it (issue #525). The near search costs well
+        // under a millisecond.
+        let recheck = self.offset.is_some() || self.since_check >= self.check_every;
+        let searching = self.offset.is_none() && self.since_locate >= self.locate_every;
+        if searching || recheck {
             self.since_check = 0;
-            self.locate(start, m);
+            self.since_locate = 0;
+            // Once locked, the periodic check only has to confirm the delay has
+            // not crept, so it looks a few samples either side of where it was
+            // rather than across the whole history: over the second of history
+            // a networked radio keeps, the full search is long enough to starve
+            // the transmitter it shares a thread with. A delay that has jumped
+            // further fails this, and the full search runs on the next block.
+            match self.offset {
+                Some(off) if recheck => self.locate_near(start, m, off),
+                _ => self.locate(start, m),
+            }
         }
         let Some(off) = self.offset else { return false };
 
@@ -342,7 +486,7 @@ impl PureSignal {
             self.offset = None;
             return false;
         }
-        if self.frozen {
+        if self.frozen || score < LEARN_THRESHOLD {
             return false;
         }
         self.learn(idx, m)
@@ -366,13 +510,20 @@ impl PureSignal {
         if self.fenv.len() < 8 || self.env.len() <= self.fenv.len() {
             return;
         }
+        let flen = self.fenv.len();
+        // Near the last alignment first: a brief loss of lock (a gap in either
+        // stream) moves the delay a little, not anywhere in the history.
         let mut best = (0.0f32, 0usize);
-        let span = self.env.len() - self.fenv.len();
-        for p in 0..=span {
-            let s = correlate(&self.env[p..p + self.fenv.len()], &self.fenv);
-            if s > best.0 {
-                best = (s, p);
-            }
+        if let Some(h) = self.hint {
+            let at = (fb_start as i64 + h - self.base as i64).div_euclid(ENV_DECIM as i64);
+            let last = (self.env.len() - flen) as i64;
+            let lo = (at - HINT_ENV as i64).clamp(0, last) as usize;
+            let hi = (at + HINT_ENV as i64).clamp(0, last) as usize;
+            let (s, p) = best_correlation(&self.env[lo..hi + flen], &self.fenv);
+            best = (s, lo + p);
+        }
+        if best.0 < LOCK_THRESHOLD {
+            best = best_correlation(&self.env, &self.fenv);
         }
         if best.0 < LOCK_THRESHOLD {
             self.offset = None;
@@ -385,82 +536,284 @@ impl PureSignal {
         let hi = (coarse + REFINE).min(self.refs.len().saturating_sub(m));
         // A short window is enough for the refinement and keeps it cheap.
         let win = m.min(4096);
-        let mut fine = (0.0f32, coarse);
-        for p in lo..=hi {
-            let s = envelope_score(&self.refs[p..p + win], &self.scratch[..win]);
-            if s > fine.0 {
-                fine = (s, p);
-            }
+        if hi < lo || hi + win > self.refs.len() {
+            self.offset = None;
+            return;
         }
-        self.score = fine.0;
-        if fine.0 < LOCK_THRESHOLD {
+        // Each envelope worked out once, then slid, rather than both recomputed
+        // at every one of the positions tried.
+        let ref_env: Vec<f32> = self.refs[lo..hi + win].iter().map(|s| s.norm()).collect();
+        let fb_env: Vec<f32> = self.scratch[..win].iter().map(|s| s.norm()).collect();
+        let (score, at) = best_correlation(&ref_env, &fb_env);
+        self.score = score;
+        if score < LOCK_THRESHOLD {
             self.offset = None;
             return;
         }
         // Stored as the constant difference between the two streams' sample
         // counts, which is what stays true from one block to the next.
-        self.offset = Some(self.base as i64 + fine.1 as i64 - fb_start as i64);
+        self.offset = Some(self.base as i64 + (lo + at) as i64 - fb_start as i64);
+        self.hint = self.offset;
+    }
+
+    /// Re-check a held alignment by searching only [`NEAR`] samples either side
+    /// of it. Keeps the alignment (moved to the best of those) if it still
+    /// scores; otherwise drops it, so the full [`Self::locate`] runs next.
+    fn locate_near(&mut self, fb_start: u64, m: usize, off: i64) {
+        let win = m.min(4096);
+        let centre = fb_start as i64 + off - self.base as i64;
+        let lo = (centre - NEAR as i64).max(0);
+        let hi = (centre + NEAR as i64).min(self.refs.len() as i64 - win as i64);
+        if lo > hi {
+            self.offset = None;
+            self.score = 0.0;
+            return;
+        }
+        let (lo, hi) = (lo as usize, hi as usize);
+        let ref_env: Vec<f32> = self.refs[lo..hi + win].iter().map(|s| s.norm()).collect();
+        let fb_env: Vec<f32> = self.scratch[..win].iter().map(|s| s.norm()).collect();
+        let (score, at) = best_correlation(&ref_env, &fb_env);
+        self.score = score;
+        if score < LOCK_THRESHOLD {
+            self.offset = None;
+            return;
+        }
+        self.offset = Some(self.base as i64 + (lo + at) as i64 - fb_start as i64);
+        self.hint = self.offset;
     }
 
     /// One update of the table from an aligned pair.
     fn learn(&mut self, idx: usize, m: usize) -> bool {
-        let b = self.table.len();
-        let mut acc = vec![Complex32::new(0.0, 0.0); b];
-        let mut pw = vec![0.0f32; b];
-        let mut hits = vec![0u32; b];
-
-        // The overall complex gain of the whole loop — coupler attenuation,
+        // Only from samples sent with the table now in force. The rest were
+        // shaped by an earlier one, and averaging them in alongside makes the
+        // table chase its own history through the loop's delay. WDSP's
+        // PureSignal (Warren Pratt, NR0V, calcc.c) waits out a set loop delay
+        // after each correction for the same reason; here the delay is known
+        // exactly, from the alignment, so the wait is "until the first sample
+        // sent since the change".
+        if self.base + (idx as u64) < self.changed_at {
+            return false;
+        }
+        // The overall complex gain of the whole loop: coupler attenuation,
         // cable length, receiver gain and the phase between the two
         // synthesisers, all of it. Estimated per block and divided out, so
         // what is left is the *shape* of the amplifier's curve, which is the
         // only part worth learning.
+        //
+        // As a gain *and a slow rotation*, not a constant. The two
+        // synthesisers are not exactly the spun-out offset apart, and a few
+        // hundred hertz left over turns the loop gain through tens of degrees
+        // inside one block. A constant fitted to that comes out too small,
+        // each entry's own estimate scatters in phase around it, and the
+        // scatter reads as gain the amplifier has too much of: the whole
+        // learned table walks down to the floor (seen on a PlutoSky R2,
+        // issue #525). So the rotation is measured from how the gain turns
+        // between short slices of the block, and taken out first.
+        let mut turn = Complex32::new(0.0, 0.0);
+        let mut prev: Option<Complex32> = None;
+        let mut at = 0;
+        while at + K_SLICE <= m {
+            let mut sn = Complex32::new(0.0, 0.0);
+            for n in at..at + K_SLICE {
+                sn += self.scratch[n] * self.refs[idx + n].conj();
+            }
+            if let Some(p) = prev {
+                turn += sn * p.conj();
+            }
+            prev = Some(sn);
+            at += K_SLICE;
+        }
+        // Radians per sample; zero when there was too little to measure.
+        let w = if turn.norm() > 0.0 { f64::from(turn.arg()) / K_SLICE as f64 } else { 0.0 };
+        self.residual_hz = (w * self.sample_rate / std::f64::consts::TAU) as f32;
+        if self.residual_hz.abs() > MAX_RESIDUAL_HZ {
+            return false;
+        }
+        if w != 0.0 {
+            let spun = std::mem::take(&mut self.scratch);
+            derotate(&spun[..m], -w, &mut self.scratch);
+        }
+
+        // The amplifier on its own. For each level that went *into* it (the
+        // wanted sample times the gain it was actually sent with), how much
+        // came out, relative to the loop's overall gain. The correction table
+        // is then worked out from that curve, rather than nudged towards its
+        // own inverse block by block.
+        //
+        // Nudging has to judge each step through the loop's delay. On a
+        // networked radio the feedback is the better part of a fifth of a
+        // second old, dozens of steps ago, and against an amplifier that is
+        // compressing each step counts for more than it should: the table
+        // swung wider every time, seen on a PlutoSky R2 as a two-tone that
+        // quivered and then spread (issue #525). The amplifier's curve does
+        // not depend on the table, so measuring it cannot oscillate however
+        // long the loop is.
         let mut num = Complex32::new(0.0, 0.0);
         let mut den = 0.0f32;
         for n in 0..m {
-            let x = self.refs[idx + n];
-            num += self.scratch[n] * x.conj();
-            den += x.norm_sqr();
+            let u = self.refs[idx + n] * self.sent[idx + n];
+            num += self.scratch[n] * u.conj();
+            den += u.norm_sqr();
         }
         if den <= 0.0 || num.norm() <= 0.0 {
             return false;
         }
         let k = num / den;
 
+        let b = self.model.len();
+        let bin = |a: f32| ((a.clamp(0.0, 1.0) * b as f32) as usize).min(b - 1);
+        let mut acc = vec![Complex32::new(0.0, 0.0); b];
+        let mut pw = vec![0.0f32; b];
+        let mut hits = vec![0u32; b];
         for n in 0..m {
-            let x = self.refs[idx + n];
-            let a = x.norm();
+            let u = self.refs[idx + n] * self.sent[idx + n];
+            let a = u.norm();
             if a <= 0.0 {
                 continue;
             }
-            let i = ((a.clamp(0.0, 1.0) * b as f32) as usize).min(b - 1);
-            // The feedback referred back to the reference's own scale.
-            acc[i] += (self.scratch[n] / k) * x.conj();
-            pw[i] += a * a;
-            hits[i] += 1;
+            let j = bin(a);
+            acc[j] += (self.scratch[n] / k) * u.conj();
+            pw[j] += a * a;
+            hits[j] += 1;
+        }
+        let mut h = vec![Complex32::new(0.0, 0.0); b];
+        for j in 0..b {
+            if hits[j] >= MIN_BIN_HITS && pw[j] > 0.0 {
+                h[j] = acc[j] / pw[j];
+            }
+        }
+        // How noisy each level's figure is: the residual left once it is
+        // taken out, per sample, over the level's power. A least-squares
+        // fit's variance, so a level the envelope only grazes, or one down
+        // near the receiver's noise, says so.
+        let mut err = vec![0.0f32; b];
+        for n in 0..m {
+            let u = self.refs[idx + n] * self.sent[idx + n];
+            let a = u.norm();
+            if a <= 0.0 {
+                continue;
+            }
+            let j = bin(a);
+            err[j] += (self.scratch[n] / k - h[j] * u).norm_sqr();
+        }
+
+        // On the curve's own scale. The loop gain divided out above is a
+        // power-weighted average over whatever levels this block happened to
+        // drive, and those move as the table does, so each block's figures
+        // come out scaled a little differently. Fitted to the curve already
+        // held before being averaged in, only their shape is kept; without
+        // this a hard-driven amplifier's curve drifted with the table it was
+        // supposed to be independent of, and the two chased each other.
+        let (mut cross, mut norm) = (Complex32::new(0.0, 0.0), 0.0f32);
+        for j in 0..b {
+            if self.seen[j] && hits[j] >= MIN_BIN_HITS && pw[j] > 0.0 {
+                cross += h[j] * self.model[j].conj() * pw[j];
+                norm += self.model[j].norm_sqr() * pw[j];
+            }
+        }
+        if norm > 0.0 && cross.norm() > 0.0 {
+            let scale = cross / norm;
+            for v in &mut h {
+                *v /= scale;
+            }
         }
 
         let mut moved = false;
-        for i in 0..b {
-            if hits[i] < MIN_BIN_HITS || pw[i] <= 0.0 {
+        for j in 0..b {
+            if hits[j] < MIN_BIN_HITS || pw[j] <= 0.0 {
                 continue;
             }
-            // What the cascade actually does at this amplitude, relative to
-            // unity. One means already linear here.
-            let r = acc[i] / pw[i];
-            if r.norm() <= 1e-6 {
-                continue;
+            let var = err[j] / hits[j] as f32 / pw[j];
+            // All the way when it is clean, less as its spread approaches the
+            // size of the effects being measured.
+            let trust = 1.0 / (1.0 + var / (TRUST_SPREAD * TRUST_SPREAD));
+            // Averaged in, never divided by: the average of a noisy figure is
+            // unbiased, its inverse is not (on a PlutoSky R2 with the feedback
+            // near the noise, dividing dragged the low entries to the floor).
+            let step = (h[j] - self.model[j]) * (self.alpha * trust);
+            self.model[j] += step;
+            if trust > 0.25 {
+                self.seen[j] = true;
             }
-            // Move the table towards its own inverse: fixed-point iteration on
-            // `G · g(|x·G|) = 1`, damped so one noisy block cannot swing it.
-            let want = self.table[i] / r;
-            self.table[i] = self.table[i] * (1.0 - self.alpha) + want * self.alpha;
             moved = true;
         }
         if !moved {
             return false;
         }
-        self.normalise();
+        // A correction cycle: measure for a while at one table, then change
+        // it, and start measuring afresh once the change has come round.
+        self.cycle += 1;
+        if self.cycle >= CYCLE_BLOCKS {
+            self.cycle = 0;
+            self.rebuild();
+            self.changed_at = self.ref_total;
+        }
         true
+    }
+
+    /// Work the table out from the amplifier's measured curve: for each
+    /// wanted amplitude, the drive that makes the amplifier put out a scaled
+    /// copy of it, scaled so that the highest level measured goes through at
+    /// unity. Below that the curve is inverted; above it nothing is known and
+    /// the table holds unity.
+    fn rebuild(&mut self) {
+        let b = self.table.len();
+        let Some(top) = self.seen.iter().rposition(|&s| s) else { return };
+        let Some(first) = self.seen.iter().position(|&s| s) else { return };
+        // The curve at every level up to the top, unmeasured levels filled
+        // in between their measured neighbours and held below the first.
+        let mut curve = self.model.clone();
+        let mut last = first;
+        for j in 0..=top {
+            if j < first {
+                curve[j] = self.model[first];
+            } else if self.seen[j] {
+                let (from, to) = (self.model[last], self.model[j]);
+                for (f, c) in curve.iter_mut().enumerate().take(j).skip(last + 1) {
+                    let t = (f - last) as f32 / (j - last) as f32;
+                    *c = from * (1.0 - t) + to * t;
+                }
+                last = j;
+            }
+        }
+        let centre = |j: usize| (j as f32 + 0.5) / b as f32;
+        let at = |u: f32| -> Complex32 {
+            let pos = (u * b as f32 - 0.5).clamp(0.0, top as f32);
+            let j = (pos.floor() as usize).min(top);
+            let f = pos - j as f32;
+            if j >= top { curve[top] } else { curve[j] * (1.0 - f) + curve[j + 1] * f }
+        };
+        let u_top = centre(top);
+        let h_top = at(u_top);
+        if h_top.norm() <= 1e-9 {
+            return;
+        }
+        let c = h_top.norm();
+        for i in 0..b {
+            let a = centre(i);
+            if a >= u_top {
+                self.table[i] = Complex32::new(1.0, 0.0);
+                self.learned[i] = i == top;
+                continue;
+            }
+            // The drive u whose output u·|h(u)| is a·c: bisection, the curve
+            // being monotonic below saturation.
+            let want = a * c;
+            let (mut lo, mut hi) = (0.0f32, u_top);
+            for _ in 0..30 {
+                let mid = 0.5 * (lo + hi);
+                if mid * at(mid).norm() < want {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            let u = 0.5 * (lo + hi);
+            let turn = at(u).arg() - h_top.arg();
+            self.table[i] = Complex32::from_polar(u / a, -turn);
+            self.learned[i] = true;
+        }
+        self.normalise();
     }
 
     /// Pin the top of the table at unity and hold everything inside the safe
@@ -468,10 +821,21 @@ impl PureSignal {
     /// was given — see the module doc.
     fn normalise(&mut self) {
         let b = self.table.len();
-        let top = self.table[b - 1];
-        if top.norm() > 1e-6 {
-            for g in self.table.iter_mut() {
-                *g /= top;
+        // Pinned at the highest amplitude actually being sent, not at full
+        // scale. Each block's loop gain is divided out, so the feedback says
+        // nothing about the table's overall level, only its shape; anchored
+        // on an entry nothing reaches, that level is free to wander, and any
+        // bias in the estimates walks it off. Entries above the anchor hold
+        // its value, so a louder peak later starts from the curve's end.
+        if let Some(t) = self.learned.iter().rposition(|&l| l) {
+            let top = self.table[t];
+            if top.norm() > 1e-6 {
+                for g in self.table[..=t].iter_mut() {
+                    *g /= top;
+                }
+            }
+            for g in self.table[t + 1..].iter_mut() {
+                *g = Complex32::new(1.0, 0.0);
             }
         }
         for (i, g) in self.table.iter_mut().enumerate() {
@@ -514,6 +878,117 @@ fn correlate(a: &[f32], b: &[f32]) -> f32 {
 }
 
 /// The same, straight from two complex blocks' envelopes.
+/// Multiply `y` by a phasor turning `step` radians a sample, starting at zero
+/// phase, into `out`. A running rotation in double precision rather than a
+/// sine and cosine per sample — the same result to well under a part in a
+/// million, for a small fraction of the cost at a few megasamples a second.
+fn derotate(y: &[Complex32], step: f64, out: &mut Vec<Complex32>) {
+    out.clear();
+    out.reserve(y.len());
+    let (sr, si) = (step.cos(), step.sin());
+    let (mut c, mut s) = (1.0f64, 0.0f64);
+    for (n, v) in y.iter().enumerate() {
+        out.push(*v * Complex32::new(c as f32, s as f32));
+        let nc = c * sr - s * si;
+        s = c * si + s * sr;
+        c = nc;
+        // Rounding makes the phasor's length wander; a few hundred steps of it
+        // is nowhere near enough to matter, but over a long block it would.
+        if n % 1024 == 1023 {
+            let r = (c * c + s * s).sqrt();
+            c /= r;
+            s /= r;
+        }
+    }
+}
+
+/// The position in `hay` where `needle` correlates best, and how well — what
+/// sliding [`correlate`] along `hay` gives, with the window's mean and energy
+/// carried as running sums instead of recomputed at every position.
+fn best_correlation(hay: &[f32], needle: &[f32]) -> (f32, usize) {
+    let n = needle.len();
+    if n == 0 || hay.len() < n {
+        return (0.0, 0);
+    }
+    let inv = 1.0 / n as f32;
+    let mb = needle.iter().sum::<f32>() * inv;
+    let centred: Vec<f32> = needle.iter().map(|v| v - mb).collect();
+    let db: f32 = centred.iter().map(|v| v * v).sum();
+    if db <= 0.0 {
+        return (0.0, 0);
+    }
+    // Sums of the window in f64, so sliding it across a long history does not
+    // accumulate the error a single-precision running sum would.
+    let mut sum: f64 = hay[..n].iter().map(|&v| f64::from(v)).sum();
+    let mut sum2: f64 = hay[..n].iter().map(|&v| f64::from(v) * f64::from(v)).sum();
+    let positions = hay.len() - n + 1;
+    // The cross term at every position: directly for a short search, through
+    // an FFT for a long one, where it is the whole cost — a full search of a
+    // second of history is tens of millions of multiplies done directly.
+    let nums = if positions * n > FFT_SEARCH_ABOVE {
+        Some(cross_terms_fft(hay, &centred, positions))
+    } else {
+        None
+    };
+    let mut best = (0.0f32, 0usize);
+    for p in 0..positions {
+        if p > 0 {
+            let (out, inn) = (f64::from(hay[p - 1]), f64::from(hay[p + n - 1]));
+            sum += inn - out;
+            sum2 += inn * inn - out * out;
+        }
+        let da = (sum2 - sum * sum / n as f64) as f32;
+        if da > 0.0 {
+            // The needle is centred, so the window's own mean drops out of the
+            // cross term.
+            let num: f32 = match &nums {
+                Some(v) => v[p],
+                None => hay[p..p + n].iter().zip(&centred).map(|(a, b)| a * b).sum(),
+            };
+            let s = num / (da * db).sqrt();
+            if s > best.0 {
+                best = (s, p);
+            }
+        }
+    }
+    best
+}
+
+/// Above this many multiplies, [`best_correlation`] takes its cross terms from
+/// an FFT instead of summing them position by position.
+const FFT_SEARCH_ABOVE: usize = 1 << 20;
+
+/// `sum(hay[p + i] * needle[i])` for every `p` in `0..positions`, by
+/// correlating through an FFT: transform both, multiply one by the other's
+/// conjugate, transform back.
+fn cross_terms_fft(hay: &[f32], needle: &[f32], positions: usize) -> Vec<f32> {
+    use rustfft::FftPlanner;
+    use rustfft::num_complex::Complex;
+    let len = (hay.len() + needle.len()).next_power_of_two();
+    // Planning an FFT of this size costs as much as running it, and the size
+    // only changes with the history, so the plans are made once per thread.
+    thread_local! {
+        static PLANNER: std::cell::RefCell<FftPlanner<f32>> =
+            std::cell::RefCell::new(FftPlanner::new());
+    }
+    let (fwd, inv) = PLANNER.with(|p| {
+        let mut p = p.borrow_mut();
+        (p.plan_fft_forward(len), p.plan_fft_inverse(len))
+    });
+    let mut a: Vec<Complex<f32>> = hay.iter().map(|&v| Complex::new(v, 0.0)).collect();
+    a.resize(len, Complex::new(0.0, 0.0));
+    let mut b: Vec<Complex<f32>> = needle.iter().map(|&v| Complex::new(v, 0.0)).collect();
+    b.resize(len, Complex::new(0.0, 0.0));
+    fwd.process(&mut a);
+    fwd.process(&mut b);
+    for (x, y) in a.iter_mut().zip(&b) {
+        *x *= y.conj();
+    }
+    inv.process(&mut a);
+    let scale = 1.0 / len as f32;
+    a[..positions].iter().map(|c| c.re * scale).collect()
+}
+
 fn envelope_score(a: &[Complex32], b: &[Complex32]) -> f32 {
     let n = a.len().min(b.len());
     let ea: Vec<f32> = a[..n].iter().map(|s| s.norm()).collect();
@@ -636,6 +1111,37 @@ mod tests {
         );
     }
 
+    /// A networked radio's loop delay — a Pluto over Ethernet, issue #525 —
+    /// is hundreds of milliseconds, far past the default history: the
+    /// default never locks on it, and a history long enough does. Run at a
+    /// low rate so the test stays quick; what matters is delay against
+    /// history, not the rate.
+    #[test]
+    fn a_long_loop_delay_locks_with_a_long_enough_history() {
+        let rate = 200_000.0;
+        // 0.8 s. The default keeps at least 65536 samples and holds up to
+        // twice that, so at this low rate it reaches 0.65 s; this is past
+        // that and inside the one-second history.
+        let delay = 160_000usize;
+        let run = |mut ps: PureSignal| {
+            let mut line: Vec<Complex32> = vec![Complex32::new(0.0, 0.0); delay];
+            let coupler = Complex32::from_polar(0.11, 1.0);
+            for round in 0..70 {
+                let mut block = source(8192, 300 + round);
+                ps.predistort(&mut block);
+                line.extend(block.iter().map(|s| amplifier(*s) * coupler));
+                let fb: Vec<Complex32> = line.drain(..8192).collect();
+                ps.feed_back(&fb, 0.0, rate);
+            }
+            ps
+        };
+        let short = run(PureSignal::new(32, 0.9, rate));
+        assert!(!short.locked(), "the default history should not reach a 0.8 s delay");
+        let long = run(PureSignal::with_history(32, 0.9, rate, 1.0));
+        assert!(long.locked(), "a one-second history never found it (score {:.2})", long.score());
+        assert!(long.correction_db() > 0.5, "locked, but learned nothing");
+    }
+
     /// Feedback that is not the transmission — an unconnected coupler, a
     /// receiver hearing the band instead — never locks, and an unlocked loop
     /// leaves the transmitter exactly as it was.
@@ -665,6 +1171,7 @@ mod tests {
         for (i, g) in ps.table.iter_mut().enumerate() {
             *g = Complex32::from_polar(100.0 * (i + 1) as f32, i as f32);
         }
+        ps.learned.fill(true);
         ps.normalise();
         for (i, g) in ps.table().iter().enumerate() {
             let a = (i + 1) as f32 / 16.0;
@@ -674,6 +1181,205 @@ mod tests {
                 a * g.norm()
             );
             assert!(g.norm() <= MAX_CORRECTION + 1e-3);
+        }
+    }
+
+    /// A two-tone over at 2.5 Msps with the two synthesisers 40 Hz further
+    /// apart than the offset spun out: the residual is found and taken out,
+    /// and the table learns the amplifier's curve rather than walking off.
+    /// (This first ran at 300 Hz, which with the old divide-by-estimate update
+    /// ended with every learned entry at -12 dB inside a second; a residual
+    /// that large is now refused as a misaligned block, see
+    /// `an_impossible_residual_is_not_learned_from`.)
+    #[test]
+    fn a_residual_lo_error_does_not_walk_the_table_down() {
+        let fs = 2.5e6f64;
+        let offset_hz = -625_000.0f64;
+        let err_hz = 40.0f64;
+        let delay = 50_000usize;
+        let mut ps = PureSignal::with_history(32, 0.5, fs, 1.0);
+        let mut line: std::collections::VecDeque<Complex32> =
+            std::iter::repeat_n(Complex32::new(0.0, 0.0), delay).collect();
+        let coupler = Complex32::from_polar(0.02, 0.7);
+        let mut hiss = source(16384 * 200, 31).into_iter();
+        let (mut t_tx, mut t_rx) = (0u64, 0u64);
+        for _ in 0..400 {
+            let mut x: Vec<Complex32> = (0..25_000u64)
+                .map(|n| {
+                    let t = (t_tx + n) as f64 / fs;
+                    let a = Complex32::from_polar(0.3, (std::f64::consts::TAU * 700.0 * t) as f32);
+                    let b = Complex32::from_polar(0.3, (std::f64::consts::TAU * 1900.0 * t) as f32);
+                    a + b
+                })
+                .collect();
+            t_tx += 25_000;
+            ps.predistort(&mut x);
+            line.extend(x.iter().map(|s| amplifier(*s) * coupler));
+            while line.len() >= 16384 {
+                let fb: Vec<Complex32> = line
+                    .drain(..16384)
+                    .enumerate()
+                    .map(|(i, s)| {
+                        let t = (t_rx + i as u64) as f64 / fs;
+                        let ph = (std::f64::consts::TAU * (offset_hz + err_hz) * t) as f32;
+                        let n = hiss.next().unwrap_or(Complex32::new(0.0, 0.0));
+                        s * Complex32::from_polar(1.0, ph) + n * 0.0005
+                    })
+                    .collect();
+                t_rx += 16384;
+                ps.feed_back(&fb, offset_hz, fs);
+            }
+        }
+        assert!(ps.locked(), "never aligned (score {:.2})", ps.score());
+        assert!(
+            (ps.residual_hz() - err_hz as f32).abs() < 8.0,
+            "residual measured as {:.0} Hz, not {err_hz:.0}",
+            ps.residual_hz()
+        );
+        let db: Vec<f32> = ps.table().iter().map(|g| 20.0 * g.norm().log10()).collect();
+        assert!(ps.correction_db() > 0.5, "learned nothing: {db:?}");
+        assert!(
+            ps.correction_db() < 6.0 && db.iter().all(|d| *d > -6.0),
+            "the table walked off: {db:?}"
+        );
+        // And nothing is boosted: the highest amplitude sent keeps unit gain,
+        // as the module promises, rather than the table's unreached top entry.
+        assert!(db.iter().all(|d| *d < 0.01), "an entry asks for more than unity: {db:?}");
+    }
+
+    /// Feedback down near the receiver's noise, through an amplifier that is
+    /// already linear: nothing to correct, so the table has to stay flat.
+    /// Dividing by each entry's noisy estimate used to drag the low entries
+    /// to the floor within seconds, as a PlutoSky R2 did with its drive 10 dB
+    /// down (issue #525). A two-tone scaled down with the sample rate, to
+    /// keep the test quick.
+    #[test]
+    fn weak_feedback_leaves_a_linear_amplifier_alone() {
+        let fs = 250_000.0f64;
+        let mut ps = PureSignal::with_history(32, 0.5, fs, 1.0);
+        let mut line: std::collections::VecDeque<Complex32> =
+            std::iter::repeat_n(Complex32::new(0.0, 0.0), 20_000).collect();
+        let coupler = Complex32::from_polar(0.0063, 0.7);
+        // White, unlike `source`: a receiver's own noise.
+        let mut seed = 57u64;
+        let mut white = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            ((seed >> 40) as f32 / 8_388_608.0) - 1.0
+        };
+        let mut t_tx = 0u64;
+        for _ in 0..2400 {
+            let mut x: Vec<Complex32> = (0..4096u64)
+                .map(|n| {
+                    let t = (t_tx + n) as f64 / fs;
+                    let a = Complex32::from_polar(0.3, (std::f64::consts::TAU * 70.0 * t) as f32);
+                    let b = Complex32::from_polar(0.3, (std::f64::consts::TAU * 190.0 * t) as f32);
+                    a + b
+                })
+                .collect();
+            t_tx += 4096;
+            ps.predistort(&mut x);
+            line.extend(x.iter().map(|s| *s * coupler));
+            let fb: Vec<Complex32> =
+                line.drain(..4096).map(|s| s + Complex32::new(white(), white()) * 0.0011).collect();
+            ps.feed_back(&fb, 0.0, fs);
+        }
+        assert!(ps.locked(), "never aligned (score {:.2})", ps.score());
+        let db: Vec<f32> = ps.table().iter().map(|g| 20.0 * g.norm().log10()).collect();
+        assert!(ps.correction_db() < 2.0, "noise was learned as a curve: {db:?}");
+    }
+
+    /// A block whose leftover LO difference reads far beyond what two
+    /// synthesisers on one reference can be apart is not learned from: on a
+    /// PlutoSky R2 such a figure (-1112 Hz) came from the block after a stall,
+    /// and rotating by it scattered the table (issue #525).
+    #[test]
+    fn an_impossible_residual_is_not_learned_from() {
+        let fs = 2.5e6f64;
+        let mut ps = PureSignal::with_history(32, 0.9, fs, 1.0);
+        let coupler = Complex32::from_polar(0.05, 0.3);
+        let mut line: std::collections::VecDeque<Complex32> =
+            std::iter::repeat_n(Complex32::new(0.0, 0.0), 50_000).collect();
+        let mut t = 0u64;
+        for _ in 0..400 {
+            let mut x: Vec<Complex32> = (0..16384u64)
+                .map(|n| {
+                    let s = (t + n) as f64 / fs;
+                    let a = Complex32::from_polar(0.3, (std::f64::consts::TAU * 700.0 * s) as f32);
+                    let b = Complex32::from_polar(0.3, (std::f64::consts::TAU * 1900.0 * s) as f32);
+                    a + b
+                })
+                .collect();
+            ps.predistort(&mut x);
+            line.extend(x.iter().map(|s| amplifier(*s) * coupler));
+            // 400 Hz further apart than the offset given: inside what the
+            // slices can measure, far outside what is believed.
+            let fb: Vec<Complex32> = line
+                .drain(..16384)
+                .enumerate()
+                .map(|(i, s)| {
+                    let ph = std::f64::consts::TAU * 400.0 * (t + i as u64) as f64 / fs;
+                    s * Complex32::from_polar(1.0, ph as f32)
+                })
+                .collect();
+            t += 16384;
+            ps.feed_back(&fb, 0.0, fs);
+        }
+        assert!(ps.locked(), "never aligned (score {:.2})", ps.score());
+        assert!(
+            (ps.residual_hz() - 400.0).abs() < 40.0,
+            "residual read {:.0} Hz",
+            ps.residual_hz()
+        );
+        for g in ps.table() {
+            assert_eq!(*g, Complex32::new(1.0, 0.0), "learned from an impossible residual");
+        }
+    }
+
+    /// and then spread (issue #525). It has to settle on one curve and stay.
+    #[test]
+    fn a_long_loop_settles_instead_of_swinging() {
+        let fs = 250_000.0f64;
+        let delay = (0.2 * fs) as usize;
+        let mut ps = PureSignal::with_history(32, 0.5, fs, 1.0);
+        let mut line: std::collections::VecDeque<Complex32> =
+            std::iter::repeat_n(Complex32::new(0.0, 0.0), delay).collect();
+        let coupler = Complex32::from_polar(0.02, 0.7);
+        let amp = |u: Complex32| {
+            let a = u.norm();
+            if a <= 0.0 { u } else { u / (1.0 + (a / 0.5).powi(3)).powf(1.0 / 3.0) }
+        };
+        let mut t = 0u64;
+        let mut seen: Vec<Vec<f32>> = Vec::new();
+        for round in 0..1600 {
+            let mut x: Vec<Complex32> = (0..2500u64)
+                .map(|n| {
+                    let s = (t + n) as f64 / fs;
+                    Complex32::from_polar(0.3, (std::f64::consts::TAU * 70.0 * s) as f32)
+                        + Complex32::from_polar(0.3, (std::f64::consts::TAU * 190.0 * s) as f32)
+                })
+                .collect();
+            t += 2500;
+            ps.predistort(&mut x);
+            line.extend(x.iter().map(|s| amp(*s) * coupler));
+            while line.len() >= delay + 1024 {
+                let fb: Vec<Complex32> = line.drain(..1024).collect();
+                ps.feed_back(&fb, 0.0, fs);
+            }
+            if round >= 1200 && round % 50 == 0 {
+                seen.push(ps.table().iter().map(|g| 20.0 * g.norm().log10()).collect());
+            }
+        }
+        assert!(ps.locked(), "never aligned (score {:.2})", ps.score());
+        assert!(ps.correction_db() > 0.5, "learned nothing");
+        // Over the last quarter, no entry moves by as much as a decibel.
+        for i in 0..32 {
+            let (lo, hi) = seen
+                .iter()
+                .map(|t| t[i])
+                .fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(v), h.max(v)));
+            assert!(hi - lo < 1.0, "entry {i} swung by {:.1} dB: {seen:?}", hi - lo);
         }
     }
 
@@ -751,5 +1457,119 @@ mod tests {
         // Half way between the first two bin centres.
         let mid = ps.gain_at(0.25);
         assert!((mid.re - 0.625).abs() < 1e-5, "{mid:?}");
+    }
+
+    /// The running rotation that spins out the LO difference gives what a sine
+    /// and cosine per sample did, across a block longer than any real one.
+    #[test]
+    fn the_running_rotation_matches_a_phasor_per_sample() {
+        let y = source(65_536, 7);
+        for offset_hz in [625_000.0f64, -312_500.0, 12_345.6, 0.0] {
+            let step = -std::f64::consts::TAU * offset_hz / 2_500_000.0;
+            let mut fast = Vec::new();
+            derotate(&y, step, &mut fast);
+            for (n, (f, v)) in fast.iter().zip(&y).enumerate() {
+                // The phase exactly, in double precision. (The old per-sample
+                // code rounded the phase itself to single precision first,
+                // which over a long block is the larger error of the two.)
+                let ph = step * n as f64;
+                let want = *v * Complex32::new(ph.cos() as f32, ph.sin() as f32);
+                assert!((*f - want).norm() < 1e-4, "sample {n} at {offset_hz} Hz: {f} vs {want}");
+            }
+        }
+    }
+
+    /// The sliding search finds the same position, and the same score, as
+    /// correlating at every position from scratch.
+    #[test]
+    fn the_sliding_search_agrees_with_correlating_at_every_position() {
+        let hay: Vec<f32> = source(6_000, 11).iter().map(|s| s.norm()).collect();
+        let needle: Vec<f32> = hay[3_210..3_210 + 256].to_vec();
+        let mut slow = (0.0f32, 0usize);
+        for p in 0..=hay.len() - needle.len() {
+            let c = correlate(&hay[p..p + needle.len()], &needle);
+            if c > slow.0 {
+                slow = (c, p);
+            }
+        }
+        let fast = best_correlation(&hay, &needle);
+        assert_eq!(fast.1, slow.1);
+        assert!((fast.0 - slow.0).abs() < 1e-3, "{} vs {}", fast.0, slow.0);
+        assert_eq!(fast.1, 3_210);
+    }
+
+    /// Locked, the periodic re-check keeps the alignment with its narrow
+    /// search, through many more blocks than it takes to come due; and a
+    /// delay that then jumps far past that window is found again.
+    #[test]
+    fn a_held_alignment_survives_the_recheck_and_a_jump_is_found_again() {
+        let rate = 200_000.0;
+        let mut ps = PureSignal::with_history(32, 0.9, rate, 1.0);
+        let coupler = Complex32::from_polar(0.11, 1.0);
+        let mut delay = 30_000usize;
+        let mut line: Vec<Complex32> = vec![Complex32::new(0.0, 0.0); delay];
+        let mut locked_rounds = 0;
+        for round in 0..120 {
+            if round == 60 {
+                // The feedback loses 20 000 samples: the delay jumps.
+                line.drain(..20_000);
+                delay -= 20_000;
+            }
+            let mut block = source(8192, 900 + round);
+            ps.predistort(&mut block);
+            line.extend(block.iter().map(|s| amplifier(*s) * coupler));
+            let fb: Vec<Complex32> = line.drain(..8192).collect();
+            ps.feed_back(&fb, 0.0, rate);
+            if (40..60).contains(&round) || round >= 100 {
+                assert!(ps.locked(), "round {round} (delay {delay}): score {}", ps.score());
+                locked_rounds += 1;
+            }
+        }
+        assert!(locked_rounds >= 40);
+    }
+
+    /// Long enough to take the FFT path, the search still lands on the same
+    /// position with the same score as correlating at every position.
+    #[test]
+    fn the_fft_search_agrees_with_correlating_at_every_position() {
+        let hay: Vec<f32> = source(80_000, 13).iter().map(|s| s.norm()).collect();
+        let needle: Vec<f32> = hay[51_234..51_234 + 256].to_vec();
+        assert!((hay.len() - needle.len() + 1) * needle.len() > FFT_SEARCH_ABOVE);
+        let mut slow = (0.0f32, 0usize);
+        for p in 0..=hay.len() - needle.len() {
+            let c = correlate(&hay[p..p + needle.len()], &needle);
+            if c > slow.0 {
+                slow = (c, p);
+            }
+        }
+        let fast = best_correlation(&hay, &needle);
+        assert_eq!(fast.1, slow.1);
+        assert_eq!(fast.1, 51_234);
+        assert!((fast.0 - slow.0).abs() < 1e-3, "{} vs {}", fast.0, slow.0);
+    }
+
+    /// A small jump in the delay, as a gap in the transmission makes, is found
+    /// again by the search near the last alignment.
+    #[test]
+    fn a_small_jump_is_found_near_the_last_alignment() {
+        let rate = 200_000.0;
+        let mut ps = PureSignal::with_history(32, 0.9, rate, 1.0);
+        let coupler = Complex32::from_polar(0.11, 1.0);
+        let mut line: Vec<Complex32> = vec![Complex32::new(0.0, 0.0); 30_000];
+        for round in 0..80 {
+            if round == 40 {
+                // 3 000 samples of the transmission never reach the coupler.
+                line.drain(..3_000);
+            }
+            let mut block = source(8192, 1300 + round);
+            ps.predistort(&mut block);
+            line.extend(block.iter().map(|s| amplifier(*s) * coupler));
+            let fb: Vec<Complex32> = line.drain(..8192).collect();
+            ps.feed_back(&fb, 0.0, rate);
+            if round == 30 {
+                assert!(ps.locked(), "never locked: score {}", ps.score());
+            }
+        }
+        assert!(ps.locked(), "lost after a small jump: score {}", ps.score());
     }
 }

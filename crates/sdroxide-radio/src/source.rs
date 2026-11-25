@@ -182,6 +182,19 @@ pub trait IqSource: Send {
         self.read(buf)
     }
 
+    /// How many [`Self::read_available`] calls a full-duplex over may make per
+    /// transmit tick, each only for samples already waiting.
+    ///
+    /// One block a tick is 16384 samples every 10 ms, a 1.64 Msps ceiling. A
+    /// source that streams faster than that through an over, and drops what
+    /// its own ring cannot hold, says so here. Default 1: one block a tick is
+    /// what every other full-duplex source has been run and tested with, and on
+    /// SoapySX a transmit block that goes out late is heard as chirps, so a
+    /// source keeps the tick's receive work to that unless it needs more.
+    fn full_duplex_reads_per_tick(&self) -> usize {
+        1
+    }
+
     /// Human-readable description for logs/UI.
     fn describe(&self) -> String;
 
@@ -1562,6 +1575,10 @@ impl IqSource for ConvertedSource {
 
     fn read_available(&mut self, buf: &mut [Complex32]) -> Result<usize> {
         self.inner.read_available(buf)
+    }
+
+    fn full_duplex_reads_per_tick(&self) -> usize {
+        self.inner.full_duplex_reads_per_tick()
     }
 
     fn set_gain_element(&mut self, name: &str, db: f64) -> Result<()> {
