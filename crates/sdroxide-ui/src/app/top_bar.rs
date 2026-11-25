@@ -1609,13 +1609,13 @@ impl SdroxideApp {
             // On the air through a repeater it is the transmit frequency — see
             // [`Self::readout`].
             let (shown, ink, offset) = self.readout();
-            let mut new_hz = None;
+            let mut edit = freq_display::Edit::default();
             let readout = ui.allocate_ui_with_layout(
                 egui::vec2(readout_w, full_h),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     ui.add_space(((full_h - readout_h) / 2.0).max(0.0));
-                    new_hz = freq_display::show(
+                    edit = freq_display::show(
                         ui,
                         crate::layout::salted_id(ui.ctx(), "main-freq"),
                         shown,
@@ -1641,8 +1641,16 @@ impl SdroxideApp {
                     crate::theme::CYAN_DIM(),
                 );
             }
-            if let Some(hz) = new_hz {
+            if let Some(hz) = edit.hz {
                 cmds.push(Command::SetVfo { vfo: active, hz: hz - offset });
+            }
+            // A right-clicked digit becomes the wheel's tune step — the same
+            // setting Settings → Controls edits, saved the same way.
+            if let Some(step) = edit.step_hz
+                && step != self.input.cfg.wheel.tune_step_hz
+            {
+                self.input.cfg.wheel.tune_step_hz = step;
+                self.input.persist();
             }
             ui.add_space(12.0);
 

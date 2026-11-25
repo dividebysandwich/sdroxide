@@ -273,6 +273,14 @@ FFT, and System.
 - **Scroll the mouse wheel** to tune that decade up or down.
 - **Click the upper half** of a digit to increment it, the **lower half** to
   decrement it.
+- **Right-click** a digit to make it the tuning step: right-click the kilohertz
+  digit and the wheel on the panadapter tunes 1 kHz a notch. The digit the step
+  sits on stays highlighted, so the readout always shows how far one notch
+  moves. It is the same **Tune step** as in Settings → Controls (anything up to
+  1 MHz), and it is remembered.
+- **Shift + right-click** or **middle-click** a digit to zero it and every digit
+  to its right: on the 5 of 7.090.054 that gives 7.090.000.
+- **Double-click** to type a frequency in MHz.
 
 The smaller grey number below the readout is the *inactive* VFO's frequency.
 
@@ -14084,6 +14092,8 @@ back to receive rather than transmitting your office.
   default zoom and tune. Swapping them is a single dropdown if you would rather
   scroll to tune.
 - **Tune step** — the Hz per wheel detent, and the grid wheel tuning lands on.
+  A right-click on a digit of the frequency readout sets it to that digit's
+  place, and the readout highlights the digit it is on (section 2.3).
   A dial left between two grid points — by a click on the waterfall, say — goes
   to the next point in the direction you turn on the first detent: from
   14.262.500 one 1 kHz step up is 14.263.000, and one down is 14.262.000. The

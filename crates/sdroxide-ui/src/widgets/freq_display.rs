@@ -1,6 +1,8 @@
 //! PowerSDR-style frequency readout: each digit tunes with the scroll wheel,
-//! click upper/lower half to increment/decrement, or right-click to zero that
-//! digit and everything to its right. Compact layouts use [`show_typed`]
+//! click upper/lower half to increment/decrement, right-click to make that
+//! digit the tuning step (it stays highlighted), or Shift+right-click /
+//! middle-click to zero that digit and everything to its right. Compact
+//! layouts use [`show_typed`]
 //! instead: the same dial, but a tap on it opens a type-in field rather than
 //! nudging whichever place value was under the finger.
 
@@ -34,13 +36,44 @@ fn digit_ink() -> Color32 {
     }
 }
 
+/// The largest place a right-click on the readout can make the tuning step:
+/// 10^6, the 1 MHz that Settings → Controls stops at. A click further left
+/// does nothing rather than set a step the settings field would not hold.
+const MAX_STEP_PLACE: u32 = 6;
+
+/// What one frame of [`show`] asks for: a new frequency, a new tuning step,
+/// both `None` when the operator touched nothing.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Edit {
+    /// The dial was moved: tune here.
+    pub hz: Option<f64>,
+    /// A digit was right-clicked: make this [`WheelSettings::tune_step_hz`].
+    pub step_hz: Option<f64>,
+}
+
+/// The digit column a tuning step lights: the place of its leading digit, so
+/// 100 Hz lights the hundreds and 2.5 kHz or 9 kHz the kilohertz — the lowest
+/// digit a step of that size can change on its own grid. `None` for a step
+/// under 1 Hz or past the readout's `digits` columns.
+fn step_place(step_hz: f64, digits: u32) -> Option<u32> {
+    if !step_hz.is_finite() || step_hz < 1.0 {
+        return None;
+    }
+    let step = step_hz.round() as i64;
+    (0..digits).rev().find(|&p| 10i64.pow(p) <= step)
+}
+
 /// Shows `hz` as a `digits`-column tunable readout — [`DIGITS`] on every radio
 /// this program reaches without a converter, [`DIGITS_EXT`] on one whose
-/// LNB/converter offset puts it past 10 GHz. Returns `Some(new_hz)` on change.
+/// LNB/converter offset puts it past 10 GHz. Returns `Some(new_hz)` on change, in
+/// [`Edit::hz`].
 ///
 /// `wheel` supplies the operator's pointer preferences: `digit_wheel` turns the
 /// per-digit scroll stepping off for anyone who would rather scroll the page,
-/// and `invert` flips the wheel direction to match the panadapter.
+/// and `invert` flips the wheel direction to match the panadapter. Its
+/// `tune_step_hz` is the digit drawn highlighted, and a right-click on a digit
+/// asks for that digit's place as the new step in [`Edit::step_hz`] — the
+/// caller owns the setting and saves it.
 ///
 /// `size` is the digit height; the caller fits it to the room it actually has
 /// (see `freq_module`). [`DIGIT_SIZE`] is the design size a desktop uses.
@@ -57,18 +90,20 @@ pub fn show(
     size: f32,
     ink: Option<Color32>,
     digits: u32,
-) -> Option<f64> {
+) -> Edit {
     // Double-click turns the readout into the same type-in field the compact
     // layout opens with a tap (`show_typed`): the two share the editor, its
     // MHz prefill and its parser.
     let edit_id = id.with("edit");
     if let Some(text) = ui.data(|d| d.get_temp::<String>(edit_id)) {
-        return edit_field(ui, id, edit_id, text, size, digits);
+        return Edit { hz: edit_field(ui, id, edit_id, text, size, digits), step_hz: None };
     }
     let lit = ink.unwrap_or_else(digit_ink);
     let mut freq = hz.round().max(0.0) as i64;
     let orig = freq;
     let mut open_edit = false;
+    let step_at = step_place(wheel.tune_step_hz, digits);
+    let mut new_step = None;
 
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 1.0;
@@ -84,6 +119,9 @@ pub fn show(
             let leading_zero = p > 0 && freq < step;
             let color = if leading_zero { crate::theme::gray(70) } else { lit };
 
+            // Reserved before the digit so the step highlight lands behind
+            // its ink, not over it.
+            let backing = ui.painter().add(egui::Shape::Noop);
             let resp = ui
                 .add(
                     Label::new(
@@ -92,7 +130,21 @@ pub fn show(
                     .sense(Sense::click()),
                 )
                 .on_hover_cursor(egui::CursorIcon::ResizeVertical)
-                .on_hover_text(tr!("freqdisplay-double-click-type-frequency"));
+                .on_hover_text(format!(
+                    "{}\n{}\n{}",
+                    tr!("freqdisplay-double-click-type-frequency"),
+                    tr!("freqdisplay-right-click-sets-step"),
+                    tr!("freqdisplay-shift-right-click-zeros"),
+                ));
+
+            // The digit the wheel tunes by sits on a tinted block of its own
+            // ink: readable at a glance, and distinct from the hover underline.
+            if step_at == Some(p) {
+                ui.painter().set(
+                    backing,
+                    egui::Shape::rect_filled(resp.rect, 3.0, lit.gamma_multiply(0.25)),
+                );
+            }
 
             if resp.hovered() {
                 ui.painter().hline(resp.rect.x_range(), resp.rect.bottom() - 1.0, (2.0, lit));
@@ -125,12 +177,20 @@ pub fn show(
                 }
             }
 
-            // Right-click: a quick way to reset the dial without walking every
-            // digit down by hand. Zeros this digit and everything to its
-            // right, so clicking the 5 in 7.090.054 gives 7.090.000 and
-            // clicking the 4 gives 7.090.050.
-            if resp.secondary_clicked() {
+            // Shift+right-click or middle-click: a quick way to reset the
+            // dial without walking every digit down by hand. Zeros this digit
+            // and everything to its right, so clicking the 5 in 7.090.054
+            // gives 7.090.000 and clicking the 4 gives 7.090.050.
+            //
+            // A plain right-click makes this digit's place the tuning step
+            // instead; the frequency is left alone.
+            // Why: KC2RGW 2026-11-23: "a right click on the VFO sets the step
+            //      for tuning".
+            let shift = ui.input(|i| i.modifiers.shift);
+            if resp.middle_clicked() || (shift && resp.secondary_clicked()) {
                 freq = zero_from_digit(freq, step);
+            } else if resp.secondary_clicked() && p <= MAX_STEP_PLACE {
+                new_step = Some(step as f64);
             }
         }
         ui.add(Label::new(RichText::new(" Hz").size(size * 0.3).color(crate::theme::gray(140))));
@@ -145,9 +205,9 @@ pub fn show(
             d.insert_temp(edit_id, format_mhz(back as f64));
             d.insert_temp(id.with("fresh"), true);
         });
-        return (back != orig).then_some(back as f64);
+        return Edit { hz: (back != orig).then_some(back as f64), step_hz: None };
     }
-    (freq != orig).then_some(freq as f64)
+    Edit { hz: (freq != orig).then_some(freq as f64), step_hz: new_step }
 }
 
 /// Floor `freq` to a multiple of `step * 10`: zeros the digit at `step`'s
@@ -387,7 +447,29 @@ mod tests {
     }
 
     #[test]
-    fn right_click_zeros_the_digit_and_everything_right_of_it() {
+    fn the_step_lights_the_place_of_its_leading_digit() {
+        assert_eq!(step_place(1.0, DIGITS), Some(0));
+        assert_eq!(step_place(10.0, DIGITS), Some(1));
+        assert_eq!(step_place(100.0, DIGITS), Some(2));
+        assert_eq!(step_place(1_000.0, DIGITS), Some(3));
+        assert_eq!(step_place(1_000_000.0, DIGITS), Some(6));
+        // Off-decade steps light the lowest digit they can change.
+        assert_eq!(step_place(500.0, DIGITS), Some(2));
+        assert_eq!(step_place(2_500.0, DIGITS), Some(3));
+        assert_eq!(step_place(9_000.0, DIGITS), Some(3));
+        assert_eq!(step_place(12_500.0, DIGITS), Some(4));
+        // A step typed a hair off a decade is still that decade.
+        assert_eq!(step_place(999.6, DIGITS), Some(3));
+        // Nothing to light for no step, or a nonsense one.
+        assert_eq!(step_place(0.0, DIGITS), None);
+        assert_eq!(step_place(0.4, DIGITS), None);
+        assert_eq!(step_place(f64::NAN, DIGITS), None);
+        // A step wider than the readout lights its leftmost digit.
+        assert_eq!(step_place(1e12, DIGITS), Some(DIGITS - 1));
+    }
+
+    #[test]
+    fn shift_right_click_zeros_the_digit_and_everything_right_of_it() {
         // 7,090,054 Hz: right-clicking the tens digit ("5", step 10) clears
         // the tens and units, right-clicking the units digit ("4", step 1)
         // clears only itself.

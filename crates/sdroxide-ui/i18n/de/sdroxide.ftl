@@ -5152,6 +5152,8 @@ speech-browser-client-cannot-speak-yet = Der Browser-Client kann noch nicht spre
 ## freqdisplay (src/widgets/freq_display.rs)
 
 freqdisplay-double-click-type-frequency = Doppelklick, um eine Frequenz einzutippen
+freqdisplay-right-click-sets-step = Rechtsklick, um in Schritten dieser Stelle abzustimmen
+freqdisplay-shift-right-click-zeros = Umschalt + Rechtsklick oder Mittelklick setzt diese Stelle und alle rechts davon auf null
 freqdisplay-tap-type-frequency = Tippen, um eine Frequenz einzutippen
 
 ## solarstate (src/solar3d/state.rs)

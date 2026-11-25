@@ -4744,6 +4744,8 @@ speech-browser-client-cannot-speak-yet = de browserclient kan nog niet spreken
 ## freqdisplay (src/widgets/freq_display.rs)
 
 freqdisplay-double-click-type-frequency = Dubbelklik om een frequentie te typen
+freqdisplay-right-click-sets-step = Rechtsklik om in stappen van dit cijfer af te stemmen
+freqdisplay-shift-right-click-zeros = Shift + rechtsklik of middelklik om dit cijfer en alles rechts ervan op nul te zetten
 freqdisplay-tap-type-frequency = Tik om een frequentie te typen
 
 ## solarstate (src/solar3d/state.rs)

@@ -4752,6 +4752,8 @@ speech-browser-client-cannot-speak-yet = le client navigateur ne peut pas encore
 ## freqdisplay (src/widgets/freq_display.rs)
 
 freqdisplay-double-click-type-frequency = Double-cliquez pour saisir une fréquence
+freqdisplay-right-click-sets-step = Clic droit pour accorder par pas de ce chiffre
+freqdisplay-shift-right-click-zeros = Maj + clic droit ou clic du milieu pour mettre à zéro ce chiffre et ceux à sa droite
 freqdisplay-tap-type-frequency = Touchez pour saisir une fréquence
 
 ## solarstate (src/solar3d/state.rs)

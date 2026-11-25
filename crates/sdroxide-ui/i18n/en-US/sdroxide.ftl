@@ -5273,6 +5273,8 @@ speech-browser-client-cannot-speak-yet = the browser client cannot speak yet
 ## freqdisplay (src/widgets/freq_display.rs)
 
 freqdisplay-double-click-type-frequency = Double-click to type a frequency
+freqdisplay-right-click-sets-step = Right-click to tune in steps of this digit
+freqdisplay-shift-right-click-zeros = Shift + right-click or middle-click to zero this digit and those to its right
 freqdisplay-tap-type-frequency = Tap to type a frequency
 
 ## solarstate (src/solar3d/state.rs)

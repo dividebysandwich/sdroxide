@@ -4740,6 +4740,8 @@ speech-browser-client-cannot-speak-yet = tarayıcı istemcisi henüz konuşamıy
 ## freqdisplay (src/widgets/freq_display.rs)
 
 freqdisplay-double-click-type-frequency = Bir frekans yazmak için çift tıklayın
+freqdisplay-right-click-sets-step = Bu basamağın adımlarıyla ayarlamak için sağ tıklayın
+freqdisplay-shift-right-click-zeros = Bu basamağı ve sağındakileri sıfırlamak için Shift + sağ tık veya orta tık
 freqdisplay-tap-type-frequency = Bir frekans yazmak için dokunun
 
 ## solarstate (src/solar3d/state.rs)
