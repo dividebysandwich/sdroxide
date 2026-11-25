@@ -14176,7 +14176,7 @@ back to receive rather than transmitting your office.
   a tenth of the **Tune step** at a time, on a grid ten times as fine, whatever
   the wheel itself is set to. With a 1 kHz step the wheel moves 1 kHz a notch
   and the side wheel 100 Hz. Shift + wheel is not a side wheel: it keeps its own
-  action.
+  action. Off by default, so a sideways drift on a trackpad does not retune.
 - **Restore mouse defaults** puts the whole section back.
 
 **Mouse buttons** binds the buttons themselves. The left and right buttons are

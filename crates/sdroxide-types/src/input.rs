@@ -659,7 +659,7 @@ impl Default for WheelSettings {
             drag_tunes: true,
             digit_wheel: true,
             points_per_step: 30.0,
-            side_wheel_fine: true,
+            side_wheel_fine: false,
         }
     }
 }
