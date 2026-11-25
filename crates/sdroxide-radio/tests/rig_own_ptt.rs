@@ -268,10 +268,14 @@ fn rig_tx_status_changes_do_not_end_an_active_host_transmission() {
         "the rig transmit indication",
         |ev| matches!(ev, RadioEvent::Meters(m) if m.tx.is_some_and(|tx| tx.swr == Some(SWR))),
     );
+    // Drain the transmit-meter readings from while the rig was still keyed.
+    // The host transmission remains active, so the receive indication is a TX
+    // meter with no rig-reported SWR, not a return to the RX meter.
+    t.drain();
     t.rig_keys(false);
     t.wait(
         "the rig receive indication",
-        |ev| matches!(ev, RadioEvent::Meters(m) if m.tx.is_none()),
+        |ev| matches!(ev, RadioEvent::Meters(m) if m.tx.is_some_and(|tx| tx.swr.is_none())),
     );
 
     assert_eq!(
