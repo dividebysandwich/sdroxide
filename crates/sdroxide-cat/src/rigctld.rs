@@ -253,11 +253,14 @@ impl Protocol for Rigctld {
     }
 
     fn set_mode(&mut self, m: Mode) -> Vec<u8> {
-        // Passband 0 is Hamlib's "leave the filter alone" — the rig's own
-        // default for the mode. sdroxide's filter width reaches the radio
-        // through `set_filter` on the native profiles and not at all here, so
-        // there is nothing to say about it and every reason not to guess.
-        cmd(&format!("M {} 0", mode_name(m)))
+        // Passband -1 is Hamlib's RIG_PASSBAND_NOCHANGE: leave the operator's
+        // filter as it is. 0 is RIG_PASSBAND_NORMAL, which makes the backend
+        // set the mode's default width and so reset the rig's filter on every
+        // band or mode change (#945). sdroxide's filter width reaches the
+        // radio through `set_filter` on the native profiles and not at all
+        // here, so there is nothing to say about it and every reason not to
+        // guess.
+        cmd(&format!("M {} -1", mode_name(m)))
     }
 
     fn ptt(&self, on: bool) -> Vec<u8> {
@@ -425,7 +428,7 @@ mod tests {
         // pipelined poll cannot tell one bare number from another.
         let mut r = Rigctld::new();
         assert_eq!(text(r.set_freq(14_074_000.0)), "+F 14074000\n");
-        assert_eq!(text(r.set_mode(Mode::Usb)), "+M USB 0\n");
+        assert_eq!(text(r.set_mode(Mode::Usb)), "+M USB -1\n");
         assert_eq!(text(r.ptt(true)), "+T 1\n");
         assert_eq!(text(r.ptt(false)), "+T 0\n");
         assert_eq!(frames(r.poll_requests()), vec!["+f\n", "+m\n"]);
@@ -551,7 +554,7 @@ mod tests {
         assert!(parse_str(&mut r, "get_mode:\nMode: RTTY\nPassband: 300\nRPRT 0\n").is_empty());
         // Synchronous AM is this side's own detector on the rig's plain AM, so
         // the rig goes to `AM` either way and its sync setting is not followed.
-        assert_eq!(text(r.set_mode(Mode::Sam)), "+M AM 0\n");
+        assert_eq!(text(r.set_mode(Mode::Sam)), "+M AM -1\n");
         assert!(parse_str(&mut r, "get_mode:\nMode: AMS\nPassband: 6000\nRPRT 0\n").is_empty());
         // Every mode this profile does command has to read back as itself.
         for m in [
