@@ -6448,6 +6448,8 @@ when it was registered, unique worldwide and unchanging.
 | AIRLINE | The airline's name, from the first three letters of the callsign (`RYR95MB` → Ryanair). Empty for private flights, whose callsign is a registration. |
 | TYPE | The aircraft type as an ICAO type designator (`B38M`, `A20N`), where the airframe is known. Otherwise a guess from the sighting log with a question mark (`A320?`), see *The sighting log* below; otherwise, faint, the class the aircraft sends about itself (`large`, `rotorcraft`). |
 | Δf | Where the aircraft's transponder carrier sits, in kHz from 1090.000 MHz (`+175`). Each transponder has its own; see *One trace per aircraft* below. Shown where the panel is wide. |
+| RX% | How much of its position reports arrive. An airborne transponder sends its position twice a second, so over the last two minutes (or since it came into range) the share heard says how clear the path from it to your antenna is: near 100 on a free line of sight, falling where a building, a hill or the horizon stands between. A strong SIG with a low RX% is a path partly blocked, not a weak transmitter. Empty for the first ten seconds and on the ground, where the rate depends on whether it moves. Sorting by it puts the aircraft at the edge of what the antenna sees at the bottom. |
+| SIG | The last message's level, dBFS. |
 | TRK | Track over ground, degrees true. |
 | V/S | Rate of climb or descent, feet per minute. |
 | SQK | The squawk — the four-digit code the crew set for air traffic control. Only some frames carry it; see below. |
@@ -6479,7 +6481,7 @@ from* below.
 
 When the panel is narrow, columns drop out rather than overprint each other.
 Among the ones after the speed, FROM › TO goes first, then AIRLINE; TYPE is
-short and stays longest. On the right, Δf goes first, then the signal column,
+short and stays longest. On the right, Δf goes first, then RX%, then the signal column,
 then V/S, SQK and KM together.
 
 **Right-click a row** for what you would otherwise type somewhere else: copy

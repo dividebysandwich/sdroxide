@@ -93,8 +93,9 @@ mod wxsat;
 pub use access::{AUTH_BUSY, AUTH_REFUSED, AuthPhase, RemoteAccess, RemoteServer, is_auth_busy};
 pub use adsb::{
     ADSB_DROP_LIST_S, ADSB_DROP_MAP_S, ADSB_FREQ_HZ, ADSB_GOOD_RATE_HZ, ADSB_HISTORY_POINTS,
-    ADSB_MAX_AIRCRAFT, ADSB_MAX_RATE_HZ, ADSB_MIN_RATE_HZ, ADSB_TRACK_MAX, ADSB_VECTOR_MINUTES,
-    AdsbAircraft, AdsbAvionics, AdsbFeed, AdsbSettings, AdsbSource, AdsbStatus, BeastConfig,
+    ADSB_MAX_AIRCRAFT, ADSB_MAX_RATE_HZ, ADSB_MIN_RATE_HZ, ADSB_POSITION_RATE_HZ, ADSB_RX_WINDOW_S,
+    ADSB_TRACK_MAX, ADSB_VECTOR_MINUTES, AdsbAircraft, AdsbAvionics, AdsbFeed, AdsbSettings,
+    AdsbSource, AdsbStatus, BeastConfig,
 };
 pub use ais::{
     AIS_ALL_CHANNELS, AIS_BIT_RATE, AIS_CHANNEL_A_HZ, AIS_CHANNEL_B_HZ, AIS_CHANNEL_SPACING_HZ,

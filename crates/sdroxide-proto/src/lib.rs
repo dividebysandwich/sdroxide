@@ -1765,7 +1765,11 @@ use sdroxide_types::{
 /// `two_tone` on its tail and `Command` gains a trailing `SetTuneTwoTone`;
 /// `TxState` rides whole inside `RadioState`, so a v211 peer reads the extra
 /// byte as the start of the next field and fails to decode every state.
-pub const PROTO_VERSION: u16 = 221;
+///
+/// v222: ADS-B reception share. `AdsbAircraft` gains `rx_share` (share of the
+/// expected position messages heard) at its tail, which changes every
+/// `AdsbStatus`.
+pub const PROTO_VERSION: u16 = 222;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

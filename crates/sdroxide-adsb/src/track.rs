@@ -28,7 +28,9 @@
 
 use std::collections::HashMap;
 
-use sdroxide_types::{AdsbAircraft, AdsbSettings, AdsbSource};
+use sdroxide_types::{
+    ADSB_POSITION_RATE_HZ, ADSB_RX_WINDOW_S, AdsbAircraft, AdsbSettings, AdsbSource,
+};
 
 use crate::cpr;
 use crate::frame::Accepted;
@@ -70,6 +72,44 @@ struct Entry {
     turn_ref: Option<(f32, f64)>,
     /// The last frames' carrier measurements, absolute Hz, newest last.
     carriers: std::collections::VecDeque<f64>,
+    /// Stream times of the airborne position messages heard within the last
+    /// [`ADSB_RX_WINDOW_S`], oldest first, for [`AdsbAircraft::rx_share`].
+    positions_at: std::collections::VecDeque<f64>,
+    /// Stream time of the first airborne position message ever heard from it:
+    /// an aircraft that came into range a minute ago has had a minute to send,
+    /// not two.
+    positions_since: Option<f64>,
+}
+
+/// The shortest stretch [`AdsbAircraft::rx_share`] is given for: twenty
+/// expected messages, so one more or less moves it by five points.
+const RX_MIN_SPAN_S: f64 = 10.0;
+
+/// Note an airborne position message heard at stream time `mono_s`.
+fn note_position(e: &mut Entry, mono_s: f64) {
+    e.positions_since.get_or_insert(mono_s);
+    e.positions_at.push_back(mono_s);
+    while e.positions_at.front().is_some_and(|&t| t < mono_s - ADSB_RX_WINDOW_S) {
+        e.positions_at.pop_front();
+    }
+}
+
+/// The share of the expected airborne position messages heard over the last
+/// [`ADSB_RX_WINDOW_S`] up to stream time `mono_s`, or since the first one if
+/// that is more recent. Counted at the time asked rather than the time of the
+/// last message, so an aircraft gone behind a building falls towards zero
+/// instead of keeping the share it had when it was last heard.
+fn rx_share(e: &Entry, mono_s: f64) -> Option<f32> {
+    if e.ac.on_ground {
+        return None;
+    }
+    let start = (mono_s - ADSB_RX_WINDOW_S).max(e.positions_since?);
+    let span = mono_s - start;
+    if span < RX_MIN_SPAN_S {
+        return None;
+    }
+    let heard = e.positions_at.iter().filter(|&&t| t >= start).count() as f64;
+    Some((heard / (ADSB_POSITION_RATE_HZ * span)).min(1.0) as f32)
 }
 
 /// How many carrier measurements the median is taken over. A median rather
@@ -91,11 +131,20 @@ pub struct Tracker {
     /// Where the receiver is, when the operator has said. Reference of last
     /// resort for a surface position.
     home: Option<(f64, f64)>,
+    /// The latest stream time seen, which [`AdsbAircraft::rx_share`] is
+    /// counted up to.
+    mono_s: f64,
 }
 
 impl Tracker {
     pub fn new(cfg: AdsbSettings) -> Tracker {
-        Tracker { by_icao: HashMap::new(), cfg: cfg.sane(), home: None }
+        Tracker { by_icao: HashMap::new(), cfg: cfg.sane(), home: None, mono_s: 0.0 }
+    }
+
+    /// Move the stream clock on without a message, so the shares of the
+    /// aircraft that have gone quiet fall while nothing is heard.
+    pub fn clock(&mut self, mono_s: f64) {
+        self.mono_s = self.mono_s.max(mono_s);
     }
 
     pub fn set_config(&mut self, cfg: AdsbSettings) {
@@ -150,7 +199,10 @@ impl Tracker {
             verified: false,
             turn_ref: None,
             carriers: std::collections::VecDeque::new(),
+            positions_at: std::collections::VecDeque::new(),
+            positions_since: None,
         });
+        self.mono_s = self.mono_s.max(mono_s);
         if let Some(hz) = carrier_hz {
             if e.carriers.len() == CARRIER_FRAMES {
                 e.carriers.pop_front();
@@ -209,7 +261,10 @@ impl Tracker {
 
     /// The table as the panel sees it.
     pub fn snapshot(&self) -> Vec<AdsbAircraft> {
-        self.by_icao.values().map(|e| e.ac.clone()).collect()
+        self.by_icao
+            .values()
+            .map(|e| AdsbAircraft { rx_share: rx_share(e, self.mono_s), ..e.ac.clone() })
+            .collect()
     }
 }
 
@@ -238,6 +293,7 @@ fn absorb_es(
                 e.ac.altitude_ft = *altitude_ft;
             }
             e.ac.on_ground = false;
+            note_position(e, mono_s);
             airborne_position(e, *cpr, history, now, mono_s);
         }
         Es::Surface { movement_kt, track_deg, cpr } => {
@@ -454,6 +510,52 @@ mod tests {
         }
         t.absorb(&a, &b, -20.0, None, 1_000, 0.0);
         assert_eq!(t.snapshot()[0].carrier_hz, Some(1_090_175_100.0));
+    }
+
+    /// The share of expected position messages heard: all of them on a clear
+    /// path, half when every other one is lost, nothing yet for the first
+    /// seconds, and falling towards zero once the aircraft has gone quiet.
+    #[test]
+    fn the_reception_share_counts_the_position_messages_heard() {
+        let even = "8D40621D58C382D690C8AC2863A7";
+        let mut t = Tracker::new(AdsbSettings::default());
+        feed(&mut t, even, 1_000, 0.0);
+        t.clock(5.0);
+        assert_eq!(t.snapshot()[0].rx_share, None, "too soon to say");
+
+        // 2 Hz for a minute: every message heard.
+        let mut t = Tracker::new(AdsbSettings::default());
+        for i in 0..120 {
+            feed(&mut t, even, 1_000, f64::from(i) * 0.5);
+        }
+        t.clock(60.0);
+        let full = t.snapshot()[0].rx_share.expect("a minute of positions");
+        assert!((full - 1.0).abs() < 0.01, "clear path {full}");
+        // A minute of silence after it: half the window heard.
+        t.clock(120.0);
+        let half = t.snapshot()[0].rx_share.unwrap();
+        assert!((half - 0.5).abs() < 0.01, "gone quiet for a minute {half}");
+        // Two minutes of silence: nothing in the window.
+        t.clock(180.0);
+        assert_eq!(t.snapshot()[0].rx_share, Some(0.0));
+
+        // Every other message lost.
+        let mut t = Tracker::new(AdsbSettings::default());
+        for i in 0..60 {
+            feed(&mut t, even, 1_000, f64::from(i));
+        }
+        t.clock(60.0);
+        let lossy = t.snapshot()[0].rx_share.unwrap();
+        assert!((lossy - 0.5).abs() < 0.01, "every other lost {lossy}");
+
+        // On the ground the rate depends on whether it moves: no share.
+        let mut t = Tracker::new(AdsbSettings::default());
+        for i in 0..60 {
+            feed(&mut t, even, 1_000, f64::from(i));
+        }
+        t.by_icao.values_mut().for_each(|e| e.ac.on_ground = true);
+        t.clock(60.0);
+        assert_eq!(t.snapshot()[0].rx_share, None);
     }
 
     /// The published even/odd pair resolves to the published position, and the

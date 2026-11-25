@@ -396,6 +396,7 @@ impl Worker {
         let now = unix_now();
         debug!(frames = self.frames, repaired = self.repaired, "ADS-B frames");
         self.tracker.expire(now);
+        self.tracker.clock(self.samples as f64 / self.rate_hz.max(1.0));
         AdsbStatus {
             aircraft: self.tracker.snapshot(),
             unavailable: None,
