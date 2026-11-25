@@ -18747,18 +18747,17 @@ impl Engine {
     /// safety rails on key-down.
     fn sync_tx_state(&mut self) {
         let requested_tx = self.atu_rf_active() || self.state.tx.ptt || self.state.tx.tune;
+        let want_tx = requested_tx;
 
-        // The radio is already transmitting under its own control.
-        // Refuse any request for host transmission.
-        if requested_tx && self.rig_tx {
-            return self.deny_tx("the radio is transmitting on its own PTT");
-        }
-
-        let want_tx = !self.rig_tx && requested_tx;
         if want_tx == self.tx_active {
             return;
         }
         if want_tx {
+            // The radio is already transmitting under its own control.
+            // Refuse a new host key-down, but do not interrupt an active over.
+            if self.rig_tx {
+                return self.deny_tx("the radio is transmitting on its own PTT");
+            }
             // **A receive-only mode cannot be keyed, by any route.** The chrome
             // stops offering a PTT in WEFAX, NAVTEX and the rest (issue
             // #239), and this is the half that makes the refusal true rather
