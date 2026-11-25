@@ -1776,7 +1776,10 @@ use sdroxide_types::{
 /// its tail, and the radio configuration rides whole in both a command and an
 /// event, so a v222 peer reads the extra bytes as the start of the next field
 /// and fails to decode either.
-pub const PROTO_VERSION: u16 = 223;
+///
+/// v224: SDRplay automatic LNA. `SdrPlayConfig` gains `auto_lna` on its tail,
+/// which changes `ServerMsg::RadioConfig` and `Command::SetRadioConfig`.
+pub const PROTO_VERSION: u16 = 224;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
