@@ -1373,10 +1373,6 @@ fn usable_ports(
     Ok(candidates)
 }
 
-/// Parse IIO's `[min step max]` range spelling into `(min, step, max)`.
-///
-/// The brackets are part of the value, and the fields are in that order — not
-/// min/max/step, which is the natural reading and the wrong one.
 /// A low-pass for the AD9361's FIRs decimating (receive) and interpolating
 /// (transmit) by [`FIR_DECIMATION`]: a Kaiser-windowed sinc, symmetric, with
 /// its taps summing to 2 × 32768.
@@ -1445,6 +1441,10 @@ fn parse_tx_path_rates(text: &str) -> Option<(f64, f64)> {
     (txsamp > 0.0).then_some((dac, txsamp))
 }
 
+/// Parse IIO's `[min step max]` range spelling into `(min, step, max)`.
+///
+/// The brackets are part of the value, and the fields are in that order — not
+/// min/max/step, which is the natural reading and the wrong one.
 fn parse_range(text: &str) -> Option<(f64, f64, f64)> {
     let inner = text.trim().trim_start_matches('[').trim_end_matches(']');
     let mut it = inner.split_whitespace();

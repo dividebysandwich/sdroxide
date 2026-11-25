@@ -5540,16 +5540,15 @@ impl PlutoConfig {
     /// Ethernet gadget will actually carry: 2 Msps of 16-bit I/Q is 64 Mbit/s
     /// before framing, which is already most of the link.
     ///
-    /// The entries below [`Self::NO_FIR_FLOOR_HZ`] need a FIR configuration
-    /// loaded into the part, which sdroxide does not do — a stock Pluto rounds
-    /// them all up to that floor and says so on connect. They are still offered
-    /// because a board someone else has configured, or an IIO device that is
-    /// not a Pluto at all, can honour them.
+    /// The entries below [`Self::NO_FIR_FLOOR_HZ`] need a decimating FIR
+    /// loaded into the part. sdroxide loads one when the board accepts a FIR
+    /// configuration; a board that does not rounds them up to that floor and
+    /// says so on connect.
     pub const SAMPLE_RATES: [f64; 6] =
         [521_000.0, 1_000_000.0, 2_000_000.0, 2_500_000.0, 3_840_000.0, 5_000_000.0];
 
-    /// The lowest rate an AD936x can produce with its FIR decimator bypassed,
-    /// which is how a Pluto arrives and how sdroxide leaves it.
+    /// The lowest rate an AD936x can produce with its FIR decimator bypassed.
+    /// Below it sdroxide loads a decimate-by-4 FIR and leaves it enabled.
     ///
     /// The part's clock-chain solver accepts a rate only if `rate × 12` clears
     /// the ADC's 25 MHz minimum, so the true floor is 25 MHz / 12 = 2083333.33
