@@ -55,11 +55,7 @@ impl NullSource {
             // Where the switch is: the rings on the radio's tab while there are
             // tabs, and above the A/B selector only in a one-radio session,
             // which has none (`SdroxideApp::own_link_state`).
-            status: "This radio is switched off — its interface is not open. Switch it back on \
-                     with the rings on its tab, or in Settings → Radio. A session with one \
-                     radio has them above the A/B selector (in the VFO menu on a compact \
-                     layout)."
-                .into(),
+            status: sdroxide_types::RADIO_OFF_NOTICE.into(),
             retry: false,
         }
     }

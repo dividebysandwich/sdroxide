@@ -116,6 +116,9 @@ settings-ui-cities = Städte auf Karten
 
         Sie zeigen vor allem, *wo* ein Punkt auf einer Weltkarte liegt, und sie sind zugleich das Unruhigste darauf. Schalten Sie sie aus, wenn die Namen die Stationen stören, die Sie lesen. Der 3D-Globus ist nicht betroffen — seine Städte sind Lichter auf der Nachtseite und keine Markierungen, und dort wird nichts über einen Kontakt geschrieben.
 settings-ui-cities-show = Städte und ihre Namen anzeigen
+settings-ui-warnings = Warnungen
+settings-ui-quiet-off-radios = Warnungen ausgeschalteter Radios unterdrücken
+    .hint = Ein ausgeschaltetes Radio zeigt keinen Hinweisbalken mehr; die Ringe auf seinem Tab zeigen das schon. Alle anderen Warnungen bleiben: ein Gerät, das sich nicht öffnen lässt, eine fehlende Soundkarte, eine gescheiterte Aufnahme.
 settings-ui-update-check = Beim Start nach Updates suchen
     .hint = Fragt einmal pro Start bei sdroxide.com nach, ob eine neuere Version veröffentlicht wurde, und meldet das in einem schließbaren Banner über dem Wasserfall. Außer der Anfrage selbst wird nichts gesendet.
 settings-ui-band-conditions-download = Bandbedingungs-Vorhersage herunterladen
