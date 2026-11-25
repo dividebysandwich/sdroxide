@@ -20,6 +20,7 @@ struct AtuRig {
     bypasses: Arc<Mutex<usize>>,
     tx_begins: Arc<Mutex<usize>>,
     report_tuning: bool,
+    reports_operation_state: bool,
 }
 
 impl AtuRig {
@@ -30,6 +31,7 @@ impl AtuRig {
             bypasses: Arc::new(Mutex::new(0)),
             tx_begins: Arc::new(Mutex::new(0)),
             report_tuning: true,
+            reports_operation_state: false,
         }
     }
 
@@ -37,6 +39,11 @@ impl AtuRig {
         let mut rig = Self::new(atu);
         rig.report_tuning = false;
         rig
+    }
+
+    fn with_operation_state_reporting(mut self) -> AtuRig {
+        self.reports_operation_state = true;
+        self
     }
 }
 
@@ -62,6 +69,9 @@ impl IqSource for AtuRig {
     fn tx_begin(&mut self, _center_hz: f64, rate: f64) -> Result<f64> {
         *self.tx_begins.lock().unwrap() += 1;
         Ok(rate)
+    }
+    fn reports_atu_operation_state(&self) -> bool {
+        self.reports_operation_state
     }
     fn atu(&self) -> Option<AtuState> {
         *self.atu.lock().unwrap()
@@ -177,7 +187,7 @@ fn a_tune_reaches_the_radio_and_its_outcome_is_shown() {
 /// even before the radio reports that tuning has started.
 #[test]
 fn host_ptt_is_interlocked_before_the_tuning_status_arrives() {
-    let rig = AtuRig::new_with_deferred_tune_report(Some(TUNED));
+    let rig = AtuRig::new_with_deferred_tune_report(Some(TUNED)).with_operation_state_reporting();
     let (tunes, tx_begins) = (rig.tunes.clone(), rig.tx_begins.clone());
     let mut h = start_engine(Box::new(rig), caps(), EngineConfig::default());
     let thread = h.thread.take();
@@ -201,6 +211,47 @@ fn host_ptt_is_interlocked_before_the_tuning_status_arrives() {
         *tx_begins.lock().unwrap(),
         0,
         "host transmission must not start during the ATU operation"
+    );
+
+    drop(h);
+    let _ = thread.map(|t| t.join());
+}
+
+/// A FLEX-style tuner reports its tuner state but not the HPSDR
+/// operation lifecycle. Tune followed by Bypass must not leave the
+/// engine-side operation interlock latched.
+#[test]
+fn a_non_hpsdr_tune_then_bypass_does_not_interlock_host_ptt() {
+    let rig = AtuRig::new(Some(TUNED));
+    let (tunes, bypasses, tx_begins) =
+        (rig.tunes.clone(), rig.bypasses.clone(), rig.tx_begins.clone());
+    let mut h = start_engine(Box::new(rig), caps(), EngineConfig::default());
+    let thread = h.thread.take();
+
+    assert!(wait_for_state(&h.event_rx, |s| s.atu == TUNED));
+
+    h.cmd_tx.send(Command::AtuTune).unwrap();
+    assert!(wait_for_state(&h.event_rx, |s| s.atu.status == AtuStatus::Tuning));
+
+    h.cmd_tx.send(Command::AtuBypass).unwrap();
+    assert!(wait_for_state(&h.event_rx, |s| {
+        s.atu.status == AtuStatus::Bypass && !s.atu.enabled
+    }));
+
+    // Use the same public command path as a host PTT request and verify that
+    // the radio actually receives key-down after both tuner commands.
+    h.cmd_tx.send(Command::SetPtt(true)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline && *tx_begins.lock().unwrap() == 0 {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    assert_eq!(*tunes.lock().unwrap(), 1, "one tune command should reach the FLEX");
+    assert_eq!(*bypasses.lock().unwrap(), 1, "one bypass command should reach the FLEX");
+    assert_eq!(
+        *tx_begins.lock().unwrap(),
+        1,
+        "host PTT must still key after Tune followed by Bypass on a non-HPSDR tuner"
     );
 
     drop(h);

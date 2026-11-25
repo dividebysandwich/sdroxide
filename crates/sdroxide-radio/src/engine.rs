@@ -6891,12 +6891,14 @@ impl Engine {
             }
             ControlUpdate::Ptt(closed) => self.apply_hw_ptt(closed),
             ControlUpdate::AtuState { rf_requested, operation_active } => {
-                let changed = self.atu_rf_requested != rf_requested
-                    || self.atu_operation_active != operation_active;
-                self.atu_rf_requested = rf_requested;
-                self.atu_operation_active = operation_active;
-                if changed {
-                    self.sync_tx_state();
+                if self.source.reports_atu_operation_state() {
+                    let changed = self.atu_rf_requested != rf_requested
+                        || self.atu_operation_active != operation_active;
+                    self.atu_rf_requested = rf_requested;
+                    self.atu_operation_active = operation_active;
+                    if changed {
+                        self.sync_tx_state();
+                    }
                 }
             }
             // An over the operator started at the radio. Recorded, never
@@ -7278,6 +7280,7 @@ impl Engine {
         // radio is transmitting or another ATU operation is still running,
         // retain the request and retry on a later poll.
         if changed
+            && self.source.reports_atu_operation_state()
             && self.caps.has_atu
             && (self.state.atu.enabled
                 || matches!(
@@ -7288,7 +7291,7 @@ impl Engine {
             self.atu_band_bypass_pending = true;
         }
         if self.atu_band_bypass_pending {
-            if !self.caps.has_atu {
+            if !self.source.reports_atu_operation_state() || !self.caps.has_atu {
                 self.atu_band_bypass_pending = false;
             } else if !self.tx_active
                 && !self.rig_tx
@@ -9862,7 +9865,7 @@ impl Engine {
                 if let Err(e) = self.source.atu_tune() {
                     warn!("starting the antenna tuner: {e}");
                     self.notice(&format!("The radio would not start its tuner: {e}"));
-                } else {
+                } else if self.source.reports_atu_operation_state() {
                     // The command is accepted: acquire the interlock now,
                     // before the next status-poll cycle can report 0xEE.
                     self.atu_operation_active = true;
@@ -9886,7 +9889,7 @@ impl Engine {
                 if let Err(e) = self.source.atu_bypass() {
                     warn!("bypassing the antenna tuner: {e}");
                     self.notice(&format!("The radio would not bypass its tuner: {e}"));
-                } else {
+                } else if self.source.reports_atu_operation_state() {
                     // Bypass has the same operation-wide transmit interlock.
                     self.atu_operation_active = true;
                 }
@@ -18484,12 +18487,13 @@ impl Engine {
     /// An external ATU request owns the host TX path unless the radio
     /// itself has started transmitting.
     fn atu_rf_active(&self) -> bool {
-        self.atu_rf_requested && !self.rig_tx
+        self.source.reports_atu_operation_state() && self.atu_rf_requested && !self.rig_tx
     }
 
     /// Whether an external antenna-tuner operation owns the host TX path.
     fn atu_tx_interlocked(&self) -> bool {
-        self.atu_operation_active || self.atu_rf_requested
+        self.source.reports_atu_operation_state()
+            && (self.atu_operation_active || self.atu_rf_requested)
     }
 
     /// The drive actually used: the operator's setting, calibrated for the band
