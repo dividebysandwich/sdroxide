@@ -610,6 +610,25 @@ fn drive_ceiling_row(ui: &mut egui::Ui, cfg: &mut sdroxide_types::RadioConfig) {
     });
 }
 
+/// The command that puts an edit to the drive ceiling or the band table on the
+/// air at once, or `None` when neither moved this frame.
+///
+/// The dialog's own end-of-frame save is not enough for either: on a radio
+/// this process runs, `LocalController::set_radio_config` only writes
+/// `radio.json`, and the engine reads both from it when it is built — not
+/// even Apply & reconnect reloads them. So "applies immediately" meant "at the
+/// next start of sdroxide", and an ANAN operator with the ceiling at 1 % still
+/// made full power on WSPR and TUNE (issue #947). The live controls beside
+/// these (audio route, S-meter calibration) send the same command for the same
+/// reason; a remote client already sends one, and a second is harmless.
+fn drive_limits_edit(
+    was: &(Option<f32>, Vec<sdroxide_types::BandDriveTrim>),
+    cfg: &sdroxide_types::RadioConfig,
+) -> Option<Command> {
+    (was.0 != cfg.tx_drive_max || was.1 != cfg.tx_drive_trim)
+        .then(|| Command::SetRadioConfig { cfg: Box::new(cfg.clone()), reopen: false })
+}
+
 /// The per-band transmit drive calibration: one trim per band, so that one
 /// Drive setting means one output power everywhere (issue #295).
 ///
@@ -2392,8 +2411,10 @@ impl SdroxideApp {
                 // selected above, so it sits here rather than in one of the
                 // per-backend sections below.
                 if self.tx_capable() {
+                    let was = (cfg.tx_drive_max, cfg.tx_drive_trim.clone());
                     drive_ceiling_row(ui, cfg);
                     drive_trim_table(ui, cfg);
+                    cmds.extend(drive_limits_edit(&was, cfg));
                     ui.separator();
                     ui.label(
                         RichText::new(tr!("settings-transmit-audio"))
@@ -4370,6 +4391,30 @@ mod roster_order_tests {
 #[cfg(test)]
 mod tests {
     use super::iface_opts;
+
+    /// The drive ceiling reaches the engine the frame it is changed, without a
+    /// reopen, and an untouched dialog sends nothing (issue #947).
+    #[test]
+    fn a_drive_ceiling_edit_is_sent_to_the_engine_live() {
+        use sdroxide_types::{Band, BandDriveTrim, Command, RadioConfig};
+        let mut cfg = RadioConfig::default();
+        let was = (cfg.tx_drive_max, cfg.tx_drive_trim.clone());
+        assert!(super::drive_limits_edit(&was, &cfg).is_none(), "nothing moved");
+
+        cfg.tx_drive_max = Some(0.01);
+        match super::drive_limits_edit(&was, &cfg) {
+            Some(Command::SetRadioConfig { cfg: sent, reopen }) => {
+                assert_eq!(sent.tx_drive_max, Some(0.01));
+                assert!(!reopen, "a ceiling is a number, not a new device");
+            }
+            other => panic!("expected SetRadioConfig, got {other:?}"),
+        }
+
+        // The band table beside it has the same problem and the same answer.
+        let mut cfg = RadioConfig::default();
+        cfg.tx_drive_trim.push(BandDriveTrim { band: Band::M20, db: -3.0 });
+        assert!(super::drive_limits_edit(&was, &cfg).is_some());
+    }
 
     /// A backend registered everywhere else (`Backend::ALL`, the `open_*`
     /// dispatch in `src/main.rs`, its own settings tab) but never pushed
