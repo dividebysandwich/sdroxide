@@ -16777,10 +16777,19 @@ impl Engine {
 
     /// Put the Hermes-Lite 2's PA switch back where the operator last left it
     /// on `band` (issue #444): a transverter band keeps it off to drive RF1,
-    /// an HF band keeps it on. A band never chosen on leaves it alone, and a
-    /// source with no such switch ignores the call.
+    /// an HF band keeps it on. A band never chosen on takes the radio's
+    /// configured PA setting rather than whatever the previous band left, so
+    /// one band's choice never leaks into the others. A source with no such
+    /// switch ignores the call.
     fn follow_band_pa(&mut self, band: Band) {
-        if let Some(on) = self.band_pa.get(&band).copied()
+        let want = match self.band_pa.get(&band).copied() {
+            Some(on) => Some(on),
+            None if self.source.pa_enable().is_some() => {
+                Some(self.store.load_radio_config().hpsdr.pa_enable)
+            }
+            None => None,
+        };
+        if let Some(on) = want
             && self.source.pa_enable() != Some(on)
             && self.source.set_pa_enable(on)
         {
