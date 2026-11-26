@@ -9,6 +9,7 @@
 
 mod adsb_clouds;
 mod adsb_coverage;
+mod adsb_graphs;
 mod adsb_log;
 mod adsb_map;
 /// The sighting log as a bar chart, the x axis picked from a list.
