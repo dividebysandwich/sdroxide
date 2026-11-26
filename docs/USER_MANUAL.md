@@ -245,7 +245,7 @@ box over the window. Type a few letters and press Enter:
 - a **mode** or a **band** — `ft8`, `cw`, `40m` — switches to it;
 - a **window** — `log`, `spots`, `scan`, `awards`, `manual` — opens it (or closes
   it, if it is open);
-- a **settings page** — `uploads`, `controls`, `t/r` — opens Settings on that
+- a **settings page** — `uploads`, `controls` — opens Settings on that
   page;
 - a **switch** — `mute`, `notch`, `split`, `peak` — flips it: every action the
   Controls tab can bind a key to is here under the same name;
@@ -8666,7 +8666,7 @@ window opens the same dialog on its Spots tab). Fifteen tabs run across the top:
 | **Winlink** | The radio-email account, and whether it forwards over the internet or on the air. [6.8](#68-winlink-radio-email-account) |
 | **Servers** | Hamlib rigctld, the built-in TCI server, and the WSJT-X UDP broadcast. [6.9](#69-servers-letting-other-programs-drive-the-radio) |
 | **Amplifier** | A HobbyPCB Hardrock on its USB serial port: model, port, baud rate, and whether it follows the radio's band. [2.23](#223-hardrock-amplifier) |
-| **T/R switch** | The relay that grounds the SDR's antenna while the station transmits, and the sequencer around it. [6.11](#611-tr-switch-protecting-the-receiver-on-transmit) |
+| **T/R switch** | (Now at the bottom of the **Radio** tab.) The relay that grounds the SDR's antenna while the station transmits, and the sequencer around it. [6.11](#611-tr-switch-protecting-the-receiver-on-transmit) |
 | **Remote** | The address of an sdroxide server elsewhere, and the button that connects to it. [8.2](#82-connect-a-native-remote-client) |
 | **TLE** | Satellites to track beyond the amateur set, and their frequencies. [6.10](#610-tle-satellites-and-their-frequencies) |
 | **Profiles** | Named snapshots of how the station is set up, put back on in one click. [6.12](#612-profiles-saved-station-setups) |
@@ -8690,7 +8690,7 @@ They live on the machine the radio engine runs on, and the engine tells every
 client what they say — so the **Radio**, **Spots**, **FreeDV**, **Uploads**,
 **Winlink**, **Servers**, **TLE** and **Profiles** tabs show, and change, the real thing
 whether you are at the shack machine, on a native remote client or in a browser tab. The **T/R switch**
-tab is the same kind of thing — the relay is bolted to the antenna, not to your
+(at the bottom of the Radio tab) is the same kind of thing — the relay is bolted to the antenna, not to your
 desk — with one difference worth knowing before you use it from away: its
 **TEST** buttons operate real hardware in a room you are not in. (The Radio tab
 keeps back the parts that are about a *machine* rather than about the radio:
@@ -10488,7 +10488,7 @@ involved:
   general-purpose outputs, and operators also use them for amplifier PTT,
   antenna relays and transverter switching; driving them from band data would
   start operating whatever is wired there. (If what you want is an antenna relay
-  that follows *transmit* rather than the band, that is the **T/R switch** tab —
+  that follows *transmit* rather than the band, that is the **T/R switch** section of the **Radio** tab —
   see [6.11](#611-tr-switch-protecting-the-receiver-on-transmit) — which drives
   one over USB and sequences an amplifier with it.) There are three ways to
   drive them:
@@ -15145,9 +15145,38 @@ a hundred watts of it.
 
 The usual answer is a relay: a coax relay that disconnects the SDR and grounds
 its input, an outboard T/R switch, or the receive-antenna port on an amplifier.
-This tab drives one — and sequences an amplifier or a second relay with it — so
+This section drives one — and sequences an amplifier or a second relay with it — so
 the contacts always close *before* your transmitter comes up and open *after* it
 has stopped.
+
+**Where it is.** The T/R switch is no longer a tab of its own. It is at the
+bottom of **Settings → Radio**, under the radio's own Apply & reconnect button,
+and it has its own **Apply** button. It belongs to the radio whose Radio tab you
+are looking at.
+
+**A radio owns its T/R resources.** Each radio has its own T/R switch — its
+hardware, contacts, sequencer timings, band table and sense input — saved with
+that radio. Whatever the switch uses is *owned* by one radio at a time: a
+serial port (relay board or RTS/DTR line), an HID relay board, a CM108/CM119
+pin, or a Linux GPIO line (GPIO is claimed line by line, so two radios can each
+have their own pins on one header). Another radio cannot take a resource that
+a radio already owns:
+
+- If the resource is free, or is already yours, it is claimed when you press
+  **Apply** and the status line shows it in **green**, for example
+  `● COM7 — owned by this radio — receiving`.
+- If another radio already owns it, the claim is refused and the status line
+  says so in **red**: `this hardware (serial port, HID board, GPIO line or CM108
+  pin) is already assigned to another radio ("Name", radio id N); each can belong to only
+  one radio`, naming the radio that owns it. Nothing is switched. Free it on the radio that owns it (set that
+  radio's hardware to *Off* or choose another resource and Apply), then Apply
+  here.
+
+The claim is let go when the owning radio is reconfigured, pointed at other
+hardware, or closed. An **External command** is not claimed, because the program
+it runs is yours to arbitrate. The transmit-sense input rides on the same
+adapter as the switch, so it is owned by the same radio, and it is ignored when
+that radio's *External PTT* is set to **Disable**.
 
 Read [6.11.5](#6115-what-this-cannot-do) before relying on this feature.
 
@@ -15308,6 +15337,12 @@ J16 open-collector outputs; see [6.2.3](#623-hpsdr-network-radios).
   replug. `cargo run -p sdroxide-relay --example relay -- --list --all` prints
   every HID device the machine can see, which separates "not permitted" from
   "not recognised".
+  Discovery includes both standard `USBRelay` boards (`16c0:05df`) and Noyito
+  modules (`5131:2007`); the latter do not need a `USBRelay` product string.
+  Noyito switching and read-back still need hardware verification.
+  The permission rule must cover the HID node, not just the USB bus node.
+  Linux `/dev/hidraw*` numbers can change after reconnecting or rebooting:
+  reselect the relay rather than retaining a path now assigned to another device.
 - **A CM108 card that is listed and does nothing.** Several clones carry a
   genuine C-Media id and ignore the GPIO report entirely. Nothing but listening
   for the click tells them apart.
@@ -17800,8 +17835,8 @@ the GPIO report entirely; nothing but listening for the click separates those.
 **Every transmit is refused, saying the T/R switch is not answering.**
 That is the switch's fail-safe doing its job: the relay that protects the
 receiver has stopped responding, so the over is refused rather than sent into an
-unprotected front end. Check the cable and press **APPLY** on the **T/R switch**
-tab to try again. If you would rather transmit anyway, set **If it will not
+unprotected front end. Check the cable and press **APPLY** in the **T/R switch**
+section at the bottom of the **Radio** tab to try again. If you would rather transmit anyway, set **If it will not
 answer** to *Transmit anyway, warn* — but read
 [6.11.4](#6114-wire-it-so-that-a-dead-relay-is-the-safe-one) first.
 

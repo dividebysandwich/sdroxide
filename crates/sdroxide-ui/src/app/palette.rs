@@ -173,7 +173,6 @@ impl SdroxideApp {
             (SettingsTab::Uploads, tr!("settings-uploads")),
             (SettingsTab::Winlink, tr!("settings-winlink")),
             (SettingsTab::Servers, tr!("settings-servers")),
-            (SettingsTab::TrSwitch, tr!("settings-t-r-switch")),
             (SettingsTab::Amp, tr!("settings-amplifier")),
             (SettingsTab::Tle, tr!("settings-tle")),
             (SettingsTab::Profiles, tr!("settings-profiles")),

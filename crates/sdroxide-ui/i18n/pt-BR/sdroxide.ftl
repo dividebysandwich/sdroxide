@@ -835,8 +835,6 @@ settings-relay-line = Linha
 settings-relay-transmitting = Transmitindo quando
 settings-relay-high-line = a linha está em nível alto
 settings-relay-most-opto-isolated-interfaces-pull = A maioria das interfaces optoisoladas puxa a linha para baixo quando o rádio aciona, então isto costuma ficar desligado
-settings-relay-belongs-radio = Pertence ao rádio
-settings-relay-which-radio-tab-sensed-transceiver = Em qual aba de rádio está o transceptor detectado. Em uma estação com um rádio, isto é 1 e nada depende disso.
 settings-relay-needs-serial-port-handshake-lines = Exige uma porta serial — as linhas de handshake estão nela.
 settings-relay-wiring-only-fail-safe-survives = A fiação é a única proteção de segurança que sobrevive a este programa.
 settings-relay-choose-tx-closes-so-de = Escolha “TX fecha” para que o contato *desenergizado* seja o estado desejado quando a placa for desconectada, o computador estiver desligado ou o sdroxide não estiver rodando. Ligado de modo que desenergizado signifique aterrado, um relé morto deixa o SDR surdo — incômodo, e seguro. Ligado do outro jeito, um relé morto mais uma transmissão é um front end morto. Com um amplificador real atrás, escolha a primeira.
@@ -1053,6 +1051,7 @@ settings-profiles-delete = Excluir “{ $name }”
 
 settings-relay-not-usable = Ainda não utilizável: { $why }
 settings-relay-receiving = recebendo
+settings-relay-owned-by-this-radio = atribuído a este rádio
 settings-relay-rx-tx-words = { $rx } / TX { $tx }
 
 ## Janela de Configurações, Servidores: mensagens com valores

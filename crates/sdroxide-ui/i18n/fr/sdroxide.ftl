@@ -830,8 +830,6 @@ settings-relay-line = Ligne
 settings-relay-transmitting = L'émission correspond à
 settings-relay-high-line = une ligne haute
 settings-relay-most-opto-isolated-interfaces-pull = La plupart des interfaces opto-isolées tirent la ligne vers le bas lorsque l'appareil émet, donc c'est généralement désactivé
-settings-relay-belongs-radio = Appartient à la radio
-settings-relay-which-radio-tab-sensed-transceiver = Quel onglet radio est le transceiver détecté. Sur une station avec une seule radio, c'est 1 et rien n'en dépend.
 settings-relay-needs-serial-port-handshake-lines = Nécessite un port série — les lignes de handshake s'y trouvent.
 settings-relay-wiring-only-fail-safe-survives = Le câblage est la seule sécurité qui survit à ce programme.
 settings-relay-choose-tx-closes-so-de = Choisissez « Émission ferme » pour que le contact *désénergisé* soit l'état voulu lorsque la carte est débranchée, que l'ordinateur est éteint ou que sdroxide ne tourne pas. Câblé de sorte que désénergisé signifie mis à la masse, un relais mort laisse le SDR sourd — gênant, mais sûr. Câblé à l'inverse, un relais mort plus une émission donnent un étage d'entrée mort. Avec un vrai amplificateur derrière, prenez la première option.
@@ -1048,6 +1046,7 @@ settings-profiles-delete = Supprimer « { $name } »
 
 settings-relay-not-usable = Pas encore utilisable : { $why }
 settings-relay-receiving = réception
+settings-relay-owned-by-this-radio = attribué à cette radio
 settings-relay-rx-tx-words = { $rx } / TX { $tx }
 
 ## Settings window, Servers: messages with values

@@ -4,8 +4,8 @@
 //! end, so each is measured rather than assumed: that the contacts close
 //! *before* `tx_begin` by at least the lead they asked for, that they open
 //! *after* `tx_end` by at least the hold, that a refused key-down leaves them
-//! exactly where they were, and that a second radio on the air holds them shut
-//! while the first one unkeys.
+//! exactly where they were, and that a module follows only the radio it
+//! belongs to.
 //!
 //! The board is a `RelayTransport` that records `(when, mask)`; the radio is an
 //! `IqSource` that records when it was keyed and unkeyed. Both clocks are the
@@ -170,14 +170,16 @@ struct Station {
     engines: Vec<sdroxide_radio::EngineHandles>,
     rigs: Vec<Arc<Mutex<RigLog>>>,
     board: Arc<Mutex<BoardLog>>,
+    /// The switch of the radio that owns the fake board.
     hub: Arc<TrSwitch>,
 }
 
-/// Bring up `n` engines sharing one T/R switch, with the fake board installed.
+/// Bring up `n` engines, each with its own T/R switch, and the fake board
+/// installed on the first radio's.
 ///
 /// No `TxGate`: the interlock is a separate rule with its own test, and here it
-/// would stop the second radio ever reaching the air — which is the case the
-/// last test is about.
+/// would stop a second radio ever reaching the air — which is the case the
+/// ownership tests are about.
 fn station(n: u32) -> Station {
     station_with(n, relay_cfg(), caps())
 }
@@ -185,22 +187,28 @@ fn station(n: u32) -> Station {
 /// [`station`], with the switch's configuration and the radio's capabilities
 /// given rather than the defaults.
 fn station_with(n: u32, cfg: RelayConfig, caps: DeviceCaps) -> Station {
+    station_owned(n, 0, cfg, caps)
+}
+
+/// [`station_with`], with the fake board belonging to radio `owner` rather
+/// than the first.
+fn station_owned(n: u32, owner: usize, cfg: RelayConfig, caps: DeviceCaps) -> Station {
     isolate_config();
-    let hub = Arc::new(TrSwitch::new());
     let board = Arc::new(Mutex::new(BoardLog::default()));
     let mut engines = Vec::new();
     let mut rigs = Vec::new();
+    let mut hubs = Vec::new();
     for i in 0..n {
         let log = Arc::new(Mutex::new(RigLog::default()));
+        let hub = Arc::new(TrSwitch::new());
         let h = start_engine(
             Box::new(MockTrx { log: Arc::clone(&log) }),
             caps.clone(),
             EngineConfig {
                 tx_ham_only: false,
                 instance: i,
-                // Only the first engine would open hardware; none of them does
-                // here, because the installed handle below replaces whatever
-                // `sync_relay` decided at boot.
+                // Nothing opens hardware here: the installed handle below
+                // replaces whatever `sync_relay` decided at boot.
                 primary: i == 0,
                 tr_switch: Some(Arc::clone(&hub)),
                 ..Default::default()
@@ -209,17 +217,19 @@ fn station_with(n: u32, cfg: RelayConfig, caps: DeviceCaps) -> Station {
         h.cmd_tx.send(Command::SetVfo { vfo: sdroxide_types::Vfo::A, hz: DIAL }).unwrap();
         engines.push(h);
         rigs.push(log);
+        hubs.push(hub);
     }
+    let hub = Arc::clone(&hubs[owner]);
     let st = Station { engines, rigs, board, hub };
-    // Wait for the engine's *own* `sync_relay` to have run before installing
-    // the board over the top of it.
+    // Wait for the owning engine's *own* `sync_relay` to have run before
+    // installing the board over the top of it.
     //
     // `RadioEvent::RelayStatus` and not `State`: the state goes out early in
     // the boot sequence and `sync_relay` runs later, so on a loaded machine the
     // install below landed first and the engine then replaced the fake board
     // with the `None` its (empty) `relay.json` asked for. Three of these tests
     // failed that way, and only when the whole suite was running.
-    st.wait(0, "the engine's own T/R switch to settle", |ev| {
+    st.wait(owner, "the  engine's own T/R switch to settle", |ev| {
         matches!(ev, RadioEvent::RelayStatus(_))
     });
     st.hub.install(
@@ -388,33 +398,32 @@ fn a_radio_that_refuses_to_key_drops_the_contacts_without_the_hold() {
     st.shutdown();
 }
 
-/// The reason the switch is shared rather than owned by one engine: with two
-/// radios on the air, the first to unkey must not take the antenna relay with
-/// it.
+/// A module belongs to one radio. Another radio keying — with this radio's
+/// module installed and this radio receiving — must not throw it: that radio
+/// has its own antenna, and its own module if it needs one.
 #[test]
-fn a_second_radio_on_the_air_holds_the_contacts_shut() {
+fn another_radio_keying_leaves_this_radios_module_alone() {
     let st = station(2);
-    st.key(0, true);
-    st.wait_state(1);
     st.key(1, true);
-    // Both are keyed; let the second one's over be established.
     let deadline = Instant::now() + Duration::from_secs(5);
     while st.rigs[1].lock().unwrap().keyed.is_empty() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(2));
     }
     assert!(!st.rigs[1].lock().unwrap().keyed.is_empty(), "the second radio never keyed");
-
-    st.key(0, false);
-    // Well past the hold: if the first radio's unkey were going to open them,
-    // it would have by now.
-    std::thread::sleep(Duration::from_millis(u64::from(HOLD_MS) + 120));
-    let (_, opened) = st.closed_opened();
-    assert!(opened.is_none(), "the antenna came back while the other radio was transmitting");
-
+    std::thread::sleep(Duration::from_millis(u64::from(LEAD_MS) + 120));
+    assert!(
+        st.changes().iter().all(|(_, m)| *m == 0),
+        "the second radio keying threw the first radio's module: {:?}",
+        st.changes()
+    );
     st.key(1, false);
+
+    // ...and the owner keying still does.
+    st.key(0, true);
+    st.wait_state(1);
+    assert_eq!(st.changes().last().map(|(_, m)| *m), Some(1), "the owner's over never threw it");
+    st.key(0, false);
     st.wait_state(0);
-    let (_, opened) = st.closed_opened();
-    assert!(opened.is_some(), "and the last radio to unkey is what released them");
     st.shutdown();
 }
 
@@ -545,12 +554,14 @@ fn a_satellite_lock_switches_the_band_decoder_to_the_uplink_band() {
     st.shutdown();
 }
 
-/// On a two-radio station the receive word is the primary's band, and the
-/// transmit word the band of whichever radio keyed: the second radio on 40 m
-/// keys while the primary listens on 20 m, and the 40 m filter is what goes
-/// in line — then the 20 m one comes back when the over ends.
+/// The bug this ownership model fixes: a module assigned to a radio that is
+/// not the first tab follows *that* radio's receive band, not the first tab's.
+/// Radio 0 sits on 20 m; radio 1 owns the module and moves 40 m → 20 m → 40 m,
+/// and the decoder's RX word follows it each time. Radio 0 keying moves
+/// nothing; radio 1 keying puts its own transmit band's word in line, and its
+/// own receive band's word comes back after the over.
 #[test]
-fn the_band_decoder_follows_the_radio_that_keyed() {
+fn the_band_decoder_follows_its_own_radio() {
     use sdroxide_types::{Band, RelayBandRow};
     const TWENTY: ChannelMask = 0b010;
     const FORTY: ChannelMask = 0b100;
@@ -568,34 +579,48 @@ fn the_band_decoder_follows_the_radio_that_keyed() {
         RelayBandRow { band: Band::M20, rx_mask: TWENTY, tx_mask: TWENTY },
         RelayBandRow { band: Band::M40, rx_mask: FORTY, tx_mask: FORTY },
     ];
-    let st = station_with(2, cfg, caps());
-    st.engines[1]
-        .cmd_tx
-        .send(Command::SetVfo { vfo: sdroxide_types::Vfo::A, hz: 7_074_000.0 })
-        .unwrap();
-    // The primary is on 20 m, so that is the receive word.
-    st.wait_state(TWENTY);
-    assert_eq!(st.changes().last().map(|(_, m)| *m), Some(TWENTY), "never settled on 20 m");
+    let st = station_owned(2, 1, cfg, caps());
+    let tune = |engine: usize, hz: f64| {
+        st.engines[engine]
+            .cmd_tx
+            .send(Command::SetVfo { vfo: sdroxide_types::Vfo::A, hz })
+            .unwrap();
+    };
+    let settled = |mask: ChannelMask, what: &str| {
+        st.wait_state(mask);
+        assert_eq!(st.changes().last().map(|(_, m)| *m), Some(mask), "{what}");
+    };
 
-    st.key(1, true);
+    tune(1, 7_074_000.0);
+    settled(FORTY, "the owning radio's 40 m receive band never reached the module");
+
+    tune(1, 14_074_000.0);
+    settled(TWENTY, "the module stayed put when its own radio moved to 20 m");
+    tune(1, 7_074_000.0);
+    settled(FORTY, "the module stayed put when its own radio came back to 40 m");
+
+    // The first tab moving and keying is no business of this module's.
+    tune(0, 14_200_000.0);
+    st.key(0, true);
     let deadline = Instant::now() + Duration::from_secs(5);
-    while st.rigs[1].lock().unwrap().keyed.is_empty() && Instant::now() < deadline {
+    while st.rigs[0].lock().unwrap().keyed.is_empty() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert!(!st.rigs[1].lock().unwrap().keyed.is_empty(), "the second radio never keyed");
-    let on_air = st.changes().last().map(|(_, m)| *m);
-    assert_eq!(
-        on_air,
-        Some(0b001 | FORTY),
-        "the 40 m radio keyed with the contacts at {on_air:?}, not the 40 m filter"
-    );
-
-    st.key(1, false);
-    st.wait_state(TWENTY);
+    assert!(!st.rigs[0].lock().unwrap().keyed.is_empty(), "the first radio never keyed");
+    std::thread::sleep(Duration::from_millis(u64::from(LEAD_MS) + 120));
     assert_eq!(
         st.changes().last().map(|(_, m)| *m),
-        Some(TWENTY),
-        "the primary's 20 m filter did not come back after the over"
+        Some(FORTY),
+        "another radio's dial or over moved this radio's module"
     );
+    st.key(0, false);
+
+    // The owner keys on 40 m, then on 20 m after moving.
+    st.key(1, true);
+    settled(0b001 | FORTY, "the owner keyed without its 40 m filter in line");
+    st.key(1, false);
+    settled(FORTY, "the 40 m receive word did not come back after the over");
+    tune(1, 14_074_000.0);
+    settled(TWENTY, "the module did not follow the owner to 20 m after an over");
     st.shutdown();
 }

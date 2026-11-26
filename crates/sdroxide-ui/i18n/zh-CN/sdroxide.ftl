@@ -825,8 +825,6 @@ settings-relay-line = 线路
 settings-relay-transmitting = 发射时为
 settings-relay-high-line = 高电平
 settings-relay-most-opto-isolated-interfaces-pull = 大多数光隔离接口会在电台按键时把线路拉低，因此通常应关闭此项
-settings-relay-belongs-radio = 所属电台
-settings-relay-which-radio-tab-sensed-transceiver = 被检测的收发信机属于哪个电台选项卡。在只有一台电台的站点上，此项为 1，且不影响任何内容。
 settings-relay-needs-serial-port-handshake-lines = 需要串口——握手线路位于其上。
 settings-relay-wiring-only-fail-safe-survives = 只有接线才是能够在本程序失效后仍然有效的故障保护。
 settings-relay-choose-tx-closes-so-de = 选择“发射时闭合”，使得*失电*的触点恰是你所需的状态：当板卡被拔掉、计算机关机或 sdroxide 未运行时。若接线使失电即接地，则继电器失效时接收机会失聪——令人烦恼，但安全。若接线方式相反，继电器失效加上一次发射，前端就会损坏。若其后接的是真正的功放，请选择前一种。
@@ -1043,6 +1041,7 @@ settings-profiles-delete = 删除“{ $name }”
 
 settings-relay-not-usable = 尚不可用：{ $why }
 settings-relay-receiving = 接收中
+settings-relay-owned-by-this-radio = 已分配给此电台
 settings-relay-rx-tx-words = { $rx } / 发射 { $tx }
 
 ## 设置窗口，服务器：带数值填充的消息

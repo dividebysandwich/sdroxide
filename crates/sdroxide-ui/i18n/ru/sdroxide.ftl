@@ -830,8 +830,6 @@ settings-relay-line = Линия
 settings-relay-transmitting = Передача —
 settings-relay-high-line = высокий уровень на линии
 settings-relay-most-opto-isolated-interfaces-pull = Большинство интерфейсов с оптоизоляцией тянут линию вниз, когда аппарат включает передачу, поэтому обычно это выключено
-settings-relay-belongs-radio = Принадлежит радио
-settings-relay-which-radio-tab-sensed-transceiver = Какой вкладке радио принадлежит контролируемый трансивер. На станции с одним радио это 1, и ничто от этого не зависит.
 settings-relay-needs-serial-port-handshake-lines = Нужен последовательный порт — на нём находятся линии рукопожатия.
 settings-relay-wiring-only-fail-safe-survives = Монтаж — единственная защита при сбое, которая переживает эту программу.
 settings-relay-choose-tx-closes-so-de = Выбирайте «Замыкается при передаче», чтобы *обесточенный* контакт был нужным состоянием, когда плата отключена, компьютер выключен или sdroxide не запущен. При монтаже, где обесточенное означает заземлённое, мёртвое реле оставляет SDR глухим — неприятно, но безопасно. При монтаже наоборот мёртвое реле плюс одна передача — мёртвый фронтенд. С настоящим усилителем за ним выбирайте первое.
@@ -1048,6 +1046,7 @@ settings-profiles-delete = Удалить «{ $name }»
 
 settings-relay-not-usable = Пока не годится: { $why }
 settings-relay-receiving = приём
+settings-relay-owned-by-this-radio = закреплён за этим радио
 settings-relay-rx-tx-words = { $rx } / TX { $tx }
 
 ## Окно настроек, Серверы: сообщения со значениями
