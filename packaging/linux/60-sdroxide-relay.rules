@@ -54,6 +54,9 @@
 # rather than offering everything that answers to these ids.
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="05df", ENV{SDROXIDE_RELAY_PLUGDEV}="1"
 
+# Noyito USB HID relay modules use a separate id.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="5131", ATTRS{idProduct}=="2007", ENV{SDROXIDE_RELAY_PLUGDEV}="1"
+
 # ── CM108/CM119-family sound-card GPIO ───────────────────────────────────────
 #
 # The pins on a cheap USB "rig interface" — DRA boards, the RB-USB RIM, the

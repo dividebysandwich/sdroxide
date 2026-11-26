@@ -83,14 +83,6 @@ pub(in crate::app) enum SettingsTab {
     Uploads,
     Winlink,
     Servers,
-    /// The external transmit/receive switch: the relay that grounds the SDR's
-    /// antenna while the station transmits.
-    ///
-    /// A tab of its own rather than another section under `Servers`, where the
-    /// rotator lives. Two reasons: the panel is large — a channel table, the
-    /// sequencer's timings and a test button apiece — and this is the one page
-    /// in here whose being hard to find could cost somebody a front end.
-    TrSwitch,
     /// The Hardrock amplifier: its port, model, and whether it follows the band.
     Amp,
     /// Dial another station. Native only: a browser client is already attached
@@ -1854,7 +1846,6 @@ impl SdroxideApp {
             (SettingsTab::Uploads, tr!("settings-uploads")),
             (SettingsTab::Winlink, tr!("settings-winlink")),
             (SettingsTab::Servers, tr!("settings-servers")),
-            (SettingsTab::TrSwitch, tr!("settings-t-r-switch")),
             (SettingsTab::Amp, tr!("settings-amplifier")),
         ];
         // Next to Servers: the two are the same subject from opposite ends —
@@ -2724,6 +2715,22 @@ impl SdroxideApp {
                         .wrap(),
                     );
                 });
+                // The external transmit/receive switch, under the radio it
+                // belongs to. It keeps its own Apply button.
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(6.0);
+                ui.heading(tr!("settings-t-r-switch"));
+                relay::settings_relay_tab(
+                    ui,
+                    io.relay_edit,
+                    self.relay_seeded,
+                    &self.relay_status,
+                    &self.serial_ports,
+                    &self.relay_devices,
+                    io.relay_apply,
+                    io.relay_test,
+                );
             }
             SettingsTab::Ui => {
                 settings_ui_tab(ui, io.ui_edit, io.solar_cloud_march.as_deref_mut());
@@ -3488,18 +3495,6 @@ impl SdroxideApp {
                     self.rot_cfg_seeded,
                     &self.rotator_status,
                     io.rot_apply,
-                );
-            }
-            SettingsTab::TrSwitch => {
-                relay::settings_relay_tab(
-                    ui,
-                    io.relay_edit,
-                    self.relay_seeded,
-                    &self.relay_status,
-                    &self.serial_ports,
-                    &self.relay_devices,
-                    io.relay_apply,
-                    io.relay_test,
                 );
             }
             SettingsTab::Amp => {

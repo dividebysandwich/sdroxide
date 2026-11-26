@@ -368,11 +368,9 @@ pub struct SenseConfig {
     /// Whether a *high* line means transmitting. Most opto-isolated interfaces
     /// pull the line down when the rig keys, so this is often false.
     pub active_high: bool,
-    /// Which radio tab the sensed transmitter belongs to, as a zero-based
-    /// index. On a station with one radio this is 0 and nobody has to think
-    /// about it; on a multi-radio station only one of them is the transceiver
-    /// with the wire in it, and telling the wrong engine would mute the wrong
-    /// receiver and refuse the wrong key-down.
+    /// Retained for compatibility with configurations saved when one switch
+    /// was shared by every radio; ignored now. The switch belongs to one
+    /// radio, so the sensed transmitter is always that radio's.
     pub radio: u32,
 }
 
@@ -390,9 +388,8 @@ pub struct SenseConfig {
 ///
 /// The move between the two is sequenced exactly like any other contact's:
 /// the channel's own lead before RF, its own hold after — the relay worker
-/// makes it, from the station-wide on-air state, never the engine. The RX
-/// word is the receive dial's band; the TX word is the band of the radio
-/// actually keying.
+/// makes it, from the owning radio's on-air state, never the engine. The RX
+/// word is the owning radio's receive band; the TX word its transmit band.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelayBandRow {
     pub band: crate::Band,
@@ -400,10 +397,11 @@ pub struct RelayBandRow {
     pub tx_mask: u32,
 }
 
-/// Everything the station's T/R switch needs to know. Persisted as
-/// `relay.json` beside the rotator's own file and announced in
+/// Everything one radio's T/R switch needs to know. Persisted as `relay.json`
+/// in the radio's own configuration scope and announced in
 /// [`crate::StationConfig`], because it is a fact about the machine the antenna
-/// is attached to and a remote client has no way to guess it.
+/// is attached to and a remote client has no way to guess it. Each radio has
+/// its own, and a relay module may be assigned to only one radio.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RelayConfig {

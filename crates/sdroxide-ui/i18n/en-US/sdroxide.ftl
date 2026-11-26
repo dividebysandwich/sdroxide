@@ -830,8 +830,9 @@ settings-profiles-apply = Apply
 ## Settings window, T/R switch (src/app/settings/relay.rs)
 
 settings-relay-transmit-receive-switch = Transmit/receive switch
-settings-relay-waiting-station-s-t-r = Waiting for the station's T/R switch configuration…
-settings-relay-closes-contact-while-station-transmits = Closes a contact while this station transmits — to disconnect and ground the SDR's antenna input, and to key an amplifier or an outboard T/R relay in sequence with it. Works with the cheap USB relay boards (LCUS, KMtronic, Numato), with a serial RTS/DTR line into any interface that wants a PTT closure, and with anything else through a command hook.
+settings-relay-waiting-station-s-t-r = Waiting for this radio's T/R switch configuration…
+settings-relay-closes-contact-while-station-transmits = Closes a contact while this radio transmits — to disconnect and ground the SDR's antenna input, and to key an amplifier or an outboard T/R relay in sequence with it. Works with the cheap USB relay boards (LCUS, KMtronic, Numato), with a serial RTS/DTR line into any interface that wants a PTT closure, and with anything else through a command hook.
+settings-relay-belongs-this-radio-only = This switch belongs to this radio only: its band decoder follows this radio's dials, and only this radio's transmissions throw it. Each radio has its own T/R resources, but each serial port, HID board, GPIO line or CM108 pin can be assigned to only one radio; another radio that asks for it is refused, in red.
 settings-relay-hardware = Hardware
 settings-relay-board = Board
 settings-relay-lcus-four-byte-a0-command = LCUS is the four-byte A0-command board sold under a dozen names; KMtronic and Numato can also be asked what they are set to
@@ -867,7 +868,7 @@ settings-relay-closed-long-before-rf-small = Closed this long before RF. A small
 settings-relay-how-long-after-rf-stops = How long after RF stops this contact goes back from its TX word to its RX word.
 settings-relay-opened-long-after-rf-stops = Opened this long after RF stops. Longer than the lead on purpose: letting the antenna back a moment late costs nothing, and letting it back early costs a front end. Zero is a real answer, and the right one for an amplifier's key line.
 settings-relay-test = {" "}TEST{" "}
-settings-relay-not-while-station-air = Not while the station is on the air
+settings-relay-not-while-station-air = Not while this radio is on the air
 settings-relay-close-contact-half-second-so = Close this contact for half a second, so you can hear the relay and check the wiring with the transmitter cold
 settings-relay-remove = Remove
 settings-relay-add-contact = + add a contact
@@ -880,8 +881,6 @@ settings-relay-line = Line
 settings-relay-transmitting = Transmitting is
 settings-relay-high-line = a high line
 settings-relay-most-opto-isolated-interfaces-pull = Most opto-isolated interfaces pull the line down when the rig keys, so this is usually off
-settings-relay-belongs-radio = Belongs to radio
-settings-relay-which-radio-tab-sensed-transceiver = Which radio tab the sensed transceiver is. On a station with one radio this is 1 and nothing depends on it.
 settings-relay-needs-serial-port-handshake-lines = Needs a serial port — the handshake lines are on it.
 settings-relay-wiring-only-fail-safe-survives = Wiring is the only fail-safe that survives this program.
 settings-relay-choose-tx-closes-so-de = Choose “TX closes” so that the *de-energised* contact is the state you want when the board is unplugged, the computer is off, or sdroxide is not running. Wired so that de-energised means grounded, a dead relay leaves the SDR deaf — annoying, and safe. Wired the other way, a dead relay plus one transmission is a dead front end. With a real amplifier behind it, take the first.
@@ -889,7 +888,7 @@ settings-relay-cannot-protect-first-instant-over = This cannot protect the first
 settings-relay-contacts-transmit = contacts in TRANSMIT
 settings-relay-not-open = Not open.
 settings-relay-status-unknown-press-apply = Status unknown — press APPLY.
-settings-relay-station-air-apply-will-take = The station is on the air — APPLY will take effect after this over.
+settings-relay-station-air-apply-will-take = This radio is on the air — APPLY will take effect after this over.
 settings-relay-band-decoder-outputs = Band decoder outputs
 settings-relay-one-control-word-per-band = One control word per band: bit 0 is contact 1, bit 1 contact 2 and so on, matching the numbering above. RX follows the receive dial's band; TX the band of whichever radio keyed, switched in on each contact's lead before RF and back after its hold — give them the same value for a filter that does not care which way the RF is going, and different ones for a receive-only preamp bypass or a transmit-only LPF bank. Bands left at 0 assert nothing. Applies on Apply / reconnect.
 settings-relay-band = Band
@@ -1109,6 +1108,7 @@ settings-profiles-delete = Delete “{ $name }”
 
 settings-relay-not-usable = Not usable yet: { $why }
 settings-relay-receiving = receiving
+settings-relay-owned-by-this-radio = owned by this radio
 settings-relay-rx-tx-words = { $rx } / TX { $tx }
 
 ## Settings window, Servers: messages with values

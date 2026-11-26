@@ -67,14 +67,13 @@ pub struct StationConfig {
     /// that disagrees with the radio. The largest field in this bundle by some
     /// way, but the bundle is sent on connect and on change, not in a loop.
     pub band_plan: crate::BandPlan,
-    /// The external T/R switch: the relay board or contact closure that gets
-    /// the SDR out of the way while the station transmits.
+    /// The external T/R switch: the relay module or contact closure that gets
+    /// this radio's SDR out of the way while it transmits.
     ///
-    /// Here rather than in `radio.json` because it is one box for the whole
-    /// station, in front of whatever this program happens to be receiving with
-    /// — the same argument the LimeRFE makes for being its own crate. On a
-    /// multi-radio station every engine reports whether it is on the air and
-    /// the switch follows all of them.
+    /// Per radio, in the radio's own scope (`relay.json`; radio 0's is the
+    /// legacy root file). A module belongs to exactly one radio and follows
+    /// only that radio's dials and key-downs; a station can have several,
+    /// one per radio.
     ///
     /// Appended last, for the usual reason.
     pub relay: RelayConfig,

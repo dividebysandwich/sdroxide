@@ -825,8 +825,6 @@ settings-relay-line = 回線
 settings-relay-transmitting = 送信中は
 settings-relay-high-line = 高レベルの回線
 settings-relay-most-opto-isolated-interfaces-pull = ほとんどのフォトアイソレーション・インターフェースは、無線機がキーされると回線を下げるため、通常はオフです
-settings-relay-belongs-radio = 所属する無線機
-settings-relay-which-radio-tab-sensed-transceiver = 検出されたトランシーバーがどの無線機タブかです。無線機が 1 台のステーションでは 1 で、他には影響しません。
 settings-relay-needs-serial-port-handshake-lines = シリアルポートが必要です。ハンドシェイク回線がそこにあります。
 settings-relay-wiring-only-fail-safe-survives = このプログラムが終了しても残る唯一のフェイルセーフは配線です。
 settings-relay-choose-tx-closes-so-de = 「送信時に閉じる」を選び、ボードが抜かれたとき、コンピューターの電源が切れたとき、または sdroxide が動いていないときに、*励磁されていない*接点が望ましい状態になるようにしてください。励磁されていないときに接地される配線にすると、リレーが故障してもSDR は聞こえなくなります。迷惑ですが安全です。逆に配線すると、リレーの故障と 1 回の送信でフロントエンドが壊れます。背後に本物のアンプがある場合は、前者を選んでください。
@@ -1044,6 +1042,7 @@ settings-profiles-delete = 「{ $name }」を削除
 
 settings-relay-not-usable = まだ使用できません：{ $why }
 settings-relay-receiving = 受信中
+settings-relay-owned-by-this-radio = このラジオに割り当て済み
 settings-relay-rx-tx-words = { $rx } / TX { $tx }
 
 ## 設定ウィンドウ、サーバー：値を含むメッセージ。

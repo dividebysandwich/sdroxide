@@ -828,8 +828,6 @@ settings-relay-line = Hat
 settings-relay-transmitting = Yayında olmak
 settings-relay-high-line = yüksek hat
 settings-relay-most-opto-isolated-interfaces-pull = Çoğu optik izoleli arayüz, telsiz anahtarlandığında hattı aşağı çeker; bu yüzden genellikle kapalıdır
-settings-relay-belongs-radio = Bağlı olduğu radyo
-settings-relay-which-radio-tab-sensed-transceiver = Algılanan telsizin hangi radyo sekmesinde olduğu. Tek radyolu bir istasyonda bu 1'dir ve hiçbir şey buna bağlı değildir.
 settings-relay-needs-serial-port-handshake-lines = Bir seri bağlantı noktası gerektirir — el sıkışma hatları onun üzerindedir.
 settings-relay-wiring-only-fail-safe-survives = Bu programdan sağ kurtulan tek emniyet, kablolamadır.
 settings-relay-choose-tx-closes-so-de = “TX closes” seçin; böylece kart çekildiğinde, bilgisayar kapalıyken ya da sdroxide çalışmazken istediğiniz durum *enerjisiz* kontak olsun. Enerjisiz olmanın topraklı anlamına gelecek şekilde kablolandığında, ölü bir röle SDR'yi sağır bırakır — rahatsız edici ama güvenli. Diğer yönde kablolandığında ölü bir röle ve tek bir yayın, ölü bir ön uç demektir. Arkasında gerçek bir amplifikatör varsa ilkini alın.
@@ -1046,6 +1044,7 @@ settings-profiles-delete = “{ $name }” sil
 
 settings-relay-not-usable = Henüz kullanılamaz: { $why }
 settings-relay-receiving = alıyor
+settings-relay-owned-by-this-radio = bu telsize atandı
 settings-relay-rx-tx-words = { $rx } / TX { $tx }
 
 ## Ayarlar penceresi, Sunucular: değerli iletiler

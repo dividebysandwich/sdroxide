@@ -830,8 +830,6 @@ settings-relay-line = Lijn
 settings-relay-transmitting = Zenden is
 settings-relay-high-line = een hoge lijn
 settings-relay-most-opto-isolated-interfaces-pull = De meeste opto-geïsoleerde interfaces trekken de lijn omlaag wanneer de radio zendt, dus dit staat meestal uit
-settings-relay-belongs-radio = Hoort bij radio
-settings-relay-which-radio-tab-sensed-transceiver = Op welk radiotabblad de waargenomen transceiver zit. Op een station met één radio is dit 1 en hangt er niets van af.
 settings-relay-needs-serial-port-handshake-lines = Vereist een seriële poort — de handshake-lijnen zitten daarop.
 settings-relay-wiring-only-fail-safe-survives = Alleen de bedrading is een veiligheid die dit programma overleeft.
 settings-relay-choose-tx-closes-so-de = Kies “Zenden sluit” zodat het *niet-bekrachtigde* contact de toestand is die je wilt wanneer de kaart losgekoppeld is, de computer uit staat of sdroxide niet draait. Zo bedraad dat niet-bekrachtigd betekent: geaard, laat een dode relais de SDR doof — vervelend, maar veilig. Andersom bedraad, geeft een dode relais plus één zending een dode front-end. Met een echte versterker erachter kies je de eerste.
@@ -1048,6 +1046,7 @@ settings-profiles-delete = “{ $name }” verwijderen
 
 settings-relay-not-usable = Nog niet bruikbaar: { $why }
 settings-relay-receiving = ontvangen
+settings-relay-owned-by-this-radio = toegewezen aan deze radio
 settings-relay-rx-tx-words = { $rx } / TX { $tx }
 
 ## Settings window, Servers: messages with values

@@ -779,7 +779,7 @@ fn welcome_page_transmit(ui: &mut egui::Ui, checks: &[checkup::Check], go: &mut 
         ui,
         tr!("welcome-open-trswitch"),
         tr!("welcome-open-trswitch", "hint"),
-        Go::Settings(SettingsTab::TrSwitch),
+        Go::Settings(SettingsTab::Radio),
         go,
     );
     heading(ui, tr!("welcome-now"));

@@ -854,8 +854,6 @@ settings-relay-line = Leitung
 settings-relay-transmitting = Senden ist
 settings-relay-high-line = eine High-Leitung
 settings-relay-most-opto-isolated-interfaces-pull = Die meisten optoisolierten Schnittstellen ziehen die Leitung herunter, wenn das Gerät tastet; deshalb ist dies meist aus
-settings-relay-belongs-radio = Gehört zu Funkgerät
-settings-relay-which-radio-tab-sensed-transceiver = Zu welchem Funkgerät-Reiter der erkannte Transceiver gehört. Bei einer Station mit einem Funkgerät ist das 1, und nichts hängt davon ab.
 settings-relay-needs-serial-port-handshake-lines = Braucht einen seriellen Port — die Handshake-Leitungen liegen darauf.
 settings-relay-wiring-only-fail-safe-survives = Die Verdrahtung ist die einzige Ausfallsicherung, die dieses Programm übersteht.
 settings-relay-choose-tx-closes-so-de = „Senden schließt“ wählen, damit der *stromlose* Kontakt der gewünschte Zustand ist, wenn die Karte abgezogen ist, der Computer aus ist oder sdroxide nicht läuft. Verdrahtet so, dass stromlos Masse bedeutet, lässt ein totes Relais den SDR taub — lästig, aber sicher. Andersherum verdrahtet, bedeutet ein totes Relais plus eine Aussendung eine tote Frontstufe. Mit einem echten Verstärker dahinter die erste Option nehmen.
@@ -1083,6 +1081,7 @@ settings-profiles-delete = „{ $name }“ löschen
 
 settings-relay-not-usable = Noch nicht nutzbar: { $why }
 settings-relay-receiving = empfängt
+settings-relay-owned-by-this-radio = diesem Funkgerät zugeordnet
 settings-relay-rx-tx-words = { $rx } / TX { $tx }
 
 ## Settings window, Servers: messages with values

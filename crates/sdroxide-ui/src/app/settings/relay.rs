@@ -1,5 +1,5 @@
 //! The external transmit/receive switch: the relay that gets the SDR out of the
-//! way while the station transmits.
+//! way while this radio transmits.
 //!
 //! A tab of its own rather than another section under Servers, where the
 //! rotator lives. The panel is large — a channel table, the sequencer's
@@ -52,6 +52,8 @@ pub(in crate::app) fn settings_relay_tab(
         return;
     }
     ui.label(RichText::new(tr!("settings-relay-closes-contact-while-station-transmits")).weak());
+    ui.add_space(4.0);
+    ui.label(RichText::new(tr!("settings-relay-belongs-this-radio-only")).weak());
     ui.add_space(8.0);
 
     // ── the link ────────────────────────────────────────────────────────────
@@ -408,15 +410,6 @@ pub(in crate::app) fn settings_relay_tab(
                     cfg.sense.active_high = high;
                 }
                 ui.end_row();
-
-                ui.label(tr!("settings-relay-belongs-radio"));
-                ui.add(
-                    egui::DragValue::new(&mut cfg.sense.radio)
-                        .range(0..=15)
-                        .custom_formatter(|n, _| format!("{}", n as u32 + 1)),
-                )
-                .on_hover_text(tr!("settings-relay-which-radio-tab-sensed-transceiver"));
-                ui.end_row();
             }
         });
     });
@@ -444,8 +437,9 @@ pub(in crate::app) fn settings_relay_tab(
     } else if status.configured && status.present {
         ui.label(
             RichText::new(format!(
-                "● {} — {}",
+                "● {} — {} — {}",
                 status.describe,
+                tr!("settings-relay-owned-by-this-radio"),
                 if status.keyed {
                     tr!("settings-relay-contacts-transmit")
                 } else {

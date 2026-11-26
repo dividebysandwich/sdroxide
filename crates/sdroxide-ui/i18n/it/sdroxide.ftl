@@ -833,8 +833,6 @@ settings-relay-line = Linea
 settings-relay-transmitting = In trasmissione è
 settings-relay-high-line = una linea alta
 settings-relay-most-opto-isolated-interfaces-pull = La maggior parte delle interfacce optoisolate porta la linea a massa quando l'apparato trasmette, quindi di solito questa è disattivata
-settings-relay-belongs-radio = Appartiene alla radio
-settings-relay-which-radio-tab-sensed-transceiver = A quale scheda radio appartiene il ricetrasmettitore rilevato. In una stazione con una sola radio è 1 e nulla dipende da questo.
 settings-relay-needs-serial-port-handshake-lines = Richiede una porta seriale — su di essa ci sono le linee di handshake.
 settings-relay-wiring-only-fail-safe-survives = Il cablaggio è l'unica protezione di sicurezza che sopravvive a questo programma.
 settings-relay-choose-tx-closes-so-de = Scegli “Chiude in TX” così che il contatto *diseccitato* sia lo stato che vuoi quando la scheda viene staccata, il computer è spento o sdroxide non è in funzione. Cablato in modo che diseccitato significhi a massa, un relè guasto lascia l'SDR sordo — fastidioso, ma sicuro. Cablato al contrario, un relè guasto più una trasmissione significa uno stadio d'ingresso morto. Con un vero amplificatore a valle, scegli la prima.
@@ -1051,6 +1049,7 @@ settings-profiles-delete = Elimina “{ $name }”
 
 settings-relay-not-usable = Non ancora utilizzabile: { $why }
 settings-relay-receiving = in ricezione
+settings-relay-owned-by-this-radio = assegnato a questa radio
 settings-relay-rx-tx-words = { $rx } / TX { $tx }
 
 ## Settings window, Servers: messages with values
