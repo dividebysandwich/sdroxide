@@ -234,8 +234,9 @@ fn auto_follows_the_band_plan_and_stays_simplex_outside_it() {
         caps(),
         EngineConfig { remember_session: false, tx_ham_only: false, ..Default::default() },
     );
-    // start_engine() adopts the saved station region; override it only for
-    // this Region 1 band-plan assertion.
+    // The engine thread adopts the saved station region as it starts; wait for
+    // its first state so the override below is not overwritten by it.
+    state_where(&h.event_rx, |_| true);
     region_guard.set_region(Region::R1);
     region_guard.own_engine_thread(h.thread.take());
     let send = |c: Command| h.cmd_tx.send(c).unwrap();

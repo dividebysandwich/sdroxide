@@ -76,6 +76,8 @@ fn the_radios_calibration_moves_the_meter_at_once() {
     let thread = h.thread.take();
     let mut settle = |h: &sdroxide_radio::EngineHandles| {
         let mut last = None;
+        // The meter falls with a 0.5 s release (`meter_ballistics`), so a
+        // 40 dB drop needs about six time constants to come within 0.1 dB.
         let deadline = Instant::now() + Duration::from_millis(3000);
         while Instant::now() < deadline {
             while let Ok(ev) = h.event_rx.try_recv() {
