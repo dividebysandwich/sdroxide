@@ -2912,8 +2912,11 @@ struct Engine {
     /// The transceiver in front of us is transmitting on its own — someone has
     /// their hand on its microphone. See [`ControlUpdate::RigTx`]: this engine
     /// is not driving that over and must not try to, so nothing here keys, and
-    /// nothing here modulates. It only watches.
+    /// no CAT key/unkey is sent. Host voice is fed only if the source confirms
+    /// its selected modulation input accepts it.
     rig_tx: bool,
+    /// Whether the radio's own PTT is followed (`CatConfig::external_ptt`).
+    allow_external_ptt: bool,
     /// ELAD only: mute the speakers for an over keyed at the radio itself
     /// (`CatConfig::elad_mute_on_radio_ptt`, the MIC A chip right of REC when
     /// off). Read live, so the chip needs no reopen.
@@ -2929,6 +2932,7 @@ struct Engine {
     /// The receive socket the transverter port moved off, put back when the
     /// dial leaves the row.
     xvtr_prev_ant: Option<String>,
+    rig_audio_active: bool,
     /// The transmit frequency the source has already been told, so
     /// [`Self::push_tx_freq`] only speaks when it moves.
     tx_freq_told: Option<f64>,
@@ -4713,10 +4717,12 @@ fn engine_thread(
         voice_blocks: 0,
         hw_ptt: false,
         rig_tx: false,
+        allow_external_ptt: radio_cfg.cat.external_ptt == sdroxide_types::ExternalPtt::Allow,
         elad_mute_rig_tx: radio_cfg.cat.elad_mute_on_radio_ptt,
         elad_hear_own_tx: radio_cfg.elad.hear_own_tx,
         xvtr_port_applied: false,
         xvtr_prev_ant: None,
+        rig_audio_active: false,
         tx_freq_told: None,
         drive_trim_db: 0.0,
         drive_trim: radio_cfg.tx_drive_trim.clone(),
@@ -5326,9 +5332,12 @@ fn engine_thread(
         engine.poll_reconnect();
         engine.poll_playback();
 
-        if engine.tx_active {
+        engine.sync_rig_tx_audio();
+        if engine.tx_active || engine.rig_audio_active {
             // Blocking TX write paces this loop at ~10 ms per block.
-            if let Err(e) = engine.tx_block() {
+            let written =
+                if engine.rig_audio_active { engine.tx_block_audio() } else { engine.tx_block() };
+            if let Err(e) = written {
                 let _ = engine.event_tx.send(RadioEvent::ConnectionLost(e.to_string()));
                 // Unkey on the way out. This thread is the only thing that ever
                 // calls `tx_end`, so returning without it leaves the
@@ -5339,8 +5348,10 @@ fn engine_thread(
                 // no `tx_write`) turned a refused over into a stuck one.
                 // Best-effort by necessity: the failure being reported may well
                 // be the same link this has to travel over.
-                if let Err(e) = engine.source.tx_end() {
-                    warn!("could not unkey after a transmit failure: {e}");
+                if engine.tx_active {
+                    if let Err(e) = engine.source.tx_end() {
+                        warn!("could not unkey after a transmit failure: {e}");
+                    }
                 }
                 // Same as the controller-gone exit: a dead engine must not
                 // keep the station interlock, nor the T/R switch.
@@ -11307,6 +11318,10 @@ impl Engine {
                 // an over already under way, and hearing our own overs is
                 // taken at the next key-down.
                 self.elad_hear_own_tx = cfg.elad.hear_own_tx;
+                self.allow_external_ptt = cfg.cat.external_ptt == sdroxide_types::ExternalPtt::Allow;
+                if !self.allow_external_ptt {
+                    self.adopt_rig_tx(false, "external PTT being disabled");
+                }
                 if self.elad_mute_rig_tx != cfg.cat.elad_mute_on_radio_ptt {
                     self.elad_mute_rig_tx = cfg.cat.elad_mute_on_radio_ptt;
                     let on = self.rig_tx;
@@ -14724,10 +14739,15 @@ impl Engine {
     /// Recorded, never answered: keying along with it would talk over the
     /// person holding the microphone. See [`ControlUpdate::RigTx`].
     fn adopt_rig_tx(&mut self, on: bool, how: &str) {
+        // Both the CAT report and the sense line are the radio's own PTT.
+        if on && !self.allow_external_ptt {
+            return;
+        }
         if on == self.rig_tx {
             return;
         }
         self.rig_tx = on;
+        self.state.tx.external_ptt = on;
         info!(
             "the radio is {} under {how}",
             match on {
@@ -14745,6 +14765,7 @@ impl Engine {
         if let Some(hub) = self.tr_switch.as_ref() {
             hub.publish(self.instance, self.on_air());
         }
+        let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
     }
 
     /// The receive Doppler correction currently in force, Hz — zero unless a
@@ -17790,6 +17811,10 @@ impl Engine {
     /// [`IqSource::release`]) is stood down first and takes the failure case
     /// with it: it goes dark, and [`Engine::poll_reconnect`] picks it up.
     fn reopen_source(&mut self) {
+        // The settings tab only saves the file; this is how the engine learns
+        // of a change to whether the radio's own PTT is followed.
+        self.allow_external_ptt = self.store.load_radio_config().cat.external_ptt
+            == sdroxide_types::ExternalPtt::Allow;
         let center = self.state.active_freq_hz();
         let Some(factory) = self.reopen.clone() else {
             warn!("runtime interface switching unavailable in this build");
@@ -18087,6 +18112,9 @@ impl Engine {
         // Drop rate-dependent / stateful DSP so it rebuilds for the new source.
         self.tx = None;
         self.tx_active = false;
+        self.rig_tx = false;
+        self.rig_audio_active = false;
+        self.state.tx.external_ptt = false;
         // The new front end has its own PTT line and reports it from scratch.
         // Carrying "still held" across the swap would swallow the next press,
         // since only an edge keys.
@@ -18664,6 +18692,39 @@ impl Engine {
             mixer.tx_muted = mute;
             mixer.rx_rec_enabled = !mute;
         }
+    }
+
+    fn sync_rig_tx_audio(&mut self) {
+        let voice = matches!(self.state.rx[0].mode, Mode::Usb | Mode::Lsb | Mode::Am | Mode::Nfm);
+        let active = self.rig_tx
+            && !self.tx_active
+            && !self.digi_tx
+            && !self.voice_tx
+            && !self.tci_tx
+            && !self.state.tx.tune
+            && voice
+            && self.source.feeds_audio_on_rig_tx();
+        if active == self.rig_audio_active {
+            return;
+        }
+        self.rig_audio_active = active;
+        self.tx_pace = None;
+        self.mic_fifo.clear();
+        self.tx_analyzer.reset();
+        self.voice_peak = 0.0;
+        self.voice_blocks = 0;
+        if let Some(mic) = self.mic.as_mut() {
+            while mic.consumer.pop().is_ok() {}
+        }
+        if active {
+            if self.voice.is_recording() {
+                self.voice.stop_record();
+                self.emit_voice_status();
+            }
+            self.stop_voice_preview();
+            self.rebuild_sub_tone();
+        }
+        info!(active, "host voice audio following the radio's local PTT (no CAT key/unkey)");
     }
 
     /// The radio's own PTT line changed state — a foot switch, a mic button, or

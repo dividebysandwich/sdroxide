@@ -103,6 +103,7 @@ impl Default for SimOptions {
 #[derive(Debug, Default)]
 struct Recorded {
     mode: u8,
+    data_mode: u8,
     /// PCM the client transmitted, decoded to mono.
     tx_audio: Vec<f32>,
     /// CI-V frames the client sent.
@@ -139,6 +140,7 @@ pub struct Sim {
     /// Whether the scope is streaming — `27 11` sets it, and a test can clear
     /// it. See [`Sim::stall_scope`].
     scope_out: Arc<AtomicBool>,
+    ptt: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
 }
 
@@ -157,6 +159,7 @@ impl Sim {
         // Off until the client asks for it, as on a real radio: a scope running
         // on the radio's own display streams nothing until `27 11`.
         let scope_out = Arc::new(AtomicBool::new(false));
+        let ptt = Arc::new(AtomicBool::new(false));
 
         let menu_default = opts.menu_default;
         let start_dial = opts.freq_hz;
@@ -173,6 +176,7 @@ impl Sim {
             alive: alive.clone(),
             recorded: recorded.clone(),
             scope_out: scope_out.clone(),
+            ptt: ptt.clone(),
             token: 0x1234_5678,
             token_request: 0,
             civ_open: false,
@@ -193,6 +197,7 @@ impl Sim {
             menu_default,
             start_dial,
             scope_out,
+            ptt,
             join: Some(join),
         })
     }
@@ -216,6 +221,11 @@ impl Sim {
     /// the frequency it was started on.
     pub fn dial(&self) -> f64 {
         self.recorded.lock().unwrap_or_else(|e| e.into_inner()).dial.unwrap_or(self.start_dial)
+    }
+
+    /// Key the radio locally, without a client CI-V PTT command.
+    pub fn set_local_ptt(&self, on: bool) {
+        self.ptt.store(on, Ordering::Relaxed);
     }
 
     /// Whether the client got as far as opening the streams.
@@ -471,6 +481,7 @@ struct SimRadio {
     token_request: u16,
     civ_open: bool,
     scope_out: Arc<AtomicBool>,
+    ptt: Arc<AtomicBool>,
     audio_started: Option<Instant>,
     audio_sent: u64,
     next_scope: Instant,
@@ -685,10 +696,29 @@ impl SimRadio {
                 Some(0x11) => Some(reply(vec![0x15, 0x11, 0x02, 0x13])),
                 _ => None,
             },
+            0x1c if frame.get(5) == Some(&0x00) && frame.len() >= 7 => {
+                match &frame[6..frame.len() - 1] {
+                    [] => Some(reply(vec![0x1c, 0x00, u8::from(self.ptt.load(Ordering::Relaxed))])),
+                    [on @ (0 | 1)] => {
+                        self.ptt.store(*on != 0, Ordering::Relaxed);
+                        Some(vec![0xfe, 0xfe, 0xe0, addr, 0xfb, 0xfd])
+                    }
+                    _ => None,
+                }
+            }
             // The Set-mode menu, `1A 05 <hi> <lo> [value]`. A bare item number
             // is a question and is answered with what the item holds; anything
             // after it is a write, and the radio keeps it — which is what lets
             // a test see what state the client left the rig in (issue #252).
+            0x1a if frame.get(5) == Some(&0x06) && frame.len() >= 7 => {
+                let mut recorded = self.recorded.lock().unwrap_or_else(|e| e.into_inner());
+                if frame.len() == 7 {
+                    Some(reply(vec![0x1a, 0x06, recorded.data_mode, 0x01]))
+                } else {
+                    recorded.data_mode = frame[6];
+                    Some(vec![0xfe, 0xfe, 0xe0, addr, 0xfb, 0xfd])
+                }
+            }
             0x1a if frame.get(5) == Some(&0x05) && frame.len() >= 9 => {
                 let item = (u16::from(frame[6]) << 8) | u16::from(frame[7]);
                 let value = &frame[8..frame.len() - 1];

@@ -1051,7 +1051,7 @@ impl SdroxideApp {
         if tx_capable {
             let resp = crate::chrome::chip_hold_sized(
                 ui,
-                self.state.tx.ptt,
+                self.state.tx.ptt_on(),
                 RichText::new("PTT").size(STRIP_PTT_TEXT).strong(),
                 crate::theme::ALERT(),
                 Color32::WHITE,
@@ -1435,9 +1435,9 @@ impl SdroxideApp {
             let w = crate::chrome::chip_width(ui, PTT_LABEL, Some(PTT_TEXT)) + extra;
             let h = crate::chrome::chip_height(ui, Some(PTT_TEXT));
             let size = egui::vec2(w, h);
-            crate::chrome::chip_hold_sized(ui, self.state.tx.ptt, label, fill, ink, size)
+            crate::chrome::chip_hold_sized(ui, self.state.tx.ptt_on(), label, fill, ink, size)
         } else {
-            crate::chrome::chip_hold(ui, self.state.tx.ptt, label, fill, ink)
+            crate::chrome::chip_hold(ui, self.state.tx.ptt_on(), label, fill, ink)
         }
         .on_hover_text(PTT_HOLD_HINT);
         self.apply_held_ptt(&resp, cmds);
@@ -5508,10 +5508,10 @@ impl SdroxideApp {
         let label = RichText::new(tr!("topbar-ptt")).size(15.0).strong();
         // Tinted only while idle: keyed, the chip fills red and the label
         // needs its white ink (`chip_enabled_tinted` is the precedent).
-        let label = if tx.ptt { label } else { label.color(crate::theme::ALERT()) };
+        let label = if tx.ptt_on() { label } else { label.color(crate::theme::ALERT()) };
         if crate::chrome::chip_accent_sized(
             ui,
-            tx.ptt,
+            tx.ptt_on(),
             label,
             crate::theme::ALERT(),
             Color32::WHITE,

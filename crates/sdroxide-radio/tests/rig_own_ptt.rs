@@ -35,6 +35,9 @@ struct Rig {
     keyed: bool,
     /// Every frequency `tx_begin` was called with: the transmit chain running.
     keyed_by_us: Vec<f64>,
+    unkeyed_by_us: usize,
+    lan_input: bool,
+    audio: Vec<f32>,
 }
 
 struct MockRig {
@@ -97,9 +100,83 @@ impl IqSource for MockRig {
     fn tx_write(&mut self, _samples: &[Complex32]) -> Result<()> {
         Ok(())
     }
-    fn tx_write_audio(&mut self, _audio: &[f32]) -> Result<()> {
+    fn tx_write_audio(&mut self, audio: &[f32]) -> Result<()> {
+        self.rig.lock().unwrap().audio.extend_from_slice(audio);
         Ok(())
     }
+    fn feeds_audio_on_rig_tx(&self) -> bool {
+        self.rig.lock().unwrap().lan_input
+    }
+    fn tx_end(&mut self) -> Result<()> {
+        self.rig.lock().unwrap().unkeyed_by_us += 1;
+        Ok(())
+    }
+}
+
+#[test]
+fn local_ptt_feeds_host_voice_only_when_the_radio_selects_lan_audio() {
+    use sdroxide_radio::{MicParams, rtrb::RingBuffer};
+
+    let rig = Arc::new(Mutex::new(Rig::default()));
+    let (mut mic, consumer) = RingBuffer::new(4096);
+    let mut c = caps();
+    c.tx_audio = true;
+    let h = start_engine(
+        Box::new(MockRig { rig: Arc::clone(&rig) }),
+        c,
+        EngineConfig {
+            tx_ham_only: false,
+            mic: Some(MicParams { consumer, rate: RATE }),
+            ..Default::default()
+        },
+    );
+    let t = Harness { h, rig };
+    t.h.cmd_tx
+        .send(Command::SetMode { rx: sdroxide_types::RxId::Main, mode: sdroxide_types::Mode::Usb })
+        .unwrap();
+    t.wait("receive meter", |ev| matches!(ev, RadioEvent::Meters(m) if m.tx.is_none()));
+    t.rig_keys(true);
+    t.wait("local transmit meter", |ev| matches!(ev, RadioEvent::Meters(m) if m.tx.is_some()));
+    assert!(t.rig.lock().unwrap().audio.is_empty(), "host audio leaked into radio mic mode");
+
+    t.rig.lock().unwrap().lan_input = true;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline {
+        while mic.push(0.2).is_ok() {}
+        if t.rig.lock().unwrap().audio.iter().any(|a| a.abs() > 0.01) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    {
+        let r = t.rig.lock().unwrap();
+        assert!(r.audio.iter().any(|a| a.abs() > 0.01), "LAN mode never received computer voice");
+        assert!(r.keyed_by_us.is_empty(), "audio following sent radio key-down");
+    }
+    t.rig.lock().unwrap().lan_input = false;
+    std::thread::sleep(Duration::from_millis(80));
+    let samples = t.rig.lock().unwrap().audio.len();
+    std::thread::sleep(Duration::from_millis(80));
+    assert_eq!(t.rig.lock().unwrap().audio.len(), samples, "voice continued in radio mic mode");
+    t.rig.lock().unwrap().lan_input = true;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline && t.rig.lock().unwrap().audio.len() == samples {
+        while mic.push(0.2).is_ok() {}
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(t.rig.lock().unwrap().audio.len() > samples, "voice did not resume in LAN mode");
+    t.rig_keys(false);
+    t.wait(
+        "receive after local release",
+        |ev| matches!(ev, RadioEvent::Meters(m) if m.tx.is_none()),
+    );
+    let samples = t.rig.lock().unwrap().audio.len();
+    std::thread::sleep(Duration::from_millis(80));
+    let r = t.rig.lock().unwrap();
+    assert_eq!(r.audio.len(), samples, "voice continued after local release");
+    assert_eq!(r.unkeyed_by_us, 0, "audio following sent radio key-up");
+    drop(r);
+    t.shutdown();
 }
 
 fn caps() -> DeviceCaps {
@@ -169,6 +246,25 @@ impl Harness {
 /// The meter follows whatever is on the air. An over the operator keyed at the
 /// radio is on the air, so the needle goes to transmit and reads its SWR — and
 /// comes back to receive when they let go.
+#[test]
+fn external_ptt_is_published_as_status_without_commanding_ptt() {
+    let t = engine();
+    t.wait("initial state", |ev| matches!(ev, RadioEvent::State(_)));
+    t.rig_keys(true);
+    t.wait(
+        "external PTT indication",
+        |ev| matches!(ev, RadioEvent::State(s) if s.tx.external_ptt && s.tx.ptt_on() && !s.tx.ptt),
+    );
+    assert!(t.rig.lock().unwrap().keyed_by_us.is_empty());
+    t.rig_keys(false);
+    t.wait(
+        "external PTT indicator release",
+        |ev| matches!(ev, RadioEvent::State(s) if !s.tx.external_ptt && !s.tx.ptt_on()),
+    );
+    assert_eq!(t.rig.lock().unwrap().unkeyed_by_us, 0);
+    t.shutdown();
+}
+
 #[test]
 fn the_meter_follows_an_over_the_operator_keyed_at_the_radio() {
     let t = engine();

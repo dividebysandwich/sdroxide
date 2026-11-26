@@ -108,7 +108,9 @@ pub enum ControlUpdate {
     /// them off mid-word.
     ///
     /// So the engine *observes* it: the meter follows the over and shows its
-    /// SWR, and sdroxide will not key on top of it. It does not transmit.
+    /// SWR, and sdroxide will not key on top of it. An explicitly opted-in
+    /// source may accept host voice audio while locally keyed, without CAT
+    /// key/unkey commands — see [`IqSource::feeds_audio_on_rig_tx`].
     RigTx(bool),
 }
 
@@ -375,6 +377,11 @@ pub trait IqSource: Send {
     /// Stop transmitting and restore RX.
     fn tx_end(&mut self) -> Result<()> {
         Ok(())
+    }
+    /// The radio is already keyed locally and its selected input accepts host
+    /// voice audio. Enables audio feeding only, never `tx_begin` or `tx_end`.
+    fn feeds_audio_on_rig_tx(&self) -> bool {
+        false
     }
     /// Discard any RX samples buffered while transmitting, so the first read
     /// after [`Self::tx_end`] returns fresh data instead of a stale backlog.
@@ -1694,6 +1701,10 @@ impl IqSource for ConvertedSource {
 
     fn tx_end(&mut self) -> Result<()> {
         self.inner.tx_end()
+    }
+
+    fn feeds_audio_on_rig_tx(&self) -> bool {
+        self.inner.feeds_audio_on_rig_tx()
     }
 
     /// Both of these are about the receiver behind the converter, which is the

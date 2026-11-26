@@ -8,7 +8,7 @@
 
 use sdroxide_types::{
     AlertReply, AlertSound, AmpModel, AudioRoute, Backend, BandplanKind, CallsignStyle, CatFamily,
-    ChromeStyle, CwKeying, DigiMode, EladTxInput, FontSize, FreqStyle, IcomModel, KenwoodSend,
+    ChromeStyle, CwKeying, DigiMode, EladTxInput, ExternalPtt, FontSize, FreqStyle, IcomModel, KenwoodSend,
     LayoutMode, LineState, ModeControl, PanadapterAudio, PanadapterTap, Parity, PlutoAgc,
     PlutoDuplex, PlutoPtt, RotatorProtocol, RtlSdrAgc, RtlSdrHfMode, SdrPlayAgc, SdrPlayDuoRole,
     SdrPlayDuoTuner, SoundFormat, SpyServerFormat, TrUsdxAudio, UiTheme, Verbosity,
@@ -172,6 +172,15 @@ impl Tr for LineState {
             LineState::None => tr!("line-state-none"),
             LineState::High => tr!("line-state-high"),
             LineState::Low => tr!("line-state-low"),
+        }
+    }
+}
+
+impl Tr for ExternalPtt {
+    fn tr(self) -> String {
+        match self {
+            ExternalPtt::Allow => tr!("external-ptt-allow"),
+            ExternalPtt::Disable => tr!("external-ptt-disable"),
         }
     }
 }

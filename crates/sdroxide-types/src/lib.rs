@@ -256,7 +256,7 @@ pub use radio::{
     HackRfDevice, HpsdrConfig, HpsdrDevice, HpsdrFilterBoard, HpsdrIoRxInput, HpsdrOcPlan,
     HpsdrOcRow, HydraSdrConfig, HydraSdrDevice, HydraSdrGain, HydraSdrPort, IcomModel,
     IcomNetConfig, IcomRxSource, IcomScopeSpan, IfModeClass, KenwoodSend, KiwiConfig,
-    LimeAuxConfig, LimeAuxRole, LimeConfig, LimeDevice, LineState, MAX_TRANSVERTERS, ModeControl,
+    ExternalPtt, LimeAuxConfig, LimeAuxRole, LimeConfig, LimeDevice, LineState, MAX_TRANSVERTERS, ModeControl,
     PANADAPTER_OFFSET_MAX_HZ, PanadapterAudio, PanadapterConfig, PanadapterTap, Parity, PlutoAgc,
     PlutoAuxConfig, PlutoConfig, PlutoDevice, PlutoDuplex, PlutoPtt, PttMethod, QMX_IQ_OFFSET_HZ,
     QMX_IQ_RATE_HZ, RS_HFIQ_CAT_BAUD, RadioConfig, RtlSdrAgc, RtlSdrConfig, RtlSdrDevice,
