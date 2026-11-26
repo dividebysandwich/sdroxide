@@ -16782,9 +16782,9 @@ impl Engine {
     fn follow_band_pa(&mut self, band: Band) {
         if let Some(on) = self.band_pa.get(&band).copied()
             && self.source.pa_enable() != Some(on)
+            && self.source.set_pa_enable(on)
         {
             info!("Hermes-Lite PA {} for {band:?}", if on { "ON" } else { "OFF" });
-            self.source.set_pa_enable(on);
         }
         let now = self.source.pa_enable();
         if now != self.state.pa_enable {

@@ -2856,6 +2856,7 @@ mod tests {
             ]),
             band_gains: BandGains::from([
                 ("M40".to_string(), vec![("LNA".to_string(), 10.0)]),
+                ("GEN_VHF".to_string(), vec![("LNA".to_string(), 40.0)]),
             ]),
             band_drive: BandLevels::from([(sdroxide_types::Band::M40, 0.5)]),
             band_tune_drive: BandLevels::from([(sdroxide_types::Band::M40, 0.25)]),

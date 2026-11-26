@@ -48,6 +48,7 @@ const LINK_GAP: f32 = 4.0;
 /// What the RIG box's receiving-antenna chip says, in the one place the width
 /// measurement and the chip itself both read it from.
 const RX_ANT_LABEL: &str = "RX ANT";
+/// The label of the RIG box's Hermes-Lite 2 PA row, for the same reason.
 const PA_LABEL: &str = "Onboard PA";
 /// What the same chip says on an ELAD FDM-DUO, where the extra port is the
 /// 0 dBm RF OUT for a transverter rather than a receiving antenna.
@@ -5056,9 +5057,7 @@ impl SdroxideApp {
         // owns the other.
         if self.ant_row_shown() {
             crate::chrome::control_row(ui, narrow, |ui| {
-                if !ants.is_empty() || rx_ant.is_some() {
-                    ui.label("ANT").on_hover_text(tr!("topbar-which-socket-back-radio-receiving"));
-                }
+                ui.label("ANT").on_hover_text(tr!("topbar-which-socket-back-radio-receiving"));
                 if !ants.is_empty() {
                     let here = ants.iter().position(|a| *a == self.state.antenna_rx);
                     // The socket's own name, whole: a front end that spells its
