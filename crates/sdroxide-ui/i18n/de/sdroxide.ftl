@@ -4212,6 +4212,13 @@ scanner-settles = Wartet je Abschnitt
 scanner-settles-hint = Wartezeit nach dem Umstimmen, bevor das Spektrum gelesen wird. Länger: ruhigeres Bild, langsamerer Durchlauf.
 scanner-pano-width = Abschnittsbreite
 scanner-pano-width-hint = Anteil der Empfängerbreite je Abschnitt. Weniger: frei vom Randabfall; mehr: schnellerer Durchlauf. Abschnitte überlappen 10 %.
+scanner-pano-level = Pegel
+scanner-pano-hold = VERST. FEST
+scanner-pano-hold-hint = Verstärkung beim Durchlauf fest: SDRplay-AGC, Auto-LNA, Bandwerte.
+    Beim Stopp zurück, nicht gespeichert.
+scanner-pano-flat = GLATT
+scanner-pano-flat-hint = Durchlasskurve über Abschnitte gelernt, je Abschnitt abgezogen.
+    Glättet Hängematten im Rauschboden; Träger bleiben.
 scanner-pano-pause = Pause nach jeder Zeile
 scanner-pano-pause-hint = Wartezeit nach jedem vollen Durchlauf, bevor der nächste beginnt. 0: ohne Pause.
 scanner-pano-now = Jetzt

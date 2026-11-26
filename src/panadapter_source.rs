@@ -742,6 +742,12 @@ impl IqSource for PanadapterSource {
         self.rx.rx_gains_moved()
     }
 
+    /// The receiver's, like its gains: its samples are the ones a panorama
+    /// stitches.
+    fn hold_rx_gain(&mut self, hold: bool) -> bool {
+        self.rx.hold_rx_gain(hold)
+    }
+
     /// The receiver's, for the same reason: its samples are the ones measured.
     fn sample_full_scale(&self) -> f32 {
         self.rx.sample_full_scale()

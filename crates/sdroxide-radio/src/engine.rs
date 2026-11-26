@@ -1449,6 +1449,9 @@ struct Pano {
     sweep_at: Instant,
     /// Sweeps finished into this panorama: the first had no pause before it.
     rows: u32,
+    /// The receiver's passband shape, learned from this panorama's slices
+    /// ([`crate::scanner::PassbandShape`]).
+    shape: crate::scanner::PassbandShape,
 }
 
 struct Scan {
@@ -3353,6 +3356,10 @@ struct Engine {
     wide_from_pano: bool,
     /// Seconds between the last two panorama rows — what paces their scale.
     pano_row_s: f32,
+    /// Whether the front end is holding its receive gain for a panorama
+    /// ([`IqSource::hold_rx_gain`]), so the engine knows there is something to
+    /// let go of. False on a front end that had nothing to hold.
+    gain_held: bool,
     /// Scratch for the sweep's spectrum read, kept so a scan allocates nothing
     /// per slice.
     scan_db: Vec<f32>,
@@ -4874,6 +4881,7 @@ fn engine_thread(
         pano: None,
         wide_from_pano: false,
         pano_row_s: 0.1,
+        gain_held: false,
         scan_db: Vec::new(),
         audio_level: 0.0,
         wsjtx: None,
@@ -9462,6 +9470,9 @@ impl Engine {
                     self.stop_scan(None);
                     self.set_scanning(true);
                 }
+                // The hold switched on or off under a running panorama takes
+                // effect at once.
+                self.sync_gain_hold();
                 self.save_scanner_config();
             }
             SetScanning(on) => self.set_scanning(on),
@@ -11538,6 +11549,7 @@ impl Engine {
             // Let the device go, and any reconnect in flight with it, exactly
             // as an interface change does — a dongle held open and unread would
             // only overflow, and one claimed exclusively blocks its own return.
+            self.let_go_of_gain();
             self.source.release();
             if let Some(factory) = self.reopen.clone() {
                 let _held = factory.lock().unwrap_or_else(|e| e.into_inner());
@@ -15870,11 +15882,63 @@ impl Engine {
         });
         self.state.scan =
             sdroxide_types::ScanState { running: true, holding: false, sweeps: 0, sweep_ms: 0 };
+        // Before the first slice moves the front end, so what is held is the
+        // gain the operator was listening at.
+        self.sync_gain_hold();
         // Pick the first target now rather than waiting a poll for it, so
         // nothing has to distinguish "just started" from "just finished a
         // dwell" later on.
         self.scan_advance(now);
         self.emit_state();
+    }
+
+    /// Whether the scan in progress wants the receive gain held still: a
+    /// panorama with [`sdroxide_types::ScannerConfig::pano_hold_gain`] on.
+    fn pano_holds_gain(&self) -> bool {
+        self.state.scan.running
+            && self.scan_cfg.kind == ScanKind::Panorama
+            && self.scan_cfg.pano_hold_gain
+            && self.scan_can_sweep()
+    }
+
+    /// Bring the front end's gain hold into line with what the scan wants —
+    /// held while a panorama asks for it, let go the moment it does not.
+    ///
+    /// The hold is the front end's business ([`IqSource::hold_rx_gain`]); the
+    /// engine only says when. That keeps it off every saved setting: nothing
+    /// here goes through `remember_gain` or the band memory, and the radio's
+    /// config is never touched, so the hold is gone with the scan. A front end
+    /// with no loop of its own answers no and nothing happens; the per-band
+    /// gain recall, which is the engine's own loop, stands still for all of
+    /// them (see [`Engine::poll_gain_slot`]).
+    // Why: HDZ 2026-11-26: „ich leide darunter dass der lna autoskaled,
+    //      besser wäre den zu klemmen“.
+    fn sync_gain_hold(&mut self) {
+        let want = self.pano_holds_gain();
+        if want == self.gain_held {
+            return;
+        }
+        if want {
+            self.gain_held = self.source.hold_rx_gain(true);
+            if !self.gain_held {
+                return;
+            }
+        } else {
+            self.let_go_of_gain();
+        }
+        // The rails follow: the IF AGC is off and the LNA's automatic label
+        // dark while held, and both come back with it.
+        self.state.gains = self.source.current_gains();
+    }
+
+    /// Let go of a held receive gain, if there is one — before the front end
+    /// is stood down or swapped, so a device the next source shares (an
+    /// RSPduo's other tuner, a board reopened through the registry) is handed
+    /// over with the operator's own gain on it rather than the hold's.
+    fn let_go_of_gain(&mut self) {
+        if std::mem::take(&mut self.gain_held) {
+            self.source.hold_rx_gain(false);
+        }
     }
 
     /// Stop a running scan wherever it happens to be, which leaves the operator
@@ -15885,6 +15949,10 @@ impl Engine {
         }
         self.state.scan = sdroxide_types::ScanState::default();
         self.pano = None;
+        // Every way a scan ends comes through here — the operator, a fault, a
+        // transmission, a setting that restarts it — and the front end gets
+        // its own gain back on each of them.
+        self.sync_gain_hold();
         // A sweep drives the hardware centre itself, dial and all, so a scan
         // that stopped on a CW signal leaves a self-keying transceiver's VFO on
         // our zero-beat rather than on the station. Put it back before the
@@ -16033,10 +16101,22 @@ impl Engine {
             // showed before it.
             self.wide_levels = None;
             let n = crate::scanner::panorama_bins(lo, hi, span, self.scan_db.len());
-            self.pano = Some(Pano { lo, hi, bins: vec![f32::NAN; n], sweep_at: now, rows: 0 });
+            self.pano = Some(Pano {
+                lo,
+                hi,
+                bins: vec![f32::NAN; n],
+                sweep_at: now,
+                rows: 0,
+                shape: crate::scanner::PassbandShape::default(),
+            });
         }
         let (uh, _) = crate::scanner::panorama_geometry(self.scan_cfg.pano_usable);
         let last = self.scan.as_ref().is_some_and(|sc| sc.slice + 1 >= sc.slices.len());
+        // A panorama of one slice sees each station in the same bin every
+        // time round, where the shape estimate cannot tell it from the
+        // passband; one slice also has no seams to scallop.
+        let flatten =
+            self.scan_cfg.pano_flatten && self.scan.as_ref().is_some_and(|sc| sc.slices.len() >= 2);
         // The slice before this one in the sweep, whose overlap levels this one.
         let prev = self.scan.as_ref().and_then(|sc| {
             let i = sc.slice.checked_sub(1)?;
@@ -16046,6 +16126,15 @@ impl Engine {
             self.emit_state();
         }
         if let Some(p) = self.pano.as_mut() {
+            // The receiver's own passband curve out first, so neither the
+            // levelling nor the stitch sees a hammock in every slice. Learned
+            // whether or not it is used, so switching it on mid-sweep takes
+            // effect at once.
+            // Why: HDZ 2026-11-26: „ich sehe sprünge und hängematten“.
+            p.shape.learn(&self.scan_db, span, uh);
+            if flatten {
+                p.shape.flatten(&mut self.scan_db);
+            }
             // A gain step of a decibel or more between neighbours is the front
             // end's, not the band's: match this slice to the one before it.
             // Smaller differences are left alone, so a front end on a fixed
@@ -16999,7 +17088,11 @@ impl Engine {
             return;
         }
         self.gain_slot_seen = slot.clone();
-        if !self.gain_per_band {
+        // A panorama holding its gain crosses bands slice by slice, and a
+        // gain recalled at each crossing is a level step at that seam. The
+        // band is still noted, so the stop leaves the gain the operator had
+        // rather than the one remembered for wherever the sweep ended.
+        if !self.gain_per_band || self.pano_holds_gain() {
             return;
         }
         let Some(set) = self.band_gains.get(&slot).cloned() else { return };
@@ -17797,6 +17890,8 @@ impl Engine {
         };
         // Before the factory runs, not after it fails: an exclusively-claimed
         // device is the one thing standing between itself and its replacement.
+        // Its gain goes back first, for the same reason.
+        self.let_go_of_gain();
         self.source.release();
         // A background attempt may hold the factory; the operator's own change
         // wins as soon as that one finishes.
@@ -17819,6 +17914,9 @@ impl Engine {
         match opened {
             Ok((source, caps)) => self.adopt_source(source, caps),
             Err(e) => {
+                // Still on the old front end, and a panorama on it may still be
+                // sweeping: hold its gain again.
+                self.sync_gain_hold();
                 warn!("interface change failed: {e}");
                 let _ = self
                     .event_tx
@@ -17920,6 +18018,7 @@ impl Engine {
         // that has stopped delivering without dying still holds its USB
         // interface, so every attempt to replace it would be refused as busy
         // and the stream could never recover on its own.
+        self.let_go_of_gain();
         self.source.release();
 
         let center = self.state.active_freq_hz();
@@ -17958,6 +18057,9 @@ impl Engine {
         // new one reports only changes, so a stale `true` would keep receive
         // muted and transmit refused until the radio keyed again.
         self.adopt_rig_tx(false, "a new interface");
+        // A fresh front end holds nothing; whatever held the old one was let
+        // go of before it was stood down.
+        self.gain_held = false;
         self.source = source;
         self.receive_mode_seen = None;
         // The old front end's pipeline went with it.

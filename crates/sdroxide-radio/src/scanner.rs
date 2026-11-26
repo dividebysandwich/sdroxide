@@ -469,6 +469,145 @@ pub fn fill_panorama_gaps(pano: &mut [f32]) {
     }
 }
 
+/// Slices a [`PassbandShape`] keeps its estimate over.
+pub const PASSBAND_SLICES: usize = 24;
+/// Slices it wants before its estimate is used at all.
+pub const PASSBAND_MIN_SLICES: usize = 6;
+/// The quantile of a bin's recent deviations taken as its shape.
+///
+/// Low rather than the median because a station is never *below* the floor:
+/// a carrier that comes back to the same bin in half the slices — a short
+/// panorama of two slices puts every carrier there every other time — still
+/// leaves the lower quarter to the noise. The quantile reads the noise a
+/// little low, by the same amount in every bin, so re-centring takes it out.
+const PASSBAND_QUANTILE: f64 = 0.25;
+
+/// The receiver's own passband shape across one FFT, learned from panorama
+/// slices so it can be taken out of them.
+///
+/// Every slice a panorama takes passes through the same anti-alias and IF
+/// filters, so every slice's noise floor carries the same curve — a hammock
+/// that sags or bulges towards the edges by a few dB. Stitched side by side,
+/// one per slice, those curves make a scalloped floor that looks like signal
+/// and is not. The curve is a property of the bin, the band is a property of
+/// the frequency, and a sweep moves one under the other: in a given bin a
+/// station shows in some slices and not in others, while the curve shows in
+/// all of them. So per bin, a low quantile of the slice's deviation from its
+/// own median over the last [`PASSBAND_SLICES`] slices is the curve, and
+/// carriers fall out.
+///
+/// Kept per FFT size and span: either changing is a different curve, and the
+/// estimate starts over.
+#[derive(Debug, Clone, Default)]
+pub struct PassbandShape {
+    bins: usize,
+    span_hz: f64,
+    /// The trusted part of the slice, `lo..hi` in bins: what each slice's
+    /// deviations are measured from, and what the estimate is centred on.
+    usable: (usize, usize),
+    /// [`PASSBAND_SLICES`] rows of `bins` deviations, NaN where unwritten.
+    ring: Vec<f32>,
+    /// The row the next slice lands in.
+    next: usize,
+    /// Rows written, up to [`PASSBAND_SLICES`].
+    filled: usize,
+    /// The estimate: what to subtract from each bin, zero-median over the
+    /// trusted part so the slice's level is not moved — matching neighbours
+    /// is [`level_offset_db`]'s job.
+    shape: Vec<f32>,
+    scratch: Vec<f32>,
+}
+
+impl PassbandShape {
+    /// Learn from one slice's spectrum (dB, `span_hz` wide, its centre in the
+    /// middle bin), of which `usable_half` of the span either side of the
+    /// centre is trusted.
+    pub fn learn(&mut self, db: &[f32], span_hz: f64, usable_half: f64) {
+        let n = db.len();
+        if n == 0 || !span_hz.is_finite() || span_hz <= 0.0 {
+            return;
+        }
+        if n != self.bins || (span_hz - self.span_hz).abs() > 1e-6 * span_hz {
+            *self = PassbandShape {
+                bins: n,
+                span_hz,
+                ring: vec![f32::NAN; PASSBAND_SLICES * n],
+                shape: vec![0.0; n],
+                ..PassbandShape::default()
+            };
+        }
+        let half = ((n as f64 * usable_half.clamp(0.0, 0.5)) as usize).min(n / 2);
+        self.usable = (n / 2 - half, (n / 2 + half).min(n));
+        let (lo, hi) = self.usable;
+        let Some(reference) = median(&db[lo..hi], &mut self.scratch) else { return };
+        let row = &mut self.ring[self.next * n..(self.next + 1) * n];
+        for (d, &v) in row.iter_mut().zip(db) {
+            *d = if v.is_finite() { v - reference } else { f32::NAN };
+        }
+        self.next = (self.next + 1) % PASSBAND_SLICES;
+        self.filled = (self.filled + 1).min(PASSBAND_SLICES);
+        self.estimate();
+    }
+
+    /// Recompute [`Self::shape`] from the ring.
+    fn estimate(&mut self) {
+        let n = self.bins;
+        let (lo, hi) = self.usable;
+        let mut col: Vec<f32> = Vec::with_capacity(PASSBAND_SLICES);
+        // Every bin, not only the trusted ones: the stitch decides which bins
+        // it takes by frequency, and a bin on the boundary that missed the
+        // correction would stand out as a step of its own.
+        for i in 0..n {
+            self.shape[i] = 0.0;
+            col.clear();
+            col.extend((0..self.filled).map(|r| self.ring[r * n + i]).filter(|v| v.is_finite()));
+            if col.is_empty() {
+                continue;
+            }
+            let k = ((col.len() - 1) as f64 * PASSBAND_QUANTILE).round() as usize;
+            let (_, q, _) = col.select_nth_unstable_by(k, |a, b| a.total_cmp(b));
+            self.shape[i] = *q;
+        }
+        if let Some(centre) = median(&self.shape[lo..hi], &mut self.scratch) {
+            self.shape.iter_mut().for_each(|v| *v -= centre);
+        }
+    }
+
+    /// Whether enough slices are in for the estimate to be worth using.
+    pub fn ready(&self) -> bool {
+        self.filled >= PASSBAND_MIN_SLICES
+    }
+
+    /// The estimate, per bin, once [`Self::ready`].
+    pub fn shape(&self) -> Option<&[f32]> {
+        self.ready().then_some(&self.shape[..])
+    }
+
+    /// Take the estimate out of a slice of the size it was learned at. A
+    /// no-op before it is [`Self::ready`] or on any other size.
+    pub fn flatten(&self, db: &mut [f32]) {
+        let Some(shape) = self.shape() else { return };
+        if db.len() != shape.len() {
+            return;
+        }
+        for (v, s) in db.iter_mut().zip(shape) {
+            *v -= s;
+        }
+    }
+}
+
+/// The median of the finite values in `v`, sorted in `scratch`.
+fn median(v: &[f32], scratch: &mut Vec<f32>) -> Option<f32> {
+    scratch.clear();
+    scratch.extend(v.iter().copied().filter(|x| x.is_finite()));
+    if scratch.is_empty() {
+        return None;
+    }
+    let mid = scratch.len() / 2;
+    let (_, m, _) = scratch.select_nth_unstable_by(mid, |a, b| a.total_cmp(b));
+    Some(*m)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -779,4 +918,176 @@ mod tests {
     }
 
     const SPAN_PANO: f64 = 2e6;
+
+    /// Deterministic noise for the passband tests, uniform in ±`amp` dB.
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn next(&mut self, amp: f32) -> f32 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            ((self.0 >> 40) as f32 / (1u64 << 24) as f32 * 2.0 - 1.0) * amp
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            ((self.next(0.5) + 0.5) * n as f32) as usize % n.max(1)
+        }
+    }
+
+    /// A receiver's passband as it shows on the noise floor: up towards the
+    /// edges, a little tilted — a hammock some 3 dB deep across the trusted
+    /// part.
+    fn hammock(i: usize, n: usize) -> f32 {
+        let x = (i as f32 - n as f32 / 2.0) / (n as f32 / 2.0);
+        3.0 * x * x + 1.5 * x.powi(4) + 0.6 * x
+    }
+
+    #[test]
+    fn a_receivers_passband_is_learned_through_the_carriers() {
+        // Four slices a sweep, six sweeps: stations at fixed frequencies (so
+        // each comes back to some bin every sweep), a few short-lived ones in
+        // every slice, and a gain that jumps by up to ±3 dB from slice to
+        // slice as an AGC would.
+        let n = 1024;
+        let stride = (n as f64 * 0.7) as usize;
+        let mut rng = Lcg(7);
+        let stations: Vec<usize> = (0..12).map(|k| 60 + k * 250).collect();
+        let mut shape = PassbandShape::default();
+        let mut last = (Vec::new(), Vec::new(), 0);
+        for _sweep in 0..6 {
+            for k in 0..4 {
+                let gain = rng.next(3.0);
+                let mut truth = vec![-100.0f32; n];
+                for &a in &stations {
+                    if let Some(i) = a.checked_sub(k * stride).filter(|&i| i < n) {
+                        truth[i] = -60.0;
+                    }
+                }
+                for _ in 0..3 {
+                    truth[rng.below(n)] = -50.0;
+                }
+                let noise: Vec<f32> = (0..n).map(|_| rng.next(0.5)).collect();
+                let db: Vec<f32> =
+                    (0..n).map(|i| truth[i] + hammock(i, n) + noise[i] + gain).collect();
+                shape.learn(&db, SPAN_PANO, USABLE_HALF);
+                last = (db, truth, k);
+            }
+        }
+        let est = shape.shape().expect("24 slices are plenty");
+        let (lo, hi) =
+            (n / 2 - (n as f64 * USABLE_HALF) as usize, n / 2 + (n as f64 * USABLE_HALF) as usize);
+        let err: Vec<f32> = (lo..hi).map(|i| est[i] - hammock(i, n)).collect();
+        let spread = err.iter().copied().fold(f32::MIN, f32::max)
+            - err.iter().copied().fold(f32::MAX, f32::min);
+        assert!(spread < 1.0, "the estimate is the hammock to within ±0.5 dB: {spread:.2} dB");
+
+        let (mut db, truth, _) = last;
+        let raw = db.clone();
+        shape.flatten(&mut db);
+        let floor: Vec<f32> = (lo..hi).filter(|&i| truth[i] < -90.0).map(|i| db[i]).collect();
+        let mut sorted = floor.clone();
+        sorted.sort_by(f32::total_cmp);
+        let mid = sorted[sorted.len() / 2];
+        let raw_floor: Vec<f32> = (lo..hi).filter(|&i| truth[i] < -90.0).map(|i| raw[i]).collect();
+        let raw_p2p = raw_floor.iter().copied().fold(f32::MIN, f32::max)
+            - raw_floor.iter().copied().fold(f32::MAX, f32::min);
+        let p2p = sorted[sorted.len() - 1] - sorted[0];
+        assert!(raw_p2p > 2.5, "the hammock was there to take out: {raw_p2p:.2} dB");
+        // The noise alone is 1 dB peak to peak; the hammock adds next to none.
+        assert!(p2p < 1.5, "the floor is flat after: {p2p:.2} dB peak to peak");
+        for i in (lo..hi).filter(|&i| truth[i] > -70.0) {
+            assert!(db[i] > mid + 30.0, "the carrier in bin {i} survives: {} over {mid}", db[i]);
+        }
+    }
+
+    #[test]
+    fn a_passband_estimate_waits_for_enough_slices_and_starts_over_on_a_new_fft() {
+        let n = 512;
+        let db: Vec<f32> = (0..n).map(|i| -100.0 + hammock(i, n)).collect();
+        let mut shape = PassbandShape::default();
+        for _ in 0..PASSBAND_MIN_SLICES - 1 {
+            shape.learn(&db, SPAN_PANO, USABLE_HALF);
+        }
+        let mut out = db.clone();
+        shape.flatten(&mut out);
+        assert_eq!(out, db, "too few slices: left alone");
+        shape.learn(&db, SPAN_PANO, USABLE_HALF);
+        assert!(shape.ready());
+        shape.flatten(&mut out);
+        assert_ne!(out, db, "enough: flattened");
+        // Another FFT size, another span: a different curve.
+        let wider: Vec<f32> = (0..2 * n).map(|i| -100.0 + hammock(i, 2 * n)).collect();
+        shape.learn(&wider, SPAN_PANO, USABLE_HALF);
+        assert!(!shape.ready(), "a new FFT size starts the estimate over");
+        let mut shape = PassbandShape::default();
+        for _ in 0..PASSBAND_MIN_SLICES {
+            shape.learn(&db, SPAN_PANO, USABLE_HALF);
+        }
+        shape.learn(&db, SPAN_PANO * 2.0, USABLE_HALF);
+        assert!(!shape.ready(), "a new span starts it over");
+    }
+
+    #[test]
+    fn a_flattened_panorama_has_no_scallops_and_keeps_its_carrier() {
+        // 0..7 MHz from a 2 MHz front end with a hammock in every slice and
+        // one carrier at 3.3 MHz, stitched as the engine does: the slice
+        // levelled against the one before it at the overlap, six sweeps.
+        let (lo, hi) = (0.0, 7e6);
+        let n = 1024;
+        let (uh, stride) = panorama_geometry(0.8);
+        let centers = slice_centers_with(lo, hi, SPAN_PANO, uh, stride);
+        assert!(centers.len() >= 4, "{centers:?}");
+        let bin_hz = SPAN_PANO / n as f64;
+        let carrier = 3.3e6;
+        let mut rng = Lcg(11);
+        let mut shape = PassbandShape::default();
+        let sweep = |shape: &mut PassbandShape, rng: &mut Lcg, flatten: bool| {
+            let mut pano = vec![f32::NAN; panorama_bins(lo, hi, SPAN_PANO, n)];
+            for (k, &c) in centers.iter().enumerate() {
+                let mut db: Vec<f32> =
+                    (0..n).map(|i| -100.0 + hammock(i, n) + rng.next(0.2)).collect();
+                let i = ((carrier - (c - SPAN_PANO / 2.0)) / bin_hz) as usize;
+                if i < n {
+                    db[i] = -50.0;
+                }
+                shape.learn(&db, SPAN_PANO, uh);
+                if flatten {
+                    shape.flatten(&mut db);
+                }
+                let off = k
+                    .checked_sub(1)
+                    .and_then(|p| {
+                        let win = (c - SPAN_PANO * uh, centers[p] + SPAN_PANO * uh);
+                        level_offset_db(&pano, lo, hi, &db, c, SPAN_PANO, uh, win)
+                    })
+                    .filter(|o| o.abs() >= 1.0)
+                    .unwrap_or(0.0);
+                stitch_slice(&mut pano, lo, hi, &db, c, SPAN_PANO, uh, off);
+            }
+            fill_panorama_gaps(&mut pano);
+            pano
+        };
+        for _ in 0..5 {
+            sweep(&mut shape, &mut rng, false);
+        }
+        let p2p = |pano: &[f32]| {
+            let m = pano.len();
+            let at = ((carrier - lo) / (hi - lo) * m as f64) as usize;
+            let floor: Vec<f32> = (0..m).filter(|&k| k.abs_diff(at) > 3).map(|k| pano[k]).collect();
+            floor.iter().copied().fold(f32::MIN, f32::max)
+                - floor.iter().copied().fold(f32::MAX, f32::min)
+        };
+        let mut bare_shape = shape.clone();
+        let bare = sweep(&mut bare_shape, &mut rng, false);
+        let flat = sweep(&mut shape, &mut rng, true);
+        assert!(p2p(&bare) > 2.0, "scalloped as stitched: {:.2} dB", p2p(&bare));
+        assert!(p2p(&flat) < 1.0, "flat once flattened: {:.2} dB", p2p(&flat));
+        let m = flat.len();
+        let at = ((carrier - lo) / (hi - lo) * m as f64) as usize;
+        let peak =
+            flat[at.saturating_sub(2)..(at + 3).min(m)].iter().copied().fold(f32::MIN, f32::max);
+        assert!(peak > -55.0, "the carrier is still there: {peak:.1} dB");
+    }
 }

@@ -4338,6 +4338,13 @@ scanner-settles = Settles for
 scanner-settles-hint = Wait per slice after retuning, before the spectrum is read. Longer: steadier picture, slower sweep.
 scanner-pano-width = Slice width
 scanner-pano-width-hint = Share of the receiver's span each slice uses. Less: clear of the edge roll-off; more: faster sweep. Slices overlap by 10 %.
+scanner-pano-level = Level
+scanner-pano-hold = HOLD GAIN
+scanner-pano-hold-hint = Gain fixed during sweep: SDRplay AGC, auto LNA, band gains.
+    Restored on stop, not saved.
+scanner-pano-flat = FLAT
+scanner-pano-flat-hint = Passband curve learned over slices, subtracted per slice.
+    Flattens scalloped floor; carriers stay.
 scanner-pano-pause = Pause after each line
 scanner-pano-pause-hint = Wait after each full sweep before the next one starts. 0: sweep without a break.
 scanner-pano-now = Now

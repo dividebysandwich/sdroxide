@@ -111,6 +111,23 @@ pub struct ScannerConfig {
     //      after each line oben hin"; Loop: "Scan-Delay/Intervall für
     //      RX-888-Langzeitaufnahmen".
     pub pano_pause_s: f32,
+    /// Hold the front end's gain still while a panorama sweeps: its own loops
+    /// (an RSP's IF AGC and automatic LNA) stand where they are when the sweep
+    /// starts, and the engine recalls no per-band gain on the way across. A
+    /// loop that moves between slices is a level step at every seam; held, the
+    /// slices are all taken at one gain and stitch as one spectrum. Everything
+    /// is put back as it was when the panorama stops, and nothing of it is
+    /// saved.
+    // Why: HDZ 2026-11-26: „ich leide darunter dass der lna autoskaled,
+    //      besser wäre den zu klemmen“ — „pano scan lokal, zb. sdrplay ich sehe
+    //      sprünge und hängematten“.
+    pub pano_hold_gain: bool,
+    /// Take the receiver's own passband shape out of every panorama slice
+    /// before it is stitched: the curve an anti-alias and IF filter leave on
+    /// the noise floor is the same in every slice, so the floor of the
+    /// panorama otherwise comes out scalloped, one hollow per slice.
+    // Why: HDZ 2026-11-26: „ich sehe sprünge und hängematten“.
+    pub pano_flatten: bool,
     /// How long to listen on a candidate before deciding it is really busy.
     pub dwell_ms: u32,
     pub resume: ScanResume,
@@ -187,6 +204,8 @@ impl Default for ScannerConfig {
             snr_db: 10.0,
             pano_usable: 0.8,
             pano_pause_s: 0.0,
+            pano_hold_gain: true,
+            pano_flatten: true,
             dwell_ms: 150,
             resume: ScanResume::Carrier,
             resume_ms: 2_000,
@@ -415,5 +434,16 @@ mod folder_tests {
         assert!(c.forget_folder(2));
         assert_eq!(c.folders, vec![Some(1)]);
         assert!(!c.forget_folder(2), "asking twice is not a change to persist");
+    }
+
+    /// A `scanner.json` written before the panorama's gain hold and
+    /// flattening existed comes up with both on, which is what a new one gets.
+    #[test]
+    fn an_older_scanner_file_holds_and_flattens() {
+        let old = r#"{"kind":"Panorama","pano_usable":0.8,"pano_pause_s":0.0}"#;
+        let c: ScannerConfig = serde_json::from_str(old).unwrap();
+        assert!(c.pano_hold_gain && c.pano_flatten);
+        let d = ScannerConfig::default();
+        assert!(d.pano_hold_gain && d.pano_flatten);
     }
 }

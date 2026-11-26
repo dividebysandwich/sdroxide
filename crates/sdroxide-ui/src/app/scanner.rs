@@ -284,8 +284,9 @@ impl SdroxideApp {
     /// stop somewhere is indistinguishable from a scanner that cannot hear it,
     /// and the operator who pressed SKIP three passes ago is exactly the person
     /// who will wonder why the repeater never comes up.
-    /// A panorama: the range and the slice width. It stops nowhere, so the grid, the mode and
-    /// the thresholds a range scan judges channels by do not apply.
+    /// A panorama: the range, the slice width and how the slices are levelled.
+    /// It stops nowhere, so the grid, the mode and the thresholds a range scan
+    /// judges channels by do not apply.
     fn scanner_panorama(&self, ui: &mut egui::Ui, cfg: &mut ScannerConfig) {
         egui::Grid::new("scan-pano").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
             ui.label(tr!("scanner-band"));
@@ -310,6 +311,26 @@ impl SdroxideApp {
             {
                 cfg.pano_usable = pct / 100.0;
             }
+            ui.end_row();
+
+            // Why: HDZ 2026-11-26: „ich leide darunter dass der lna autoskaled,
+            //      besser wäre den zu klemmen“ — „ich sehe sprünge und
+            //      hängematten“.
+            ui.label(tr!("scanner-pano-level"));
+            ui.horizontal(|ui| {
+                if crate::chrome::chip(ui, cfg.pano_hold_gain, tr!("scanner-pano-hold"))
+                    .on_hover_text(tr!("scanner-pano-hold-hint"))
+                    .clicked()
+                {
+                    cfg.pano_hold_gain = !cfg.pano_hold_gain;
+                }
+                if crate::chrome::chip(ui, cfg.pano_flatten, tr!("scanner-pano-flat"))
+                    .on_hover_text(tr!("scanner-pano-flat-hint"))
+                    .clicked()
+                {
+                    cfg.pano_flatten = !cfg.pano_flatten;
+                }
+            });
             ui.end_row();
         });
         if !cfg.range_is_usable() {
