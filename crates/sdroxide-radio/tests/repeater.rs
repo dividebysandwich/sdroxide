@@ -18,8 +18,8 @@ use std::time::{Duration, Instant};
 use sdroxide_dsp::SubToneDetect;
 use sdroxide_radio::{Complex32, EngineConfig, IqSource, Result, start_engine};
 use sdroxide_types::{
-    Command, DeviceCaps, Mode, RadioEvent, RadioState, Region, RepeaterState, RxId, Shift,
-    SubTone, ToneMode, Vfo,
+    Command, DeviceCaps, Mode, RadioEvent, RadioState, Region, RepeaterState, RxId, Shift, SubTone,
+    ToneMode, Vfo,
 };
 
 /// 48 kHz so the transmit chain's DUC is a straight pass-through and what the
