@@ -3686,6 +3686,10 @@ struct Engine {
     /// The receive gain stages last set on each band. See
     /// [`sdroxide_config::Session::band_gains`] and [`Engine::poll_gain_slot`].
     band_gains: sdroxide_config::BandGains,
+    /// The drive and TUNE drive last set on each band — see
+    /// [`sdroxide_config::Session::band_drive`] and [`Engine::follow_band_drive`].
+    band_drive: sdroxide_config::BandLevels,
+    band_tune_drive: sdroxide_config::BandLevels,
     /// The [`gain_slot`] the dial was in at the last check.
     gain_slot_seen: String,
     /// Whether gains follow the band —
@@ -4654,6 +4658,8 @@ fn engine_thread(
         session.as_ref().map(|s| (s.gains.clone(), s.tx_gains.clone())).unwrap_or_default();
     let band_antenna = session.as_ref().map(|s| s.band_antenna.clone()).unwrap_or_default();
     let band_gains = session.as_ref().map(|s| s.band_gains.clone()).unwrap_or_default();
+    let band_drive = session.as_ref().map(|s| s.band_drive.clone()).unwrap_or_default();
+    let band_tune_drive = session.as_ref().map(|s| s.band_tune_drive.clone()).unwrap_or_default();
     let gain_slot_seen = gain_slot(state.band, state.active_freq_hz());
     // Taken before the state is moved into the engine. Both VFOs open on the
     // mode the receiver came up in — the command line's, the session's, or the
@@ -4976,6 +4982,8 @@ fn engine_thread(
         want_antenna,
         band_antenna,
         band_gains,
+        band_drive,
+        band_tune_drive,
         gain_slot_seen,
         gain_per_band: !radio_cfg.same_gain_all_bands,
         want_gains,
@@ -9570,6 +9578,7 @@ impl Engine {
             }
             SetTxDrive(v) => {
                 self.state.tx.drive = v.clamp(0.0, 1.0);
+                self.band_drive.insert(self.state.band, self.state.tx.drive);
                 // CAT/TCI rigs command output power directly; IQ sources ignore
                 // this and scale the modulated samples instead. While tuning the
                 // rig is holding the tune level, so leave it alone until unkey.
@@ -9580,6 +9589,7 @@ impl Engine {
             }
             SetTuneDrive(v) => {
                 self.state.tx.tune_drive = v.clamp(0.0, 1.0);
+                self.band_tune_drive.insert(self.state.band, self.state.tx.tune_drive);
                 self.source.set_tune_drive(self.tx_tune_level() as f64);
                 // Tuning right now: the rig's power is the tune level, so the
                 // slider takes effect without unkeying.
@@ -16659,6 +16669,38 @@ impl Engine {
             }
             self.state.antenna_tx = self.source.current_tx_antenna();
         }
+        // A freshly opened device comes up on the levels the session ended on,
+        // not the ones this band was last worked at.
+        self.follow_band_drive(self.state.band);
+    }
+
+    /// Put the drive and TUNE drive last used on `band` back as the dial
+    /// crosses into it (issue #444), so a transverter band keeps its low drive
+    /// and an HF band its own. A band never chosen on keeps the current levels.
+    /// Not while keyed: the rig is then on the level this end put it on.
+    fn follow_band_drive(&mut self, band: Band) {
+        if self.tx_active || self.state.tx.tune {
+            return;
+        }
+        let mut changed = false;
+        if let Some(d) = self.band_drive.get(&band).copied()
+            && self.state.tx.drive != d
+        {
+            self.state.tx.drive = d;
+            let level = self.tx_drive();
+            self.source.set_tx_drive(level as f64);
+            changed = true;
+        }
+        if let Some(t) = self.band_tune_drive.get(&band).copied()
+            && self.state.tx.tune_drive != t
+        {
+            self.state.tx.tune_drive = t;
+            self.source.set_tune_drive(self.tx_tune_level() as f64);
+            changed = true;
+        }
+        if changed {
+            let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
+        }
     }
 
     /// Put the socket the operator last chose on `band` back, as the dial
@@ -16684,6 +16726,7 @@ impl Engine {
     /// while 20 m → 40 m switched it correctly: the same preference, and only
     /// the *cached* value differed (issue #258).
     fn follow_band_antenna(&mut self, band: Band) {
+        self.follow_band_drive(band);
         // Not where the source owns the receive port: a LimeRFE listens on the
         // socket it is cabled to whatever the band. Same exemption as
         // `restore_antennas`.
@@ -17129,6 +17172,8 @@ impl Engine {
             recording_mono: self.state.recording_mono,
             band_antenna: self.band_antenna.clone(),
             band_gains: self.band_gains.clone(),
+            band_drive: self.band_drive.clone(),
+            band_tune_drive: self.band_tune_drive.clone(),
             // The shelf again, with the live socket written into the active
             // slot on the way past for the same reason the modes are.
             vfo_antennas: Some({
@@ -17267,6 +17312,8 @@ impl Engine {
         self.want_gains = (s.gains.clone(), s.tx_gains.clone());
         self.restore_gains();
         self.band_gains = s.band_gains.clone();
+        self.band_drive = s.band_drive.clone();
+        self.band_tune_drive = s.band_tune_drive.clone();
         self.gain_slot_seen.clear();
         self.poll_gain_slot();
 

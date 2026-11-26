@@ -1650,7 +1650,18 @@ pub struct Session {
     /// session written before this existed.
     #[serde(default)]
     pub band_gains: BandGains,
+    /// The transmit drive (0.0..=1.0) last set on each band, so a transverter
+    /// band can run at a few percent and an HF band at full (issue #444).
+    /// A band never touched keeps whatever drive is already set.
+    #[serde(default)]
+    pub band_drive: BandLevels,
+    /// The TUNE drive last set on each band — see [`Session::band_drive`].
+    #[serde(default)]
+    pub band_tune_drive: BandLevels,
 }
+
+/// A 0.0..=1.0 level per band — see [`Session::band_drive`].
+pub type BandLevels = std::collections::HashMap<sdroxide_types::Band, f32>;
 
 /// Which antenna socket was last chosen on each band — see
 /// [`Session::band_antenna`]. `(RX, TX)`; either may be `None` where that
@@ -1709,6 +1720,8 @@ impl Default for Session {
             // said what belongs where.
             vfo_antennas: None,
             band_gains: BandGains::new(),
+            band_drive: BandLevels::new(),
+            band_tune_drive: BandLevels::new(),
         }
     }
 }
@@ -2834,6 +2847,8 @@ mod tests {
                 ("M40".to_string(), vec![("LNA".to_string(), 10.0)]),
                 ("GEN_VHF".to_string(), vec![("LNA".to_string(), 40.0)]),
             ]),
+            band_drive: BandLevels::from([(sdroxide_types::Band::M40, 0.5)]),
+            band_tune_drive: BandLevels::from([(sdroxide_types::Band::M40, 0.25)]),
         };
         let back: Session = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!(back, s);
