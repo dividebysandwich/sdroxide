@@ -45,6 +45,8 @@ struct Bench {
     /// Where the (single) signal is, or `None` for a dead band.
     signal_hz: Arc<Mutex<Option<f64>>>,
     visited: Arc<Mutex<Vec<f64>>>,
+    /// Every [`IqSource::hold_rx_gain`] the engine made, in order.
+    holds: Arc<Mutex<Vec<bool>>>,
     phase: f64,
 }
 
@@ -54,6 +56,7 @@ impl Bench {
             center_hz: CENTER,
             signal_hz: Arc::new(Mutex::new(signal_hz)),
             visited: Arc::new(Mutex::new(vec![CENTER])),
+            holds: Arc::new(Mutex::new(Vec::new())),
             phase: 0.0,
         }
     }
@@ -91,6 +94,11 @@ impl IqSource for Bench {
     }
     fn describe(&self) -> String {
         "scanner bench".into()
+    }
+    /// A front end with a gain loop of its own to hold.
+    fn hold_rx_gain(&mut self, hold: bool) -> bool {
+        self.holds.lock().unwrap().push(hold);
+        true
     }
 }
 
@@ -159,6 +167,7 @@ struct Rig {
     thread: Option<std::thread::JoinHandle<()>>,
     visited: Arc<Mutex<Vec<f64>>>,
     signal: Arc<Mutex<Option<f64>>>,
+    holds: Arc<Mutex<Vec<bool>>>,
     /// The speaker ring, drained and discarded. Its presence is the point: with
     /// it the engine builds a real receive chain, and the scanner reads the same
     /// level meter the squelch does — which is the arrangement every operator
@@ -172,6 +181,7 @@ impl Rig {
         isolate_config();
         let source = Bench::new(signal_hz);
         let (visited, signal) = (Arc::clone(&source.visited), Arc::clone(&source.signal_hz));
+        let holds = Arc::clone(&source.holds);
         let (producer, audio) = rtrb::RingBuffer::new(48_000);
         let cfg = EngineConfig {
             audio: Some(sdroxide_radio::AudioParams { producer, out_rate: 48_000.0 }),
@@ -179,7 +189,7 @@ impl Rig {
         };
         let mut h = start_engine(Box::new(source), caps(), cfg);
         let thread = h.thread.take();
-        Rig { h, thread, visited, signal, audio, w: Watch::default() }
+        Rig { h, thread, visited, signal, holds, audio, w: Watch::default() }
     }
 
     fn send(&self, cmd: Command) {
@@ -467,6 +477,51 @@ fn a_panorama_pauses_after_each_sweep() {
         swept > 0.0 && swept < gap - PAUSE_S + 0.3,
         "sweep {swept:.2} s, rows {gap:.2} s apart"
     );
+}
+
+/// A panorama holds the front end's gain from its start to its stop, and
+/// only a panorama does; switching the hold off under a running one lets go
+/// at once, and every way of stopping lets go too.
+#[test]
+fn a_panorama_holds_the_gain_until_it_stops() {
+    let (lo, hi) = (144_000_000.0, 150_000_000.0);
+    let pano =
+        ScannerConfig { kind: ScanKind::Panorama, range_lo_hz: lo, range_hi_hz: hi, ..range_cfg() };
+    let holds = |rig: &mut Rig, secs: f64| {
+        rig.pump(secs, false);
+        rig.holds.lock().unwrap().clone()
+    };
+
+    // Stopped by the operator's STOP.
+    let mut rig = Rig::new(None);
+    rig.send(Command::SetScannerConfig(pano.clone()));
+    rig.send(Command::SetScanning(true));
+    assert_eq!(holds(&mut rig, 0.3), vec![true], "held from the start");
+    rig.send(Command::SetScanning(false));
+    assert_eq!(holds(&mut rig, 0.3), vec![true, false], "let go at the stop");
+
+    // Stopped by a hand on the dial.
+    rig.holds.lock().unwrap().clear();
+    rig.send(Command::SetScanning(true));
+    rig.pump(0.3, false);
+    rig.send(Command::SetVfo { vfo: Vfo::A, hz: 145_500_000.0 });
+    assert_eq!(holds(&mut rig, 0.3), vec![true, false], "let go when the operator tunes");
+
+    // The hold switched off under a running panorama, and back on.
+    rig.holds.lock().unwrap().clear();
+    rig.send(Command::SetScanning(true));
+    rig.pump(0.3, false);
+    rig.send(Command::SetScannerConfig(ScannerConfig { pano_hold_gain: false, ..pano.clone() }));
+    assert_eq!(holds(&mut rig, 0.3), vec![true, false], "let go when switched off");
+    rig.send(Command::SetScannerConfig(pano.clone()));
+    assert_eq!(holds(&mut rig, 0.3), vec![true, false, true], "held again when switched on");
+
+    // Turned into a range scan: a range scan stops on signals and judges them
+    // by level, so it is not held.
+    rig.send(Command::SetScannerConfig(ScannerConfig { kind: ScanKind::Range, ..pano }));
+    let h = holds(&mut rig, 0.5);
+    assert_eq!(h, vec![true, false, true, false], "a range scan holds nothing: {h:?}");
+    assert!(rig.pump(0.1, false).running, "and is still scanning");
 }
 
 /// A dead band is scanned round and round without ever stopping, and without

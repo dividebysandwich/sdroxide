@@ -96,6 +96,18 @@ pub struct SdrPlaySource {
     /// What [`IqSource::rx_gains_moved`] last answered for.
     reported_lna: u8,
     gains_dirty: bool,
+    /// What a held gain put aside — see [`IqSource::hold_rx_gain`]. `Some`
+    /// while it is held.
+    held: Option<HeldGain>,
+}
+
+/// The gain settings a hold stood still, to be put back when it lets go.
+#[derive(Debug, Clone, Copy)]
+struct HeldGain {
+    agc: SdrPlayAgc,
+    if_gr_db: i32,
+    auto_lna: bool,
+    lna_floor: u8,
 }
 
 impl SdrPlaySource {
@@ -199,6 +211,7 @@ impl SdrPlaySource {
             rx_paused: false,
             reported_lna: cfg.lna_state,
             gains_dirty: false,
+            held: None,
             handle,
         };
         // A radio that did not open the board still has to have its own way
@@ -501,6 +514,11 @@ impl IqSource for SdrPlaySource {
                 };
                 self.if_gr_db = gr.clamp(min, SdrPlayConfig::IF_GR_MAX);
                 self.handle.set_if_gr_db(self.if_gr_db);
+                // Set by hand under a hold: the operator's word, and what
+                // comes back when the hold lets go.
+                if let Some(h) = self.held.as_mut() {
+                    h.if_gr_db = self.if_gr_db;
+                }
             }
             SdrPlayConfig::LNA_ELEMENT => {
                 let state = (-db).round().clamp(0.0, 255.0) as u8;
@@ -510,6 +528,23 @@ impl IqSource for SdrPlaySource {
                 self.lna_floor = state;
                 self.lna_loop.reset();
                 self.handle.set_lna_state(state);
+                if let Some(h) = self.held.as_mut() {
+                    h.lna_floor = state;
+                }
+            }
+            // Under a hold the two loops' switches are taken down for when it
+            // lets go rather than thrown now: running either again is what
+            // the hold is there to stop.
+            SdrPlayConfig::AUTO_LNA_ELEMENT if self.held.is_some() => {
+                if let Some(h) = self.held.as_mut() {
+                    h.auto_lna = db >= 0.5;
+                }
+                self.gains_dirty = true;
+            }
+            SdrPlayConfig::AGC_ELEMENT if self.held.is_some() => {
+                if let Some(h) = self.held.as_mut() {
+                    h.agc = SdrPlayAgc::from_code(db);
+                }
             }
             SdrPlayConfig::AUTO_LNA_ELEMENT => {
                 self.auto_lna = db >= 0.5;
@@ -567,6 +602,9 @@ impl IqSource for SdrPlaySource {
                 if self.if_gr_db < min {
                     self.if_gr_db = min;
                     self.handle.set_if_gr_db(min);
+                }
+                if let Some(h) = self.held.as_mut() {
+                    h.if_gr_db = h.if_gr_db.max(min);
                 }
             }
             // The second tuner and its filter. Everything here is live: a null
@@ -658,6 +696,78 @@ impl IqSource for SdrPlaySource {
         self.reported_lna = lna;
         self.gains_dirty = false;
         moved
+    }
+
+    /// Stand the IF AGC and the automatic LNA still where they are, or put
+    /// them back — see [`IqSource::hold_rx_gain`].
+    ///
+    /// Held, the LNA stays on the state the loop had reached and the IF gain
+    /// on the reduction the AGC had last reported, now set by hand: the
+    /// receiver keeps the gain it had a moment ago and simply stops moving it.
+    /// Turning the loops off in the ordinary way would not do that — the
+    /// automatic LNA switched off drops back to the operator's floor, and the
+    /// AGC switched off falls to the manual reduction last set, either a step
+    /// of its own.
+    ///
+    /// Let go, the AGC, the manual reduction, the LNA floor and the loop's
+    /// switch are as they were; with the loop on, the LNA carries on from the
+    /// state it was held at, as if it had only paused.
+    fn hold_rx_gain(&mut self, hold: bool) -> bool {
+        if !hold {
+            let Some(h) = self.held.take() else { return false };
+            self.agc = h.agc;
+            self.if_gr_db = h.if_gr_db;
+            self.auto_lna = h.auto_lna;
+            self.lna_floor = h.lna_floor;
+            self.handle.set_if_gr_db(self.if_gr_db);
+            self.handle.set_agc(self.agc.code() as i32);
+            if !self.auto_lna {
+                self.handle.set_lna_state(self.lna_floor);
+            }
+            self.lna_loop.reset();
+            self.overload_seen = false;
+            self.gains_dirty = true;
+            tracing::info!("{}: receive gain let go", self.label);
+            return true;
+        }
+        if self.held.is_some() {
+            return true;
+        }
+        let min = if self.extended_if_gr {
+            SdrPlayConfig::IF_GR_MIN_EXTENDED
+        } else {
+            SdrPlayConfig::IF_GR_MIN
+        };
+        let gr = self
+            .handle
+            .effective_if_gr_db()
+            .unwrap_or(self.if_gr_db)
+            .clamp(min, SdrPlayConfig::IF_GR_MAX);
+        let lna = self.handle.lna_state();
+        self.held = Some(HeldGain {
+            agc: self.agc,
+            if_gr_db: self.if_gr_db,
+            auto_lna: self.auto_lna,
+            lna_floor: self.lna_floor,
+        });
+        // The loop stops without dropping back to the floor: the floor is
+        // moved up to where it stands instead, and put back on letting go.
+        self.auto_lna = false;
+        self.lna_floor = lna;
+        self.overload_seen = false;
+        self.agc = SdrPlayAgc::Off;
+        self.if_gr_db = gr;
+        // The reduction first: should the stream thread take the two in
+        // separate passes, the AGC goes off onto the reduction it had reached
+        // rather than onto the old manual one.
+        self.handle.set_if_gr_db(gr);
+        self.handle.set_agc(SdrPlayAgc::Off.code() as i32);
+        self.gains_dirty = true;
+        tracing::info!(
+            "{}: receive gain held at LNA state {lna}, IF reduction {gr} dB",
+            self.label
+        );
+        true
     }
 
     /// What the API says is between the antenna socket and the converter, so

@@ -555,6 +555,24 @@ pub trait IqSource: Send {
     fn rx_gains_moved(&mut self) -> bool {
         false
     }
+
+    /// Hold the receive gain where it stands, or let it go again.
+    ///
+    /// `true` stands every loop the front end runs on its own gain still — an
+    /// RSP's IF AGC and its automatic LNA — at the gain it has reached, and
+    /// puts aside what it took to do that. `false` puts back exactly what was
+    /// put aside, with whatever the operator set in between winning over it.
+    /// Neither is a setting: nothing of it goes into the radio's saved
+    /// configuration, so a hold the engine never let go of (a crash, a pulled
+    /// cable) costs nothing beyond the session it happened in.
+    ///
+    /// The engine holds the gain while a panorama sweeps, where a loop that
+    /// moves between slices is a level step at every seam. Answers whether
+    /// there was anything to hold or let go; the default is a front end with
+    /// no loop of its own, for which the answer is no and nothing happens.
+    fn hold_rx_gain(&mut self, _hold: bool) -> bool {
+        false
+    }
     /// What this radio's adaptive-predistortion loop is doing, where it runs
     /// one — see [`sdroxide_types::PsMeter`].
     ///
@@ -1764,6 +1782,9 @@ impl IqSource for ConvertedSource {
     }
     fn rx_gains_moved(&mut self) -> bool {
         self.inner.rx_gains_moved()
+    }
+    fn hold_rx_gain(&mut self, hold: bool) -> bool {
+        self.inner.hold_rx_gain(hold)
     }
     fn sample_full_scale(&self) -> f32 {
         self.inner.sample_full_scale()
