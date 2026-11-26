@@ -478,7 +478,7 @@ impl HpsdrSource {
         }
     }
 
-    /// Process the latest tuner snapshot without initiating I2C traffic.
+    /// End a tuner operation that has exceeded its overall wall-clock deadline.
     fn expire_atu_operation(&mut self) {
         let (Some(operation), Some(started_at)) =
             (self.atu_operation, self.atu_operation_started_at)
@@ -502,13 +502,14 @@ impl HpsdrSource {
         }
     }
 
+    /// Process the latest tuner snapshot without initiating I2C traffic.
     fn poll_atu_status(&mut self) {
         self.poll_atu_command_reply();
         self.expire_atu_operation();
         if !self.generic_atu_available() {
             self.atu_state = None;
             self.atu_operation = None;
-                self.atu_operation_started_at = None;
+            self.atu_operation_started_at = None;
             self.atu_command_reply = None;
             self.atu_saw_rf_request = false;
             self.atu_rf_requested = false;
@@ -519,7 +520,7 @@ impl HpsdrSource {
         let Some(rx) = self.rx.as_ref() else {
             self.atu_command_reply = None;
             self.atu_operation = None;
-                self.atu_operation_started_at = None;
+            self.atu_operation_started_at = None;
             self.atu_saw_rf_request = false;
             self.atu_rf_requested = false;
             return;
@@ -530,7 +531,7 @@ impl HpsdrSource {
         if snapshot.present != Some(true) {
             self.atu_state = None;
             self.atu_operation = None;
-                self.atu_operation_started_at = None;
+            self.atu_operation_started_at = None;
             self.atu_command_reply = None;
             self.atu_saw_rf_request = false;
             self.atu_rf_requested = false;
@@ -917,7 +918,7 @@ impl IqSource for HpsdrSource {
         self.board = None;
         self.atu_command_reply = None;
         self.atu_operation = None;
-                self.atu_operation_started_at = None;
+        self.atu_operation_started_at = None;
         self.atu_saw_rf_request = false;
         self.atu_rf_requested = false;
     }
