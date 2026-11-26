@@ -753,6 +753,12 @@ pub struct RadioState {
     /// `hfdl_outputs.json`. Appended last: postcard numbers fields by position.
     #[serde(default)]
     pub hfdl_outputs: crate::HfdlOutputs,
+    /// Whether the radio's onboard power amplifier is on, for the band the dial
+    /// is on — remembered per band. `None` on a radio with no such switch (only
+    /// the Hermes-Lite 2 has one). Appended last: postcard numbers fields by
+    /// position.
+    #[serde(default)]
+    pub pa_enable: Option<bool>,
 }
 
 /// Where a radio's built-in antenna tuner stands, as the radio reports it.
@@ -840,6 +846,7 @@ impl Default for RadioState {
             wxsat: crate::WxsatSettings::default(),
             sonde: crate::SondeSettings::default(),
             hfdl_outputs: crate::HfdlOutputs::default(),
+            pa_enable: None,
         }
     }
 }

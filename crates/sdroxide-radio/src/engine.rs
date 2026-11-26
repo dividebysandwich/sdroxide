@@ -3690,6 +3690,9 @@ struct Engine {
     /// [`sdroxide_config::Session::band_drive`] and [`Engine::follow_band_drive`].
     band_drive: sdroxide_config::BandLevels,
     band_tune_drive: sdroxide_config::BandLevels,
+    /// Whether the Hermes-Lite 2's PA was last on or off on each band — see
+    /// [`sdroxide_config::Session::band_pa`] and [`Engine::follow_band_pa`].
+    band_pa: sdroxide_config::BandPa,
     /// The [`gain_slot`] the dial was in at the last check.
     gain_slot_seen: String,
     /// Whether gains follow the band —
@@ -4660,6 +4663,7 @@ fn engine_thread(
     let band_gains = session.as_ref().map(|s| s.band_gains.clone()).unwrap_or_default();
     let band_drive = session.as_ref().map(|s| s.band_drive.clone()).unwrap_or_default();
     let band_tune_drive = session.as_ref().map(|s| s.band_tune_drive.clone()).unwrap_or_default();
+    let band_pa = session.as_ref().map(|s| s.band_pa.clone()).unwrap_or_default();
     let gain_slot_seen = gain_slot(state.band, state.active_freq_hz());
     // Taken before the state is moved into the engine. Both VFOs open on the
     // mode the receiver came up in — the command line's, the session's, or the
@@ -4984,6 +4988,7 @@ fn engine_thread(
         band_gains,
         band_drive,
         band_tune_drive,
+        band_pa,
         gain_slot_seen,
         gain_per_band: !radio_cfg.same_gain_all_bands,
         want_gains,
@@ -7270,6 +7275,10 @@ impl Engine {
     /// there and then, rather than being missed.
     fn poll_band_change(&mut self) {
         let band = self.state.band;
+        // Every tick, not only on a change: it costs a lookup, and a PA switch
+        // that missed its band change (a source swap, a reconnect, a state
+        // published before the band was noticed) corrects itself on the next.
+        self.follow_band_pa(band);
         if std::mem::replace(&mut self.band_seen, band) == band {
             return;
         }
@@ -9542,6 +9551,15 @@ impl Engine {
                 self.state.tx.two_tone = on;
                 self.two_tone = TwoTone::default();
                 self.emit_state();
+            }
+            SetPa(on) => {
+                // Remembered for the band the dial is on, and only where the
+                // source has a PA to switch (issue #444).
+                if self.source.set_pa_enable(on) {
+                    self.band_pa.insert(self.state.band, on);
+                    self.state.pa_enable = self.source.pa_enable();
+                    self.emit_state();
+                }
             }
             SetSwrGuard { enabled, limit } => {
                 // Clamped, not trusted. Below about 1.1:1 no real antenna ever
@@ -16672,6 +16690,9 @@ impl Engine {
         // A freshly opened device comes up on the levels the session ended on,
         // not the ones this band was last worked at.
         self.follow_band_drive(self.state.band);
+        // A freshly opened board comes up on the configured PA setting, not the
+        // one this band was left on.
+        self.follow_band_pa(self.state.band);
     }
 
     /// Put the drive and TUNE drive last used on `band` back as the dial
@@ -16727,6 +16748,7 @@ impl Engine {
     /// the *cached* value differed (issue #258).
     fn follow_band_antenna(&mut self, band: Band) {
         self.follow_band_drive(band);
+        self.follow_band_pa(band);
         // Not where the source owns the receive port: a LimeRFE listens on the
         // socket it is cabled to whatever the band. Same exemption as
         // `restore_antennas`.
@@ -16749,6 +16771,24 @@ impl Engine {
             self.want_antenna.1 = Some(name);
         }
         if before != (self.state.antenna_rx.clone(), self.state.antenna_tx.clone()) {
+            let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
+        }
+    }
+
+    /// Put the Hermes-Lite 2's PA switch back where the operator last left it
+    /// on `band` (issue #444): a transverter band keeps it off to drive RF1,
+    /// an HF band keeps it on. A band never chosen on leaves it alone, and a
+    /// source with no such switch ignores the call.
+    fn follow_band_pa(&mut self, band: Band) {
+        if let Some(on) = self.band_pa.get(&band).copied()
+            && self.source.pa_enable() != Some(on)
+        {
+            info!("Hermes-Lite PA {} for {band:?}", if on { "ON" } else { "OFF" });
+            self.source.set_pa_enable(on);
+        }
+        let now = self.source.pa_enable();
+        if now != self.state.pa_enable {
+            self.state.pa_enable = now;
             let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
         }
     }
@@ -17174,6 +17214,7 @@ impl Engine {
             band_gains: self.band_gains.clone(),
             band_drive: self.band_drive.clone(),
             band_tune_drive: self.band_tune_drive.clone(),
+            band_pa: self.band_pa.clone(),
             // The shelf again, with the live socket written into the active
             // slot on the way past for the same reason the modes are.
             vfo_antennas: Some({
@@ -17307,6 +17348,7 @@ impl Engine {
         // that offers it and is ignored by one that does not.
         self.want_antenna = (s.antenna_rx.clone(), s.antenna_tx.clone());
         self.band_antenna = s.band_antenna.clone();
+        self.band_pa = s.band_pa.clone();
         self.restore_antennas();
         self.follow_band_antenna(self.state.band);
         self.want_gains = (s.gains.clone(), s.tx_gains.clone());
@@ -17962,6 +18004,7 @@ impl Engine {
             tx_gains: self.source.current_tx_gains(),
             antenna_rx: self.source.current_antenna(),
             antenna_tx: self.source.current_tx_antenna(),
+            pa_enable: self.source.pa_enable(),
             // The levels carry over; a keyed transmit never does.
             // Two-tone ends with the TUNE it was chosen for, here too.
             tx: sdroxide_types::TxState {

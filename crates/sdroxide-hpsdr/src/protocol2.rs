@@ -904,7 +904,7 @@ impl P2Thread {
                     Ctrl::RxGain(_) => {}
                     // The HL2IOBoard is a Hermes-Lite accessory on Protocol 1's
                     // I2C tunnel; nothing here to switch.
-                    Ctrl::IoRxInput(_) => {}
+                    Ctrl::IoRxInput(_) | Ctrl::PaEnable(_) => {}
                     // The open collectors follow the dial here exactly as they
                     // do on Protocol 1: a band decoder switches for the signal
                     // on the air, not for the I.F. a transverter left the radio

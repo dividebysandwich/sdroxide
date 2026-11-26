@@ -1351,4 +1351,10 @@ pub enum Command {
     /// (`false`) — see [`crate::TxState::two_tone`]. Does not key anything by
     /// itself: [`Command::SetTune`] does that. Appended for the usual reason.
     SetTuneTwoTone(bool),
+
+    /// Switch the radio's onboard power amplifier on or off for the band the
+    /// dial is on, and remember it for that band (see
+    /// [`crate::RadioState::pa_enable`]). Ignored by a radio with no such
+    /// switch. Appended for the usual reason.
+    SetPa(bool),
 }
