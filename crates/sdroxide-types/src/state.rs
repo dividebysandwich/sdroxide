@@ -770,7 +770,7 @@ pub enum AtuStatus {
     Bypass,
     /// The last tune found no match.
     Failed,
-    /// The last tune was cut short before it finished.
+    /// The last tuner operation was cut short before it finished.
     Aborted,
 }
 

@@ -42,6 +42,13 @@ const PS_LOG_INTERVAL: Duration = Duration::from_secs(5);
 /// The same freshness limit enforced by the HPSDR I/O board scheduler.
 const TUNER_STATUS_MAX_AGE: Duration = Duration::from_millis(200);
 
+/// Maximum time a host-requested tuner operation may hold the transmit interlock.
+const TUNER_OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn atu_operation_deadline_expired(started_at: Instant, now: Instant) -> bool {
+    now.saturating_duration_since(started_at) >= TUNER_OPERATION_TIMEOUT
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AtuOperation {
     Tune,
@@ -76,6 +83,9 @@ pub struct HpsdrSource {
 
     /// Last host-requested tuner operation, needed to interpret status 0x00.
     atu_operation: Option<AtuOperation>,
+
+    /// When the current tuner operation started, for the overall deadline.
+    atu_operation_started_at: Option<Instant>,
 
     /// Pending result of delivering the command to the Pico over I2C.
     atu_command_reply: Option<std::sync::mpsc::Receiver<HpsdrAtuCommandResult>>,
@@ -261,6 +271,7 @@ impl HpsdrSource {
             ptt: false,
             ddc: cfg.ddc,
             atu_operation: None,
+            atu_operation_started_at: None,
             atu_command_reply: None,
             atu_saw_rf_request: false,
             atu_rf_requested: false,
@@ -363,6 +374,7 @@ impl HpsdrSource {
                 }
 
                 self.atu_operation = None;
+                self.atu_operation_started_at = None;
                 self.atu_saw_rf_request = false;
             }
 
@@ -377,6 +389,7 @@ impl HpsdrSource {
                 });
 
                 self.atu_operation = None;
+                self.atu_operation_started_at = None;
                 self.atu_saw_rf_request = false;
             }
 
@@ -435,6 +448,7 @@ impl HpsdrSource {
             HpsdrAtuCommandResult::Rejected => {
                 tracing::warn!("HPSDR: antenna tuner command rejected before the I2C write");
                 self.atu_operation = None;
+                self.atu_operation_started_at = None;
                 self.atu_saw_rf_request = false;
                 self.atu_rf_requested = false;
                 let previous = self.atu_state.unwrap_or_default();
@@ -449,6 +463,7 @@ impl HpsdrSource {
             HpsdrAtuCommandResult::Failed => {
                 tracing::warn!("HPSDR: antenna tuner I2C command failed or was not acknowledged");
                 self.atu_operation = None;
+                self.atu_operation_started_at = None;
                 self.atu_saw_rf_request = false;
                 self.atu_rf_requested = false;
                 let previous = self.atu_state.unwrap_or_default();
@@ -464,11 +479,36 @@ impl HpsdrSource {
     }
 
     /// Process the latest tuner snapshot without initiating I2C traffic.
+    fn expire_atu_operation(&mut self) {
+        let (Some(operation), Some(started_at)) =
+            (self.atu_operation, self.atu_operation_started_at)
+        else {
+            return;
+        };
+
+        if !atu_operation_deadline_expired(started_at, Instant::now()) {
+            return;
+        }
+
+        tracing::warn!(?operation, "HPSDR: antenna tuner operation timed out after 10 seconds");
+        self.atu_operation = None;
+        self.atu_operation_started_at = None;
+        self.atu_command_reply = None;
+        self.atu_saw_rf_request = false;
+        self.atu_rf_requested = false;
+        if let Some(state) = self.atu_state.as_mut() {
+            state.status = sdroxide_types::AtuStatus::Aborted;
+            state.using_memory = false;
+        }
+    }
+
     fn poll_atu_status(&mut self) {
         self.poll_atu_command_reply();
+        self.expire_atu_operation();
         if !self.generic_atu_available() {
             self.atu_state = None;
             self.atu_operation = None;
+                self.atu_operation_started_at = None;
             self.atu_command_reply = None;
             self.atu_saw_rf_request = false;
             self.atu_rf_requested = false;
@@ -479,6 +519,7 @@ impl HpsdrSource {
         let Some(rx) = self.rx.as_ref() else {
             self.atu_command_reply = None;
             self.atu_operation = None;
+                self.atu_operation_started_at = None;
             self.atu_saw_rf_request = false;
             self.atu_rf_requested = false;
             return;
@@ -489,6 +530,7 @@ impl HpsdrSource {
         if snapshot.present != Some(true) {
             self.atu_state = None;
             self.atu_operation = None;
+                self.atu_operation_started_at = None;
             self.atu_command_reply = None;
             self.atu_saw_rf_request = false;
             self.atu_rf_requested = false;
@@ -578,6 +620,7 @@ impl HpsdrSource {
         self.atu_last_status_at = snapshot.updated_at;
 
         self.atu_operation = Some(operation);
+        self.atu_operation_started_at = Some(Instant::now());
         self.atu_command_reply = Some(reply);
         self.atu_saw_rf_request = false;
 
@@ -874,6 +917,7 @@ impl IqSource for HpsdrSource {
         self.board = None;
         self.atu_command_reply = None;
         self.atu_operation = None;
+                self.atu_operation_started_at = None;
         self.atu_saw_rf_request = false;
         self.atu_rf_requested = false;
     }
@@ -1026,5 +1070,23 @@ impl IqSource for HpsdrSource {
     /// the network.
     fn tx_pace_cushion_ms(&self) -> f64 {
         self.tx_latency_ms
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tuner_operation_deadline_expires_at_ten_seconds() {
+        let started_at = Instant::now();
+        assert!(!atu_operation_deadline_expired(
+            started_at,
+            started_at + Duration::from_millis(9_999),
+        ));
+        assert!(atu_operation_deadline_expired(
+            started_at,
+            started_at + TUNER_OPERATION_TIMEOUT,
+        ));
     }
 }
