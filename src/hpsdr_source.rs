@@ -49,6 +49,10 @@ fn atu_operation_deadline_expired(started_at: Instant, now: Instant) -> bool {
     now.saturating_duration_since(started_at) >= TUNER_OPERATION_TIMEOUT
 }
 
+fn atu_status_requests_rf(status: u8, operation: Option<AtuOperation>) -> bool {
+    status == 0xEE && operation == Some(AtuOperation::Tune)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AtuOperation {
     Tune,
@@ -572,7 +576,7 @@ impl HpsdrSource {
 
         // Only a fresh 0xEE status authorises the host to transmit.
         // Every other status withdraws the request.
-        self.atu_rf_requested = status == 0xEE && self.atu_operation == Some(AtuOperation::Tune);
+        self.atu_rf_requested = atu_status_requests_rf(status, self.atu_operation);
 
         self.observe_atu_status(status);
     }
@@ -1076,6 +1080,14 @@ impl IqSource for HpsdrSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_fresh_ee_status_during_tune_requests_rf() {
+        assert!(atu_status_requests_rf(0xEE, Some(AtuOperation::Tune)));
+        assert!(!atu_status_requests_rf(0xEE, Some(AtuOperation::Bypass)));
+        assert!(!atu_status_requests_rf(0xEE, None));
+        assert!(!atu_status_requests_rf(0x00, Some(AtuOperation::Tune)));
+    }
 
     #[test]
     fn tuner_operation_deadline_expires_at_ten_seconds() {
