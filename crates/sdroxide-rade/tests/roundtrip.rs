@@ -304,10 +304,7 @@ fn worker_survives_chunk_sizes_unrelated_to_nin() {
     while pos < modem.len() {
         let n = sizes[i % sizes.len()].min(modem.len() - pos);
         i += 1;
-        while {
-            let free = worker.rx_free();
-            free < MIN_RX_FREE || free < n
-        } {
+        while worker.rx_free() < MIN_RX_FREE + n {
             worker.pop_rx(&mut speech);
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
