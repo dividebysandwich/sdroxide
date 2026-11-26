@@ -33,10 +33,8 @@ impl IqSource for Rig {
             let index = self.sample_index + i as u64;
             let phase = std::f64::consts::TAU * 1_000.0 * index as f64 / RATE;
 
-            *sample = Complex32::new(
-                amplitude * phase.cos() as f32,
-                amplitude * phase.sin() as f32,
-            );
+            *sample =
+                Complex32::new(amplitude * phase.cos() as f32, amplitude * phase.sin() as f32);
         }
 
         self.sample_index += n as u64;

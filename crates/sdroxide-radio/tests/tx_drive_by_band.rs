@@ -146,11 +146,7 @@ fn the_drive_that_reaches_the_rig_follows_the_bands_calibration() {
         }
     }
     let s = last.expect("expected a radio state event after changing VFO");
-    assert!(
-        (s.tx.drive - 1.0).abs() < 1e-6,
-        "the Drive setting is untouched, got {}",
-        s.tx.drive
-    );
+    assert!((s.tx.drive - 1.0).abs() < 1e-6, "the Drive setting is untouched, got {}", s.tx.drive);
 
     drop(h.cmd_tx);
     if let Some(t) = thread {
