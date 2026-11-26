@@ -1630,11 +1630,11 @@ impl IqSource for ConvertedSource {
     fn reread_rx_antenna(&mut self) {
         self.inner.reread_rx_antenna();
     }
-    /// The tuner sits between the radio and its aerial, behind any converter
-    /// on the receive side, so it is the inner radio's.
     fn reports_atu_operation_state(&self) -> bool {
         self.inner.reports_atu_operation_state()
     }
+    /// The tuner sits between the radio and its aerial, behind any converter
+    /// on the receive side, so it is the inner radio's.
     fn atu(&self) -> Option<sdroxide_types::AtuState> {
         self.inner.atu()
     }
