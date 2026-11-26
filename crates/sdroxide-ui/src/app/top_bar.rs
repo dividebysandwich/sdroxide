@@ -5113,8 +5113,9 @@ impl SdroxideApp {
                     if crate::chrome::chip(ui, on == want, label)
                         .on_hover_text(tr!("topbar-hermes-lite-pa"))
                         .clicked()
-                        && on != want
                     {
+                        // Sent even when already in force: that is how the
+                        // band's current setting is pinned for the band.
                         self.state.pa_enable = Some(want); // optimistic echo
                         cmds.push(Command::SetPa(want));
                     }
