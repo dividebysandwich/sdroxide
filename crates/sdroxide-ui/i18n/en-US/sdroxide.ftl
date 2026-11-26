@@ -4586,6 +4586,25 @@ adsb-chip-map = MAP
 adsb-chip-map-tip = Map on the right
 adsb-chip-plots = PLOTS
 adsb-chip-plots-tip = Bar chart of the log's lines on the right
+adsb-chip-graphs = GRAPHS
+adsb-chip-graphs-tip = Station over time: rate, aircraft, range
+  With a readsb feed also signal, noise, temperature, WiFi
+adsb-graph-rate = Messages
+adsb-graph-aircraft = Aircraft
+adsb-graph-heard = heard
+adsb-graph-placed = placed
+adsb-graph-range = Distance of positions
+adsb-graph-max = max
+adsb-graph-q75 = 75 %
+adsb-graph-median = median
+adsb-graph-level = Level
+adsb-graph-signal = signal
+adsb-graph-noise = noise
+adsb-graph-strong = Strong signals (> −3 dBFS)
+adsb-graph-temp = Temperature
+adsb-graph-wifi = WiFi
+adsb-graph-note-local = Every 10 s from this decoder; aircraft and range over the last minute
+adsb-graph-note-remote = Every 10 s; level and strong share from the feed's readsb, temperature and WiFi from its station.json; red tick = supply or heat limit
 adsb-plot-x = X axis
 adsb-plot-daytime = Daytime (h)
 adsb-plot-height = Height (FL)

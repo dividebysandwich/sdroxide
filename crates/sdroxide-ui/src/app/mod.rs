@@ -894,6 +894,8 @@ pub struct SdroxideApp {
     adsb_log_week: bool,
     /// The lines the log showed last, for its chart on the right.
     adsb_log_shown: Vec<crate::adsb_log::Sighting>,
+    /// The station over time, sampled as the status arrives (chip GRAPHS).
+    adsb_graphs: crate::adsb_graphs::Graphs,
     /// The log shows only the aircraft in the live table now (today only).
     adsb_log_live: bool,
     /// AIS: the vessel table and everything the decoder is seeing, as the
@@ -1932,6 +1934,7 @@ impl SdroxideApp {
             adsb_log_day: None,
             adsb_log_week: false,
             adsb_log_shown: Vec::new(),
+            adsb_graphs: crate::adsb_graphs::Graphs::default(),
             adsb_log_live: false,
             ais_status: None,
             ais_map: crate::ais_map::AisMapState::default(),

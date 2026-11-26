@@ -232,16 +232,38 @@ impl SdroxideApp {
             // Why: HDZ 2026-11-18: „du kannst das ganze rechte Feld nehmen,
             //      das kann mit einem Chip Map gegen Plots getauscht werden“.
             if self.view.adsb_show_log {
-                for (plots, text, tip) in [
-                    (false, tr!("adsb-chip-map"), tr!("adsb-chip-map-tip")),
-                    (true, tr!("adsb-chip-plots"), tr!("adsb-chip-plots-tip")),
+                // Which of the three is up: map, the log's bar chart, or the
+                // station's graphs over time.
+                let now_side =
+                    if self.view.adsb_log_graphs { 2 } else { u8::from(self.view.adsb_log_plots) };
+                for (side, text, tip) in [
+                    (0u8, tr!("adsb-chip-map"), tr!("adsb-chip-map-tip")),
+                    (1, tr!("adsb-chip-plots"), tr!("adsb-chip-plots-tip")),
+                    (2, tr!("adsb-chip-graphs"), tr!("adsb-chip-graphs-tip")),
                 ] {
-                    if crate::chrome::chip(ui, self.view.adsb_log_plots == plots, small(text))
+                    if crate::chrome::chip(ui, now_side == side, small(text))
                         .on_hover_text(tip)
                         .clicked()
                     {
-                        self.view.adsb_log_plots = plots;
+                        self.view.adsb_log_plots = side == 1;
+                        self.view.adsb_log_graphs = side == 2;
                     }
+                }
+                if self.view.adsb_log_graphs {
+                    use crate::adsb_graphs::{SPANS, span_label};
+                    ui.add_space(6.0);
+                    for (i, s) in SPANS.iter().enumerate() {
+                        if crate::chrome::chip(
+                            ui,
+                            usize::from(self.view.adsb_graphs_span) == i,
+                            small(span_label(*s)),
+                        )
+                        .clicked()
+                        {
+                            self.view.adsb_graphs_span = i as u8;
+                        }
+                    }
+                    return;
                 }
                 if self.view.adsb_log_plots {
                     use crate::adsb_plots::Axis;
@@ -1216,6 +1238,10 @@ impl SdroxideApp {
         let top = ui.cursor().top();
         self.adsb_map_chips(ui, in_window);
         let h = (h - (ui.cursor().top() - top)).max(60.0);
+        if self.view.adsb_show_log && self.view.adsb_log_graphs {
+            self.adsb_station_graphs(ui, h);
+            return;
+        }
         if self.view.adsb_show_log && self.view.adsb_log_plots {
             self.adsb_log_plot(ui, h);
             return;
@@ -1288,6 +1314,122 @@ impl SdroxideApp {
         };
         let state = &mut self.adsb_map;
         crate::adsb_map::show(ui, state, &st.aircraft, &route, home, now, cfg, h, layers);
+    }
+
+    /// The station over time: rate, aircraft and range from this decoder, and
+    /// when the frames come from `readsb` elsewhere, that host's signal, noise,
+    /// strong-signal share, temperature and WiFi.
+    fn adsb_station_graphs(&mut self, ui: &mut egui::Ui, h: f32) {
+        use crate::adsb_graphs::{Curve, Panel, SPANS, Sample, draw};
+        let span = SPANS.get(usize::from(self.view.adsb_graphs_span)).copied().unwrap_or(3600);
+        let now = crate::time::now_unix();
+        let remote = self.adsb_graphs.has_remote(now - span);
+        let (cyan, amber, gray) =
+            (theme::CYAN(), egui::Color32::from_rgb(235, 170, 60), theme::gray(150));
+        let mut panels = vec![
+            Panel {
+                title: tr!("adsb-graph-rate"),
+                unit: "/min",
+                decimals: 0,
+                curves: vec![Curve {
+                    label: String::new(),
+                    color: cyan,
+                    get: |s: &Sample| s.msgs_min,
+                }],
+            },
+            Panel {
+                title: tr!("adsb-graph-aircraft"),
+                unit: "",
+                decimals: 0,
+                curves: vec![
+                    Curve {
+                        label: tr!("adsb-graph-heard"),
+                        color: cyan,
+                        get: |s: &Sample| s.aircraft,
+                    },
+                    Curve {
+                        label: tr!("adsb-graph-placed"),
+                        color: amber,
+                        get: |s: &Sample| s.placed,
+                    },
+                ],
+            },
+            Panel {
+                title: tr!("adsb-graph-range"),
+                unit: "km",
+                decimals: 0,
+                curves: vec![
+                    Curve { label: tr!("adsb-graph-max"), color: cyan, get: |s: &Sample| s.max_km },
+                    Curve {
+                        label: tr!("adsb-graph-q75"),
+                        color: amber,
+                        get: |s: &Sample| s.q75_km,
+                    },
+                    Curve {
+                        label: tr!("adsb-graph-median"),
+                        color: gray,
+                        get: |s: &Sample| s.med_km,
+                    },
+                ],
+            },
+        ];
+        if remote {
+            panels.push(Panel {
+                title: tr!("adsb-graph-level"),
+                unit: "dBFS",
+                decimals: 1,
+                curves: vec![
+                    Curve {
+                        label: tr!("adsb-graph-signal"),
+                        color: cyan,
+                        get: |s: &Sample| s.signal,
+                    },
+                    Curve {
+                        label: tr!("adsb-graph-noise"),
+                        color: gray,
+                        get: |s: &Sample| s.noise,
+                    },
+                ],
+            });
+            panels.push(Panel {
+                title: tr!("adsb-graph-strong"),
+                unit: "%",
+                decimals: 1,
+                curves: vec![Curve {
+                    label: String::new(),
+                    color: amber,
+                    get: |s: &Sample| s.strong_pct,
+                }],
+            });
+            panels.push(Panel {
+                title: tr!("adsb-graph-temp"),
+                unit: "°C",
+                decimals: 1,
+                curves: vec![Curve {
+                    label: String::new(),
+                    color: amber,
+                    get: |s: &Sample| s.temp_c,
+                }],
+            });
+            panels.push(Panel {
+                title: tr!("adsb-graph-wifi"),
+                unit: "dBm",
+                decimals: 0,
+                curves: vec![Curve {
+                    label: String::new(),
+                    color: cyan,
+                    get: |s: &Sample| s.wifi_dbm,
+                }],
+            });
+        }
+        let note =
+            if remote { tr!("adsb-graph-note-remote") } else { tr!("adsb-graph-note-local") };
+        ui.label(RichText::new(note).size(9.5).weak());
+        let size = egui::vec2(ui.available_width(), (h - 24.0).max(120.0));
+        draw(ui, &self.adsb_graphs, &panels, span, now, size, theme::gray(200));
+        // A sample arrives every ten seconds; the curves should not wait for
+        // the pointer to move.
+        ui.ctx().request_repaint_after(std::time::Duration::from_secs(2));
     }
 
     /// The log's lines as a bar chart, counted by the axis picked over it.

@@ -490,6 +490,13 @@ pub struct ViewState {
     /// The chart's x axis, [`crate::adsb_plots::Axis`] as a number.
     #[serde(default)]
     pub adsb_plot_axis: u8,
+    /// With the log shown, the right side shows the station's graphs over
+    /// time (chip GRAPHS); wins over `adsb_log_plots`.
+    #[serde(default)]
+    pub adsb_log_graphs: bool,
+    /// The graphs' window, an index into [`crate::adsb_graphs::SPANS`].
+    #[serde(default)]
+    pub adsb_graphs_span: u8,
     /// The ADS-B map in a window of its own; the list then has the panel.
     #[serde(default)]
     pub adsb_map_out: bool,
@@ -956,6 +963,8 @@ impl Default for ViewState {
             adsb_alt_planes: true,
             adsb_log_plots: false,
             adsb_plot_axis: 0,
+            adsb_log_graphs: false,
+            adsb_graphs_span: 1,
             adsb_gain_presets: Default::default(),
             adsb_map_pointer: adsb_map_cities_default(),
             adsb_range_window: adsb_range_window_default(),

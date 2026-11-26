@@ -2029,6 +2029,9 @@ impl SdroxideApp {
                     // the diagram keeps filling while another pane is up.
                     let home = self.adsb_home();
                     self.adsb_coverage.note(home, &st.aircraft, crate::time::now_unix());
+                    let feed_host =
+                        self.beast_edit.in_target().and_then(|a| crate::adsb_graphs::host_of(&a));
+                    self.adsb_graphs.note(&st, home, feed_host, crate::time::now_unix());
                     #[cfg(not(target_arch = "wasm32"))]
                     {
                         let instrument = self.adsb_instrument();
