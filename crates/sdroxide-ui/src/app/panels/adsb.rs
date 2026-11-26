@@ -41,6 +41,9 @@ pub(in crate::app) enum AdsbSort {
     /// there is no distance without one.
     Range,
     Signal,
+    /// Share of the expected position messages heard: the aircraft at the edge
+    /// of what the antenna sees, at the bottom.
+    Reception,
 }
 
 /// How the sighting log is ordered.
@@ -1151,6 +1154,16 @@ impl SdroxideApp {
                         format!("{:.3} MHz ({:+.0} kHz)", hz / 1e6, (hz - MODE_S_HZ) / 1e3),
                     ));
                 }
+                if let Some(share) = a.rx_share {
+                    rows.push((
+                        tr!("adsb-row-rx"),
+                        tr!(
+                            "adsb-rx-share",
+                            pct = format!("{:.0}", share * 100.0),
+                            secs = format!("{:.0}", sdroxide_types::ADSB_RX_WINDOW_S)
+                        ),
+                    ));
+                }
                 rows.push((tr!("adsb-row-frames"), format!("{} ({})", a.frames, a.source.label())));
                 rows.push((tr!("adsb-first-heard"), fmt_age(now - a.first_at)));
 
@@ -1674,6 +1687,7 @@ fn adsb_head_row(ui: &mut egui::Ui, have_home: bool, sort: &mut AdsbSort, desc: 
             (cols.airline, L, &tr!("adsb-airline-col"), None),
             (cols.kind, L, &tr!("adsb-type-col"), None),
             (cols.df, R, "Δf", None),
+            (cols.rx, R, "RX%", Some(AdsbSort::Reception)),
             (cols.sig, R, "SIG", Some(AdsbSort::Signal)),
             (cols.trk, R, "TRK", None),
             (cols.vs, R, &tr!("adsb-v-s"), None),
@@ -1703,6 +1717,10 @@ const AIRLINE_W: f32 = 116.0;
 const DF_W: f32 = 40.0;
 /// The nominal Mode S reply frequency the carrier offset is counted from.
 const MODE_S_HZ: f64 = 1_090_000_000.0;
+/// The reception share column, `87` (% of the expected positions), left of SIG.
+/// Why: HDZ 2026-11-17: „die Schleppendichte als QM-Parameter neben der Signalstärke“ —
+/// the track thinning out showed where a building blocks the view.
+const RX_W: f32 = 36.0;
 
 /// Column x offsets, in points from the left of a row.
 struct Cols {
@@ -1721,6 +1739,8 @@ struct Cols {
     kind: f32,
     /// Carrier offset, kHz from 1090 MHz.
     df: f32,
+    /// Share of the expected position messages heard, per cent.
+    rx: f32,
     sig: f32,
     trk: f32,
     vs: f32,
@@ -1746,18 +1766,16 @@ fn columns(w: f32, have_home: bool) -> Cols {
     // heading has to clear the fixed left-hand group, and at [`WIDE_W`] it
     // just does — with or without a range column between it and the edge.
     let sig = if w < WIDE_W { f32::NAN } else { trk - 34.0 };
-    // The carrier offset comes in after the signal and goes before it: it is
-    // what tells two traces in the waterfall apart, and nothing else needs it.
-    let df = if sig.is_nan() || w < WIDE_W + 2.0 * DF_W { f32::NAN } else { sig - DF_W };
+    // The reception share beside the signal, which it qualifies: a strong
+    // signal heard one message in three is a path half blocked, not a weak
+    // transmitter. It comes in after the signal and goes before it.
+    let rx = if sig.is_nan() || w < WIDE_W + RX_W { f32::NAN } else { sig - RX_W };
+    // The carrier offset comes in last and goes first: it is what tells two
+    // traces in the waterfall apart, and nothing else needs it.
+    let df = if rx.is_nan() || w < WIDE_W + RX_W + 2.0 * DF_W { f32::NAN } else { rx - DF_W };
     // The route sits after the speed, left-aligned, only where the first of the
     // right-hand columns leaves it room for `EDDK›…›GCLP`.
-    let first_right = if !df.is_nan() {
-        df
-    } else if sig.is_nan() {
-        trk
-    } else {
-        sig
-    };
+    let first_right = [df, rx, sig, trk].into_iter().find(|x| !x.is_nan()).unwrap_or(trk);
     let route = if first_right - 28.0 - ROUTE_X >= ROUTE_W { ROUTE_X } else { f32::NAN };
     // Right of the codes: the places, the airline and the type, in whatever
     // is left before the first right-hand column. The places give way first,
@@ -1792,6 +1810,7 @@ fn columns(w: f32, have_home: bool) -> Cols {
         airline_w,
         kind,
         df,
+        rx,
         sig,
         trk,
         vs,
@@ -2053,6 +2072,13 @@ fn adsb_row(
         small.clone(),
         dim,
     );
+    put(
+        cols.rx,
+        egui::Align2::RIGHT_CENTER,
+        a.rx_share.map(|s| format!("{:.0}", s * 100.0)).unwrap_or_default(),
+        small.clone(),
+        dim,
+    );
     put(cols.sig, egui::Align2::RIGHT_CENTER, format!("{:.0}", a.rssi_dbfs), small.clone(), dim);
     put(
         cols.trk,
@@ -2139,6 +2165,7 @@ fn sort_rows(rows: &mut [&AdsbAircraft], by: AdsbSort, desc: bool, home: Option<
                 Some(-sdroxide_types::distance_km(h, (lat, lon)))
             }
             AdsbSort::Signal => Some(f64::from(a.rssi_dbfs)),
+            AdsbSort::Reception => a.rx_share.map(f64::from),
         }
     };
     if by == AdsbSort::Callsign {
@@ -2377,7 +2404,8 @@ mod tests {
         while w < 1600.0 {
             for have_home in [true, false] {
                 let c = columns(w, have_home);
-                let first_right = [c.df, c.sig, c.trk].into_iter().find(|x| !x.is_nan()).unwrap();
+                let first_right =
+                    [c.df, c.rx, c.sig, c.trk].into_iter().find(|x| !x.is_nan()).unwrap();
                 // The right-hand columns are right-aligned: their text starts
                 // up to about 28 points left of their x.
                 let limit = first_right - 28.0;
@@ -2412,7 +2440,7 @@ mod tests {
         while w < 900.0 {
             for have_home in [true, false] {
                 let c = columns(w, have_home);
-                let mut xs: Vec<f32> = [c.df, c.sig, c.trk, c.vs, c.sqk, c.range, c.age]
+                let mut xs: Vec<f32> = [c.df, c.rx, c.sig, c.trk, c.vs, c.sqk, c.range, c.age]
                     .into_iter()
                     .filter(|x| !x.is_nan())
                     .collect();

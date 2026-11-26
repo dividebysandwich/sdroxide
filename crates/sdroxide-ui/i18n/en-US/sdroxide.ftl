@@ -121,6 +121,9 @@ settings-ui-cities = Cities on maps
 
         They are most of what says *where* a dot is on a map of the whole world, and they are also the busiest thing on it. Turn them off if the names are getting in the way of the stations you are reading. The 3D globe is unaffected — its cities are night-side lights rather than markers, and nothing there is written across a contact.
 settings-ui-cities-show = show cities and their names
+settings-ui-warnings = Warnings
+settings-ui-quiet-off-radios = suppress inactive radio warnings
+    .hint = A radio you have switched off shows no banner saying so; the rings on its tab already do. Every other warning still appears: a device that will not open, a missing sound card, a failed recording.
 settings-ui-update-check = Check for updates at startup
     .hint = Asks sdroxide.com once per start whether a newer release has been published, and says so in a dismissable banner above the waterfall. Nothing is sent beyond the request itself.
 settings-ui-band-conditions-download = Download the band-conditions forecast
@@ -594,12 +597,16 @@ settings-controls-panadapter-mouse = Panadapter mouse
 settings-controls-wheel = Wheel
 settings-controls-wheel-shift = Wheel + Shift
 settings-controls-tune-step = Tune step
+settings-controls-points-per-step = Smooth scrolling per step
+settings-controls-points-per-step-hover = How much smooth scrolling is one step, in points: a trackpad, a free-running thumb wheel, a wheel that reports a notch in pieces. Smaller is faster. A wheel that reports whole notches is one step a notch whatever this says.
 settings-controls-zoom-rate = Zoom rate
 settings-controls-click-tune-rounding = Click-tune rounding
 settings-controls-invert-wheel-direction = Invert wheel direction
 settings-controls-left-drag-tunes-well-pans = Left-drag tunes as well as pans
 settings-controls-off-makes-left-drag-pan = Off makes left-drag pan the view only, like right-drag.
 settings-controls-scroll-digit-frequency-readout-tune = Scroll a digit on the frequency readout to tune it
+settings-controls-side-wheel-fine = Side wheel tunes in tenths of the step
+settings-controls-side-wheel-fine-hover = Sideways scrolling over the panadapter — a thumb wheel, a tilt wheel, two fingers across a trackpad — tunes a tenth of the tune step at a time, whatever the wheel itself is set to.
 settings-controls-both-wheel-actions-are-tune = Both wheel actions are Tune — there is no way left to zoom.
 settings-controls-restore-mouse-defaults = Restore mouse defaults
 settings-controls-mouse-buttons = Mouse buttons
@@ -1959,6 +1966,8 @@ settings-radio-lets-if-gain-reduction-go = Lets the IF gain reduction go below 2
 settings-radio-allow-if-gain-reduction-below = Allow IF gain reduction below 20 dB
 settings-radio-front-end-attenuation-steps-0 = Front-end attenuation in steps: 0 is maximum gain, each step up switches more attenuation in. Some bands have fewer steps — the driver clamps and keeps your choice for when you tune back, and the rail here ends at what the band the radio is on will take. A higher choice made on another band is kept and still shown beside it. Applies immediately.
 settings-radio-t-0-max-gain = 0 = max gain
+settings-radio-sdrplay-auto-lna = Automatic LNA
+settings-radio-sdrplay-auto-lna-hover = Let the receiver choose its own LNA state. It adds attenuation while the converter is overloaded or the IF AGC has run out of range, and takes it off again when it can. The LNA state above becomes the most gain it may use. Also a click on the LNA label on the main window. Applies immediately.
 settings-radio-reference-error-parts-per-million-2 = Reference error in parts per million, applied by the device itself. Applies immediately.
 settings-radio-radio-s-tuner = This radio's tuner
 settings-radio-tuner = Tuner
@@ -2053,6 +2062,14 @@ settings-radio-worth-having-any-sustained-transmitting = Worth having on for any
 settings-radio-automatic-board-receives-switched-transmit = On Automatic the board receives, and is switched to transmit at key-down and back at key-up — on either cabling. Its amateur channels have one filter with a transmit/receive switch either side of it, so a board asked for both at once puts that switch on the transmitter and stops hearing anything. The 30 MHz channel is reachable only through J5, which is one connector for both directions; above it, transmitting from J4 keeps the receive path off the connector the amplifier is driving.
 settings-radio-limesdr-support-has-not-been = LimeSDR support has not been verified against hardware. This is the last session's trace, for an issue report.
 settings-radio-gains-filters-corrections-antenna-sockets = Gains, filters, corrections, the antenna sockets and every LimeRFE control — its connectors, band, relays, attenuator, notch and fan — apply immediately. The board, the receive chain, the sample rate, arming transmit and the LimeRFE's connection take effect on Apply.
+
+## Settings window, Radio tab: the PlutoSDR's second receive chain (issue #525).
+## Its other controls share the LimeSDR's second-chain messages above.
+
+settings-radio-pluto-rx2 = Second receive chain (RX2)
+settings-radio-pluto-rx2-intro = On a 2R2T board (Pluto+, PlutoSky R2 with 2R2T firmware) this radio can keep RX2 for itself: as a second aerial, or as a sample of your own transmitter for PureSignal. RX2 shares the oscillator and the clock with RX1, so it hears the same span at the same instant, and it runs at a fixed gain with its AGC off. While it is used here it is not free for a second radio tab. Changing what it is used for takes effect on Apply.
+settings-radio-pluto-rx2-gain = RX2 gain
+settings-radio-pluto-ps-needs-full-duplex = PureSignal needs Full duplex on and the PTT pins off: the coupler is only heard while receive keeps running through the over.
 
 ## Settings window, Radio tab: messages with values
 
@@ -2163,6 +2180,9 @@ topbar-rx888-tuner-auto-hint =
 topbar-rx888-tuner-agc-hint =
     R828D AGC: own LNA and mixer loops
     Lit = on; manual tuner gain held
+topbar-sdrplay-auto-lna-hint =
+    Click LNA for automatic: the receiver picks the LNA state by itself
+    Lit = on; the rail then sets the most gain it may use
 topbar-plutosdr-s-own-agc-setting =
     {""}
 
@@ -2431,9 +2451,6 @@ topbar-memory-channels = Memory channels
 topbar-scanner-stopped-signal = Scanner — stopped on a signal
 topbar-scanner-running = Scanner — running
 topbar-scan-memory-channels-frequency-range = Scan memory channels or a frequency range
-topbar-hfdl-ground-network-decode-log = HFDL ground network — the decode log and aircraft map, below the waterfall. Switch the decoder on with LISTEN inside the panel.
-topbar-hfdl-ground-network-decoding-now = HFDL ground network — decoding now. Open the panel.
-topbar-hfdl-ground-network-aircraft-shortwave = HFDL ground network — the aircraft shortwave data link, one listening channel at a time
 topbar-grid-tracker-worked-maidenhead-squares = Grid tracker — worked Maidenhead squares on a map, with what is heard
 topbar-amplifier-set-up-hardrock-under = Amplifier — set up a Hardrock under Settings → Amplifier
 topbar-settings-device-gains-antennas-audio = Settings — device gains, antennas, audio devices
@@ -2528,7 +2545,6 @@ topbar-chip-public-sdr = PUBLIC SDR
 topbar-chip-mail = MAIL
 topbar-chip-mem = MEM
 topbar-chip-scan = SCAN
-topbar-chip-hfdl = HFDL
 topbar-chip-grid = GRID
 topbar-chip-amp = AMP
 topbar-chip-settings = ⚙ SETTINGS
@@ -5270,6 +5286,8 @@ speech-browser-client-cannot-speak-yet = the browser client cannot speak yet
 ## freqdisplay (src/widgets/freq_display.rs)
 
 freqdisplay-double-click-type-frequency = Double-click to type a frequency
+freqdisplay-right-click-sets-step = Right-click to tune in steps of this digit
+freqdisplay-shift-right-click-zeros = Shift + right-click or middle-click to zero this digit and those to its right
 freqdisplay-tap-type-frequency = Tap to type a frequency
 
 ## solarstate (src/solar3d/state.rs)
@@ -5382,6 +5400,7 @@ adsb-row-range = range
 adsb-row-position = position
 adsb-row-signal = signal
 adsb-row-carrier = carrier
+adsb-row-rx = reception
 adsb-row-frames = frames
 rade-transmitting = transmitting
 decodes-odd = ODD
@@ -5977,6 +5996,7 @@ winlink-cc-list = cc { $cc }
 spots-n-of-total = { $n } of { $total }
 wefax-n-of-total = { $n } of { $total }
 adsb-range-bearing = { $km } km at { $bearing }°
+adsb-rx-share = { $pct } % of positions, last { $secs } s
 ais-range-bearing = { $km } km at { $bearing }°
 
 ## More values from sdroxide-types, as pickers name them (src/i18n/labels.rs).

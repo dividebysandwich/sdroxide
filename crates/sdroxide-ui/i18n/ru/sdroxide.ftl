@@ -570,12 +570,16 @@ settings-controls-panadapter-mouse = Мышь на панораме
 settings-controls-wheel = Колесо
 settings-controls-wheel-shift = Колесо + Shift
 settings-controls-tune-step = Шаг настройки
+settings-controls-points-per-step = Плавная прокрутка на шаг
+settings-controls-points-per-step-hover = Сколько плавной прокрутки составляет один шаг, в пунктах: трекпад, боковое колесо без щелчков, колесо, сообщающее о щелчке по частям. Меньше — быстрее. Колесо, сообщающее о целых щелчках, даёт один шаг на щелчок при любом значении.
 settings-controls-zoom-rate = Скорость масштабирования
 settings-controls-click-tune-rounding = Округление при настройке кликом
 settings-controls-invert-wheel-direction = Инвертировать направление колеса
 settings-controls-left-drag-tunes-well-pans = Перетаскивание левой кнопкой настраивает, а не только двигает вид
 settings-controls-off-makes-left-drag-pan = Выкл. — перетаскивание левой кнопкой только двигает вид, как правой.
 settings-controls-scroll-digit-frequency-readout-tune = Прокрутить цифру на индикаторе частоты, чтобы настроить её
+settings-controls-side-wheel-fine = Боковое колесо настраивает десятыми долями шага
+settings-controls-side-wheel-fine-hover = Боковая прокрутка над панадаптером — боковое колесо, наклон колеса, два пальца поперёк трекпада — перестраивает на десятую часть шага настройки за раз, как бы ни было настроено само колесо.
 settings-controls-both-wheel-actions-are-tune = Оба действия колеса — настройка; масштабирования не остаётся.
 settings-controls-restore-mouse-defaults = Восстановить настройки мыши по умолчанию
 settings-controls-mouse-buttons = Кнопки мыши
@@ -1895,6 +1899,8 @@ settings-radio-lets-if-gain-reduction-go = Позволяет ослаблени
 settings-radio-allow-if-gain-reduction-below = Разрешить ослабление ПЧ ниже 20 дБ
 settings-radio-front-end-attenuation-steps-0 = Ослабление фронтенда ступенями: 0 — максимальное усиление, каждая ступень вверх подключает больше ослабления. На некоторых диапазонах ступеней меньше — драйвер ограничивает и сохраняет ваш выбор до тех пор, пока вы не вернётесь настраиваться, а шкала здесь заканчивается там, где его примет диапазон, на котором стоит радио. Более высокий выбор, сделанный на другом диапазоне, сохраняется и по‑прежнему показывается рядом. Применяется сразу.
 settings-radio-t-0-max-gain = 0 = максимальное усиление
+settings-radio-sdrplay-auto-lna = Автоматический МШУ
+settings-radio-sdrplay-auto-lna-hover = Приёмник сам выбирает ступень МШУ. Он добавляет ослабление, пока преобразователь перегружен или АРУ ПЧ дошла до предела, и убирает его, когда это возможно. Ступень МШУ выше становится наибольшим усилением, которое он может использовать. Это то же, что клик по надписи LNA в главном окне. Применяется сразу.
 settings-radio-reference-error-parts-per-million-2 = Погрешность опорного генератора в миллионных долях, применяется самим устройством. Применяется сразу.
 settings-radio-radio-s-tuner = Тюнер этого радио
 settings-radio-tuner = Тюнер
@@ -1961,6 +1967,10 @@ settings-radio-socket = Её разъём
 settings-radio-same-first = То же, что первая
 settings-radio-gain-2 = Её усиление
 settings-radio-set-low-coupled-sample-your = Задайте НИЗКО. Связанный образец вашего собственного передатчика — сильный сигнал, а цепочка обратной связи, загнанная в компрессию, неверно измеряет кривую усилителя — она учит коррекцию собственным искажениям. Начните с низа и используйте аттенюатор ответвителя.
+settings-radio-pluto-rx2 = Второй приёмный тракт (RX2)
+settings-radio-pluto-rx2-intro = На плате 2R2T (Pluto+, PlutoSky R2 с прошивкой 2R2T) это радио может оставить RX2 себе: как вторую антенну или как отвод сигнала своего передатчика для PureSignal. RX2 использует тот же гетеродин и тактовый генератор, что и RX1, поэтому слышит тот же участок в тот же момент, и работает с фиксированным усилением при выключенной АРУ. Пока он используется здесь, он недоступен для второй вкладки радио. Смена назначения вступает в силу по кнопке «Применить».
+settings-radio-pluto-rx2-gain = Усиление RX2
+settings-radio-pluto-ps-needs-full-duplex = PureSignal требует включённого полного дуплекса и выключенных выводов PTT: ответвитель слышен, только пока приём продолжается во время передачи.
 settings-radio-set-so-both-aerials-show = Задайте так, чтобы обе антенны показывали примерно одинаковый шумовой пол. Это регулировка, на которой держится всё: сложение взвешивает обе ветви по их шуму, а вторая цепочка, загнанная в компрессию, отдаёт фильтру искажённую копию помехи — которую нельзя вычесть из неискажённой.
 settings-radio-table-steps-2 = Шаги таблицы
 settings-radio-how-finely-correction-follows-amplifier = Насколько точно коррекция следует за кривой усилителя. Больше шагов повторяют более резкое колено, но каждый нужно выучить по отсчётам, попавшим в него, — а верх гистограммы амплитуд речи тонкий. Тридцать два достаточно для плавной кривой, которая у ВЧ-усилителя действительно есть. Изменение начинает коррекцию заново.
@@ -2082,6 +2092,9 @@ topbar-counted-steps-not-decibels-what =
 
     Считается ступенями, а не децибелами: чему равна одна ступень, — дело самого приёмника, а на SDRplay это ещё зависит от диапазона. Правильно по‑прежнему больше усиления.
 topbar-gain = Усиление
+topbar-sdrplay-auto-lna-hint =
+    Клик по LNA — автоматика: приёмник сам выбирает ступень МШУ
+    Горит = включено; регулятор тогда задаёт наибольшее допустимое усиление
 topbar-plutosdr-s-own-agc-setting =
     {""}
 
@@ -2278,9 +2291,6 @@ topbar-memory-channels = Ячейки памяти
 topbar-scanner-stopped-signal = Сканер — остановился на сигнале
 topbar-scanner-running = Сканер — работает
 topbar-scan-memory-channels-frequency-range = Сканировать ячейки памяти или диапазон частот
-topbar-hfdl-ground-network-decode-log = Наземная сеть HFDL — журнал декодирования и карта самолётов под водопадом. Включите декодер кнопкой LISTEN внутри панели.
-topbar-hfdl-ground-network-decoding-now = Наземная сеть HFDL — декодируется сейчас. Откройте панель.
-topbar-hfdl-ground-network-aircraft-shortwave = Наземная сеть HFDL — коротковолновый канал передачи данных самолётов, по одному канал прослушивания за раз
 topbar-grid-tracker-worked-maidenhead-squares = Трекер квадратов — отработанные квадраты Майденгеда на карте вместе с тем, что слышно
 topbar-amplifier-set-up-hardrock-under = Усилитель — настройте Hardrock в Настройки → Усилитель
 topbar-settings-device-gains-antennas-audio = Настройки — усиления устройств, антенны, аудиоустройства
@@ -2305,7 +2315,6 @@ topbar-chip-public-sdr = ПУБЛ. SDR
 topbar-chip-mail = ПОЧТА
 topbar-chip-mem = ПАМЯТЬ
 topbar-chip-scan = СКАН
-topbar-chip-hfdl = HFDL
 topbar-chip-grid = КВАДРАТЫ
 topbar-chip-amp = УСИЛ.
 topbar-chip-settings = ⚙ НАСТРОЙКИ
@@ -4749,6 +4758,8 @@ speech-browser-client-cannot-speak-yet = браузерный клиент по�
 ## Поле частоты (src/widgets/freq_display.rs)
 
 freqdisplay-double-click-type-frequency = Двойной клик, чтобы ввести частоту
+freqdisplay-right-click-sets-step = Правый клик — настраивать шагами этого разряда
+freqdisplay-shift-right-click-zeros = Shift + правый клик или средний клик — обнулить этот разряд и все справа от него
 freqdisplay-tap-type-frequency = Коснитесь, чтобы ввести частоту
 
 ## Состояние Солнечной системы (src/solar3d/state.rs)

@@ -116,6 +116,9 @@ settings-ui-cities = Städte auf Karten
 
         Sie zeigen vor allem, *wo* ein Punkt auf einer Weltkarte liegt, und sie sind zugleich das Unruhigste darauf. Schalten Sie sie aus, wenn die Namen die Stationen stören, die Sie lesen. Der 3D-Globus ist nicht betroffen — seine Städte sind Lichter auf der Nachtseite und keine Markierungen, und dort wird nichts über einen Kontakt geschrieben.
 settings-ui-cities-show = Städte und ihre Namen anzeigen
+settings-ui-warnings = Warnungen
+settings-ui-quiet-off-radios = Warnungen ausgeschalteter Radios unterdrücken
+    .hint = Ein ausgeschaltetes Radio zeigt keinen Hinweisbalken mehr; die Ringe auf seinem Tab zeigen das schon. Alle anderen Warnungen bleiben: ein Gerät, das sich nicht öffnen lässt, eine fehlende Soundkarte, eine gescheiterte Aufnahme.
 settings-ui-update-check = Beim Start nach Updates suchen
     .hint = Fragt einmal pro Start bei sdroxide.com nach, ob eine neuere Version veröffentlicht wurde, und meldet das in einem schließbaren Banner über dem Wasserfall. Außer der Anfrage selbst wird nichts gesendet.
 settings-ui-band-conditions-download = Bandbedingungs-Vorhersage herunterladen
@@ -586,12 +589,16 @@ settings-controls-panadapter-mouse = Maus im Panorama
 settings-controls-wheel = Rad
 settings-controls-wheel-shift = Rad + Umschalt
 settings-controls-tune-step = Abstimmschritt
+settings-controls-points-per-step = Weiches Scrollen pro Schritt
+settings-controls-points-per-step-hover = Wie viel weiches Scrollen ein Schritt ist, in Punkten: ein Trackpad, ein frei laufendes Daumenrad, ein Rad, das eine Raste in Teilen meldet. Kleiner ist schneller. Ein Rad, das ganze Rasten meldet, macht einen Schritt pro Raste, was auch immer hier steht.
 settings-controls-zoom-rate = Zoomgeschwindigkeit
 settings-controls-click-tune-rounding = Runden beim Abstimmen per Klick
 settings-controls-invert-wheel-direction = Radrichtung umkehren
 settings-controls-left-drag-tunes-well-pans = Ziehen mit links stimmt ab wie auch schwenkt
 settings-controls-off-makes-left-drag-pan = Aus macht das Ziehen mit links zum reinen Schwenken der Ansicht, wie das Ziehen mit rechts.
 settings-controls-scroll-digit-frequency-readout-tune = Eine Ziffer der Frequenzanzeige scrollen, um sie abzustimmen
+settings-controls-side-wheel-fine = Seitenrad stimmt in Zehnteln des Schritts ab
+settings-controls-side-wheel-fine-hover = Seitliches Scrollen über dem Panadapter — ein Daumenrad, ein Kipprad, zwei Finger quer über ein Trackpad — stimmt jeweils ein Zehntel des Abstimmschritts ab, egal worauf das Rad selbst eingestellt ist.
 settings-controls-both-wheel-actions-are-tune = Beide Radaktionen sind Abstimmen — es bleibt kein Weg zum Zoomen.
 settings-controls-restore-mouse-defaults = Maus-Standardwerte wiederherstellen
 settings-controls-mouse-buttons = Maustasten
@@ -1922,6 +1929,8 @@ settings-radio-lets-if-gain-reduction-go = Lässt die ZF-Verstärkungsreduktion 
 settings-radio-allow-if-gain-reduction-below = ZF-Verstärkungsreduktion unter 20 dB erlauben
 settings-radio-front-end-attenuation-steps-0 = Frontstufen-Dämpfung in Schritten: 0 ist maximale Verstärkung, jeder Schritt nach oben schaltet mehr Dämpfung ein. Manche Bänder haben weniger Schritte — der Treiber begrenzt und behält Ihre Wahl für die Rückkehr zur Abstimmung, und der Regler hier endet bei dem, was das Band, auf dem das Funkgerät liegt, zulässt. Eine höhere Wahl, die auf einem anderen Band getroffen wurde, bleibt erhalten und wird daneben weiter angezeigt. Wirkt sofort.
 settings-radio-t-0-max-gain = 0 = maximale Verstärkung
+settings-radio-sdrplay-auto-lna = Automatische LNA
+settings-radio-sdrplay-auto-lna-hover = Der Empfänger wählt seine LNA-Stufe selbst. Er schaltet Dämpfung zu, solange der Wandler übersteuert oder die ZF-AGC am Anschlag ist, und nimmt sie wieder weg, sobald es geht. Die LNA-Stufe darüber ist dann die höchste Verstärkung, die er nutzen darf. Entspricht einem Klick auf die Beschriftung LNA im Hauptfenster. Wirkt sofort.
 settings-radio-reference-error-parts-per-million-2 = Referenzfehler in Teilen pro Million, vom Gerät selbst angewendet. Wirkt sofort.
 settings-radio-radio-s-tuner = Der Tuner dieses Funkgeräts
 settings-radio-tuner = Tuner
@@ -1988,6 +1997,10 @@ settings-radio-socket = Ihre Buchse
 settings-radio-same-first = Wie die erste
 settings-radio-gain-2 = Ihre Verstärkung
 settings-radio-set-low-coupled-sample-your = Dies NIEDRIG einstellen. Die eingekoppelte Probe Ihres eigenen Senders ist ein starkes Signal, und eine Rückkopplungskette, die in die Kompression getrieben wird, misst die Kurve des Verstärkers falsch — sie lehrt die Korrektur die eigene Verzerrung. Unten beginnen und das Dämpfungsglied des Kopplers nutzen.
+settings-radio-pluto-rx2 = Zweite Empfangskette (RX2)
+settings-radio-pluto-rx2-intro = Auf einer 2R2T-Platine (Pluto+, PlutoSky R2 mit 2R2T-Firmware) kann dieses Radio RX2 für sich behalten: als zweite Antenne oder als Probe des eigenen Senders für PureSignal. RX2 teilt Oszillator und Takt mit RX1, hört also denselben Bereich im selben Augenblick, und läuft mit fester Verstärkung bei abgeschalteter AGC. Solange es hier verwendet wird, steht es keinem zweiten Radio-Tab zur Verfügung. Eine Änderung des Verwendungszwecks wird mit Übernehmen wirksam.
+settings-radio-pluto-rx2-gain = RX2-Verstärkung
+settings-radio-pluto-ps-needs-full-duplex = PureSignal braucht Vollduplex an und die PTT-Pins aus: Der Koppler ist nur zu hören, solange der Empfang während des Sendens weiterläuft.
 settings-radio-set-so-both-aerials-show = So einstellen, dass beide Antennen etwa denselben Rauschboden zeigen. Darauf ruht die ganze Sache: Das Kombinieren gewichtet die beiden Zweige nach ihrem Rauschen, und eine zweite Kette, die in die Kompression getrieben wird, gibt dem Filter eine verzerrte Kopie der Störung — die sich nicht von einer unverzerrten abziehen lässt.
 settings-radio-table-steps-2 = Tabellenschritte
 settings-radio-how-finely-correction-follows-amplifier = Wie fein die Korrektur der Kurve des Verstärkers folgt. Mehr Schritte verfolgen eine schärfere Knickstelle, aber jeder muss aus den Abtastwerten gelernt werden, die in ihn fielen — und die Spitze eines Sprach-Amplituden-Histogramms ist dünn. Zweiunddreißig reicht für die glatte Kurve, die ein KW-Verstärker tatsächlich hat. Eine Änderung startet die Korrektur neu.
@@ -2121,6 +2134,9 @@ topbar-rx888-tuner-auto-hint =
 topbar-rx888-tuner-agc-hint =
     R828D-AGC: eigene LNA- und Mischerschleifen
     Leuchtet = an; manuelle Tunerverstärkung ruht
+topbar-sdrplay-auto-lna-hint =
+    Klick auf LNA für Automatik: der Empfänger wählt die LNA-Stufe selbst
+    Leuchtet = an; der Regler gibt dann die höchste erlaubte Verstärkung vor
 topbar-plutosdr-s-own-agc-setting =
     {""}
 
@@ -2385,9 +2401,6 @@ topbar-memory-channels = Speicherkanäle
 topbar-scanner-stopped-signal = Scanner — bei einem Signal angehalten
 topbar-scanner-running = Scanner — läuft
 topbar-scan-memory-channels-frequency-range = Speicherkanäle oder einen Frequenzbereich absuchen
-topbar-hfdl-ground-network-decode-log = HFDL-Bodennetz — das Dekodierprotokoll und die Flugzeugkarte unterhalb des Wasserfalls. Den Dekodierer mit HÖREN im Panel einschalten.
-topbar-hfdl-ground-network-decoding-now = HFDL-Bodennetz — dekodiert jetzt. Das Panel öffnen.
-topbar-hfdl-ground-network-aircraft-shortwave = HFDL-Bodennetz — die Kurzwellen-Datenverbindung zu Flugzeugen, jeweils ein Hörkanal
 topbar-grid-tracker-worked-maidenhead-squares = Locator-Tracker — gearbeitete Maidenhead-Quadrate auf einer Karte, mit dem, was gehört wird
 topbar-amplifier-set-up-hardrock-under = Verstärker — einen Hardrock unter Einstellungen → Verstärker einrichten
 topbar-settings-device-gains-antennas-audio = Einstellungen — Gerätverstärkungen, Antennen, Audiogeräte
@@ -2477,7 +2490,6 @@ topbar-chip-public-sdr = ÖFFENTL. SDR
 topbar-chip-mail = MAIL
 topbar-chip-mem = SPEICHER
 topbar-chip-scan = SCAN
-topbar-chip-hfdl = HFDL
 topbar-chip-grid = LOCATOR
 topbar-chip-amp = VERST.
 topbar-chip-settings = ⚙ EINSTELLUNGEN
@@ -5149,6 +5161,8 @@ speech-browser-client-cannot-speak-yet = Der Browser-Client kann noch nicht spre
 ## freqdisplay (src/widgets/freq_display.rs)
 
 freqdisplay-double-click-type-frequency = Doppelklick, um eine Frequenz einzutippen
+freqdisplay-right-click-sets-step = Rechtsklick, um in Schritten dieser Stelle abzustimmen
+freqdisplay-shift-right-click-zeros = Umschalt + Rechtsklick oder Mittelklick setzt diese Stelle und alle rechts davon auf null
 freqdisplay-tap-type-frequency = Tippen, um eine Frequenz einzutippen
 
 ## solarstate (src/solar3d/state.rs)
@@ -5259,6 +5273,7 @@ adsb-row-range = Entfernung
 adsb-row-position = Position
 adsb-row-signal = Signal
 adsb-row-carrier = Träger
+adsb-row-rx = Empfang
 adsb-row-frames = Rahmen
 rade-transmitting = sendet
 decodes-odd = UNGERADE
@@ -5843,6 +5858,7 @@ winlink-cc-list = Kopie an { $cc }
 spots-n-of-total = { $n } von { $total }
 wefax-n-of-total = { $n } von { $total }
 adsb-range-bearing = { $km } km bei { $bearing }°
+adsb-rx-share = { $pct } % der Positionen, letzte { $secs } s
 ais-range-bearing = { $km } km bei { $bearing }°
 
 ## More values from sdroxide-types, as pickers name them (src/i18n/labels.rs).

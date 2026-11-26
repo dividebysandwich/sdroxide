@@ -566,12 +566,16 @@ settings-controls-panadapter-mouse = 全景图鼠标
 settings-controls-wheel = 滚轮
 settings-controls-wheel-shift = 滚轮 + Shift
 settings-controls-tune-step = 调谐步进
+settings-controls-points-per-step = 每步的平滑滚动量
+settings-controls-points-per-step-hover = 多少点平滑滚动算作一步：触控板、无段落感的拇指滚轮、把一格分成几段上报的滚轮。数值越小越快。按整格上报的滚轮无论此值如何，都是一格一步。
 settings-controls-zoom-rate = 缩放速率
 settings-controls-click-tune-rounding = 点击调谐取整
 settings-controls-invert-wheel-direction = 反转滚轮方向
 settings-controls-left-drag-tunes-well-pans = 左键拖动同时调谐和平移
 settings-controls-off-makes-left-drag-pan = 关闭后，左键拖动仅平移视图，与右键拖动相同。
 settings-controls-scroll-digit-frequency-readout-tune = 滚动频率读数上的数字即可调谐
+settings-controls-side-wheel-fine = 侧滚轮以十分之一步长调谐
+settings-controls-side-wheel-fine-hover = 在频谱图上横向滚动（拇指滚轮、倾斜滚轮、双指在触控板上横扫）每次调谐十分之一个调谐步长，与滚轮本身的设置无关。
 settings-controls-both-wheel-actions-are-tune = 两种滚轮操作都是调谐——此时已没有缩放的方式。
 settings-controls-restore-mouse-defaults = 恢复鼠标默认值
 settings-controls-mouse-buttons = 鼠标按键
@@ -1867,6 +1871,8 @@ settings-radio-lets-if-gain-reduction-go = 允许中频增益衰减低于 20 dB�
 settings-radio-allow-if-gain-reduction-below = 允许中频增益衰减低于 20 dB
 settings-radio-front-end-attenuation-steps-0 = 分步的前端衰减：0 为最大增益，每向上一步就多切入一级衰减。某些频段的步进较少——驱动程序会将其钳位，并保留你的选择，供你调回时使用；此处的滑轨止于电台所在频段所能接受的最大值。在另一个频段上做出的更高选择会被保留，并仍显示在其旁边。立即生效。
 settings-radio-t-0-max-gain = 0 = 最大增益
+settings-radio-sdrplay-auto-lna = 自动 LNA
+settings-radio-sdrplay-auto-lna-hover = 让接收机自行选择 LNA 档位。转换器过载或中频 AGC 调到尽头时增加衰减，条件允许时再减回去。上面的 LNA 档位成为它可以使用的最大增益。与点击主窗口的 LNA 标签是同一个开关。立即生效。
 settings-radio-reference-error-parts-per-million-2 = 参考误差，单位为百万分之一，由设备自身应用。立即生效。
 settings-radio-radio-s-tuner = 此电台的调谐器
 settings-radio-tuner = 调谐器
@@ -1933,6 +1939,10 @@ settings-radio-socket = 其插座
 settings-radio-same-first = 与第一个相同
 settings-radio-gain-2 = 其增益
 settings-radio-set-low-coupled-sample-your = 请将此项设为低。你自己发射机的耦合采样是一个强信号，而被驱动至压缩的反馈通道会错误地测量功放曲线——它会让校正学习到它自己的失真。请从最低处开始，并使用耦合器的衰减器。
+settings-radio-pluto-rx2 = 第二接收链 (RX2)
+settings-radio-pluto-rx2-intro = 在 2R2T 板（Pluto+、刷 2R2T 固件的 PlutoSky R2）上，本电台可以独占 RX2：作为第二天线，或作为 PureSignal 所需的本机发射取样。RX2 与 RX1 共用本振和时钟，因此在同一时刻接收同一频段，并以固定增益、关闭 AGC 运行。在此使用期间，它不能用于第二个电台标签页。更改用途在点击“应用”后生效。
+settings-radio-pluto-rx2-gain = RX2 增益
+settings-radio-pluto-ps-needs-full-duplex = PureSignal 需要打开全双工并关闭 PTT 引脚：只有在发射期间接收持续运行时才能听到耦合器信号。
 settings-radio-set-so-both-aerials-show = 设置为使两根天线显示大致相同的底噪。整个系统都依赖于此调整：合并时会按各分支的噪声为其加权；若第二个通道被驱动至压缩，就会给滤波器一份失真的干扰副本——而失真的副本无法从未失真的副本中减去。
 settings-radio-table-steps-2 = 表格步数
 settings-radio-how-finely-correction-follows-amplifier = 校正对功放曲线的跟随精细程度。步数越多越能追踪更陡的拐点，但每一步都必须从落入其中的采样中学习——而语音幅度直方图的顶端很稀疏。对于 HF 功放实际具有的平滑曲线，三十二步已足够。更改它会重新开始校正。
@@ -2054,6 +2064,9 @@ topbar-counted-steps-not-decibels-what =
 
     按步进计数，而非分贝：每一步的价值是接收机自己的事情，在 SDRplay 上它还取决于频段。数值越大，增益仍然越大。
 topbar-gain = 增益
+topbar-sdrplay-auto-lna-hint =
+    点击 LNA 切换自动：接收机自行选择 LNA 档位
+    亮起 = 开启；此时滑块设定可使用的最大增益
 topbar-plutosdr-s-own-agc-setting =
     {""}
 
@@ -2250,9 +2263,6 @@ topbar-memory-channels = 记忆信道
 topbar-scanner-stopped-signal = 扫描器——停在一个信号上
 topbar-scanner-running = 扫描器——运行中
 topbar-scan-memory-channels-frequency-range = 扫描记忆信道或频率范围
-topbar-hfdl-ground-network-decode-log = HFDL 地面网络——解码日志和飞机地图，位于瀑布图下方。在面板内使用 LISTEN 开启解码器。
-topbar-hfdl-ground-network-decoding-now = HFDL 地面网络——正在解码。请打开面板。
-topbar-hfdl-ground-network-aircraft-shortwave = HFDL 地面网络——飞机短波数据链，一次收听一个信道
 topbar-grid-tracker-worked-maidenhead-squares = 网格追踪器——地图上已通联的梅登海德方格，以及已听到的内容
 topbar-amplifier-set-up-hardrock-under = 功放——请在“设置 → 功放”下设置 Hardrock
 topbar-settings-device-gains-antennas-audio = 设置——设备增益、天线、音频设备
@@ -2277,7 +2287,6 @@ topbar-chip-public-sdr = 公共 SDR
 topbar-chip-mail = 邮件
 topbar-chip-mem = 记忆
 topbar-chip-scan = 扫描
-topbar-chip-hfdl = HFDL
 topbar-chip-grid = 网格
 topbar-chip-amp = 功放
 topbar-chip-settings = ⚙ 设置
@@ -4714,6 +4723,8 @@ speech-browser-client-cannot-speak-yet = 浏览器客户端尚无法发声
 ## 频率显示（src/widgets/freq_display.rs）
 
 freqdisplay-double-click-type-frequency = 双击以输入频率
+freqdisplay-right-click-sets-step = 右键单击，以此位为调谐步进
+freqdisplay-shift-right-click-zeros = Shift + 右键单击或中键单击，将此位及其右侧各位清零
 freqdisplay-tap-type-frequency = 点按以输入频率
 
 ## 太阳系状态（src/solar3d/state.rs）

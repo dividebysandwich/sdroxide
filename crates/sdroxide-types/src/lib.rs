@@ -93,8 +93,9 @@ mod wxsat;
 pub use access::{AUTH_BUSY, AUTH_REFUSED, AuthPhase, RemoteAccess, RemoteServer, is_auth_busy};
 pub use adsb::{
     ADSB_DROP_LIST_S, ADSB_DROP_MAP_S, ADSB_FREQ_HZ, ADSB_GOOD_RATE_HZ, ADSB_HISTORY_POINTS,
-    ADSB_MAX_AIRCRAFT, ADSB_MAX_RATE_HZ, ADSB_MIN_RATE_HZ, ADSB_TRACK_MAX, ADSB_VECTOR_MINUTES,
-    AdsbAircraft, AdsbAvionics, AdsbFeed, AdsbSettings, AdsbSource, AdsbStatus, BeastConfig,
+    ADSB_MAX_AIRCRAFT, ADSB_MAX_RATE_HZ, ADSB_MIN_RATE_HZ, ADSB_POSITION_RATE_HZ, ADSB_RX_WINDOW_S,
+    ADSB_TRACK_MAX, ADSB_VECTOR_MINUTES, AdsbAircraft, AdsbAvionics, AdsbFeed, AdsbSettings,
+    AdsbSource, AdsbStatus, BeastConfig,
 };
 pub use ais::{
     AIS_ALL_CHANNELS, AIS_BIT_RATE, AIS_CHANNEL_A_HZ, AIS_CHANNEL_B_HZ, AIS_CHANNEL_SPACING_HZ,
@@ -257,14 +258,15 @@ pub use radio::{
     IcomNetConfig, IcomRxSource, IcomScopeSpan, IfModeClass, KenwoodSend, KiwiConfig,
     LimeAuxConfig, LimeAuxRole, LimeConfig, LimeDevice, LineState, MAX_TRANSVERTERS, ModeControl,
     PANADAPTER_OFFSET_MAX_HZ, PanadapterAudio, PanadapterConfig, PanadapterTap, Parity, PlutoAgc,
-    PlutoConfig, PlutoDevice, PlutoDuplex, PlutoPtt, PttMethod, QMX_IQ_OFFSET_HZ, QMX_IQ_RATE_HZ,
-    RS_HFIQ_CAT_BAUD, RadioConfig, RtlSdrAgc, RtlSdrConfig, RtlSdrDevice, RtlSdrHfMode,
-    RtlTcpConfig, Rx888Config, Rx888Device, RxSite, SdrPlayAgc, SdrPlayConfig, SdrPlayDevice,
-    SdrPlayDuo, SdrPlayDuoRole, SdrPlayDuoTuner, SdrPlayHdrBw, SdrPlayModel, SerialConfig,
-    SmartSdrConfig, SmartSdrDevice, SoapyConfig, SoapyDeviceInfo, SoundFormat, SpyServerConfig,
-    SpyServerFormat, StopBits, TRUSDX_RX_RATE_HZ, TRUSDX_TX_RATE_HZ, TciConfig, TrUsdxAudio,
-    Transverter, cat_iq_offset_max_hz, converter_preset_name, diversity_cost_note, elad_cat_baud,
-    format_freq_ranges, hackrf_serial_matches, hpsdr_alex_oc, hpsdr_n2adr_oc, parse_freq_ranges,
+    PlutoAuxConfig, PlutoConfig, PlutoDevice, PlutoDuplex, PlutoPtt, PttMethod, QMX_IQ_OFFSET_HZ,
+    QMX_IQ_RATE_HZ, RS_HFIQ_CAT_BAUD, RadioConfig, RtlSdrAgc, RtlSdrConfig, RtlSdrDevice,
+    RtlSdrHfMode, RtlTcpConfig, Rx888Config, Rx888Device, RxSite, SdrPlayAgc, SdrPlayConfig,
+    SdrPlayDevice, SdrPlayDuo, SdrPlayDuoRole, SdrPlayDuoTuner, SdrPlayHdrBw, SdrPlayModel,
+    SerialConfig, SmartSdrConfig, SmartSdrDevice, SoapyConfig, SoapyDeviceInfo, SoundFormat,
+    SpyServerConfig, SpyServerFormat, StopBits, TRUSDX_RX_RATE_HZ, TRUSDX_TX_RATE_HZ, TciConfig,
+    TrUsdxAudio, Transverter, cat_iq_offset_max_hz, converter_preset_name, diversity_cost_note,
+    elad_cat_baud, format_freq_ranges, hackrf_serial_matches, hpsdr_alex_oc, hpsdr_n2adr_oc,
+    parse_freq_ranges,
 };
 pub use rds::{
     RdsClock, RdsData, RdsGroupLog, RdsStandard, RdsStats, RtPlus, af_code_hz, pi_callsign,
@@ -333,9 +335,9 @@ pub use tx_voice::{
 };
 pub use ui::{
     AmpDocked, BandplanKind, ChromeStyle, DetachableModule, DetachedState, DetachedWindow,
-    FontSize, LayoutMode, SmeterStyle, Solar3dWindow, SpectrumDetail, Speed,
+    FontSize, LayoutMode, RADIO_OFF_NOTICE, SmeterStyle, Solar3dWindow, SpectrumDetail, Speed,
     TOOLTIP_DELAY_DEFAULT_S, TOOLTIP_DELAY_RANGE_S, TOOLTIP_GRACE_DEFAULT_S, TOOLTIP_GRACE_RANGE_S,
-    UiLanguage, UiSettings, UiTheme, WORKSPACE_MAX, Workspace,
+    UiLanguage, UiSettings, UiTheme, WORKSPACE_MAX, Workspace, notice_to_show,
 };
 pub use vdl2::{
     VDL2_ALL_CHANNELS, VDL2_CHANNEL_LABELS, VDL2_CHANNEL_SPACING_HZ, VDL2_CHANNELS_HZ, VDL2_CSC_HZ,

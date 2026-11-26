@@ -191,6 +191,19 @@ pub trait IqSource: Send {
         self.read(buf)
     }
 
+    /// How many [`Self::read_available`] calls a full-duplex over may make per
+    /// transmit tick, each only for samples already waiting.
+    ///
+    /// One block a tick is 16384 samples every 10 ms, a 1.64 Msps ceiling. A
+    /// source that streams faster than that through an over, and drops what
+    /// its own ring cannot hold, says so here. Default 1: one block a tick is
+    /// what every other full-duplex source has been run and tested with, and on
+    /// SoapySX a transmit block that goes out late is heard as chirps, so a
+    /// source keeps the tick's receive work to that unless it needs more.
+    fn full_duplex_reads_per_tick(&self) -> usize {
+        1
+    }
+
     /// Human-readable description for logs/UI.
     fn describe(&self) -> String;
 
@@ -537,6 +550,19 @@ pub trait IqSource: Send {
     /// Default: none.
     fn adc_overload(&mut self) -> Option<bool> {
         None
+    }
+
+    /// Whether a gain this source reports in [`Self::current_gains`] has moved
+    /// by itself since the last time this was asked — an automatic front-end
+    /// loop stepping a stage the operator also has a rail for. The engine asks
+    /// on every pass and republishes the gains on a yes, so the rail follows
+    /// the loop instead of showing where it was last put by hand.
+    ///
+    /// Asked for rather than polled by comparing: the comparison would build
+    /// the whole gain list several hundred times a second to learn, nearly
+    /// always, that nothing happened. Default: never.
+    fn rx_gains_moved(&mut self) -> bool {
+        false
     }
     /// What this radio's adaptive-predistortion loop is doing, where it runs
     /// one — see [`sdroxide_types::PsMeter`].
@@ -1584,6 +1610,10 @@ impl IqSource for ConvertedSource {
         self.inner.read_available(buf)
     }
 
+    fn full_duplex_reads_per_tick(&self) -> usize {
+        self.inner.full_duplex_reads_per_tick()
+    }
+
     fn set_gain_element(&mut self, name: &str, db: f64) -> Result<()> {
         self.inner.set_gain_element(name, db)
     }
@@ -1735,6 +1765,9 @@ impl IqSource for ConvertedSource {
     }
     fn adc_overload(&mut self) -> Option<bool> {
         self.inner.adc_overload()
+    }
+    fn rx_gains_moved(&mut self) -> bool {
+        self.inner.rx_gains_moved()
     }
     fn sample_full_scale(&self) -> f32 {
         self.inner.sample_full_scale()

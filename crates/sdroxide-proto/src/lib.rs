@@ -1765,10 +1765,25 @@ use sdroxide_types::{
 /// `two_tone` on its tail and `Command` gains a trailing `SetTuneTwoTone`;
 /// `TxState` rides whole inside `RadioState`, so a v211 peer reads the extra
 /// byte as the start of the next field and fails to decode every state.
-/// v222: HPSDR ATU diagnostics. `AtuState` gains `reg7_supported`,
+///
+/// v222: ADS-B reception share. `AdsbAircraft` gains `rx_share` (share of the
+/// expected position messages heard) at its tail, which changes every
+/// `AdsbStatus`.
+///
+/// v223: the PlutoSDR's second receive chain can serve the RX1 radio as a
+/// second aerial or as PureSignal feedback (issue #525). `PlutoConfig` gains
+/// `aux` (`PlutoAuxConfig`, the same block a LimeSDR's second chain uses) on
+/// its tail, and the radio configuration rides whole in both a command and an
+/// event, so a v222 peer reads the extra bytes as the start of the next field
+/// and fails to decode either.
+///
+/// v224: SDRplay automatic LNA. `SdrPlayConfig` gains `auto_lna` on its tail,
+/// which changes `ServerMsg::RadioConfig` and `Command::SetRadioConfig`.
+///
+/// v225: HPSDR ATU diagnostics. `AtuState` gains `reg7_supported`,
 /// `reg7_status`, `reg7_fresh` and `command_error`, changing the serialized
 /// `RadioState` layout.
-pub const PROTO_VERSION: u16 = 222;
+pub const PROTO_VERSION: u16 = 225;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]

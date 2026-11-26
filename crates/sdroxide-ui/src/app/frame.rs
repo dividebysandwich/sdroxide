@@ -253,6 +253,9 @@ impl eframe::App for SdroxideApp {
         // before anything draws, so a change in Settings → UI reaches the
         // needle and the waterfall on the same frame it reaches the scheduler.
         crate::repaint::set_frame_period_ms(1000 / u64::from(self.ui_settings.fps().max(1)));
+        // How much smooth scrolling is one step, for every control the wheel
+        // steps — the panadapter, the readout's digits, the ribbon sliders.
+        crate::widgets::set_wheel_points_per_step(&ctx, self.input.cfg.wheel.points_per_step);
         // Which radio the ids minted below belong to. Split view draws several
         // apps per frame; each declares itself before it draws anything.
         crate::layout::set_radio_salt(&ctx, self.radio_id);
@@ -451,7 +454,13 @@ impl eframe::App for SdroxideApp {
         // A persistent radio-audio warning (input unavailable / mono-for-IQ)
         // rides above the panadapter with a dismiss button, so a silent RX
         // failure is explained rather than reading as "waiting for spectrum".
-        if let Some(notice) = self.radio_notice.clone() {
+        // A radio switched off on purpose can be left without its banner — the
+        // rings on its tab already say it is off (`UiSettings::quiet_off_radios`).
+        let shown = self
+            .radio_notice
+            .as_deref()
+            .and_then(|n| sdroxide_types::notice_to_show(n, self.ui_settings.quiet_off_radios));
+        if let Some(notice) = shown {
             let (wash, rule, mark, ink) = notice_banner_colors();
             egui::Frame::new()
                 .fill(wash)
@@ -1815,7 +1824,10 @@ impl SdroxideApp {
                 RadioEvent::WavelogBatch(b) => self.on_wavelog_batch(*b),
                 RadioEvent::Notice(n) => {
                     if self.focused {
-                        self.speech.announcer.on_notice(n.as_deref(), now);
+                        let spoken = n.as_deref().and_then(|t| {
+                            sdroxide_types::notice_to_show(t, self.ui_settings.quiet_off_radios)
+                        });
+                        self.speech.announcer.on_notice(spoken.as_deref(), now);
                     }
                     self.radio_notice = n;
                 }

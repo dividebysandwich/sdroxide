@@ -273,6 +273,14 @@ FFT, and System.
 - **Scroll the mouse wheel** to tune that decade up or down.
 - **Click the upper half** of a digit to increment it, the **lower half** to
   decrement it.
+- **Right-click** a digit to make it the tuning step: right-click the kilohertz
+  digit and the wheel on the panadapter tunes 1 kHz a notch. The digit the step
+  sits on stays highlighted, so the readout always shows how far one notch
+  moves. It is the same **Tune step** as in Settings → Controls (anything up to
+  1 MHz), and it is remembered.
+- **Shift + right-click** or **middle-click** a digit to zero it and every digit
+  to its right: on the 5 of 7.090.054 that gives 7.090.000.
+- **Double-click** to type a frequency in MHz.
 
 The smaller grey number below the readout is the *inactive* VFO's frequency.
 
@@ -6448,6 +6456,8 @@ when it was registered, unique worldwide and unchanging.
 | AIRLINE | The airline's name, from the first three letters of the callsign (`RYR95MB` → Ryanair). Empty for private flights, whose callsign is a registration. |
 | TYPE | The aircraft type as an ICAO type designator (`B38M`, `A20N`), where the airframe is known. Otherwise a guess from the sighting log with a question mark (`A320?`), see *The sighting log* below; otherwise, faint, the class the aircraft sends about itself (`large`, `rotorcraft`). |
 | Δf | Where the aircraft's transponder carrier sits, in kHz from 1090.000 MHz (`+175`). Each transponder has its own; see *One trace per aircraft* below. Shown where the panel is wide. |
+| RX% | How much of its position reports arrive. An airborne transponder sends its position twice a second, so over the last two minutes (or since it came into range) the share heard says how clear the path from it to your antenna is: near 100 on a free line of sight, falling where a building, a hill or the horizon stands between. A strong SIG with a low RX% is a path partly blocked, not a weak transmitter. Empty for the first ten seconds and on the ground, where the rate depends on whether it moves. Sorting by it puts the aircraft at the edge of what the antenna sees at the bottom. |
+| SIG | The last message's level, dBFS. |
 | TRK | Track over ground, degrees true. |
 | V/S | Rate of climb or descent, feet per minute. |
 | SQK | The squawk — the four-digit code the crew set for air traffic control. Only some frames carry it; see below. |
@@ -6479,7 +6489,7 @@ from* below.
 
 When the panel is narrow, columns drop out rather than overprint each other.
 Among the ones after the speed, FROM › TO goes first, then AIRLINE; TYPE is
-short and stays longest. On the right, Δf goes first, then the signal column,
+short and stays longest. On the right, Δf goes first, then RX%, then the signal column,
 then V/S, SQK and KM together.
 
 **Right-click a row** for what you would otherwise type somewhere else: copy
@@ -11079,6 +11089,36 @@ configured in exactly the same way as one on your desk.
   the AD9361 ignores a gain written then; set the AGC to *Manual* to use it
   (issue #417).
 
+**Second receive chain (RX2).** On a 2R2T board the RX1 radio can keep RX2 for
+itself rather than leaving it to a second tab (issue #525). **Used for** offers:
+
+- **A second aerial (diversity / QRM suppression)** — RX2's aerial is combined
+  with RX1's by the same adaptive filter the LimeSDR and RSPduo use: *Cancel*
+  nulls a local noise source the second aerial hears, *Combine* adds the two
+  for diversity reception. The filter's controls also appear on the main
+  window's **DIV** strip. Because both chains arrive in the same device buffer,
+  their samples are paired exactly.
+- **Transmit feedback (PureSignal predistortion)** — a directional coupler on
+  the amplifier's output (with enough attenuation) goes into RX2, and the
+  transmitter learns the amplifier's curve from it and pre-bends the signal so
+  what comes out is straight. It needs **Full duplex** on and the **PTT pins**
+  off, because the coupler is only heard while receive keeps running through
+  the over; the correction shows on the PS meter and in the log while you
+  transmit, and stays at unity until the feedback lines up.
+
+**RX2 gain** is a fixed gain (RX2's AGC is turned off): for diversity, set it
+so both aerials show about the same noise floor; for PureSignal, keep the
+coupled signal well out of compression. Choosing PureSignal starts RX2 at
+0 dB, which suited a PlutoSky R2 with a 46 dB tap; 10–20 dB already overloaded
+it there. With the PTT pins on, PureSignal is refused when the radio opens and
+the reason is shown, since the pins key the chip one direction at a time. While RX2 is used
+here it cannot be a second radio tab. Changing what it is used for takes effect
+on Apply; the other controls apply immediately. Diversity has been tried on a
+PlutoSky R2, and PureSignal verified on one over Gigabit Ethernet at 2.5 Msps
+(two-tone, 46 dB tap, about 1.8 dB of compression corrected and held through
+overs of a minute) — reports from other boards, with the diagnostic report
+attached, are welcome.
+
 **AD9363 or AD9364.** A stock Pluto is an AD9363 and covers **325 MHz–3.8 GHz**;
 a great many have had the well-known firmware change applied, which turns them
 into an AD9364 covering **70 MHz–6 GHz** with a 56 MHz filter. sdroxide does not
@@ -11450,6 +11490,34 @@ unplug the receiver and plug it back in.
   which no amount of IF gain reduction can undo. This is also the control
   behind the main window's **Gain** slider — the IF gain belongs to the
   hardware AGC whenever a loop is running, the LNA is always yours.
+- **Automatic LNA** — let the receiver choose its own LNA state. **Off by
+  default**, because it moves a control you set.
+
+  The rule is the one you would follow by hand: as much front-end gain as the
+  receiver will take, and no more. The state goes **up** (more attenuation)
+  while the service reports the converter overloaded, or while the AGC above is
+  at maximum IF gain reduction and has nothing left to give. It comes back
+  **down** when neither is true and the AGC has room to take up the step. Up is
+  quick, a step every 300 ms during an overload; down is a step every two
+  seconds, and only after twenty seconds without trouble. A state that
+  overloads again as soon as it is tried is left alone for longer each time, up
+  to ten minutes, so the loop settles instead of hunting. A retune of 1 MHz or
+  more starts it afresh, since what it learned belonged to the other band.
+
+  **The LNA state you set is the most gain it may use.** The loop never goes
+  below it. Set it to 0 to hand the whole ladder over; leave it higher if you
+  know your aerial needs it. Moving the slider — here or on the main window —
+  sets that limit and restarts the loop from it, and switching the loop off
+  puts the receiver back on it.
+
+  The main window's **LNA** rail shows the state the loop is in, so you can
+  watch it work, and the rail's label is the same switch as this one: **click
+  the word LNA** to turn the loop on or off. It is lit while the loop runs, and
+  either place saves it. Every step is in the log with the reason for it. With the AGC
+  off the loop has only the overload report to go on, which is enough to protect
+  the converter but says nothing about a band that is merely strong. On an
+  RSPduo running both tuners it looks after this radio's tuner only. It stands
+  still while you transmit.
 - **Frequency correction** — reference error in parts per million, applied by
   the device itself.
 - **FM broadcast / DAB notch** — hardware notch filters over 88–108 MHz and
@@ -11486,7 +11554,8 @@ unplug the receiver and plug it back in.
 > or a preamplifier powered from somewhere else on the other end of the cable.
 
 If the service reports the ADC **overloaded**, sdroxide shows it on screen and
-in the log: raise the LNA state, lower the IF gain, or turn the AGC on. If the
+in the log: raise the LNA state, lower the IF gain, or turn the AGC on — or
+turn **Automatic LNA** on and let the receiver do the first of those. If the
 RSP is unplugged — or the service restarted under sdroxide — it notices within
 a few seconds and reconnects by itself when the device returns.
 
@@ -14082,10 +14151,18 @@ back to receive rather than transmitting your office.
   default zoom and tune. Swapping them is a single dropdown if you would rather
   scroll to tune.
 - **Tune step** — the Hz per wheel detent, and the grid wheel tuning lands on.
+  A right-click on a digit of the frequency readout sets it to that digit's
+  place, and the readout highlights the digit it is on (section 2.3).
   A dial left between two grid points — by a click on the waterfall, say — goes
   to the next point in the direction you turn on the first detent: from
   14.262.500 one 1 kHz step up is 14.263.000, and one down is 14.262.000. The
   keyboard's tuning keys work the same way (issue #431).
+- **Smooth scrolling per step** — how much smooth scrolling is worth one step,
+  in points. This is for scrolling that has no notches: a trackpad, a
+  free-running thumb wheel, a wheel whose driver reports a notch in pieces.
+  Smaller is faster. A wheel with notches is one step a notch whatever this
+  says — on a Mac that includes a wheel macOS accelerates, where one click used
+  to be worth a third of a step at rest and several when spun.
 - **Zoom rate** — scales how far one detent zooms.
 - **Click-tune rounding** — the step click-to-tune snaps to.
 - **Invert wheel direction** — flips both wheel actions.
@@ -14094,6 +14171,12 @@ back to receive rather than transmitting your office.
   dial being turned.
 - **Scroll a digit on the frequency readout to tune it** — the wheel over a digit
   of the VFO readout steps that digit.
+- **Side wheel tunes in tenths of the step** — sideways scrolling over the
+  panadapter (a thumb wheel, a tilt wheel, two fingers across a trackpad) tunes
+  a tenth of the **Tune step** at a time, on a grid ten times as fine, whatever
+  the wheel itself is set to. With a 1 kHz step the wheel moves 1 kHz a notch
+  and the side wheel 100 Hz. Shift + wheel is not a side wheel: it keeps its own
+  action. Off by default, so a sideways drift on a trackpad does not retune.
 - **Restore mouse defaults** puts the whole section back.
 
 **Mouse buttons** binds the buttons themselves. The left and right buttons are

@@ -27,3 +27,4 @@ received/
 
 # Screenshots of new features, taken locally for review.
 /screenshots/
+.DS_Store

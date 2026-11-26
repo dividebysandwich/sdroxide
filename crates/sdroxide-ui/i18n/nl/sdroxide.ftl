@@ -564,12 +564,16 @@ settings-controls-panadapter-mouse = Muis op het panadapter
 settings-controls-wheel = Wiel
 settings-controls-wheel-shift = Wiel + Shift
 settings-controls-tune-step = Afstemstap
+settings-controls-points-per-step = Vloeiend scrollen per stap
+settings-controls-points-per-step-hover = Hoeveel vloeiend scrollen één stap is, in punten: een trackpad, een vrijlopend duimwiel, een wiel dat een klik in stukjes meldt. Kleiner is sneller. Een wiel dat hele klikken meldt, doet één stap per klik, wat hier ook staat.
 settings-controls-zoom-rate = Zoomsnelheid
 settings-controls-click-tune-rounding = Afronding bij afstemmen met klikken
 settings-controls-invert-wheel-direction = Richting van het wiel omkeren
 settings-controls-left-drag-tunes-well-pans = Links slepen stemt af én verschuift
 settings-controls-off-makes-left-drag-pan = Uit maakt links slepen een verschuiving van het beeld, net als rechts slepen.
 settings-controls-scroll-digit-frequency-readout-tune = Scroll een cijfer op de frequentieaflezing om het af te stemmen
+settings-controls-side-wheel-fine = Zijwiel stemt af in tienden van de stap
+settings-controls-side-wheel-fine-hover = Zijwaarts scrollen boven de panadapter — een duimwiel, een kantelwiel, twee vingers dwars over een trackpad — stemt telkens een tiende van de afstemstap af, wat het wiel zelf ook doet.
 settings-controls-both-wheel-actions-are-tune = Beide wielacties zijn Afstemmen — er is dan geen manier meer om te zoomen.
 settings-controls-restore-mouse-defaults = Standaardwaarden van de muis herstellen
 settings-controls-mouse-buttons = Muisknoppen
@@ -1890,6 +1894,8 @@ settings-radio-lets-if-gain-reduction-go = Laat de IF-gainreductie onder 20 dB g
 settings-radio-allow-if-gain-reduction-below = IF-gainreductie onder 20 dB toestaan
 settings-radio-front-end-attenuation-steps-0 = Front-endverzwakking in stappen: 0 is maximale gain, elke stap omhoog schakelt meer verzwakking in. Sommige banden hebben minder stappen — de driver begrenst en houdt je keuze vast voor wanneer je weer terugstemt, en de schaal hier eindigt bij wat de band waarop de radio staat aankan. Een hogere keuze op een andere band blijft bewaard en wordt er naast getoond. Werkt meteen.
 settings-radio-t-0-max-gain = 0 = maximale gain
+settings-radio-sdrplay-auto-lna = Automatische LNA
+settings-radio-sdrplay-auto-lna-hover = Laat de ontvanger zelf zijn LNA-stand kiezen. Hij schakelt demping bij zolang de omzetter overstuurd is of de MF-AGC aan zijn grens zit, en haalt die weer weg zodra het kan. De LNA-stand hierboven wordt de hoogste versterking die hij mag gebruiken. Hetzelfde als een klik op het label LNA in het hoofdvenster. Werkt direct.
 settings-radio-reference-error-parts-per-million-2 = Referentiefout in delen per miljoen, toegepast door het apparaat zelf. Werkt meteen.
 settings-radio-radio-s-tuner = De tuner van deze radio
 settings-radio-tuner = Tuner
@@ -1956,6 +1962,10 @@ settings-radio-socket = Zijn aansluiting
 settings-radio-same-first = Hetzelfde als de eerste
 settings-radio-gain-2 = Zijn gain
 settings-radio-set-low-coupled-sample-your = Zet dit LAAG. Het gekoppelde monster van je eigen zender is een sterk signaal, en een terugkoppelketen die in compressie gedreven wordt, meet de curve van de versterker verkeerd — het leert de correctie zijn eigen vervorming. Begin onderaan en gebruik de verzwakker van de koppeler.
+settings-radio-pluto-rx2 = Tweede ontvangstketen (RX2)
+settings-radio-pluto-rx2-intro = Op een 2R2T-bord (Pluto+, PlutoSky R2 met 2R2T-firmware) kan deze radio RX2 voor zichzelf houden: als tweede antenne, of als monster van je eigen zender voor PureSignal. RX2 deelt oscillator en klok met RX1, hoort dus hetzelfde stuk op hetzelfde moment, en draait met vaste versterking en de AGC uit. Zolang het hier gebruikt wordt, is het niet vrij voor een tweede radiotabblad. Een ander gebruik gaat in bij Toepassen.
+settings-radio-pluto-rx2-gain = RX2-versterking
+settings-radio-pluto-ps-needs-full-duplex = PureSignal heeft Volledig duplex aan en de PTT-pinnen uit nodig: de koppelaar is alleen te horen zolang de ontvangst tijdens het zenden doorloopt.
 settings-radio-set-so-both-aerials-show = Zet zo dat beide antennes ongeveer dezelfde ruisvloer tonen. Dit is de afstelling waar het hele ding op rust: combineren weegt de twee takken naar hun ruis, en een tweede keten die in compressie gedreven wordt, geeft het filter een vervormde kopie van de storing — die je niet van een niet-vervormde kan aftrekken.
 settings-radio-table-steps-2 = Tabelstappen
 settings-radio-how-finely-correction-follows-amplifier = Hoe fijn de correctie de curve van de versterker volgt. Meer stappen volgen een scherpere knik, maar elk moet geleerd worden uit de samples die erin vielen — en de top van een histogram van spraakamplitude is dun. Tweeëndertig is genoeg voor de gladde curve die een HF-versterker werkelijk heeft. De waarde wijzigen start de correctie opnieuw.
@@ -2077,6 +2087,9 @@ topbar-counted-steps-not-decibels-what =
 
     Geteld in stappen, niet in decibel: wat één stap waard is, is de eigen zaak van de ontvanger, en op een SDRplay hangt het ook van de band af. Rechts is nog steeds meer gain.
 topbar-gain = Gain
+topbar-sdrplay-auto-lna-hint =
+    Klik op LNA voor automatisch: de ontvanger kiest zelf de LNA-stand
+    Verlicht = aan; de regelaar bepaalt dan de hoogste versterking die hij mag gebruiken
 topbar-plutosdr-s-own-agc-setting =
     {""}
 
@@ -2273,9 +2286,6 @@ topbar-memory-channels = Geheugenkanalen
 topbar-scanner-stopped-signal = Scanner — gestopt op een signaal
 topbar-scanner-running = Scanner — draait
 topbar-scan-memory-channels-frequency-range = Geheugenkanalen of een frequentiebereik scannen
-topbar-hfdl-ground-network-decode-log = HFDL-grondnetwerk — het decodeerlogboek en de vliegtuigkaart, onder de waterval. Zet de decoder aan met LUISTEREN in het paneel.
-topbar-hfdl-ground-network-decoding-now = HFDL-grondnetwerk — decodeert nu. Open het paneel.
-topbar-hfdl-ground-network-aircraft-shortwave = HFDL-grondnetwerk — de kortegolf-datalink voor vliegtuigen, één luisterkanaal tegelijk
 topbar-grid-tracker-worked-maidenhead-squares = Locatievak-tracker — gewerkte Maidenhead-vakken op een kaart, met wat er gehoord wordt
 topbar-amplifier-set-up-hardrock-under = Versterker — stel een Hardrock in onder Instellingen → Versterker
 topbar-settings-device-gains-antennas-audio = Instellingen — gains van apparaten, antennes, audioapparaten
@@ -2300,7 +2310,6 @@ topbar-chip-public-sdr = PUBLIEKE SDR
 topbar-chip-mail = MAIL
 topbar-chip-mem = GEH
 topbar-chip-scan = SCAN
-topbar-chip-hfdl = HFDL
 topbar-chip-grid = GRID
 topbar-chip-amp = VERSTERKER
 topbar-chip-settings = ⚙ INSTELLINGEN
@@ -4744,6 +4753,8 @@ speech-browser-client-cannot-speak-yet = de browserclient kan nog niet spreken
 ## freqdisplay (src/widgets/freq_display.rs)
 
 freqdisplay-double-click-type-frequency = Dubbelklik om een frequentie te typen
+freqdisplay-right-click-sets-step = Rechtsklik om in stappen van dit cijfer af te stemmen
+freqdisplay-shift-right-click-zeros = Shift + rechtsklik of middelklik om dit cijfer en alles rechts ervan op nul te zetten
 freqdisplay-tap-type-frequency = Tik om een frequentie te typen
 
 ## solarstate (src/solar3d/state.rs)

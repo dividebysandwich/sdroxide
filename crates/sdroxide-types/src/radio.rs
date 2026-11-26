@@ -5374,6 +5374,18 @@ impl PlutoPtt {
     }
 }
 
+/// The Pluto's second receive chain, and what is done with it.
+///
+/// The same block a LimeSDR's second chain uses ([`LimeAuxConfig`]), because it
+/// is the same idea on the same kind of part: two receive chains on one
+/// synthesiser and one clock, so the second hears the same span at the same
+/// instant as the first. The DSP behind it — the adaptive combiner and the
+/// predistortion loop — is shared too, and so are its controls.
+///
+/// [`LimeAuxConfig::antenna`] is not used on a Pluto: the AD9361 selects one
+/// receive port for both chains.
+pub type PlutoAuxConfig = LimeAuxConfig;
+
 /// ADALM-Pluto (PlutoSDR) backend configuration.
 ///
 /// The device is reached over the network — which the USB cable already
@@ -5452,6 +5464,16 @@ pub struct PlutoConfig {
     /// whole time in FDD, so nothing would ever toggle.
     #[serde(default)]
     pub ptt_gpo: PlutoPtt,
+    /// The second receive chain on a 2R2T firmware, used by this radio as a
+    /// second aerial (diversity) or as transmit feedback (PureSignal) rather
+    /// than by a radio tab of its own (issue #525).
+    ///
+    /// Only honoured on the RX1 radio — it owns the transmitter and the chain
+    /// being borrowed is RX2. While it is on, RX2 is not free for another tab.
+    /// PureSignal also needs [`Self::full_duplex`]: the coupler is only heard
+    /// if receive keeps running through the over.
+    #[serde(default)]
+    pub aux: PlutoAuxConfig,
 }
 
 impl Default for PlutoConfig {
@@ -5475,6 +5497,7 @@ impl Default for PlutoConfig {
             full_duplex: false,
             duplex: PlutoDuplex::default(),
             ptt_gpo: PlutoPtt::default(),
+            aux: PlutoAuxConfig::default(),
         }
     }
 }
@@ -5496,6 +5519,19 @@ impl PlutoConfig {
     /// renders them as sliders — the Pluto settings panel drives them directly.
     pub const AGC_ELEMENT: &'static str = "AGC";
     pub const PPM_ELEMENT: &'static str = "PPM";
+    /// The second chain and what it feeds — the same names a LimeSDR's use, so
+    /// the main window's diversity strip drives either without knowing which
+    /// board is behind it.
+    pub const AUX_GAIN_ELEMENT: &'static str = LimeConfig::AUX_GAIN_ELEMENT;
+    pub const DIV_MODE_ELEMENT: &'static str = DIV_MODE_ELEMENT;
+    pub const DIV_RATE_ELEMENT: &'static str = DIV_RATE_ELEMENT;
+    pub const DIV_TAPS_ELEMENT: &'static str = DIV_TAPS_ELEMENT;
+    pub const DIV_FREEZE_ELEMENT: &'static str = DIV_FREEZE_ELEMENT;
+    pub const DIV_RESET_ELEMENT: &'static str = DIV_RESET_ELEMENT;
+    pub const PS_BINS_ELEMENT: &'static str = LimeConfig::PS_BINS_ELEMENT;
+    pub const PS_RATE_ELEMENT: &'static str = LimeConfig::PS_RATE_ELEMENT;
+    pub const PS_FREEZE_ELEMENT: &'static str = LimeConfig::PS_FREEZE_ELEMENT;
+    pub const PS_RESET_ELEMENT: &'static str = LimeConfig::PS_RESET_ELEMENT;
 
     /// Sample rates offered in the UI.
     ///
@@ -5504,16 +5540,15 @@ impl PlutoConfig {
     /// Ethernet gadget will actually carry: 2 Msps of 16-bit I/Q is 64 Mbit/s
     /// before framing, which is already most of the link.
     ///
-    /// The entries below [`Self::NO_FIR_FLOOR_HZ`] need a FIR configuration
-    /// loaded into the part, which sdroxide does not do — a stock Pluto rounds
-    /// them all up to that floor and says so on connect. They are still offered
-    /// because a board someone else has configured, or an IIO device that is
-    /// not a Pluto at all, can honour them.
+    /// The entries below [`Self::NO_FIR_FLOOR_HZ`] need a decimating FIR
+    /// loaded into the part. sdroxide loads one when the board accepts a FIR
+    /// configuration; a board that does not rounds them up to that floor and
+    /// says so on connect.
     pub const SAMPLE_RATES: [f64; 6] =
         [521_000.0, 1_000_000.0, 2_000_000.0, 2_500_000.0, 3_840_000.0, 5_000_000.0];
 
-    /// The lowest rate an AD936x can produce with its FIR decimator bypassed,
-    /// which is how a Pluto arrives and how sdroxide leaves it.
+    /// The lowest rate an AD936x can produce with its FIR decimator bypassed.
+    /// Below it sdroxide loads a decimate-by-4 FIR and leaves it enabled.
     ///
     /// The part's clock-chain solver accepts a rate only if `rate × 12` clears
     /// the ADC's 25 MHz minimum, so the true floor is 25 MHz / 12 = 2083333.33
@@ -6041,6 +6076,16 @@ pub struct SdrPlayConfig {
     /// use. Turning it on also lifts the AGC set-point ceiling to 0 dBFS.
     #[serde(default)]
     pub extended_if_gr: bool,
+    /// Let the receiver choose its own LNA state: more attenuation while the
+    /// service reports the converter overloaded or the IF AGC has run out of
+    /// reduction, less again once neither is true — never less than
+    /// [`Self::lna_state`], which becomes the most front-end gain the loop may
+    /// use rather than the state the receiver sits in.
+    ///
+    /// Off by default, like the Hermes-Lite's overload loop and for its
+    /// reason: it moves a control the operator set.
+    #[serde(default)]
+    pub auto_lna: bool,
     /// RSPduo only: run the other tuner too — combined with this one, or as a
     /// radio of its own. Read from `radio.json` under either name: the block
     /// was called `diversity` when combining was all it could do.
@@ -6089,6 +6134,7 @@ impl Default for SdrPlayConfig {
             hdr: false,
             hdr_bw: SdrPlayHdrBw::default(),
             extended_if_gr: false,
+            auto_lna: false,
             duo: SdrPlayDuo::default(),
             low_if: true,
         }
@@ -6216,6 +6262,11 @@ impl SdrPlayConfig {
     pub const HDR_BW_ELEMENT: &'static str = "HDRBW";
     /// Whether the IF gain reduction may go below the API's 20 dB floor.
     pub const EXTENDED_IF_GR_ELEMENT: &'static str = "EXTGR";
+    /// Whether the LNA state is chosen automatically — [`Self::auto_lna`].
+    /// Unlike the switches above, the source reports this one back beside its
+    /// gains, because the main window carries it on the LNA rail's label,
+    /// which is lit while the loop runs and has to show how the receiver stands.
+    pub const AUTO_LNA_ELEMENT: &'static str = "AUTOLNA";
     /// The RSPduo's second tuner and the diversity filter, through the same
     /// door — the filter's names being the shared ones ([`DIV_MODE_ELEMENT`]
     /// and friends). The two gains are carried negated, like the main

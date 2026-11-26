@@ -566,12 +566,16 @@ settings-controls-panadapter-mouse = パナダプターのマウス
 settings-controls-wheel = ホイール
 settings-controls-wheel-shift = ホイール + Shift
 settings-controls-tune-step = 同調ステップ
+settings-controls-points-per-step = 1ステップあたりのスムーズスクロール量
+settings-controls-points-per-step-hover = スムーズスクロールの何ポイントを1ステップとするか：トラックパッド、クリックのないサムホイール、1ノッチを分割して報告するホイール。小さいほど速くなります。ノッチ単位で報告するホイールは、この値にかかわらず1ノッチで1ステップです。
 settings-controls-zoom-rate = ズーム速度
 settings-controls-click-tune-rounding = クリック同調の丸め
 settings-controls-invert-wheel-direction = ホイールの方向を反転
 settings-controls-left-drag-tunes-well-pans = 左ドラッグで表示を移動するとともに同調する
 settings-controls-off-makes-left-drag-pan = オフにすると、左ドラッグは右ドラッグと同様に表示の移動のみを行います。
 settings-controls-scroll-digit-frequency-readout-tune = 周波数表示の桁をスクロールして同調する
+settings-controls-side-wheel-fine = サイドホイールでステップの10分の1ずつ同調
+settings-controls-side-wheel-fine-hover = パナダプター上での横スクロール（サムホイール、チルトホイール、トラックパッド上の2本指の横スワイプ）は、ホイール本体の設定にかかわらず、同調ステップの10分の1ずつ同調します。
 settings-controls-both-wheel-actions-are-tune = ホイールの両方の動作が同調になっているため、ズームする方法が残っていません。
 settings-controls-restore-mouse-defaults = マウスの既定に戻す
 settings-controls-mouse-buttons = マウスボタン
@@ -1870,6 +1874,8 @@ settings-radio-lets-if-gain-reduction-go = IF のゲイン減衰を 20 dB より
 settings-radio-allow-if-gain-reduction-below = IF のゲイン減衰を 20 dB より下にも許可
 settings-radio-front-end-attenuation-steps-0 = フロントエンドの減衰を段階で指定します。0 が最大ゲインで、段階を上げるとより多くの減衰が入ります。バンドによっては段階が少ないものもあります。ドライバーは範囲内に収め、あなたの選択は、同調し直したときのために保持します。ここのスライダーは、無線機があるバンドが受け付ける上限で止まります。別のバンドで選んだより高い値は保持され、その横に表示されます。即座に適用されます。
 settings-radio-t-0-max-gain = 0 = 最大ゲイン
+settings-radio-sdrplay-auto-lna = LNA 自動
+settings-radio-sdrplay-auto-lna-hover = 受信機が LNA ステートを自分で選びます。コンバーターが過負荷のあいだ、または IF AGC が調整範囲を使い切ったときに減衰を増やし、可能になれば戻します。上の LNA ステートは、使用できる最大ゲインになります。メインウィンドウの LNA ラベルをクリックするのと同じ設定です。すぐに反映されます。
 settings-radio-reference-error-parts-per-million-2 = 基準の誤差（百万分率）で、デバイス自身が適用します。即座に適用されます。
 settings-radio-radio-s-tuner = この無線機のチューナー
 settings-radio-tuner = チューナー
@@ -1936,6 +1942,10 @@ settings-radio-socket = ソケット
 settings-radio-same-first = 1 本目と同じ
 settings-radio-gain-2 = ゲイン
 settings-radio-set-low-coupled-sample-your = これは低く設定してください。自分の送信機の結合されたサンプルは強い信号であり、圧縮に駆動されたフィードバックのチェーンは、アンプの曲線を誤って測定します。補正が自分の歪みを学習してしまうためです。下から始めて、カプラーの減衰器を使ってください。
+settings-radio-pluto-rx2 = 第2受信チェーン (RX2)
+settings-radio-pluto-rx2-intro = 2R2Tボード（Pluto+、2R2TファームウェアのPlutoSky R2）では、このラジオがRX2を専有できます。第2アンテナとして、またはPureSignal用の自局送信機のサンプルとして使います。RX2はRX1と発振器とクロックを共有するので、同じ帯域を同じ瞬間に受信し、AGCを切った固定ゲインで動作します。ここで使用中は2つ目のラジオタブには使えません。用途の変更は「適用」で反映されます。
+settings-radio-pluto-rx2-gain = RX2ゲイン
+settings-radio-pluto-ps-needs-full-duplex = PureSignalには全二重オンとPTTピンオフが必要です。カプラーの信号は送信中も受信が続くときにだけ聞こえます。
 settings-radio-set-so-both-aerials-show = 両方のアンテナが、ほぼ同じノイズフロアを示すように設定してください。これは全体が依存する調整です。合成は、2 つの枝をそのノイズで重み付けし、圧縮に駆動された 2 つ目のチェーンは、干渉の歪んだコピーをフィルターに渡すからです。それは歪みのないものからは差し引けません。
 settings-radio-table-steps-2 = テーブルのステップ
 settings-radio-how-finely-correction-follows-amplifier = 補正がアンプの曲線にどれだけ細かく従うかです。ステップが多いほど鋭い屈曲を追いますが、それぞれが、そこに落ちたサンプルから学習されなければなりません。また、音声の振幅ヒストグラムの頂点は薄いものです。HF アンプが実際に持つ滑らかな曲線には、32 で十分です。値を変えると、補正は最初からやり直されます。
@@ -2057,6 +2067,9 @@ topbar-counted-steps-not-decibels-what =
 
     デシベルではなく段階で数えます。1 段階の値は受信機自身の問題で、SDRplay ではバンドにも依存します。それでも、大きいほどゲインが多くなります。
 topbar-gain = ゲイン
+topbar-sdrplay-auto-lna-hint =
+    LNA をクリックで自動：受信機が LNA ステートを自動で選択
+    点灯 = オン。スライダーは使用できる最大ゲインを決めます
 topbar-plutosdr-s-own-agc-setting =
     {""}
 
@@ -2253,9 +2266,6 @@ topbar-memory-channels = メモリーチャンネル
 topbar-scanner-stopped-signal = スキャナー：信号で停止中
 topbar-scanner-running = スキャナー：実行中
 topbar-scan-memory-channels-frequency-range = メモリーチャンネルまたは周波数範囲をスキャンします
-topbar-hfdl-ground-network-decode-log = HFDL 地上ネットワーク。ウォーターフォールの下にあるデコードログと航空機の地図です。パネル内の LISTEN でデコーダーをオンにしてください。
-topbar-hfdl-ground-network-decoding-now = HFDL 地上ネットワーク：今デコード中です。パネルを開いてください。
-topbar-hfdl-ground-network-aircraft-shortwave = HFDL 地上ネットワーク：航空機の短波データリンクです。一度に 1 つの受信チャンネルを聴きます
 topbar-grid-tracker-worked-maidenhead-squares = グリッドトラッカー：交信したメイデンヘッドの区画を地図上に表示し、聞こえたものを並べます
 topbar-amplifier-set-up-hardrock-under = アンプ：設定 → アンプで Hardrock を設定します
 topbar-settings-device-gains-antennas-audio = 設定：デバイスのゲイン、アンテナ、音声デバイス
@@ -2280,7 +2290,6 @@ topbar-chip-public-sdr = 公開 SDR
 topbar-chip-mail = メール
 topbar-chip-mem = メモリー
 topbar-chip-scan = スキャン
-topbar-chip-hfdl = HFDL
 topbar-chip-grid = グリッド
 topbar-chip-amp = アンプ
 topbar-chip-settings = ⚙ 設定
@@ -4722,6 +4731,8 @@ speech-browser-client-cannot-speak-yet = ブラウザのクライアントはま
 ## 周波数表示（src/widgets/freq_display.rs）
 
 freqdisplay-double-click-type-frequency = ダブルクリックで周波数を入力
+freqdisplay-right-click-sets-step = 右クリックでこの桁を同調ステップにする
+freqdisplay-shift-right-click-zeros = Shift + 右クリックまたは中クリックで、この桁とその右側をゼロにする
 freqdisplay-tap-type-frequency = タップして周波数を入力
 
 ## 太陽の状態（src/solar3d/state.rs）

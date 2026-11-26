@@ -635,6 +635,16 @@ pub struct WheelSettings {
     pub drag_tunes: bool,
     /// Per-digit scroll stepping on the frequency readout.
     pub digit_wheel: bool,
+    /// How many points of smooth scrolling are worth one step — a trackpad, a
+    /// free-running thumb wheel, a wheel whose driver reports a notch in
+    /// pieces. A wheel that reports whole notches is one step a notch whatever
+    /// this says.
+    pub points_per_step: f32,
+    /// Sideways scrolling over the panadapter tunes in tenths of
+    /// [`Self::tune_step_hz`], whatever the wheel itself is bound to.
+    // Why: KC2RGW 2026-11-23: "one click of the mousewheel is equal to one
+    //      tuning step and the thumbwheel is 1/10 of the tuning step".
+    pub side_wheel_fine: bool,
 }
 
 impl Default for WheelSettings {
@@ -648,6 +658,8 @@ impl Default for WheelSettings {
             click_tune_step_hz: 10.0,
             drag_tunes: true,
             digit_wheel: true,
+            points_per_step: 30.0,
+            side_wheel_fine: false,
         }
     }
 }

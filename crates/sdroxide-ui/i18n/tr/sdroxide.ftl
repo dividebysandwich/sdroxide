@@ -569,12 +569,16 @@ settings-controls-panadapter-mouse = Panadaptör faresi
 settings-controls-wheel = Tekerlek
 settings-controls-wheel-shift = Tekerlek + Shift
 settings-controls-tune-step = Ayar adımı
+settings-controls-points-per-step = Adım başına yumuşak kaydırma
+settings-controls-points-per-step-hover = Ne kadar yumuşak kaydırmanın bir adım sayılacağı, punto olarak: dokunmatik yüzey, serbest dönen başparmak tekeri, bir çentiği parçalar hâlinde bildiren teker. Küçük değer daha hızlıdır. Tam çentik bildiren bir teker, bu değer ne olursa olsun çentik başına bir adım atar.
 settings-controls-zoom-rate = Yakınlaştırma hızı
 settings-controls-click-tune-rounding = Tıklayarak ayarda yuvarlama
 settings-controls-invert-wheel-direction = Tekerlek yönünü ters çevir
 settings-controls-left-drag-tunes-well-pans = Sol sürükleme hem ayarlar hem kaydırır
 settings-controls-off-makes-left-drag-pan = Kapalıyken sol sürükleme, sağ sürükleme gibi yalnızca görünümü kaydırır.
 settings-controls-scroll-digit-frequency-readout-tune = Ayarlamak için frekans göstergesinde bir rakamı kaydırın
+settings-controls-side-wheel-fine = Yan teker adımın onda biriyle ayarlar
+settings-controls-side-wheel-fine-hover = Panadaptör üzerinde yana kaydırma — başparmak tekeri, yatırılabilir teker, dokunmatik yüzeyde iki parmakla yana kaydırma — tekerin kendi ayarı ne olursa olsun her seferinde ayar adımının onda biri kadar ayarlar.
 settings-controls-both-wheel-actions-are-tune = İki tekerlek eylemi de Ayar — geriye yakınlaştırmanın hiçbir yolu kalmıyor.
 settings-controls-restore-mouse-defaults = Fare varsayılanlarını geri yükle
 settings-controls-mouse-buttons = Fare düğmeleri
@@ -1889,6 +1893,8 @@ settings-radio-lets-if-gain-reduction-go = IF kazanç azaltmasının 20 dB'nin a
 settings-radio-allow-if-gain-reduction-below = IF kazanç azaltmasına 20 dB'nin altında izin ver
 settings-radio-front-end-attenuation-steps-0 = Adımlarla ön uç zayıflatması: 0 maksimum kazançtır, yukarı her adım daha fazla zayıflatma devreye alır. Bazı bantların daha az adımı vardır — sürücü sınırlar ve seçiminizi, geri ayar yaptığınızda kullanılmak üzere saklar; buradaki kaydırıcı, radyonun olduğu bandın alacağı yerde biter. Başka bir bantta yapılan daha yüksek bir seçim korunur ve yanında hâlâ gösterilir. Hemen uygulanır.
 settings-radio-t-0-max-gain = 0 = maksimum kazanç
+settings-radio-sdrplay-auto-lna = Otomatik LNA
+settings-radio-sdrplay-auto-lna-hover = Alıcının LNA kademesini kendisinin seçmesini sağlar. Çevirici aşırı yüklenmişken veya IF AGC sınırına dayanmışken zayıflatma ekler, mümkün olduğunda geri alır. Yukarıdaki LNA kademesi, kullanabileceği en yüksek kazanç olur. Ana penceredeki LNA etiketine tıklamakla aynıdır. Hemen uygulanır.
 settings-radio-reference-error-parts-per-million-2 = Milyonda kısım cinsinden referans hatası; aygıtın kendisi tarafından uygulanır. Hemen uygulanır.
 settings-radio-radio-s-tuner = Bu radyonun tuner'ı
 settings-radio-tuner = Tuner
@@ -1955,6 +1961,10 @@ settings-radio-socket = Soketi
 settings-radio-same-first = Birincisiyle aynı
 settings-radio-gain-2 = Kazancı
 settings-radio-set-low-coupled-sample-your = Bunu DÜŞÜK ayarlayın. Kendi vericinizin kuplajlı örneği güçlü bir sinyaldir ve sıkıştırmaya sürülen bir geri besleme zinciri amplifikatörün eğrisini yanlış ölçer — düzeltmeye kendi bozulmasını öğretir. Alttan başlayın ve kuplajın zayıflatıcısını kullanın.
+settings-radio-pluto-rx2 = İkinci alma zinciri (RX2)
+settings-radio-pluto-rx2-intro = 2R2T kartta (Pluto+, 2R2T yazılımlı PlutoSky R2) bu radyo RX2'yi kendine ayırabilir: ikinci anten olarak ya da PureSignal için kendi vericinizin örneği olarak. RX2, osilatörü ve saati RX1 ile paylaşır; aynı aralığı aynı anda duyar ve AGC kapalı, sabit kazançla çalışır. Burada kullanıldığı sürece ikinci bir radyo sekmesine açık değildir. Kullanım değişikliği Uygula ile geçerli olur.
+settings-radio-pluto-rx2-gain = RX2 kazancı
+settings-radio-pluto-ps-needs-full-duplex = PureSignal için Tam dupleks açık, PTT pinleri kapalı olmalı: kuplör yalnızca gönderim sırasında alma sürerken duyulur.
 settings-radio-set-so-both-aerials-show = İki anten de yaklaşık aynı gürültü tabanını göstersin diye ayarlayın. Her şey bunun üzerine kuruludur: birleştirme iki dalı gürültülerine göre ağırlıklandırır ve sıkıştırmaya sürülen ikinci bir zincir, filtreye girişimin bozulmuş bir kopyasını verir — bozulmamış birinden çıkarılamaz.
 settings-radio-table-steps-2 = Tablo adımları
 settings-radio-how-finely-correction-follows-amplifier = Düzeltmenin amplifikatörün eğrisini ne kadar ince izlediği. Daha fazla adım daha keskin bir dirseği izler, ama her biri içine düşen örneklerden öğrenilmelidir — ve bir konuşma genliği histogramının tepesi incedir. Otuz iki, bir HF amplifikatörünün gerçekte sahip olduğu düzgün eğri için yeterlidir. Değiştirmek düzeltmeyi yeniden başlatır.
@@ -2076,6 +2086,9 @@ topbar-counted-steps-not-decibels-what =
 
     Adımla sayılır, desibelle değil: bir adımın ne değerinde olduğu alıcının kendi işidir ve SDRplay'de bant da buna dahildir. Doğrusu yine daha fazla kazançtır.
 topbar-gain = Kazanç
+topbar-sdrplay-auto-lna-hint =
+    Otomatik için LNA’ya tıklayın: alıcı LNA kademesini kendisi seçer
+    Yanıyor = açık; sürgü o zaman kullanılabilecek en yüksek kazancı belirler
 topbar-plutosdr-s-own-agc-setting =
     {""}
 
@@ -2272,9 +2285,6 @@ topbar-memory-channels = Hafıza kanalları
 topbar-scanner-stopped-signal = Tarayıcı — bir sinyalde durdu
 topbar-scanner-running = Tarayıcı — çalışıyor
 topbar-scan-memory-channels-frequency-range = Hafıza kanallarını ya da bir frekans aralığını tarayın
-topbar-hfdl-ground-network-decode-log = HFDL yer ağı — çözüm günlüğü ve uçak haritası, şelalenin altında. Çözücüyü panelin içindeki DİNLE ile açın.
-topbar-hfdl-ground-network-decoding-now = HFDL yer ağı — şimdi çözülüyor. Paneli açın.
-topbar-hfdl-ground-network-aircraft-shortwave = HFDL yer ağı — uçakların kısa dalga veri bağlantısı, her seferinde bir dinleme kanalı
 topbar-grid-tracker-worked-maidenhead-squares = Lokatör izleyici — haritada çalışılmış Maidenhead kareleri ve duyulanlar
 topbar-amplifier-set-up-hardrock-under = Amplifikatör — Ayarlar → Amplifikatör altında bir Hardrock kurun
 topbar-settings-device-gains-antennas-audio = Ayarlar — aygıt kazançları, antenler, ses aygıtları
@@ -2299,7 +2309,6 @@ topbar-chip-public-sdr = GENEL SDR
 topbar-chip-mail = POSTA
 topbar-chip-mem = HAFIZA
 topbar-chip-scan = TARA
-topbar-chip-hfdl = HFDL
 topbar-chip-grid = LOKATÖR
 topbar-chip-amp = AMP
 topbar-chip-settings = ⚙ AYARLAR
@@ -4740,6 +4749,8 @@ speech-browser-client-cannot-speak-yet = tarayıcı istemcisi henüz konuşamıy
 ## freqdisplay (src/widgets/freq_display.rs)
 
 freqdisplay-double-click-type-frequency = Bir frekans yazmak için çift tıklayın
+freqdisplay-right-click-sets-step = Bu basamağın adımlarıyla ayarlamak için sağ tıklayın
+freqdisplay-shift-right-click-zeros = Bu basamağı ve sağındakileri sıfırlamak için Shift + sağ tık veya orta tık
 freqdisplay-tap-type-frequency = Bir frekans yazmak için dokunun
 
 ## solarstate (src/solar3d/state.rs)

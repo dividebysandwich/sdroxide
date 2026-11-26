@@ -567,12 +567,16 @@ settings-controls-panadapter-mouse = Mouse sul panadapter
 settings-controls-wheel = Rotella
 settings-controls-wheel-shift = Rotella + Maiusc
 settings-controls-tune-step = Passo di sintonia
+settings-controls-points-per-step = Scorrimento fluido per passo
+settings-controls-points-per-step-hover = Quanto scorrimento fluido vale un passo, in punti: un trackpad, una rotella laterale libera, una rotella che segnala uno scatto a pezzi. Più piccolo è più veloce. Una rotella che segnala scatti interi fa un passo per scatto qualunque sia questo valore.
 settings-controls-zoom-rate = Velocità di zoom
 settings-controls-click-tune-rounding = Arrotondamento della sintonia al clic
 settings-controls-invert-wheel-direction = Inverti la direzione della rotella
 settings-controls-left-drag-tunes-well-pans = Il trascinamento sinistro sintonizza oltre a spostare la vista
 settings-controls-off-makes-left-drag-pan = Disattivato, il trascinamento sinistro sposta solo la vista, come quello destro.
 settings-controls-scroll-digit-frequency-readout-tune = Scorri una cifra sulla lettura di frequenza per sintonizzarla
+settings-controls-side-wheel-fine = La rotella laterale sintonizza a decimi del passo
+settings-controls-side-wheel-fine-hover = Lo scorrimento laterale sul panadapter — una rotella laterale, una rotella inclinabile, due dita di traverso su un trackpad — sintonizza un decimo del passo di sintonia alla volta, qualunque sia l'impostazione della rotella.
 settings-controls-both-wheel-actions-are-tune = Entrambe le azioni della rotella sono Sintonia — non resta alcun modo per zoomare.
 settings-controls-restore-mouse-defaults = Ripristina i predefiniti del mouse
 settings-controls-mouse-buttons = Pulsanti del mouse
@@ -1900,6 +1904,8 @@ settings-radio-lets-if-gain-reduction-go = Lascia che la riduzione del guadagno 
 settings-radio-allow-if-gain-reduction-below = Consenti la riduzione del guadagno IF sotto 20 dB
 settings-radio-front-end-attenuation-steps-0 = Attenuazione del front-end a passi: 0 è il guadagno massimo, ogni passo in più inserisce più attenuazione. Alcune bande hanno meno passi — il driver li limita e conserva la tua scelta per quando risintonizzi, e il cursore qui finisce dove arriva la banda su cui è la radio. Una scelta più alta fatta su un'altra banda viene conservata e mostrata accanto. Ha effetto subito.
 settings-radio-t-0-max-gain = 0 = guadagno massimo
+settings-radio-sdrplay-auto-lna = LNA automatico
+settings-radio-sdrplay-auto-lna-hover = Lascia che il ricevitore scelga da sé lo stato dell’LNA. Aggiunge attenuazione finché il convertitore è in sovraccarico o l’AGC di FI è a fine corsa, e la toglie quando può. Lo stato LNA qui sopra diventa il guadagno massimo che può usare. È lo stesso di un clic sull’etichetta LNA nella finestra principale. Si applica subito.
 settings-radio-reference-error-parts-per-million-2 = Errore di riferimento in parti per milione, applicato dal dispositivo stesso. Ha effetto subito.
 settings-radio-radio-s-tuner = Il sintonizzatore di questa radio
 settings-radio-tuner = Sintonizzatore
@@ -1966,6 +1972,10 @@ settings-radio-socket = La sua presa
 settings-radio-same-first = Uguale alla prima
 settings-radio-gain-2 = Il suo guadagno
 settings-radio-set-low-coupled-sample-your = Impostalo BASSO. Il campione accoppiato del tuo stesso trasmettitore è un segnale forte, e una catena di retroazione portata in compressione misura male la curva dell'amplificatore — insegna alla correzione la propria distorsione. Parti dal fondo e usa l'attenuatore dell'accoppiatore.
+settings-radio-pluto-rx2 = Seconda catena di ricezione (RX2)
+settings-radio-pluto-rx2-intro = Su una scheda 2R2T (Pluto+, PlutoSky R2 con firmware 2R2T) questa radio può tenere RX2 per sé: come seconda antenna, o come campione del proprio trasmettitore per PureSignal. RX2 condivide oscillatore e clock con RX1, quindi ascolta la stessa banda nello stesso istante, e lavora a guadagno fisso con l'AGC spento. Finché è usata qui non è libera per una seconda scheda radio. Il cambio di uso ha effetto con Applica.
+settings-radio-pluto-rx2-gain = Guadagno RX2
+settings-radio-pluto-ps-needs-full-duplex = PureSignal richiede il full duplex attivo e i pin PTT spenti: l'accoppiatore si sente solo se la ricezione continua durante la trasmissione.
 settings-radio-set-so-both-aerials-show = Impostalo perché entrambe le antenne mostrino circa lo stesso rumore di fondo. È la regolazione su cui poggia tutto: combinare pesa i due rami per il loro rumore, e una seconda catena portata in compressione consegna al filtro una copia distorta dell'interferenza — che non si può sottrarre da una non distorta.
 settings-radio-table-steps-2 = Passi della tabella
 settings-radio-how-finely-correction-follows-amplifier = Quanto finemente la correzione segue la curva dell'amplificatore. Più passi seguono un ginocchio più netto, ma ciascuno va appreso dai campioni che vi sono finiti — e la parte alta di un istogramma di ampiezza vocale è rada. Trentadue bastano per la curva liscia che un amplificatore HF ha davvero. Cambiarlo fa ricominciare la correzione.
@@ -2087,6 +2097,9 @@ topbar-counted-steps-not-decibels-what =
 
     Contato in passi, non in decibel: quanto valga un passo è affare del ricevitore, e su un SDRplay dipende anche dalla banda. Il verso giusto resta più guadagno.
 topbar-gain = Guadagno
+topbar-sdrplay-auto-lna-hint =
+    Clic su LNA per l’automatico: il ricevitore sceglie da sé lo stato dell’LNA
+    Acceso = attivo; il cursore fissa allora il guadagno massimo utilizzabile
 topbar-plutosdr-s-own-agc-setting =
     {""}
 
@@ -2283,9 +2296,6 @@ topbar-memory-channels = Canali di memoria
 topbar-scanner-stopped-signal = Scanner — fermo su un segnale
 topbar-scanner-running = Scanner — in funzione
 topbar-scan-memory-channels-frequency-range = Scansiona canali di memoria o un intervallo di frequenze
-topbar-hfdl-ground-network-decode-log = Rete di terra HFDL — il registro delle decodifiche e la mappa degli aerei, sotto la waterfall. Attiva il decodificatore con ASCOLTA dentro il pannello.
-topbar-hfdl-ground-network-decoding-now = Rete di terra HFDL — in decodifica ora. Apri il pannello.
-topbar-hfdl-ground-network-aircraft-shortwave = Rete di terra HFDL — il collegamento dati in onde corte per aerei, un canale d'ascolto alla volta
 topbar-grid-tracker-worked-maidenhead-squares = Tracciatore di locatori — quadrati Maidenhead lavorati su una mappa, con ciò che viene sentito
 topbar-amplifier-set-up-hardrock-under = Amplificatore — configura un Hardrock in Impostazioni → Amplificatore
 topbar-settings-device-gains-antennas-audio = Impostazioni — guadagni del dispositivo, antenne, dispositivi audio
@@ -2310,7 +2320,6 @@ topbar-chip-public-sdr = SDR PUBBLICO
 topbar-chip-mail = POSTA
 topbar-chip-mem = MEM
 topbar-chip-scan = SCAN
-topbar-chip-hfdl = HFDL
 topbar-chip-grid = LOCAT.
 topbar-chip-amp = AMP
 topbar-chip-settings = ⚙ OPZIONI
@@ -4755,6 +4764,8 @@ speech-browser-client-cannot-speak-yet = il client nel browser non può ancora p
 ## freqdisplay (src/widgets/freq_display.rs)
 
 freqdisplay-double-click-type-frequency = Doppio clic per scrivere una frequenza
+freqdisplay-right-click-sets-step = Clic destro per sintonizzare a passi di questa cifra
+freqdisplay-shift-right-click-zeros = Maiusc + clic destro o clic centrale per azzerare questa cifra e quelle alla sua destra
 freqdisplay-tap-type-frequency = Tocca per scrivere una frequenza
 
 ## solarstate (src/solar3d/state.rs)

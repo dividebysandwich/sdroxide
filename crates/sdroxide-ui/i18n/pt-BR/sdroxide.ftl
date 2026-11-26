@@ -569,12 +569,16 @@ settings-controls-panadapter-mouse = Mouse do panadaptador
 settings-controls-wheel = Roda
 settings-controls-wheel-shift = Roda + Shift
 settings-controls-tune-step = Passo de sintonia
+settings-controls-points-per-step = Rolagem suave por passo
+settings-controls-points-per-step-hover = Quanta rolagem suave vale um passo, em pontos: um trackpad, uma roda lateral livre, uma roda que informa um clique em partes. Menor é mais rápido. Uma roda que informa cliques inteiros dá um passo por clique, seja qual for este valor.
 settings-controls-zoom-rate = Velocidade do zoom
 settings-controls-click-tune-rounding = Arredondamento do clique para sintonizar
 settings-controls-invert-wheel-direction = Inverter a direção da roda
 settings-controls-left-drag-tunes-well-pans = Arrastar com o botão esquerdo sintoniza além de deslocar
 settings-controls-off-makes-left-drag-pan = Desligado faz o arraste com o botão esquerdo apenas deslocar a visão, como o direito.
 settings-controls-scroll-digit-frequency-readout-tune = Rolar um dígito no visor de frequência para sintonizá-lo
+settings-controls-side-wheel-fine = A roda lateral sintoniza em décimos do passo
+settings-controls-side-wheel-fine-hover = A rolagem lateral sobre o panadapter — uma roda lateral, uma roda inclinável, dois dedos atravessando um trackpad — sintoniza um décimo do passo de sintonia por vez, seja qual for o ajuste da roda.
 settings-controls-both-wheel-actions-are-tune = As duas ações da roda são Sintonizar — não sobra nenhuma forma de dar zoom.
 settings-controls-restore-mouse-defaults = Restaurar padrões do mouse
 settings-controls-mouse-buttons = Botões do mouse
@@ -1896,6 +1900,8 @@ settings-radio-lets-if-gain-reduction-go = Deixa a redução de ganho de F.I. de
 settings-radio-allow-if-gain-reduction-below = Permitir redução de ganho de F.I. abaixo de 20 dB
 settings-radio-front-end-attenuation-steps-0 = Atenuação do front end em passos: 0 é o ganho máximo, cada passo acima acrescenta mais atenuação. Algumas faixas têm menos passos — o driver limita e mantém a sua escolha para quando você sintonizar de volta, e a barra aqui termina no que a faixa em que o rádio está aceitará. Uma escolha mais alta feita em outra faixa é mantida e continua mostrada ao lado. Vale imediatamente.
 settings-radio-t-0-max-gain = 0 = ganho máximo
+settings-radio-sdrplay-auto-lna = LNA automático
+settings-radio-sdrplay-auto-lna-hover = Deixa o receptor escolher sozinho o estado do LNA. Ele acrescenta atenuação enquanto o conversor está sobrecarregado ou o AGC de FI chegou ao limite, e a retira quando pode. O estado do LNA acima passa a ser o ganho máximo que ele pode usar. É o mesmo que um clique no rótulo LNA na janela principal. Aplica-se imediatamente.
 settings-radio-reference-error-parts-per-million-2 = Erro de referência em partes por milhão, aplicado pelo próprio dispositivo. Vale imediatamente.
 settings-radio-radio-s-tuner = O sintonizador deste rádio
 settings-radio-tuner = Sintonizador
@@ -1962,6 +1968,10 @@ settings-radio-socket = Seu conector
 settings-radio-same-first = Igual à primeira
 settings-radio-gain-2 = Seu ganho
 settings-radio-set-low-coupled-sample-your = Ajuste BAIXO. A amostra acoplada do seu próprio transmissor é um sinal forte, e uma cadeia de realimentação levada à compressão mede mal a curva do amplificador — ela ensina à correção a própria distorção. Comece no fundo e use o atenuador do acoplador.
+settings-radio-pluto-rx2 = Segunda cadeia de recepção (RX2)
+settings-radio-pluto-rx2-intro = Numa placa 2R2T (Pluto+, PlutoSky R2 com firmware 2R2T) este rádio pode ficar com o RX2: como segunda antena, ou como amostra do seu próprio transmissor para o PureSignal. O RX2 compartilha oscilador e relógio com o RX1, então ouve a mesma faixa no mesmo instante, e funciona com ganho fixo e AGC desligado. Enquanto for usado aqui, não fica livre para uma segunda aba de rádio. A mudança de uso vale ao Aplicar.
+settings-radio-pluto-rx2-gain = Ganho do RX2
+settings-radio-pluto-ps-needs-full-duplex = O PureSignal precisa de Full duplex ligado e dos pinos de PTT desligados: o acoplador só é ouvido enquanto a recepção continua durante a transmissão.
 settings-radio-set-so-both-aerials-show = Ajuste para que as duas antenas mostrem aproximadamente o mesmo piso de ruído. Este é o ajuste em que tudo se apoia: a combinação pondera os dois ramos pelo ruído deles, e uma segunda cadeia levada à compressão entrega ao filtro uma cópia distorcida da interferência — que não pode ser subtraída de uma não distorcida.
 settings-radio-table-steps-2 = Passos da tabela
 settings-radio-how-finely-correction-follows-amplifier = Com que precisão a correção segue a curva do amplificador. Mais passos acompanham um joelho mais agudo, mas cada um precisa ser aprendido a partir das amostras que caíram nele — e o topo de um histograma de amplitude de voz é fino. Trinta e dois basta para a curva suave que um amplificador de HF de fato tem. Alterá-lo reinicia a correção.
@@ -2085,6 +2095,9 @@ topbar-counted-steps-not-decibels-what =
 topbar-gain = Ganho
 
 
+topbar-sdrplay-auto-lna-hint =
+    Clique em LNA para automático: o receptor escolhe sozinho o estado do LNA
+    Aceso = ligado; o controle define então o ganho máximo que ele pode usar
 topbar-plutosdr-s-own-agc-setting =
     {""}
 
@@ -2281,9 +2294,6 @@ topbar-memory-channels = Canais de memória
 topbar-scanner-stopped-signal = Scanner — parado em um sinal
 topbar-scanner-running = Scanner — em execução
 topbar-scan-memory-channels-frequency-range = Varre canais de memória ou uma faixa de frequências
-topbar-hfdl-ground-network-decode-log = Rede terrestre HFDL — o log de decodificação e o mapa de aeronaves, abaixo da cascata. Ligue o decodificador com ESCUTAR dentro do painel.
-topbar-hfdl-ground-network-decoding-now = Rede terrestre HFDL — decodificando agora. Abra o painel.
-topbar-hfdl-ground-network-aircraft-shortwave = Rede terrestre HFDL — o enlace de dados de ondas curtas das aeronaves, um canal de escuta por vez
 topbar-grid-tracker-worked-maidenhead-squares = Rastreador de locators — quadrados Maidenhead trabalhados num mapa, com o que é ouvido
 topbar-amplifier-set-up-hardrock-under = Amplificador — configure um Hardrock em Configurações → Amplificador
 topbar-settings-device-gains-antennas-audio = Configurações — ganhos dos dispositivos, antenas, dispositivos de áudio
@@ -2308,7 +2318,6 @@ topbar-chip-public-sdr = SDR PÚBLICO
 topbar-chip-mail = E-MAIL
 topbar-chip-mem = MEM
 topbar-chip-scan = SCAN
-topbar-chip-hfdl = HFDL
 topbar-chip-grid = GRID
 topbar-chip-amp = AMP
 topbar-chip-settings = ⚙ CONFIG
@@ -4752,6 +4761,8 @@ speech-browser-client-cannot-speak-yet = o cliente de navegador ainda não conse
 ## freqdisplay (src/widgets/freq_display.rs)
 
 freqdisplay-double-click-type-frequency = Clique duas vezes para digitar uma frequência
+freqdisplay-right-click-sets-step = Clique com o botão direito para sintonizar em passos deste dígito
+freqdisplay-shift-right-click-zeros = Shift + clique direito ou clique do meio para zerar este dígito e os à direita dele
 freqdisplay-tap-type-frequency = Toque para digitar uma frequência
 
 ## solarstate (src/solar3d/state.rs)

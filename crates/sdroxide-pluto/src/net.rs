@@ -50,6 +50,9 @@ pub use crate::phy::PlutoLimits;
 use crate::stream;
 use crate::trace::Trace;
 
+/// [`Shared::pair_origin`] before any lockstep pair has been pushed.
+pub(crate) const NO_PAIR: u64 = u64::MAX;
+
 /// How long the TCP handshake may take before the address counts as wrong.
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -93,14 +96,25 @@ const MAX_BLIND_CTRL_REDIALS: u32 = 5;
 /// with it — the tell that the buffer length, not the link, was the bottleneck.
 ///
 /// 25 ms puts an order of magnitude between the two while still keying up
-/// faster than an operator can hear.
+/// faster than an operator can hear. Above about 1.3 Msps the ceiling in
+/// [`TX_BUFFER_BOUNDS`] cuts it shorter.
 const TX_BUFFER_MS: f64 = 25.0;
 
 /// Floor and ceiling on [`tx_buffer_samples`], in complex samples. The floor
 /// keeps a slow rate from producing a buffer so short that the per-buffer round
-/// trip dominates again; the ceiling bounds the device-side allocation and the
-/// key-up latency at rates a Pluto cannot stream over USB anyway.
-const TX_BUFFER_BOUNDS: (usize, usize) = (4096, 1 << 17);
+/// trip dominates again.
+///
+/// The ceiling is 32768 samples (128 KB), because a larger buffer costs the
+/// board incoming packets while it is also streaming receive. On a PlutoSky R2
+/// in 2R2T over Gigabit Ethernet at 2.5 Msps, with both receive chains
+/// streaming, libiio's own `iio_writedev` sending 61440-sample buffers (about
+/// what 25 ms comes to) made eth0 drop 1023 incoming packets a minute and lost
+/// about a second to retransmission stalls; at 32768 it dropped 135 and lost
+/// none worth measuring. Each lost packet stops the transmit stream for the
+/// sender's minimum retransmission timeout, 300 ms on Windows. Pacing the
+/// writes did not help, so it is the size of the buffer the board takes in at
+/// once that matters, not how fast it arrives.
+const TX_BUFFER_BOUNDS: (usize, usize) = (4096, 32768);
 
 /// Transmit buffer length in complex samples at `rate_hz` — see
 /// [`TX_BUFFER_MS`]. Rounded to a multiple of 1024 so the byte count stays
@@ -212,6 +226,22 @@ pub(crate) struct Shared {
     pub rx_pairs: AtomicUsize,
     /// The second chain's ring feed, installed while its stream is attached.
     pub ring1: Mutex<Option<Producer<f32>>>,
+    /// The second chain is this connection's *own* auxiliary receiver — a
+    /// second aerial or a PureSignal coupler for chain 0's radio — rather than
+    /// a radio of its own, so the two rings must stay sample-for-sample in
+    /// step. See [`PlutoRx::rx_read_paired`] for what that buys and how.
+    pub lockstep: AtomicBool,
+    /// Floats ever committed to chain 0's ring, and ever taken out of it.
+    /// Only the difference between the two and [`Self::pair_origin`] matters;
+    /// they are what lets the reader tell which of the chain-0 samples it is
+    /// holding have a chain-1 twin.
+    pub pushed0: AtomicU64,
+    pub popped0: AtomicU64,
+    /// The value [`Self::pushed0`] had when the first lockstep buffer was
+    /// pushed — chain 1's first float is chain 0's float number
+    /// `pair_origin`. [`NO_PAIR`] until then, and again after the auxiliary
+    /// stream detaches.
+    pub pair_origin: AtomicU64,
     /// Per-chain LO-move subscribers: `(chain, notify)`. The control thread
     /// tells every chain but the one that asked when the shared LO moves.
     pub lo_watch: Mutex<Vec<(u8, Sender<f64>)>>,
@@ -658,6 +688,10 @@ impl PlutoRig {
             tx_buffer_samples: tx_buffer_samples(tx_rate),
             rx_pairs: AtomicUsize::new(1),
             ring1: Mutex::new(None),
+            lockstep: AtomicBool::new(false),
+            pushed0: AtomicU64::new(0),
+            popped0: AtomicU64::new(0),
+            pair_origin: AtomicU64::new(NO_PAIR),
             lo_watch: Mutex::new(Vec::new()),
             trace: trace.clone(),
         });
@@ -815,6 +849,13 @@ impl PlutoRig {
     /// that already has a live stream: two engines draining one ring would
     /// each get half the samples.
     pub fn rx(&self, chain: u8) -> Result<PlutoRx> {
+        self.attach(chain, false)
+    }
+
+    /// [`Self::rx`], and for chain 1 with `lockstep`, the receive thread keeps
+    /// it in step with chain 0 from the first buffer it ever pushes to it —
+    /// see [`Self::aux_rx`].
+    fn attach(&self, chain: u8, lockstep: bool) -> Result<PlutoRx> {
         let inner = &self.inner;
         if !self.is_alive() {
             return Err(Error::Msg("this connection is closed".into()));
@@ -852,7 +893,11 @@ impl PlutoRig {
                     // held it (chain 0's producer lives in the thread); drain
                     // the backlog so a re-attached stream starts live rather
                     // than replaying half a second of the past.
-                    while r.pop().is_ok() {}
+                    let mut drained = 0u64;
+                    while r.pop().is_ok() {
+                        drained += 1;
+                    }
+                    inner.shared.popped0.fetch_add(drained, Ordering::SeqCst);
                     (r, tx)
                 }
                 None => {
@@ -868,7 +913,19 @@ impl PlutoRig {
             // to a long-running connection must age from its attach, not from
             // the connection's epoch.
             inner.shared.stamp_rx1();
-            *inner.shared.ring1.lock().unwrap_or_else(|e| e.into_inner()) = Some(prod);
+            // Lockstep is switched on under the same lock that hands the ring
+            // over, and only now that this chain is ours. The receive thread
+            // decides between lockstep and independent pushes under this lock,
+            // so it can neither push this ring a single unpaired buffer, nor
+            // run a different radio's chain 1 in lockstep because an attach
+            // that was going to fail had switched it on early.
+            let mut slot = inner.shared.ring1.lock().unwrap_or_else(|e| e.into_inner());
+            if lockstep {
+                inner.shared.pair_origin.store(NO_PAIR, Ordering::SeqCst);
+                inner.shared.lockstep.store(true, Ordering::SeqCst);
+            }
+            *slot = Some(prod);
+            drop(slot);
             // The receive thread reopens its buffer for both pairs.
             inner.shared.rx_pairs.store(2, Ordering::Relaxed);
             (cons, None)
@@ -886,6 +943,38 @@ impl PlutoRig {
             rx_port: if chain == 0 { inner.rx_port0.clone() } else { String::new() },
             tx_port: inner.tx_port0.clone(),
         })
+    }
+}
+
+/// How many floats [`PlutoRx::rx_read_paired`] may take from chain `chain`'s
+/// ring as unpaired, given what the ring held (`waiting`, measured before
+/// `origin` was read), the pairing origin and chain 0's running count of
+/// floats taken. Never past the origin once there is one; with none yet,
+/// never more than was already waiting when it was found unset. Even, so I
+/// and Q stay together.
+fn unpaired_room(chain: u8, waiting: usize, origin: u64, popped: u64, out_len: usize) -> usize {
+    let room = if chain != 0 {
+        out_len
+    } else if origin == NO_PAIR {
+        waiting.min(out_len)
+    } else {
+        usize::try_from(origin.saturating_sub(popped)).unwrap_or(usize::MAX).min(out_len)
+    };
+    room & !1
+}
+
+impl PlutoRig {
+    /// Attach receive chain 1 as chain 0's own auxiliary receiver — a second
+    /// aerial or a transmit coupler — rather than as a radio of its own
+    /// (issue #525).
+    ///
+    /// The stream is an ordinary [`PlutoRx`] for its gain, AGC and lifetime;
+    /// what differs is that the receive thread now keeps its ring and chain
+    /// 0's in step — both buffers' worth or neither — so that
+    /// [`PlutoRx::rx_read_paired`] can hand over the two chains' samples of
+    /// the same instants. Dropping it lets the rings run independently again.
+    pub fn aux_rx(&self) -> Result<PlutoRx> {
+        self.attach(1, true)
     }
 }
 
@@ -938,7 +1027,12 @@ impl Drop for PlutoRx {
         } else {
             // The receive thread narrows its buffer back to one pair.
             self.rig.shared.rx_pairs.store(1, Ordering::Relaxed);
-            *self.rig.shared.ring1.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            // Under the ring's lock, so the receive thread never sees
+            // lockstep with the ring gone or the ring with lockstep half-off.
+            let mut slot = self.rig.shared.ring1.lock().unwrap_or_else(|e| e.into_inner());
+            *slot = None;
+            self.rig.shared.lockstep.store(false, Ordering::SeqCst);
+            self.rig.shared.pair_origin.store(NO_PAIR, Ordering::SeqCst);
         }
     }
 }
@@ -1124,19 +1218,81 @@ impl PlutoRx {
     /// Drain interleaved I,Q floats from the RX ring into `out`. Always returns
     /// an even count, so the stream stays aligned. 0 means nothing yet.
     pub fn rx_read(&mut self, out: &mut [f32]) -> usize {
-        let Some(ring) = self.ring.as_mut() else { return 0 };
-        let take = ring.slots().min(out.len()) & !1;
-        let mut n = 0;
-        while n < take {
-            match ring.pop() {
-                Ok(v) => {
-                    out[n] = v;
-                    n += 1;
-                }
-                Err(_) => break,
-            }
+        let n = pop_into(self.ring.as_mut(), out);
+        if self.chain == 0 {
+            self.rig.shared.popped0.fetch_add(n as u64, Ordering::SeqCst);
         }
         n
+    }
+
+    /// Drain chain 0 (`self`) and the auxiliary chain `aux` together, keeping
+    /// the two sample-for-sample aligned.
+    ///
+    /// Returns `(n, paired)`, both in floats: `out[..n]` is chain 0's next
+    /// samples, and when `paired == n` then `aux_out[..n]` holds chain 1's
+    /// samples of *the same instants*. A block the auxiliary chain has no
+    /// twin for — the samples queued before it attached, or ones whose twins
+    /// have not been committed yet — comes back with `paired == 0` and is
+    /// still the main receiver's audio, uncombined.
+    ///
+    /// # Why the two can be trusted to line up
+    ///
+    /// Both chains arrive in one device buffer, interleaved, so the hardware
+    /// hands them over already aligned; the only way to lose that is on this
+    /// side. So in lockstep the receive thread commits a buffer to both rings
+    /// or to neither (an overrun drops the pair), chain 1's first float is
+    /// recorded against chain 0's running count ([`Shared::pair_origin`]), and
+    /// this reader only ever takes equal amounts from the two past that point.
+    /// Every other chain-0 read — the plain one, a discard — is counted, which
+    /// is what keeps "how far past the origin" true.
+    pub fn rx_read_paired(
+        &mut self,
+        aux: &mut PlutoRx,
+        out: &mut [f32],
+        aux_out: &mut [f32],
+    ) -> (usize, usize) {
+        let shared = &self.rig.shared;
+        // What chain 0's ring holds, measured *before* the origin is read. The
+        // receive thread records the origin before it commits the first paired
+        // buffer, so if the origin still reads as unset below, none of these
+        // samples is paired. Measured after, a pair committed in between would
+        // be taken here as unpaired history, and every paired read after it
+        // would hand RX2 up to a buffer behind RX1, for good.
+        let waiting = self.ring.as_ref().map_or(0, |r| r.slots());
+        let origin = shared.pair_origin.load(Ordering::SeqCst);
+        let popped = shared.popped0.load(Ordering::SeqCst);
+        if self.chain != 0 || origin == NO_PAIR || popped < origin {
+            // Nothing paired yet, or unpaired history still to hand over —
+            // but never read past the origin, or the twins would be skipped.
+            let room = unpaired_room(self.chain, waiting, origin, popped, out.len());
+            let n = self.rx_read(&mut out[..room]);
+            return (n, 0);
+        }
+        let (Some(main), Some(side)) = (self.ring.as_ref(), aux.ring.as_ref()) else {
+            return (self.rx_read(out), 0);
+        };
+        // Chain 0 is committed first, so chain 1 is the one that may lag by a
+        // buffer: take no more than both have.
+        let take = main.slots().min(side.slots()).min(out.len()).min(aux_out.len()) & !1;
+        let n = pop_into(self.ring.as_mut(), &mut out[..take]);
+        let m = pop_into(aux.ring.as_mut(), &mut aux_out[..n]);
+        shared.popped0.fetch_add(n as u64, Ordering::SeqCst);
+        debug_assert_eq!(n, m, "the rings were measured before either was read");
+        (n, if m == n { n } else { 0 })
+    }
+
+    /// Throw away everything queued on chain 0 and on `aux`, keeping the pair
+    /// aligned — [`Self::discard_pending_rx`] for a radio running an
+    /// auxiliary chain.
+    pub fn discard_pending_paired(&mut self, aux: &mut PlutoRx) {
+        let mut a = vec![0.0f32; 8192];
+        let mut b = vec![0.0f32; 8192];
+        loop {
+            let (n, _) = self.rx_read_paired(aux, &mut a, &mut b);
+            if n == 0 {
+                break;
+            }
+        }
     }
 
     /// Drop whatever the receive thread queued. Receive is torn down for the
@@ -1145,7 +1301,13 @@ impl PlutoRx {
     /// front of the first live sample.
     pub fn discard_pending_rx(&mut self) {
         if let Some(ring) = self.ring.as_mut() {
-            while ring.pop().is_ok() {}
+            let mut n = 0u64;
+            while ring.pop().is_ok() {
+                n += 1;
+            }
+            if self.chain == 0 {
+                self.rig.shared.popped0.fetch_add(n, Ordering::SeqCst);
+            }
         }
     }
 
@@ -1173,6 +1335,24 @@ impl PlutoRx {
         let last = clock.load(Ordering::Relaxed).max(shared.last_tx_end_ms.load(Ordering::Relaxed));
         since_open.saturating_sub(Duration::from_millis(last))
     }
+}
+
+/// Pop up to `out.len()` floats — always an even number, so I and Q stay
+/// paired — and say how many.
+fn pop_into(ring: Option<&mut Consumer<f32>>, out: &mut [f32]) -> usize {
+    let Some(ring) = ring else { return 0 };
+    let take = ring.slots().min(out.len()) & !1;
+    let mut n = 0;
+    while n < take {
+        match ring.pop() {
+            Ok(v) => {
+                out[n] = v;
+                n += 1;
+            }
+            Err(_) => break,
+        }
+    }
+    n
 }
 
 /// The single-stream view of a Pluto: chain 0 of a [`PlutoRig`] of its own.
@@ -1740,25 +1920,48 @@ mod tests {
     /// samples did at 2.5 Msps: 1.64 ms of buffer against a ~2.2 ms round trip.
     #[test]
     fn a_transmit_buffer_outlasts_the_round_trip_that_refills_it() {
-        // Generous next to the ~2.2 ms measured over a Pluto's USB gadget.
-        let round_trip_ms = 5.0;
-        // Up to about 5 Msps, which is already 20 MB/s of transmit payload —
-        // past what that gadget carries, so the rates above it are theoretical.
-        for rate in [2_083_333.0, 2_500_000.0, 3_072_000.0, 4_000_000.0, 5_000_000.0] {
+        // The ~2.2 ms measured over a Pluto's USB gadget, the slowest link a
+        // Pluto is reached over; Ethernet is quicker.
+        let round_trip_ms = 2.2;
+        // Up to 4 Msps, which is already 16 MB/s of transmit payload — past
+        // what that gadget carries, so the rates above it are theoretical.
+        for rate in [2_083_333.0, 2_500_000.0, 3_072_000.0, 4_000_000.0] {
             let ms = tx_buffer_samples(rate) as f64 / rate * 1e3;
             assert!(
                 ms > round_trip_ms * 3.0,
                 "{rate} sps gives a {ms:.2} ms transmit buffer, too short to stay ahead"
             );
         }
-        // Bounded the other way by the sample cap, which is there for the
-        // device-side allocation: 25 ms at the AD9361's top rate would ask a
-        // Pluto for megabytes of DMA memory it has no way to fill over USB.
+        // Bounded the other way by the sample cap: a buffer the board takes
+        // in at once may not pass 32768 samples, or it drops incoming packets
+        // while streaming receive too, at the default rate as well.
         assert_eq!(tx_buffer_samples(30_720_000.0), TX_BUFFER_BOUNDS.1);
+        assert_eq!(tx_buffer_samples(2_500_000.0), 32768);
         // Key-up latency is capped by the *time*, not the count, so it does not
         // grow with the rate.
         assert!(tx_buffer_samples(2_500_000.0) as f64 / 2.5e6 < 0.030);
         assert_eq!(tx_buffer_samples(0.0), TX_BUFFER_BOUNDS.0);
+    }
+
+    /// Review of #743: with pairing not yet begun, an unpaired read takes no
+    /// more than chain 0's ring held *before* the origin was found unset. The
+    /// receive thread records the origin first and commits the first pair
+    /// after, so those samples are all from before it; anything that arrived
+    /// since may be the first pair's chain-0 half, and taking it as unpaired
+    /// would leave RX2 behind RX1 for every read after. Once there is an
+    /// origin, never past it.
+    #[test]
+    fn an_unpaired_read_takes_nothing_that_may_be_a_pair() {
+        // Origin unset: bounded by what was waiting, not by the buffer.
+        assert_eq!(unpaired_room(0, 1000, NO_PAIR, 0, 4096), 1000);
+        assert_eq!(unpaired_room(0, 0, NO_PAIR, 0, 4096), 0);
+        assert_eq!(unpaired_room(0, 9000, NO_PAIR, 0, 4096), 4096);
+        // Origin set, history still to hand over: up to the origin exactly.
+        assert_eq!(unpaired_room(0, 9000, 5000, 4000, 4096), 1000);
+        // Kept even, so a sample's I and Q are never split.
+        assert_eq!(unpaired_room(0, 1001, NO_PAIR, 0, 4096), 1000);
+        // Chain 1 read on its own has no pairing to respect.
+        assert_eq!(unpaired_room(1, 0, NO_PAIR, 0, 4096), 4096);
     }
 
     #[test]

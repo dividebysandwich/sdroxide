@@ -66,6 +66,14 @@ pub const ADSB_MAX_RATE_HZ: f64 = 9_000_000.0;
 /// Longest track kept per aircraft, whatever the settings say.
 pub const ADSB_TRACK_MAX: usize = 240;
 
+/// How often an airborne transponder sends its position: every 0.4–0.6 s,
+/// at random (DO-260B), so twice a second on average.
+pub const ADSB_POSITION_RATE_HZ: f64 = 2.0;
+
+/// The window [`AdsbAircraft::rx_share`] is counted over: as long as a full
+/// track of [`ADSB_TRACK_MAX`] points takes at [`ADSB_POSITION_RATE_HZ`].
+pub const ADSB_RX_WINDOW_S: f64 = ADSB_TRACK_MAX as f64 / ADSB_POSITION_RATE_HZ;
+
 /// Default for [`AdsbSettings::drop_map_s`].
 pub const ADSB_DROP_MAP_S: u16 = 10;
 /// Default for [`AdsbSettings::drop_list_s`].
@@ -177,6 +185,14 @@ pub struct AdsbAircraft {
     /// is what draws one trace per aircraft in a waterfall zoomed in on
     /// 1090. `None` until a frame has been measured.
     pub carrier_hz: Option<f64>,
+    /// Share of the airborne position messages it should have sent in the last
+    /// [`ADSB_RX_WINDOW_S`] that were actually heard, 0–1. A transponder sends
+    /// one about twice a second ([`ADSB_POSITION_RATE_HZ`]), so this measures
+    /// the path from it to the antenna rather than its power: 1.0 on a clear
+    /// line of sight, falling where a building or the horizon stands between.
+    /// `None` until it has been heard sending positions for 10 s, and on the
+    /// ground, where the rate depends on whether it moves.
+    pub rx_share: Option<f32>,
 }
 
 /// What an aircraft reports from its own systems (TC 19 subtypes 3/4, TC 29,
@@ -242,6 +258,7 @@ impl AdsbAircraft {
             raw_hex: String::new(),
             avionics: AdsbAvionics::default(),
             carrier_hz: None,
+            rx_share: None,
         }
     }
 

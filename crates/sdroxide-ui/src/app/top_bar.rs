@@ -1609,13 +1609,13 @@ impl SdroxideApp {
             // On the air through a repeater it is the transmit frequency — see
             // [`Self::readout`].
             let (shown, ink, offset) = self.readout();
-            let mut new_hz = None;
+            let mut edit = freq_display::Edit::default();
             let readout = ui.allocate_ui_with_layout(
                 egui::vec2(readout_w, full_h),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     ui.add_space(((full_h - readout_h) / 2.0).max(0.0));
-                    new_hz = freq_display::show(
+                    edit = freq_display::show(
                         ui,
                         crate::layout::salted_id(ui.ctx(), "main-freq"),
                         shown,
@@ -1641,8 +1641,16 @@ impl SdroxideApp {
                     crate::theme::CYAN_DIM(),
                 );
             }
-            if let Some(hz) = new_hz {
+            if let Some(hz) = edit.hz {
                 cmds.push(Command::SetVfo { vfo: active, hz: hz - offset });
+            }
+            // A right-clicked digit becomes the wheel's tune step — the same
+            // setting Settings → Controls edits, saved the same way.
+            if let Some(step) = edit.step_hz
+                && step != self.input.cfg.wheel.tune_step_hz
+            {
+                self.input.cfg.wheel.tune_step_hz = step;
+                self.input.persist();
             }
             ui.add_space(12.0);
 
@@ -2799,6 +2807,36 @@ impl SdroxideApp {
         cmds.push(Command::SetGain { dir: Direction::Rx, element: element.into(), db });
     }
 
+    /// Whether an RSP's automatic LNA is running, when `element` is the stage
+    /// it drives; `None` for every other rail. Read from the gains the source
+    /// publishes, where it reports the switch beside the LNA state.
+    fn sdrplay_auto_lna(&self, element: &str) -> Option<bool> {
+        use sdroxide_types::SdrPlayConfig as S;
+        (element == S::LNA_ELEMENT && self.caps.as_ref().is_some_and(|c| c.driver == "sdrplay"))
+            .then(|| self.state.gains.iter().any(|(n, v)| n == S::AUTO_LNA_ELEMENT && *v >= 0.5))
+    }
+
+    /// Switch an RSP's automatic LNA the way Settings → Radio does: into the
+    /// radio's config, which is saved so it is still on after a restart, and
+    /// to the receiver as `SetGain`.
+    fn set_sdrplay_auto_lna(&mut self, cmds: &mut Vec<Command>, on: bool) {
+        let element = sdroxide_types::SdrPlayConfig::AUTO_LNA_ELEMENT;
+        if self.radio_cfg.is_none() {
+            self.radio_cfg = self.ctrl.radio_config();
+        }
+        if let Some(cfg) = self.radio_cfg.as_mut() {
+            cfg.sdrplay.auto_lna = on;
+            self.ctrl.set_radio_config(cfg.clone());
+        }
+        let db = f64::from(u8::from(on));
+        // Optimistic echo, so the label lights on the click.
+        match self.state.gains.iter_mut().find(|(n, _)| n == element) {
+            Some((_, d)) => *d = db,
+            None => self.state.gains.push((element.to_string(), db)),
+        }
+        cmds.push(Command::SetGain { dir: Direction::Rx, element: element.into(), db });
+    }
+
     /// One [`FrontChip`]: lit while it is anything but its first setting
     /// (the amplifier on, a VGA range forced), a click steps it on.
     fn front_chip(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, c: &FrontChip) {
@@ -3083,7 +3121,7 @@ impl SdroxideApp {
                         tr!("topbar-rx888-tuner-hint")
                     };
                     let label = gain_label(&g.name, rx_gains.len());
-                    if gain_rail(ui, narrow, g, &label, &hint, hardware_agc, &mut db) {
+                    if gain_rail(ui, narrow, g, &label, &hint, hardware_agc, None, &mut db).moved {
                         self.set_rx888_tuner(cmds, &g.name, db);
                     }
                     continue;
@@ -3110,8 +3148,27 @@ impl SdroxideApp {
                         tr!("topbar-tuner-agc-owns-gain")
                     });
                 }
+                // An RSP's LNA label is also the switch for its automatic
+                // LNA: a click turns the loop on or off, and the label is lit
+                // while it runs. The rail stays live either way — it shows the
+                // state the loop is in, and moving it sets the most gain the
+                // loop may use.
+                // Why: KC2RGW 2026-11-23: "Instead of the Auto button can it
+                //      be a click on LNA to activate, highlight LNA when
+                //      active".
+                let auto_lna = self.sdrplay_auto_lna(&g.name);
+                if auto_lna.is_some() {
+                    hint.push('\n');
+                    hint.push_str(&tr!("topbar-sdrplay-auto-lna-hint"));
+                }
                 let label = gain_label(&g.name, rx_gains.len());
-                if gain_rail(ui, narrow, g, &label, &hint, hardware_agc, &mut db) {
+                let rail = gain_rail(ui, narrow, g, &label, &hint, hardware_agc, auto_lna, &mut db);
+                if rail.label_clicked
+                    && let Some(on) = auto_lna
+                {
+                    self.set_sdrplay_auto_lna(cmds, !on);
+                }
+                if rail.moved {
                     // Optimistic echo so the knob tracks the drag instead
                     // of snapping back until the engine answers.
                     match self.state.gains.iter_mut().find(|(n, _)| *n == g.name) {
@@ -6696,11 +6753,11 @@ impl SdroxideApp {
         }
         // In a box the skimmers hang off a chip of their own; a menu inlines
         // them below instead: a popup opened from a popup counts as a click
-        // outside the first and closes it. HFDL is a plain chip, so it stays.
+        // outside the first and closes it. ISM is a plain chip, so it stays.
         if !narrow {
             self.skimmer_button(ui, cmds, extra);
         }
-        self.hfdl_chip(ui, cmds, extra);
+        self.ism_chip(ui, extra);
     }
 
     /// The FFT chip and its popup: the waterfall's controls, lit while the
@@ -6731,46 +6788,25 @@ impl SdroxideApp {
         }
     }
 
-    /// The HFDL chip, in the Display box beside SKIM: like SKIM it shows a
-    /// decoder running. It opens HFDL's own mode, whose panel docks under the
-    /// waterfall.
-    fn hfdl_chip(&mut self, ui: &mut egui::Ui, cmds: &mut Vec<Command>, extra: f32) {
-        let hfdl_label = tr!("topbar-chip-hfdl");
-        // HFDL: shortwave aircraft ground network. It opens HFDL's own mode,
-        // whose panel docks under the waterfall; accented while the decoder
-        // runs, like the ISM chip, because it spends a downconverter and a
-        // worker thread whether or not the panel is on screen.
-        let hfdl_mode = self.state.rx[0].mode.is_hfdl();
-        let hfdl_running = self.state.hfdl.enabled;
-        let hfdl_chip = if hfdl_running {
-            accent_chip_stretched(
-                ui,
-                true,
-                &hfdl_label,
-                crate::theme::GREEN(),
-                crate::theme::INK_ON_BRIGHT(),
-                extra,
-            )
-        } else {
-            chip_stretched(ui, hfdl_mode, &hfdl_label, extra)
-        };
-        if hfdl_chip
-            .on_hover_text(if hfdl_mode {
-                tr!("topbar-hfdl-ground-network-decode-log")
-            } else if hfdl_running {
-                tr!("topbar-hfdl-ground-network-decoding-now")
+    /// The ISM chip, in the Display box beside SKIM: lit, as SKIM is, while
+    /// the decoder runs — it spends downconverters and a worker thread whether
+    /// or not its window is open — and while the window is open.
+    fn ism_chip(&mut self, ui: &mut egui::Ui, extra: f32) {
+        let [_, _, ism] = DISPLAY_TOOL_CHIPS;
+        let ism_running = self.state.ism.any_enabled();
+        if chip_stretched(ui, ism_running || self.show_ism, ism, extra)
+            .on_hover_text(if ism_running {
+                // Which is not the same as "this window is open", and the chip
+                // cannot say so on its own: an operator who closes the window
+                // and finds the chip still lit has no way to guess that it is
+                // the decoder rather than the window, or where its switch went.
+                tr!("topbar-ism-band-devices-decoding-now")
             } else {
-                tr!("topbar-hfdl-ground-network-aircraft-shortwave")
+                tr!("topbar-ism-band-devices-weather-sensors")
             })
             .clicked()
         {
-            // The lane follows its own chosen frequency; bring the dial with it
-            // so the panadapter shows the signal being decoded.
-            cmds.push(Command::SetMode { rx: RxId::Main, mode: Mode::Hfdl });
-            cmds.push(Command::SetVfo {
-                vfo: self.state.active_vfo,
-                hz: self.state.hfdl.frequency_hz,
-            });
+            self.show_ism = !self.show_ism;
         }
     }
 
@@ -7171,7 +7207,7 @@ impl SdroxideApp {
     /// The first five window chips — the condensed System box's top row.
     /// `extra` stretches each chip past its label; the popup passes 0.
     fn system_chips_top(&mut self, ui: &mut egui::Ui, extra: f32) {
-        let [log, spots, awards, bands, sat_label, ism, public_sdrs] = system_chip_labels_top();
+        let [log, spots, awards, bands, sat_label, public_sdrs] = system_chip_labels_top();
         if chip_stretched(ui, self.show_logbook, &log, extra)
             .on_hover_text(tr!("topbar-logbook-all-qsos-digital-manual"))
             .clicked()
@@ -7225,37 +7261,6 @@ impl SdroxideApp {
             .clicked()
         {
             self.show_sat = !self.show_sat;
-        }
-        // Accented while the decoder is actually running, like the scanner and
-        // the satellite lock: it is spending CPU on four downconverters whether
-        // or not the window is open.
-        let ism_running = self.state.ism.any_enabled();
-        let ism_chip = if ism_running {
-            accent_chip_stretched(
-                ui,
-                true,
-                &ism,
-                crate::theme::GREEN(),
-                crate::theme::INK_ON_BRIGHT(),
-                extra,
-            )
-        } else {
-            chip_stretched(ui, self.show_ism, &ism, extra)
-        };
-        if ism_chip
-            .on_hover_text(if ism_running {
-                // Which is not the same as "this window is open", and the chip
-                // cannot say so on its own: an operator who closes the window
-                // and finds the chip still lit has no way to guess that the
-                // green is the decoder rather than the window, or where its
-                // switch went. Same wording problem the SAT chip solves above.
-                tr!("topbar-ism-band-devices-decoding-now")
-            } else {
-                tr!("topbar-ism-band-devices-weather-sensors")
-            })
-            .clicked()
-        {
-            self.show_ism = !self.show_ism;
         }
         // Named for what it lists rather than for the WebSDR network, which is
         // the one thing it does *not* list: PA3FWM's receivers speak a
@@ -7538,14 +7543,13 @@ impl PttPress {
 /// put this box near the end of a row — and, later, how the public-SDR chip
 /// did, drawn in the top row while a single split index still counted it in the
 /// bottom one.
-fn system_chip_labels_top() -> [String; 7] {
+fn system_chip_labels_top() -> [String; 6] {
     [
         tr!("topbar-chip-log"),
         tr!("topbar-chip-spots"),
         tr!("topbar-chip-awards"),
         tr!("topbar-chip-bands"),
         tr!("topbar-chip-sat"),
-        tr!("topbar-chip-ism"),
         tr!("topbar-chip-public-sdr"),
     ]
 }
@@ -7600,8 +7604,8 @@ const MODULE_WINDOWS_CHIP: &str = "▣";
 pub(in crate::app) const DISPLAY_VIEW_CHIPS: [&str; 4] = ["FFT", "SPEC", "FIT", "WIDE"];
 
 /// The Display box's bottom row: centre tuning and the two decoders that run
-/// in the background, the skimmers and HFDL, each lit while it runs.
-pub(in crate::app) const DISPLAY_TOOL_CHIPS: [&str; 3] = ["CTR", "SKIM", "HFDL"];
+/// in the background, the skimmers and ISM, each lit while it runs.
+pub(in crate::app) const DISPLAY_TOOL_CHIPS: [&str; 3] = ["CTR", "SKIM", "ISM"];
 
 /// The solar view's chip, in the System box among the window chips since HFDL
 /// took its place in the Display box. SOLAR, not "☀ 3D": "3D" is also the
@@ -7963,9 +7967,22 @@ fn readout_rail_w(ui: &egui::Ui) -> f32 {
     STRIP_RAIL_W + MODULE_ROW_SPACING + value_field_w(ui, RAIL_READOUT)
 }
 
+/// What the operator did to a [`gain_rail`] this frame.
+struct RailEdit {
+    /// The rail was moved; the new figure is in `db`.
+    moved: bool,
+    /// The label was clicked — only ever true for a label that is a switch.
+    label_clicked: bool,
+}
+
 /// One front-end gain stage on the receive row: its label and its rail,
-/// inert while a hardware AGC owns the stage. Returns whether the
-/// operator moved it this frame, with the new figure in `db`.
+/// inert while a hardware AGC owns the stage. Says whether the operator
+/// moved it this frame, with the new figure in `db`.
+///
+/// `switch` makes the label a switch as well: `Some(on)` draws it clickable,
+/// lit like a selected chip while `on`, and reports the click. The label keeps
+/// the size of a plain one, so the row is as wide as it was measured to be.
+#[allow(clippy::too_many_arguments)]
 fn gain_rail(
     ui: &mut egui::Ui,
     narrow: bool,
@@ -7973,9 +7990,45 @@ fn gain_rail(
     label: &str,
     hint: &str,
     hardware_agc: bool,
+    switch: Option<bool>,
     db: &mut f64,
-) -> bool {
-    ui.label(label).on_hover_text(hint);
+) -> RailEdit {
+    let label_clicked = match switch {
+        None => {
+            ui.label(label).on_hover_text(hint);
+            false
+        }
+        Some(on) => {
+            // Reserved first so the lit backing lands behind the text.
+            let backing = ui.painter().add(egui::Shape::Noop);
+            let text = if on {
+                RichText::new(label).color(crate::theme::INK_ON_CYAN())
+            } else {
+                RichText::new(label)
+            };
+            let resp = ui
+                .add(egui::Label::new(text).selectable(false).sense(egui::Sense::click()))
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(hint);
+            if on {
+                ui.painter().set(
+                    backing,
+                    egui::Shape::rect_filled(
+                        resp.rect.expand2(egui::vec2(3.0, 1.0)),
+                        3.0,
+                        crate::theme::CYAN(),
+                    ),
+                );
+            } else if resp.hovered() {
+                ui.painter().hline(
+                    resp.rect.x_range(),
+                    resp.rect.bottom(),
+                    (1.0, ui.visuals().text_color()),
+                );
+            }
+            resp.clicked()
+        }
+    };
     let step = if g.step_db > 0.0 { g.step_db } else { 1.0 };
     // Every gain rail at one pinned length, a little shorter than
     // volume and squelch, which take the box's stretch (HDZ
@@ -7983,34 +8036,36 @@ fn gain_rail(
     // müssen etwas länger"); in a menu `control_row` sizes them.
     // The readout is a bare number — the unit is in the hint — so
     // the field stays small.
-    ui.scope(|ui| {
-        if !narrow {
-            ui.spacing_mut().slider_width = STRIP_RAIL_W;
-        }
-        ui.add_enabled_ui(!hardware_agc, |ui| {
-            crate::chrome::slider_wheel(
-                crate::chrome::slider_readout(
-                    ui,
-                    value_field_w(ui, RAIL_READOUT),
-                    // A bare number: three rails fit the strip only
-                    // without a unit on each readout. The unit is in
-                    // the hint — and a stage counted in steps says so
-                    // there — so no step index reads as "dB".
-                    Slider::new(&mut *db, g.min_db..=g.max_db)
-                        .step_by(step)
-                        .fixed_decimals(usize::from(step.fract() != 0.0)),
-                ),
-                db,
-                g.min_db..=g.max_db,
-                step,
-            )
+    let moved = ui
+        .scope(|ui| {
+            if !narrow {
+                ui.spacing_mut().slider_width = STRIP_RAIL_W;
+            }
+            ui.add_enabled_ui(!hardware_agc, |ui| {
+                crate::chrome::slider_wheel(
+                    crate::chrome::slider_readout(
+                        ui,
+                        value_field_w(ui, RAIL_READOUT),
+                        // A bare number: three rails fit the strip only
+                        // without a unit on each readout. The unit is in
+                        // the hint — and a stage counted in steps says so
+                        // there — so no step index reads as "dB".
+                        Slider::new(&mut *db, g.min_db..=g.max_db)
+                            .step_by(step)
+                            .fixed_decimals(usize::from(step.fract() != 0.0)),
+                    ),
+                    db,
+                    g.min_db..=g.max_db,
+                    step,
+                )
+            })
+            .inner
         })
         .inner
-    })
-    .inner
-    .on_hover_text(hint)
-    .on_disabled_hover_text(hint)
-    .changed()
+        .on_hover_text(hint)
+        .on_disabled_hover_text(hint)
+        .changed();
+    RailEdit { moved, label_clicked }
 }
 
 /// The widest figure a rail's readout shows: a gain or attenuation to a
@@ -9565,6 +9620,12 @@ fn div_settings(cfg: &sdroxide_types::RadioConfig) -> Option<(DiversityMode, f32
         sdroxide_types::Backend::Lime => {
             Some((cfg.lime.aux.mode, cfg.lime.aux.rate, cfg.lime.aux.frozen))
         }
+        // RX2 borrowed by the RX1 radio carries the LimeSDR's own block
+        // (`PlutoAuxConfig` is `LimeAuxConfig`); `caps.diversity` keeps the box
+        // off screen unless that block's role is a second aerial (#525).
+        sdroxide_types::Backend::Pluto => {
+            Some((cfg.pluto.aux.mode, cfg.pluto.aux.rate, cfg.pluto.aux.frozen))
+        }
         sdroxide_types::Backend::SdrPlay => {
             Some((cfg.sdrplay.duo.mode, cfg.sdrplay.duo.rate, cfg.sdrplay.duo.frozen))
         }
@@ -9586,6 +9647,10 @@ fn set_div_setting(cfg: &mut sdroxide_types::RadioConfig, element: &str, db: f64
     let (mode, rate, frozen) = match cfg.backend {
         sdroxide_types::Backend::Lime => {
             let a = &mut cfg.lime.aux;
+            (&mut a.mode, &mut a.rate, &mut a.frozen)
+        }
+        sdroxide_types::Backend::Pluto => {
+            let a = &mut cfg.pluto.aux;
             (&mut a.mode, &mut a.rate, &mut a.frozen)
         }
         sdroxide_types::Backend::SdrPlay => {
@@ -11101,7 +11166,7 @@ mod tests {
             // 1400 pt is where `layout::tier_for` starts calling a window a
             // desktop; the top panel's 8+8 margin and `angled_frame`'s 10+10
             // come off it before the packer sees it.
-            // FFT · SPEC · FIT / CTR · SKIM · HFDL, SOLAR among the window
+            // FFT · SPEC · FIT / CTR · SKIM · ISM, SOLAR among the window
             // chips, makes the Display box a few points wider: a CAT rig's
             // second row needs about 1368 pt, so it is checked at 1410.
             let avail = 1410.0 - 16.0 - 20.0;

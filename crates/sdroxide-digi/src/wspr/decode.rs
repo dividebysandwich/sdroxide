@@ -56,6 +56,14 @@ pub struct WsprDecode {
     /// [`fit_of`]. Near zero means the message does not explain the audio; a
     /// clean decode runs from about 0.3 at the noise floor up towards 0.8.
     pub fit: f32,
+    /// Whether the ordered-statistics fallback produced this rather than Fano.
+    ///
+    /// Carried out of the decoder because the rule that makes such a decode
+    /// believable is not a property of one slot: `wsprd` keeps an OSD result
+    /// only when it names a station already in its table of callsigns heard
+    /// outright (`wsprd.c`, the block after `osdwspr_`), and the table is
+    /// [`crate::WsprController`]'s to keep (issue #946).
+    pub from_osd: bool,
 }
 
 impl WsprDecode {
@@ -270,6 +278,7 @@ pub fn decode_slot(audio: &[f32], sample_rate: u32) -> Vec<WsprDecode> {
             let refined = r.start_sample;
             let mut d = from_result(&r, c, pad, sample_rate);
             d.fit = fit;
+            d.from_osd = hit.from_osd;
             if !is_plausible(&d) {
                 continue;
             }
@@ -836,6 +845,7 @@ fn from_result(
         snr_db: c.snr_db,
         drift_hz: reportable_drift(c.drift_hz),
         fit: 0.0,
+        from_osd: false,
     }
 }
 
@@ -1180,6 +1190,7 @@ mod tests {
             snr_db: -20.0,
             drift_hz: 0.0,
             fit: 0.5,
+            from_osd: false,
         };
         // Four tones 1.4648 Hz apart: the centre is 1.5 spacings up, ≈2.2 Hz.
         assert!((d.carrier_hz() - 1502.197).abs() < 0.01, "{}", d.carrier_hz());

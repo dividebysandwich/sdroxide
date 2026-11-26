@@ -5305,6 +5305,7 @@ fn engine_thread(
         engine.poll_rigctld();
         engine.poll_band_change();
         engine.poll_gain_slot();
+        engine.poll_source_gains();
         engine.wsjtx_heartbeat();
         engine.poll_spots();
         engine.poll_winlink();
@@ -5351,8 +5352,14 @@ fn engine_thread(
             // spends that budget: the transmit ring empties, and hardware that
             // answers an underrun by skipping ahead (SoapySX does) puts the
             // over on the air as chirps. See `IqSource::read_available`.
+            //
+            // A source that streams faster than one block a tick may take more
+            // when more are already waiting (`IqSource::full_duplex_reads_per_tick`):
+            // still only what has arrived, so the budget is never spent
+            // waiting. Every other source keeps the one block.
             if engine.rx_drawn_during_tx() {
-                if let Ok(n @ 1..) = engine.source.read_available(&mut buf) {
+                for _ in 0..engine.source.full_duplex_reads_per_tick().max(1) {
+                    let Ok(n @ 1..) = engine.source.read_available(&mut buf) else { break };
                     lane_samples += n as u64;
                     engine.samples_read += n as u64;
                     engine.last_block = n as u64;
@@ -5366,6 +5373,9 @@ fn engine_thread(
                     // QO-100 station watches its own downlink through the over
                     // (#652).
                     engine.process_block(iq, pool.as_ref());
+                    if n < buf.len() {
+                        break; // drained
+                    }
                 }
             }
         } else {
@@ -12086,8 +12096,13 @@ impl Engine {
         // sound card hands over demodulated audio, not a 1.5 MHz span. Correcting
         // the state means the UI says so instead of showing a request the engine
         // quietly dropped.
+        // The operator's own preference survives being overruled: `state.ism`
+        // is what the panel reads, `ism_cfg` is what they chose, so a swap back
+        // to a wideband front end brings the decoder back as it was left.
         if self.audio_mode {
             self.state.ism = sdroxide_types::IsmSettings::OFF;
+        } else {
+            self.state.ism = self.ism_cfg;
         }
         let want = self.state.ism.any_enabled();
         match (want, self.ism.is_some()) {
@@ -17075,6 +17090,21 @@ impl Engine {
         }
     }
 
+    /// Republish the receive gains when the front end has moved one by itself
+    /// — an RSP's automatic LNA stepping the state the Gain rail shows. Not
+    /// remembered as a setting: what the loop arrived at is not what the
+    /// operator asked for, and the next start should begin from the latter.
+    fn poll_source_gains(&mut self) {
+        if !self.source.rx_gains_moved() {
+            return;
+        }
+        let now = self.source.current_gains();
+        if now != self.state.gains {
+            self.state.gains = now;
+            let _ = self.event_tx.send(RadioEvent::State(self.state.clone()));
+        }
+    }
+
     fn remember_gain(&mut self, dir: Direction, element: String, db: f64) {
         let (want, actual) = match dir {
             Direction::Rx => (&mut self.want_gains.0, &self.state.gains),
@@ -18188,9 +18218,12 @@ impl Engine {
 
         // Re-establish mode-dependent chains for the fresh state.
         self.sync_digi_mode();
+        // Outside the wideband-only block: on an audio-mode front end it is
+        // what switches the decoder off, rather than leaving the old one's
+        // chain standing and its chip lit.
+        self.sync_ism();
         if !self.audio_mode {
             self.sync_skimmer();
-            self.sync_ism();
             self.sync_adsb();
             self.sync_vdl2();
             self.sync_ais();
