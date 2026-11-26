@@ -300,13 +300,6 @@ impl SdroxideApp {
             {
                 self.view.adsb_map_clouds = !self.view.adsb_map_clouds;
             }
-            if crate::chrome::chip(ui, self.view.adsb_map_storms, small(tr!("adsb-chip-storms")))
-                .on_hover_text(tr!("adsb-chip-storms-tip"))
-                .context_menu_link(NOWCOAST)
-                .clicked()
-            {
-                self.view.adsb_map_storms = !self.view.adsb_map_storms;
-            }
             let (wx_name, wx_lic, wx_url) =
                 crate::adsb_wx::Source::pick(self.view.adsb_wx_source, self.adsb_home()).info();
             if crate::chrome::chip(ui, self.view.adsb_map_wx, small(tr!("adsb-chip-wx")))
@@ -1231,8 +1224,7 @@ impl SdroxideApp {
             .map(|r| r.iter().filter_map(|c| self.adsb_routes.airport(c)).collect())
             .unwrap_or_default();
         let night = self.night_texture(ui.ctx());
-        let (clouds_tex, clouds_credit) = if self.view.adsb_map_clouds || self.view.adsb_map_storms
-        {
+        let (clouds_tex, clouds_credit) = if self.view.adsb_map_clouds {
             self.adsb_clouds.poll(ui.ctx(), now);
             let tex = self.adsb_clouds.texture();
             let credit = if tex.is_some() {
@@ -1279,7 +1271,6 @@ impl SdroxideApp {
             pointer: self.view.adsb_map_pointer,
             wx,
             clouds: clouds_tex,
-            storms: self.view.adsb_map_storms.then_some(self.adsb_clouds.cells.as_slice()),
             clouds_credit,
             airports,
             stamp: self.view.adsb_map_stamp,
@@ -1645,7 +1636,7 @@ impl SdroxideApp {
     }
 }
 
-/// The cloud mosaic's home, for CLOUDS and STORMS.
+/// The cloud mosaic's home, for CLOUDS.
 const NOWCOAST: &str = "https://nowcoast.noaa.gov/";
 
 /// A right-click on a data chip offers the source's page, where its licence

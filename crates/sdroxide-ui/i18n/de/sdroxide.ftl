@@ -4343,12 +4343,9 @@ adsb-lic-nasa = NASA, frei
 adsb-chip-clouds = WOLKEN
 adsb-chip-clouds-tip = Bewölkung aus Satelliten, stündlich, weltweit
   NOAA/NESDIS über nowCOAST, gemeinfrei · Rechtsklick: Quelle
-adsb-chip-storms = GEWITTER
-adsb-chip-storms-tip = Gewitterzellen, geschätzt aus kalten Wolkenobergrenzen, stündlich
   NOAA/NESDIS über nowCOAST, gemeinfrei · Rechtsklick: Quelle
 adsbmap-clouds-credit = Wolken: NOAA/NESDIS Satellitenmosaik, { $time }
 adsbmap-clouds-loading = Wolken: NOAA/NESDIS, wird geladen …
-adsbmap-storm = Gewitter: Tops { $top } km, ~{ $rate } Blitze/min
 adsb-chip-wx = WETTER
 adsb-chip-wx-tip = Niederschlag: { $src }
   { $lic } · Rechtsklick: Quelle

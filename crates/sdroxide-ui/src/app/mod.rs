@@ -875,7 +875,7 @@ pub struct SdroxideApp {
     adsb_tracks: crate::adsb_tracks::TrackBook,
     /// The DWD precipitation radar for the ADS-B map's WEATHER layer.
     adsb_wx: crate::adsb_wx::WxRadar,
-    /// Cloud and storm cells for the ADS-B map's CLOUDS and STORMS layers.
+    /// The cloud picture for the ADS-B map's CLOUDS layer.
     adsb_clouds: crate::adsb_clouds::CloudLayer,
     /// The note beside the 1090.000 chip after a gain save or recall, and
     /// when it was set.

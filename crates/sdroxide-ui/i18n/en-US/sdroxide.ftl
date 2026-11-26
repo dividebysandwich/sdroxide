@@ -4469,12 +4469,9 @@ adsb-lic-nasa = NASA, free
 adsb-chip-clouds = CLOUDS
 adsb-chip-clouds-tip = Cloud cover from satellites, hourly, worldwide
   NOAA/NESDIS via nowCOAST, public domain · right-click: source
-adsb-chip-storms = STORMS
-adsb-chip-storms-tip = Thunderstorm cells, estimated from cold cloud tops, hourly
   NOAA/NESDIS via nowCOAST, public domain · right-click: source
 adsbmap-clouds-credit = Clouds: NOAA/NESDIS satellite mosaic, { $time }
 adsbmap-clouds-loading = Clouds: NOAA/NESDIS, loading …
-adsbmap-storm = Thunderstorm: tops { $top } km, ~{ $rate } flashes/min
 adsb-chip-wx = WEATHER
 adsb-chip-wx-tip = Precipitation: { $src }
   { $lic } · right-click: source

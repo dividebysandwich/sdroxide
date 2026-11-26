@@ -66,7 +66,7 @@ impl CloudLayer {
     }
 
     /// Take in what has arrived and fetch when due. Once a frame while
-    /// CLOUDS or STORMS is on.
+    /// CLOUDS is on.
     pub fn poll(&mut self, ctx: &egui::Context, now: i64) {
         while let Ok((generation, res)) = self.rx.try_recv() {
             if generation != self.generation {
