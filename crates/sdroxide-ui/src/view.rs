@@ -458,12 +458,12 @@ pub struct ViewState {
     /// fetched from the network every five minutes while on.
     #[serde(default)]
     pub adsb_map_wx: bool,
-    /// Cloud (NOAA geostationary mosaic) and thunderstorm cells on the ADS-B
-    /// map. Off by default: fetched from the network while on.
+    /// Cloud (NOAA geostationary mosaic) on the ADS-B map. Off by default:
+    /// fetched from the network while on. (The thunderstorm layer beside it,
+    /// STORMS, is gone from this build — HDZ 2026-11-26: „den gewitter chip
+    /// auch gleich weg“.)
     #[serde(default)]
     pub adsb_map_clouds: bool,
-    #[serde(default)]
-    pub adsb_map_storms: bool,
     /// Which radar WEATHER shows: 0 by home, 1 DWD, 2 US NEXRAD
     /// (see `adsb_wx::Source::pick`).
     #[serde(default)]
@@ -949,7 +949,6 @@ impl Default for ViewState {
             adsb_show_log: false,
             adsb_map_wx: false,
             adsb_map_clouds: false,
-            adsb_map_storms: false,
             adsb_wx_source: 0,
             adsb_map_stamp: true,
             adsb_map_alt: false,
