@@ -145,13 +145,8 @@ fn the_drive_that_reaches_the_rig_follows_the_bands_calibration() {
             last = Some(s);
         }
     }
-    if let Some(s) = last {
-        assert!(
-            (s.tx.drive - 1.0).abs() < 1e-6,
-            "the Drive setting is untouched, got {}",
-            s.tx.drive
-        );
-    }
+    let s = last.expect("expected a radio state event after changing VFO");
+    assert!((s.tx.drive - 1.0).abs() < 1e-6, "the Drive setting is untouched, got {}", s.tx.drive);
 
     drop(h.cmd_tx);
     if let Some(t) = thread {
@@ -302,8 +297,8 @@ fn a_drive_ceiling_holds_the_transmitted_samples_down() {
     h.cmd_tx.send(Command::SetTuneDrive(1.0)).unwrap();
     std::thread::sleep(Duration::from_millis(250));
 
-    // What the radio does today: full drive is full scale, and nothing is
-    // between the top of the control and the finals.
+    // What the radio does today: the Drive control is at full setting,
+    // with no operator ceiling limiting the transmitted samples.
     let wide_open = tune_peak(&h);
     assert!(wide_open > 0.01, "the untrimmed radio should have transmitted, got {wide_open}");
 
@@ -319,11 +314,10 @@ fn a_drive_ceiling_holds_the_transmitted_samples_down() {
     std::thread::sleep(Duration::from_millis(250));
 
     let capped = tune_peak(&h);
-    let ratio = capped / wide_open;
     assert!(
-        (ratio - 0.25).abs() < 0.02,
-        "a 25% ceiling should hold a held carrier to a quarter of full scale even with the \
-         band trimmed up: got {capped} against {wide_open} (ratio {ratio})"
+        (capped - 0.25).abs() < 0.02,
+        "a 0.25 drive ceiling should limit the transmitted samples to 0.25 \
+         even with the band trimmed up: got {capped}"
     );
 
     // And the operator's own setting is where they left it. The ceiling is a

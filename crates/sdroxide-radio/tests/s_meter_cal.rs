@@ -8,8 +8,10 @@ use sdroxide_types::{Command, DeviceCaps, RadioConfig, RadioEvent};
 
 const RATE: f64 = 48_000.0;
 
-/// A constant carrier at -70 dBFS.
-struct Rig;
+/// A 1 kHz carrier at -70 dBFS, inside the default USB passband.
+struct Rig {
+    sample_index: u64,
+}
 
 impl IqSource for Rig {
     fn sample_rate(&self) -> f64 {
@@ -23,8 +25,19 @@ impl IqSource for Rig {
     }
     fn read(&mut self, buf: &mut [Complex32]) -> Result<usize> {
         std::thread::sleep(Duration::from_millis(5));
+
         let n = buf.len().min(2048);
-        buf[..n].fill(Complex32::new(10f32.powf(-70.0 / 20.0), 0.0));
+        let amplitude = 10f32.powf(-70.0 / 20.0);
+
+        for (i, sample) in buf[..n].iter_mut().enumerate() {
+            let index = self.sample_index + i as u64;
+            let phase = std::f64::consts::TAU * 1_000.0 * index as f64 / RATE;
+
+            *sample =
+                Complex32::new(amplitude * phase.cos() as f32, amplitude * phase.sin() as f32);
+        }
+
+        self.sample_index += n as u64;
         Ok(n)
     }
     fn describe(&self) -> String {
@@ -53,7 +66,7 @@ fn the_radios_calibration_moves_the_meter_at_once() {
 
     let (producer, mut consumer) = rtrb::RingBuffer::<f32>::new(1 << 16);
     let mut h = start_engine(
-        Box::new(Rig),
+        Box::new(Rig { sample_index: 0 }),
         caps(),
         EngineConfig {
             audio: Some(AudioParams { producer, out_rate: RATE }),
@@ -63,8 +76,6 @@ fn the_radios_calibration_moves_the_meter_at_once() {
     let thread = h.thread.take();
     let mut settle = |h: &sdroxide_radio::EngineHandles| {
         let mut last = None;
-        // The meter falls with a 0.5 s release (`meter_ballistics`), so a
-        // 40 dB drop needs about six time constants to come within 0.1 dB.
         let deadline = Instant::now() + Duration::from_millis(3000);
         while Instant::now() < deadline {
             while let Ok(ev) = h.event_rx.try_recv() {
