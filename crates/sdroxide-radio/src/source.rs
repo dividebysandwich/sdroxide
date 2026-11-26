@@ -422,6 +422,17 @@ pub trait IqSource: Send {
     fn current_tx_antenna(&self) -> String {
         String::new()
     }
+    /// Switch the radio's onboard power amplifier, on a board that has one to
+    /// switch (the Hermes-Lite 2). Returns whether this source has such a
+    /// switch, so the engine only remembers the setting for a radio it applies
+    /// to.
+    fn set_pa_enable(&mut self, _on: bool) -> bool {
+        false
+    }
+    /// Whether the onboard PA is on, or `None` on a source with no such switch.
+    fn pa_enable(&self) -> Option<bool> {
+        None
+    }
     /// Set the TX drive as a `0..1` fraction on rigs that modulate their own
     /// audio (CAT/TCI), which command output power directly rather than scaling
     /// the transmitted samples. No-op for IQ sources (they apply drive in the
@@ -1713,6 +1724,14 @@ impl IqSource for ConvertedSource {
 
     fn current_tx_antenna(&self) -> String {
         self.inner.current_tx_antenna()
+    }
+
+    fn set_pa_enable(&mut self, on: bool) -> bool {
+        self.inner.set_pa_enable(on)
+    }
+
+    fn pa_enable(&self) -> Option<bool> {
+        self.inner.pa_enable()
     }
 
     fn set_tx_drive(&mut self, frac: f64) {

@@ -1779,7 +1779,11 @@ use sdroxide_types::{
 ///
 /// v224: SDRplay automatic LNA. `SdrPlayConfig` gains `auto_lna` on its tail,
 /// which changes `ServerMsg::RadioConfig` and `Command::SetRadioConfig`.
-pub const PROTO_VERSION: u16 = 224;
+///
+/// v225: the Hermes-Lite 2's PA switch per band. `RadioState` gains
+/// `pa_enable` on its tail, which changes every state frame, and `Command`
+/// gains a trailing `SetPa`.
+pub const PROTO_VERSION: u16 = 225;
 const VERSION_BYTE: u8 = 0x12;
 
 #[derive(Debug, thiserror::Error)]
