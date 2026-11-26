@@ -52,8 +52,11 @@ pub struct Sample {
     pub aircraft: f32,
     /// Of those, aircraft whose position moved in the last minute.
     pub placed: f32,
-    /// Farthest of those positions from home, km. `NAN` without a home.
+    /// Farthest of those positions from home, km, and the distribution under
+    /// it: median and upper quartile. `NAN` without a home or a position.
     pub max_km: f32,
+    pub med_km: f32,
+    pub q75_km: f32,
     /// From the feed's `readsb`: mean signal and noise, dBFS, last minute.
     pub signal: f32,
     pub noise: f32,
@@ -127,14 +130,18 @@ impl Graphs {
             .filter(|a| a.last_pos_at > 0 && now - a.last_pos_at <= 60)
             .filter_map(|a| Some((a.lat?, a.lon?)))
             .collect();
-        let max_km = home
-            .map(|h| {
-                placed
-                    .iter()
-                    .map(|p| sdroxide_types::distance_km(h, *p) as f32)
-                    .fold(f32::NAN, f32::max)
-            })
-            .unwrap_or(f32::NAN);
+        // The farthest alone is one aircraft; the median and the upper
+        // quartile say how far the station hears most of the sky.
+        // Why: HDZ 2026-11-26: „die weiteste position würde ich noch ergänzen
+        //      mit zwei zusätzlichen graphen mit median position distanze und
+        //      upper quartile (75%)“.
+        let mut km: Vec<f32> = home
+            .map(|h| placed.iter().map(|p| sdroxide_types::distance_km(h, *p) as f32).collect())
+            .unwrap_or_default();
+        km.sort_by(f32::total_cmp);
+        let max_km = km.last().copied().unwrap_or(f32::NAN);
+        let med_km = quantile(&km, 0.5);
+        let q75_km = quantile(&km, 0.75);
         let r = self.remote_now(now);
         let v = |o: Option<f32>| o.unwrap_or(f32::NAN);
         self.push(Sample {
@@ -143,6 +150,8 @@ impl Graphs {
             aircraft: heard.len() as f32,
             placed: placed.len() as f32,
             max_km,
+            med_km,
+            q75_km,
             signal: v(r.and_then(|r| r.signal)),
             noise: v(r.and_then(|r| r.noise)),
             strong_pct: v(r.and_then(|r| r.strong_pct)),
@@ -193,6 +202,20 @@ impl Graphs {
     /// station's graphs are drawn at all.
     pub fn has_remote(&self, since: i64) -> bool {
         self.samples.iter().any(|s| s.t >= since && (!s.signal.is_nan() || !s.temp_c.is_nan()))
+    }
+}
+
+/// The `q` quantile of sorted values, linearly interpolated; `NAN` when empty.
+pub fn quantile(sorted: &[f32], q: f32) -> f32 {
+    match sorted.len() {
+        0 => f32::NAN,
+        1 => sorted[0],
+        n => {
+            let x = q.clamp(0.0, 1.0) * (n - 1) as f32;
+            let (i, f) = (x.floor() as usize, x.fract());
+            let hi = sorted[(i + 1).min(n - 1)];
+            sorted[i] + (hi - sorted[i]) * f
+        }
     }
 }
 
@@ -472,6 +495,16 @@ mod tests {
         assert_eq!(g.samples.len(), 1);
         assert_eq!(g.samples[0].msgs_min, 600.0, "100 frames in 10 s");
         assert!(g.samples[0].max_km.is_nan(), "no home, no range");
+    }
+
+    #[test]
+    fn median_and_upper_quartile_interpolate_between_positions() {
+        let km = [10.0, 20.0, 40.0, 80.0, 160.0];
+        assert_eq!(quantile(&km, 0.5), 40.0);
+        assert_eq!(quantile(&km, 0.75), 80.0);
+        assert_eq!(quantile(&[10.0, 20.0], 0.5), 15.0);
+        assert_eq!(quantile(&[7.0], 0.75), 7.0);
+        assert!(quantile(&[], 0.5).is_nan());
     }
 
     #[test]

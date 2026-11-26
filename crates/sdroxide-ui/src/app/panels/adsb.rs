@@ -1358,11 +1358,19 @@ impl SdroxideApp {
                 title: tr!("adsb-graph-range"),
                 unit: "km",
                 decimals: 0,
-                curves: vec![Curve {
-                    label: String::new(),
-                    color: cyan,
-                    get: |s: &Sample| s.max_km,
-                }],
+                curves: vec![
+                    Curve { label: tr!("adsb-graph-max"), color: cyan, get: |s: &Sample| s.max_km },
+                    Curve {
+                        label: tr!("adsb-graph-q75"),
+                        color: amber,
+                        get: |s: &Sample| s.q75_km,
+                    },
+                    Curve {
+                        label: tr!("adsb-graph-median"),
+                        color: gray,
+                        get: |s: &Sample| s.med_km,
+                    },
+                ],
             },
         ];
         if remote {
