@@ -476,6 +476,10 @@ pub struct ViewState {
     /// trail is the engine's dots in one colour.
     #[serde(default)]
     pub adsb_map_alt: bool,
+    /// Trails coloured by signal level, with the legend (chip SIG); off with
+    /// ALT on, the two share the trail.
+    #[serde(default)]
+    pub adsb_map_sig: bool,
     /// With ALT on, the aircraft symbols in the colour of their altitude;
     /// off, white. Set under ADS-B SETUP.
     #[serde(default = "adsb_alt_planes_default")]
@@ -953,6 +957,7 @@ impl Default for ViewState {
             adsb_wx_source: 0,
             adsb_map_stamp: true,
             adsb_map_alt: false,
+            adsb_map_sig: false,
             adsb_alt_planes: true,
             adsb_log_plots: false,
             adsb_plot_axis: 0,

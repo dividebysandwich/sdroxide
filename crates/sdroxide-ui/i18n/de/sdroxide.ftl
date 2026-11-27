@@ -4367,8 +4367,8 @@ adsb-wx-source = Wetterradar
 adsb-map-stamp = Kartenstempel rechts unten
 adsb-map-stamp-tip = Quelle, Flugzeuge auf der Karte, UTC-Zeit
   für Screenshots
-adsb-alt-planes = Mit HÖHE: Flugzeuge in Höhenfarbe (aus: weiß)
-adsb-alt-planes-tip = Symbolfarbe bei HÖHE: Farbe der aktuellen Flughöhe oder weiß
+adsb-alt-planes = Mit HÖHE/SIG: Flugzeuge in Spurfarbe (aus: weiß)
+adsb-alt-planes-tip = Symbolfarbe bei HÖHE oder SIG: aktuelle Höhe bzw. aktueller Pegel, oder weiß
   Auswahl, Zeiger, Notfall bleiben hervorgehoben
 adsb-wx-auto = AUTO
 adsb-wx-auto-tip = Nach Standort: DWD, USA, Kanada; sonst Satellit (WELT)
@@ -4488,6 +4488,8 @@ adsb-chip-range = REICHWEITE
 adsb-chip-range-tip = Empfang je 5° und 10 km, nur durchgehende Spuren (Lücke ≤ 20 s).
 adsb-chip-alt = HÖHE
 adsb-chip-alt-tip = Spur nach Flughöhe gefärbt, Legende unten
+adsb-chip-sig = SIG
+adsb-chip-sig-tip = Spur nach Signalpegel (dBFS) je Punkt, Flugzeug nach aktuellem Pegel; Legende unten
   Punkte des Spurenbuchs, letzte 10 min
     Helligkeit = Signal, Linie = äußerster sicherer Empfang
 adsb-chip-range-no-home = Braucht Standort: Locator in der Digimode-Einrichtung
@@ -5305,6 +5307,9 @@ winlink-to-heading = AN
 adsbmap-ft-min =
     {""}
     { $vr } ft/min
+adsbmap-sig-seen =
+    {""}
+    SIG { $sig } dBFS   zuletzt vor { $s } s
 
 ## aismap: messages with values (src/ais_map.rs)
 
