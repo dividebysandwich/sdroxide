@@ -904,7 +904,7 @@ impl P2Thread {
                     Ctrl::RxGain(_) => {}
                     // The HL2IOBoard is a Hermes-Lite accessory on Protocol 1's
                     // I2C tunnel; nothing here to switch.
-                    Ctrl::IoRxInput(_) => {}
+                    Ctrl::IoRxInput(_) | Ctrl::PaEnable(_) => {}
                     // Protocol 2 has no accessory I2C bus for antenna tuner commands.
                     Ctrl::AtuTune(reply) => {
                         let _ = reply.send(crate::net::HpsdrAtuCommandResult::Rejected);

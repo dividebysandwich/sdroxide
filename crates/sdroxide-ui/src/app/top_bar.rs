@@ -48,6 +48,8 @@ const LINK_GAP: f32 = 4.0;
 /// What the RIG box's receiving-antenna chip says, in the one place the width
 /// measurement and the chip itself both read it from.
 const RX_ANT_LABEL: &str = "RX ANT";
+/// The label of the RIG box's Hermes-Lite 2 PA row, for the same reason.
+const PA_LABEL: &str = "Onboard PA";
 /// What the same chip says on an ELAD FDM-DUO, where the extra port is the
 /// 0 dBm RF OUT for a transverter rather than a receiving antenna.
 const XVTR_LABEL: &str = "XVTR";
@@ -4936,15 +4938,21 @@ impl SdroxideApp {
     /// the power switch already hold both — it is an aerial-side control, so
     /// that is the row it belongs beside.
     fn atu_in_ant_row(&self) -> bool {
-        (!self.rig_antennas().is_empty() || self.rig_rx_antenna().is_some()) && self.rig_power()
+        self.ant_row_shown() && self.rig_power()
+    }
+
+    /// Whether the aerial row has anything on it: sockets or a receiving
+    /// antenna.
+    fn ant_row_shown(&self) -> bool {
+        !self.rig_antennas().is_empty() || self.rig_rx_antenna().is_some()
     }
 
     /// Whether the RIG box has anything to carry. Like DIV and SUB, it appears
     /// only for hardware that has what it drives — a strip is too narrow to
     /// hold controls for a radio that would ignore them.
     fn rig_box_shown(&self) -> bool {
-        !self.rig_antennas().is_empty()
-            || self.rig_rx_antenna().is_some()
+        self.ant_row_shown()
+            || self.state.pa_enable.is_some()
             || self.rig_power()
             || self.rig_atu().is_some()
             || self.tune_box_swr()
@@ -4974,6 +4982,15 @@ impl SdroxideApp {
         if top > 0.0 {
             top += crate::chrome::text_width(ui, "ANT", body.clone());
         }
+        let pa_row = if self.state.pa_enable.is_some() {
+            crate::chrome::text_width(ui, PA_LABEL, body.clone())
+                + gap
+                + crate::chrome::chip_width(ui, "ON", None)
+                + gap
+                + crate::chrome::chip_width(ui, "OFF", None)
+        } else {
+            0.0
+        };
         // The tuner: its label, the tune chip at the wider of its two labels,
         // and the bypass chip — on the aerial row or on a row of its own.
         let mut atu_row = 0.0f32;
@@ -5007,7 +5024,7 @@ impl SdroxideApp {
         } else {
             0.0
         };
-        top.max(bottom).max(atu_row).max(swr_row) + 2.0 * crate::chrome::MODULE_MARGIN_X
+        top.max(bottom).max(atu_row).max(swr_row).max(pa_row) + 2.0 * crate::chrome::MODULE_MARGIN_X
     }
 
     /// The RIG box: the radio's aerial socket and its power switch.
@@ -5038,7 +5055,7 @@ impl SdroxideApp {
         // One row for the aerials, whichever of the two the radio has. It stays
         // one row on purpose: the box is two rows tall and the power switch
         // owns the other.
-        if !ants.is_empty() || rx_ant.is_some() {
+        if self.ant_row_shown() {
             crate::chrome::control_row(ui, narrow, |ui| {
                 ui.label("ANT").on_hover_text(tr!("topbar-which-socket-back-radio-receiving"));
                 if !ants.is_empty() {
@@ -5083,6 +5100,24 @@ impl SdroxideApp {
                     && self.atu_in_ant_row()
                 {
                     Self::atu_chips(ui, cmds, atu);
+                }
+            });
+        }
+        // The Hermes-Lite 2's PA, remembered per band like the socket above
+        // it (issue #444). Two chips rather than a toggle, so the state reads
+        // at a glance: the lit one is the one in force.
+        if let Some(on) = self.state.pa_enable {
+            crate::chrome::control_row(ui, narrow, |ui| {
+                ui.label(PA_LABEL).on_hover_text(tr!("topbar-hermes-lite-pa"));
+                for (label, want) in [("ON", true), ("OFF", false)] {
+                    if crate::chrome::chip(ui, on == want, label)
+                        .on_hover_text(tr!("topbar-hermes-lite-pa"))
+                        .clicked()
+                        && on != want
+                    {
+                        self.state.pa_enable = Some(want); // optimistic echo
+                        cmds.push(Command::SetPa(want));
+                    }
                 }
             });
         }

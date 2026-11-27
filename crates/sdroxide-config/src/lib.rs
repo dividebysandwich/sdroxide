@@ -1650,7 +1650,28 @@ pub struct Session {
     /// session written before this existed.
     #[serde(default)]
     pub band_gains: BandGains,
+    /// The transmit drive (0.0..=1.0) last set on each band, so a transverter
+    /// band can run at a few percent and an HF band at full (issue #444).
+    /// A band never touched keeps whatever drive is already set.
+    #[serde(default)]
+    pub band_drive: BandLevels,
+    /// The TUNE drive last set on each band — see [`Session::band_drive`].
+    #[serde(default)]
+    pub band_tune_drive: BandLevels,
+    /// Whether the Hermes-Lite 2's onboard PA was last on or off on each band,
+    /// restored as the dial crosses into it — a transverter band drives RF1
+    /// with the PA off, an HF band uses it (issue #444). Only bands the
+    /// operator has changed the setting on appear; a band never touched keeps
+    /// whatever the PA is already set to.
+    #[serde(default)]
+    pub band_pa: BandPa,
 }
+
+/// A 0.0..=1.0 level per band — see [`Session::band_drive`].
+pub type BandLevels = std::collections::HashMap<sdroxide_types::Band, f32>;
+
+/// The Hermes-Lite 2 PA switch per band — see [`Session::band_pa`].
+pub type BandPa = std::collections::HashMap<sdroxide_types::Band, bool>;
 
 /// Which antenna socket was last chosen on each band — see
 /// [`Session::band_antenna`]. `(RX, TX)`; either may be `None` where that
@@ -1709,6 +1730,9 @@ impl Default for Session {
             // said what belongs where.
             vfo_antennas: None,
             band_gains: BandGains::new(),
+            band_drive: BandLevels::new(),
+            band_tune_drive: BandLevels::new(),
+            band_pa: BandPa::new(),
         }
     }
 }
@@ -2834,6 +2858,9 @@ mod tests {
                 ("M40".to_string(), vec![("LNA".to_string(), 10.0)]),
                 ("GEN_VHF".to_string(), vec![("LNA".to_string(), 40.0)]),
             ]),
+            band_drive: BandLevels::from([(sdroxide_types::Band::M40, 0.5)]),
+            band_tune_drive: BandLevels::from([(sdroxide_types::Band::M40, 0.25)]),
+            band_pa: BandPa::from([(sdroxide_types::Band::M40, true)]),
         };
         let back: Session = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!(back, s);

@@ -1430,6 +1430,8 @@ settings-radio-where-n2adr-hl2ioboard-takes-receive = Where an N2ADR HL2IOBoard 
 settings-radio-power-amplifier = Power amplifier
 settings-radio-use-hermes-lite-2-s = Use the Hermes-Lite 2's onboard PA
 settings-radio-default-what-you-want-unless = On by default, and what you want unless an external amplifier is driven from the board's low-power RF1 output. With it off the radio still keys — the T/R relay throws and any accessory board follows — but the antenna jack makes no power at all, and the relay is deliberately held in receive. Ignored on boards other than a Hermes-Lite.
+
+    This is the setting a band starts with. Once you have used the Onboard PA ON/OFF buttons in the top bar on a band, that band keeps its own choice.
 settings-radio-mirror-board-s-spectrum-about = Mirror the board's spectrum about the tuned frequency, on transmit as well as receive. On by default: a Hermes-Lite 2 needs it. Turn it off only if signals show up on the wrong side of the dial and nothing decodes — the giveaway is a waterfall full of convincing traces while SSB lands on the wrong sideband and FT8 returns no decodes at all.
 settings-radio-frequency-correction = Frequency correction
 settings-radio-crystal-tcxo-error-ppm-applied = Crystal/TCXO error in ppm, applied to RX and TX. Applies immediately.
@@ -2314,6 +2316,10 @@ topbar-radio-s-separate-receiving-antenna =
     The radio's separate receiving antenna, switched into the receive path or out of it — its own RX ANT setting. The aerial on the main socket stays on transmit either way.
 
     The radio remembers this per band itself, so sdroxide reads it back after every band change rather than putting back what it last saw: clicking here is the only thing that moves it.
+topbar-hermes-lite-pa =
+    The Hermes-Lite 2's onboard power amplifier. ON, transmit goes out of the antenna jack through the PA. OFF, transmit appears only at the low-power RF1 output and the T/R relay stays in receive, for driving a transverter or an external amplifier.
+
+    The choice is remembered per band, and put back the next time the dial crosses into that band. The Settings checkbox is the setting a band starts with before you have chosen one here.
 topbar-elad-xvtr =
     The FDM-DUO's transverter port (menu 33 TX OUT). Lit, the radio sends its transmit out of the 0 dBm RF OUT SMA instead of the PA, and receive moves to the RX-only socket where the transverter's IF comes back. Out, transmit returns to the PA on RTX and receive to the socket it was on.
 

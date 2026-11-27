@@ -1793,12 +1793,15 @@ On a TX-capable rig the **Transmit** module appears:
 
 - **PTT** — key the transmitter.
 - **TUNE** — send a carrier at the tune-drive level for tuning an ATU.
-- **Drive** — transmit drive (0–100%). One number for every band; if your
-  amplifier makes a different power on each, calibrate it once in **Transmit
-  drive by band** (Settings → Radio,
-  [6.2](#62-radio-choosing-and-configuring-the-rig)) rather than resetting this
-  on every band change.
-- **Tune** — the (lower) drive level used by TUNE.
+- **Drive** — transmit drive (0–100%). Remembered per band: moving it records
+  the level for the band the dial is on, and crossing into that band again puts
+  it back, so a transverter band can sit at a few percent while an HF band runs
+  higher. A band you have never moved it on keeps whatever is set. If your
+  amplifier simply makes a different power on each band at the same setting,
+  calibrate that once in **Transmit drive by band** (Settings → Radio,
+  [6.2](#62-radio-choosing-and-configuring-the-rig)) instead.
+- **Tune** — the (lower) drive level used by TUNE, remembered per band the same
+  way. Neither level is changed while transmitting or tuning.
 - **Mic** — microphone gain.
 - **TX audio** — how loud a digital mode is handed to a radio that modulates it
   itself, in dB below full scale. It stands **in the Mic rail's place**, and
@@ -10422,7 +10425,9 @@ involved:
   throws, the PTT line closes and any accessory board follows — but the antenna
   jack makes no power at all, and the relay is deliberately held in receive so
   the antenna connector stays on the receiver. Ignored on boards other than a
-  Hermes Lite.
+  Hermes Lite. This is the setting a band starts with: an **Onboard PA ON/OFF**
+  row in the top bar's RIG box switches the PA while running, and the choice is
+  remembered per band and put back whenever the dial crosses into that band.
 - **Invert spectrum (Swap I/Q)** — mirrors the board's spectrum about the tuned
   frequency, on transmit as well as receive. **On by default**, because a
   Hermes Lite 2 needs it. Turn it *off* only if signals appear on the wrong side
@@ -17460,7 +17465,7 @@ and not the station's.
 | `profiles.json` | JSON | The saved station setups from Settings → Profiles ([6.12](#612-profiles-saved-station-setups)): each one's name, the remembered radio state (the same fields as `session.json`), the digital-mode settings and the band stacks. Shared by every radio of the station. |
 | `bandplan.json` | JSON | The band plan itself, per IARU region: band edges, the CW/data/phone/beacon/all-modes sub-segments, and the PSK and RTTY skimmer windows — all in MHz. Written from the built-in IARU tables on first start and meant to be edited; narrow a band here and the transmit lockout narrows with it. Which region applies is `region` in `config.toml`. **RELOAD BAND PLAN** on the General tab applies an edit without a restart, and deleting the file restores the defaults. See [§6.1](#61-general-station-audio-and-remote-access). |
 | `digi_presets.json` | JSON | The frequencies you have added to the digital modes' own lists yourself, as `mode` / `dial_hz` / `note` — written by the **＋ Save** button in the **⇵** picker ([§3.1](#31-general-considerations)) and readable and editable by hand, which is where a `note` comes from. Belongs to the station, so every radio and every remote client offers the same list. Absent until you save one. |
-| `session.json` | JSON | Where you left the radio: both VFO dials and which of the two was selected, the mode, the RX/TX antenna ports, the AF volume, RX gain, AGC mode, squelch and noise reduction, the TX drive/tune drive/mic gain, and the front end's own gain stages (the sliders on the Radio tab's device panel), restored the next time you start. Written by the engine as you tune, so `--freq`, `--mode`, `--antenna` and `--tx-antenna` override it for a run without changing it. Gain stages are remembered by name: one your current front end does not have is kept, not thrown away, so switching back to the radio it belongs to brings it back, and a figure past what this device offers is clamped to its range. |
+| `session.json` | JSON | Where you left the radio: both VFO dials and which of the two was selected, the mode, the RX/TX antenna ports, the AF volume, RX gain, AGC mode, squelch and noise reduction, the TX drive/tune drive/mic gain (and the drive, tune drive and Hermes-Lite 2 PA switch last set on each band), and the front end's own gain stages (the sliders on the Radio tab's device panel), restored the next time you start. Written by the engine as you tune, so `--freq`, `--mode`, `--antenna` and `--tx-antenna` override it for a run without changing it. Gain stages are remembered by name: one your current front end does not have is kept, not thrown away, so switching back to the radio it belongs to brings it back, and a figure past what this device offers is clamped to its range. |
 | `qso_log.json` | JSON | The logbook (digital and manual QSOs, with contest/QSL fields). |
 | `net.json` | JSON | Network cockpit: DX cluster / POTA / SOTA / PSK / FreeDV Reporter / WSPRnet feed settings, and callsign-lookup / eQSL / QRZ / HamQTH / Club Log / LoTW credentials (stored in plaintext). |
 | `winlink/` | directory | The Winlink mailbox: `inbox/`, `outbox/`, `sent/` and `archive/`, one `.b2f` file per message holding it exactly as it rides the wire ([§11](#11-winlink-radio-email)). The account settings live in `net.json`, password included, in plaintext. |

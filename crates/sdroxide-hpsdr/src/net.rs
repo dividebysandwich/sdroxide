@@ -713,6 +713,9 @@ pub(crate) enum Ctrl {
     /// The reply reports whether the I2C write reached the Pico, not tune completion.
     AtuTune(std::sync::mpsc::Sender<HpsdrAtuCommandResult>),
     AtuBypass(std::sync::mpsc::Sender<HpsdrAtuCommandResult>),
+    /// The Hermes-Lite 2's onboard PA switched while running, because the PA
+    /// setting follows the band (issue #444). Protocol 1 Hermes-Lite only.
+    PaEnable(bool),
     /// Where the radio *would* transmit, sent while receiving so an accessory
     /// board can switch bands before the operator keys. Loads the TX NCO
     /// register too, which is harmless: it does nothing until MOX.
@@ -1306,6 +1309,12 @@ impl HpsdrBoard {
         board_has_lna_gain(&self.inner.board)
     }
 
+    /// Whether the board has an onboard PA this crate can switch: a
+    /// Hermes-Lite 2.
+    pub fn has_switchable_pa(&self) -> bool {
+        board_is_hermes_lite(&self.inner.board)
+    }
+
     /// Whether this board can have an N2ADR HL2IOBoard on it.
     pub fn has_io_board(&self) -> bool {
         board_has_io_board(&self.inner.board)
@@ -1512,6 +1521,16 @@ impl HpsdrRx {
         let (reply_tx, reply_rx) = std::sync::mpsc::channel();
         self.dev.ctrl.send(Ctrl::AtuBypass(reply_tx)).ok()?;
         Some(reply_rx)
+    }
+
+    /// Switch the Hermes-Lite 2's onboard PA. Only DDC 0 — the PA is the
+    /// *board's* — and only on a Hermes-Lite; returns whether it applies.
+    pub fn set_pa_enable(&self, on: bool) -> bool {
+        if self.ddc != 0 || !board_is_hermes_lite(&self.dev.board) {
+            return false;
+        }
+        let _ = self.dev.ctrl.send(Ctrl::PaEnable(on));
+        true
     }
 
     /// Whether this board has a front-end gain this crate can command.

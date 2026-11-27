@@ -295,12 +295,16 @@ fn worker_survives_chunk_sizes_unrelated_to_nin() {
     modem.resize(modem_len + MODEM_RATE as usize / 2, 0.0);
 
     let sizes = [480usize, 1000, 137];
+    // RadeWorker's receive ring holds one second of MODEM_RATE samples.
+    const MAX_RX_BACKLOG: usize = 2_000;
+    const MIN_RX_FREE: usize = MODEM_RATE as usize - MAX_RX_BACKLOG;
+
     let mut pos = 0;
     let mut i = 0;
     while pos < modem.len() {
         let n = sizes[i % sizes.len()].min(modem.len() - pos);
         i += 1;
-        while worker.rx_free() < n {
+        while worker.rx_free() < MIN_RX_FREE + n {
             worker.pop_rx(&mut speech);
             std::thread::sleep(std::time::Duration::from_millis(2));
         }

@@ -135,6 +135,9 @@ pub struct HpsdrSource {
     /// as the receive antenna — see [`HpsdrSource::io_inputs_offered`]. `None`
     /// on every other board and configuration.
     io_rx_input: Option<sdroxide_types::HpsdrIoRxInput>,
+    /// Whether the onboard PA is on, on a Hermes-Lite 2 — the one board with
+    /// the switch — and `None` on every other board.
+    pa: Option<bool>,
 }
 
 impl HpsdrSource {
@@ -266,6 +269,7 @@ impl HpsdrSource {
             && cfg.ddc == 0
             && cfg.io_rx_input != sdroxide_types::HpsdrIoRxInput::Radio)
             .then_some(cfg.io_rx_input);
+        let pa = (cfg.ddc == 0 && board.has_switchable_pa()).then_some(cfg.pa_enable);
         Ok(HpsdrSource {
             rate,
             center: center_hz,
@@ -308,6 +312,7 @@ impl HpsdrSource {
             ps_log_at: Instant::now(),
             ps_warned_offset: false,
             io_rx_input,
+            pa,
         })
     }
 
@@ -820,6 +825,21 @@ impl IqSource for HpsdrSource {
 
     fn current_antenna(&self) -> String {
         self.io_rx_input.map_or_else(String::new, |i| i.label().to_string())
+    }
+
+    fn set_pa_enable(&mut self, on: bool) -> bool {
+        if self.pa.is_none() {
+            return false;
+        }
+        let applied = self.rx.as_ref().is_some_and(|rx| rx.set_pa_enable(on));
+        if applied {
+            self.pa = Some(on);
+        }
+        applied
+    }
+
+    fn pa_enable(&self) -> Option<bool> {
+        self.pa
     }
 
     /// The board's own temperature sensor, which on this family means a

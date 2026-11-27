@@ -742,6 +742,16 @@ pub(crate) fn run(ctx: ThreadCtx) {
                         );
                     }
                 }
+                Ctrl::PaEnable(on) => {
+                    if regs.pa.is_some() && regs.pa != Some(on) {
+                        regs.pa = Some(on);
+                        rot.urge(Slot::Drive);
+                        tracing::info!(
+                            "HPSDR P1: onboard PA {}",
+                            if on { "ENABLED" } else { "DISABLED" }
+                        );
+                    }
+                }
                 Ctrl::RxGain(db) => {
                     if has_lna {
                         regs.lna_gain = Some(db);
