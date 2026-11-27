@@ -47,6 +47,24 @@ const CPR_PAIR_MAX_S: f64 = 10.0;
 /// How old a fix may be and still serve as the reference for a local decode.
 const LOCAL_REF_MAX_S: f64 = 60.0;
 
+/// The fastest a new fix may imply the aircraft moved since the last one,
+/// knots, before it is taken for a decoding error and dropped; plus
+/// [`JUMP_SLACK_KM`] for the CPR quantisation and the latency of a feed.
+///
+/// A CPR pair decoded across a zone boundary, or one frame with an undetected
+/// bit error, does not land near the truth: it lands a whole zone away — six
+/// degrees of latitude, about 670 km, or a zone of longitude, 10° at 52° N —
+/// and the next good frame brings it back. Measured 2026-11-27 on a readsb
+/// feed: KLM49L at 40 km, seven seconds later 929 km (+6.09° latitude), twelve
+/// seconds after that 43 km again; 42 of 74 339 kept points that day. Two
+/// thousand knots is above anything that sends ADS-B, and over the longest gap
+/// a fix is checked against (a minute, [`LOCAL_REF_MAX_S`]) it allows about
+/// 60 km — a fifth of the smallest jump a zone error makes.
+/// Why: HDZ 2026-11-27: „ist das 600km signal echt?“ — „die koordinate ist
+///      falsch dekodiert“.
+const JUMP_MAX_KT: f64 = 2000.0;
+const JUMP_SLACK_KM: f64 = 10.0;
+
 /// Window the turn rate is measured over, seconds. Long enough that the 1-degree
 /// quantisation of a broadcast track does not dominate it, short enough to
 /// follow a standard rate turn.
@@ -418,9 +436,28 @@ fn airborne_position(e: &mut Entry, cpr: Cpr, history: usize, now: i64, mono_s: 
     }
 }
 
+/// Whether a fix at `lat`/`lon` could follow the aircraft's last one: always
+/// when there is none or it is older than [`LOCAL_REF_MAX_S`], else only if
+/// getting there took no more than [`JUMP_MAX_KT`].
+///
+/// The last fix ageing out is what lets a track recover should the wrong one
+/// have been the last: a minute later the next decode is taken as it comes.
+fn plausible(e: &Entry, lat: f64, lon: f64, mono_s: f64) -> bool {
+    let (Some(plat), Some(plon)) = (e.ac.lat, e.ac.lon) else { return true };
+    let dt = mono_s - e.fix_at;
+    if !(0.0..=LOCAL_REF_MAX_S).contains(&dt) {
+        return true;
+    }
+    let km = sdroxide_types::distance_km((plat, plon), (lat, lon));
+    km <= JUMP_MAX_KT * 1.852 / 3600.0 * dt + JUMP_SLACK_KM
+}
+
 /// Record a fix, pushing the previous one onto the history.
 fn place(e: &mut Entry, lat: f64, lon: f64, history: usize, now: i64, mono_s: f64) {
     if !lat.is_finite() || !lon.is_finite() || lat.abs() > 90.0 || lon.abs() > 180.0 {
+        return;
+    }
+    if !plausible(e, lat, lon, mono_s) {
         return;
     }
     if let (Some(plat), Some(plon)) = (e.ac.lat, e.ac.lon) {
@@ -482,6 +519,53 @@ fn update_track(e: &mut Entry, deg: f32, mono_s: f64) {
 
 #[cfg(test)]
 mod tests {
+    fn entry_at(lat: f64, lon: f64, fix_at: f64) -> Entry {
+        let mut ac = AdsbAircraft::new(0x484166, 0);
+        ac.lat = Some(lat);
+        ac.lon = Some(lon);
+        Entry {
+            ac,
+            even: None,
+            odd: None,
+            fix_at,
+            verified: true,
+            turn_ref: None,
+            carriers: std::collections::VecDeque::new(),
+            positions_at: std::collections::VecDeque::new(),
+            positions_since: None,
+        }
+    }
+
+    /// The jump measured on KLM49L: 40 km out, then a fix one latitude zone
+    /// north seven seconds later. It is dropped; the aircraft stays where it
+    /// was, and the next ordinary fix is taken.
+    #[test]
+    fn a_fix_a_zone_away_seconds_later_is_dropped() {
+        let mut e = entry_at(51.14, 7.34, 100.0);
+        place(&mut e, 57.23, -3.06, 10, 7, 107.0);
+        assert_eq!((e.ac.lat, e.ac.lon), (Some(51.14), Some(7.34)), "teleported");
+        assert_eq!(e.fix_at, 100.0, "a dropped fix is no reference");
+        place(&mut e, 51.11, 7.40, 10, 19, 119.0);
+        assert_eq!((e.ac.lat, e.ac.lon), (Some(51.11), Some(7.40)));
+    }
+
+    /// Ordinary flight passes: 500 kt for ten seconds is 2.6 km.
+    #[test]
+    fn a_fix_at_airliner_speed_is_taken() {
+        let mut e = entry_at(51.0, 7.0, 0.0);
+        place(&mut e, 51.0 + 2.6 / 111.2, 7.0, 10, 10, 10.0);
+        assert!((e.ac.lat.unwrap() - 51.0234).abs() < 1e-3);
+    }
+
+    /// With the last fix older than a minute there is nothing to judge by, so
+    /// a track that was itself wrong recovers.
+    #[test]
+    fn after_a_minute_the_next_fix_is_taken_wherever_it_is() {
+        let mut e = entry_at(57.23, -3.06, 0.0);
+        place(&mut e, 51.14, 7.34, 10, 61, 61.0);
+        assert_eq!((e.ac.lat, e.ac.lon), (Some(51.14), Some(7.34)));
+    }
+
     use super::*;
     use crate::frame::accept;
 
