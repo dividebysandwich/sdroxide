@@ -2240,7 +2240,14 @@ fn active_count(aircraft: &[AdsbAircraft], now: i64) -> usize {
 /// A readout in a slot of fixed width, so a number that grows a digit cannot
 /// re-flow the header.
 fn slot(ui: &mut egui::Ui, w: f32, text: &str, color: egui::Color32) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 16.0), egui::Sense::hover());
+    // At least `w`, so a count that changes does not move the row; wider
+    // when the words need it. The widths were set for English, and the
+    // German „— fehlerhafte CRC“ was cut at „fehlerhafte (“.
+    // Why: HDZ 2026-11-27: „kleiner grafik glitch“ (screenshot of the cut).
+    let font = egui::FontId::monospace(10.0);
+    let need = ui.painter().layout_no_wrap(text.to_string(), font.clone(), color).size().x;
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(w.max(need.ceil() + 2.0), 16.0), egui::Sense::hover());
     if !ui.is_rect_visible(rect) {
         return resp;
     }
@@ -2248,7 +2255,7 @@ fn slot(ui: &mut egui::Ui, w: f32, text: &str, color: egui::Color32) -> egui::Re
         egui::pos2(rect.left(), rect.center().y),
         egui::Align2::LEFT_CENTER,
         text,
-        egui::FontId::monospace(10.0),
+        font,
         color,
     );
     resp
