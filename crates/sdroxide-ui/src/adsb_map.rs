@@ -552,6 +552,9 @@ pub struct Layers<'a> {
     pub airports: Option<&'a [crate::adsb_route::MapAirport]>,
     /// The bottom right box: source, aircraft on the map, UTC time.
     pub stamp: bool,
+    /// Each aircraft's route as the table's short code (`EDDL›EGLL`), by
+    /// address, for the first line of its tooltip.
+    pub routes: Option<&'a std::collections::HashMap<u32, String>>,
     /// Trails coloured by altitude (chip ALT): the kept points of the
     /// flight tracks, drawn as lines instead of the engine's dots.
     pub alt_trails: Option<&'a Recent>,
@@ -1098,7 +1101,13 @@ pub fn show(
     let mut clicked = None;
     if let Some(i) = hover {
         let a = live[i];
-        let mut tip = a.label();
+        let mut tip = layers
+            .routes
+            .and_then(|r| r.get(&a.icao))
+            .filter(|r| !r.is_empty())
+            .map(|r| format!("{r}\n"))
+            .unwrap_or_default();
+        tip.push_str(&a.label());
         if !a.callsign.is_empty() {
             tip.push_str(&format!("  {}", a.hex()));
         }
