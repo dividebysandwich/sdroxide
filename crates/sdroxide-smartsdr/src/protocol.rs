@@ -533,6 +533,7 @@ pub fn update_atu(prev: AtuState, kvs: &Kvs) -> Option<AtuState> {
         status: status.unwrap_or(prev.status),
         enabled: enabled.unwrap_or(prev.enabled),
         using_memory: using_memory.unwrap_or(prev.using_memory),
+        ..prev
     })
 }
 
@@ -589,14 +590,24 @@ mod tests {
         ) else {
             panic!("not a status");
         };
-        let tuned = AtuState { status: AtuStatus::Tuned, enabled: true, using_memory: true };
+        let tuned = AtuState {
+            status: AtuStatus::Tuned,
+            enabled: true,
+            using_memory: true,
+            ..AtuState::default()
+        };
         assert_eq!(update_atu(AtuState::default(), &kvs), Some(tuned));
         let in_progress = parse_kvs("status=TUNE_IN_PROGRESS atu_enabled=1 using_mem=0");
         assert_eq!(update_atu(tuned, &in_progress).map(|a| a.status), Some(AtuStatus::Tuning));
         let bypass = parse_kvs("status=TUNE_BYPASS atu_enabled=0");
         assert_eq!(
             update_atu(tuned, &bypass),
-            Some(AtuState { status: AtuStatus::Bypass, enabled: false, using_memory: true })
+            Some(AtuState {
+                status: AtuStatus::Bypass,
+                enabled: false,
+                using_memory: true,
+                ..AtuState::default()
+            })
         );
         // The copy a FLEX-8400 sends the client that asked for the tune, with
         // no `atu_enabled`: the tuner is still in circuit.

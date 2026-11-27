@@ -93,6 +93,15 @@ pub enum ControlUpdate {
     /// capability rails as the on-screen button, and ignores a key-down that
     /// arrives while something else already owns the transmitter.
     Ptt(bool),
+    /// Current state of an external antenna-tuner operation.
+    ///
+    /// RF permission is true only while a fresh tuner status is 0xEE.
+    /// The operation interlock remains true from command acceptance until
+    /// a terminal status (0x00 or 0xFA..=0xFD), or command-delivery failure.
+    AtuState {
+        rf_requested: bool,
+        operation_active: bool,
+    },
     /// The radio in front of us is transmitting **on its own** — its mic
     /// button, foot switch, VOX or keyer — and sdroxide is not driving the
     /// over. `true` is on the air.
@@ -327,6 +336,17 @@ pub trait IqSource: Send {
     /// Not an assertion: what comes back is adopted. Free on a front end with
     /// nothing to ask.
     fn reread_rx_antenna(&mut self) {}
+    /// Whether this source reports the lifecycle of tuner operations through
+    /// `ControlUpdate::AtuState`.
+    ///
+    /// The engine uses this capability to apply the operation-wide transmit
+    /// interlock only to sources that report operation completion.
+    ///
+    /// Default: false. Sources should return true only when they report both
+    /// RF permission and the completion or failure of each tuner operation.
+    fn reports_atu_operation_state(&self) -> bool {
+        false
+    }
     /// Whether this radio has a built-in antenna tuner sdroxide can drive, and
     /// what it is doing.
     ///
@@ -1650,6 +1670,9 @@ impl IqSource for ConvertedSource {
     }
     fn reread_rx_antenna(&mut self) {
         self.inner.reread_rx_antenna();
+    }
+    fn reports_atu_operation_state(&self) -> bool {
+        self.inner.reports_atu_operation_state()
     }
     /// The tuner sits between the radio and its aerial, behind any converter
     /// on the receive side, so it is the inner radio's.

@@ -35,6 +35,8 @@ struct Rig {
     keyed: bool,
     /// Every frequency `tx_begin` was called with: the transmit chain running.
     keyed_by_us: Vec<f64>,
+    /// Number of times the engine ended its host-controlled transmission.
+    tx_ends: usize,
 }
 
 struct MockRig {
@@ -83,6 +85,10 @@ impl IqSource for MockRig {
     fn tx_begin(&mut self, center_hz: f64, _rate: f64) -> Result<f64> {
         self.rig.lock().unwrap().keyed_by_us.push(center_hz);
         Ok(RATE)
+    }
+    fn tx_end(&mut self) -> Result<()> {
+        self.rig.lock().unwrap().tx_ends += 1;
+        Ok(())
     }
     /// Take the blocks, and do nothing with them.
     ///
@@ -234,5 +240,64 @@ fn sdroxide_neither_keys_along_nor_transmits_into_it() {
         "sdroxide could not transmit after the operator's over ended"
     );
     t.h.cmd_tx.send(Command::SetPtt(false)).unwrap();
+    t.shutdown();
+}
+
+/// A rig transmit-status transition during a host-controlled over must not
+/// clear the host PTT request or end the active transmission.
+#[test]
+fn rig_tx_status_changes_do_not_end_an_active_host_transmission() {
+    let t = engine();
+    t.wait("the first meter", |ev| matches!(ev, RadioEvent::Meters(_)));
+
+    t.h.cmd_tx.send(Command::SetPtt(true)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline && t.rig.lock().unwrap().keyed_by_us.is_empty() {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        t.rig.lock().unwrap().keyed_by_us.as_slice(),
+        &[DIAL],
+        "host PTT did not start the transmission"
+    );
+
+    // The radio reports transmit and then receive while host PTT remains held.
+    // Neither edge should cause the host-controlled over to end.
+    t.rig_keys(true);
+    t.wait(
+        "the rig transmit indication",
+        |ev| matches!(ev, RadioEvent::Meters(m) if m.tx.is_some_and(|tx| tx.swr == Some(SWR))),
+    );
+    // Drain the transmit-meter readings from while the rig was still keyed.
+    // The host transmission remains active, so the receive indication is a TX
+    // meter with no rig-reported SWR, not a return to the RX meter.
+    t.drain();
+    t.rig_keys(false);
+    t.wait(
+        "the rig receive indication",
+        |ev| matches!(ev, RadioEvent::Meters(m) if m.tx.is_some_and(|tx| tx.swr.is_none())),
+    );
+
+    assert_eq!(
+        t.rig.lock().unwrap().tx_ends,
+        0,
+        "a rig TX status transition ended an active host transmission"
+    );
+    assert_eq!(
+        t.rig.lock().unwrap().keyed_by_us.as_slice(),
+        &[DIAL],
+        "the host transmit chain was unexpectedly restarted"
+    );
+
+    t.h.cmd_tx.send(Command::SetPtt(false)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline && t.rig.lock().unwrap().tx_ends == 0 {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        t.rig.lock().unwrap().tx_ends,
+        1,
+        "releasing host PTT should end the transmission exactly once"
+    );
     t.shutdown();
 }
