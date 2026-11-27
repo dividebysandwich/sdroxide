@@ -69,6 +69,46 @@ pub struct AdsbMapState {
     pub view: MapView,
     /// The aircraft whose card is open, by ICAO address.
     pub selected: Option<u32>,
+    /// The last few signal levels per aircraft, for its colour under SIG.
+    sig: SigSmooth,
+}
+
+/// How many of an aircraft's latest signal levels its symbol's SIG colour is
+/// the mean of.
+/// Why: HDZ 2026-11-27: „das s/n für die farbe des flugzeuges als gleitendes
+///      mittel sonst wabbelt es zu sehr, letzte 3 werte“. A level a frame
+///      apart swings by several dB with the antenna pattern and multipath,
+///      and one colour stop is five.
+const SIG_MEAN_N: usize = 3;
+
+/// The latest [`SIG_MEAN_N`] levels per aircraft: one taken each time a table
+/// snapshot shows a newer frame than the last, so an aircraft that has gone
+/// quiet is not counted again and again at its last value.
+#[derive(Default)]
+struct SigSmooth {
+    by: std::collections::HashMap<u32, (i64, std::collections::VecDeque<f32>)>,
+}
+
+impl SigSmooth {
+    /// Take in a snapshot and answer the mean level per aircraft in it, dB.
+    fn update(&mut self, aircraft: &[AdsbAircraft]) -> std::collections::HashMap<u32, f32> {
+        for a in aircraft {
+            let (at, vals) = self.by.entry(a.icao).or_default();
+            if *at != a.last_at {
+                *at = a.last_at;
+                vals.push_back(a.rssi_dbfs);
+                while vals.len() > SIG_MEAN_N {
+                    vals.pop_front();
+                }
+            }
+        }
+        self.by.retain(|icao, _| aircraft.iter().any(|a| a.icao == *icao));
+        self.by
+            .iter()
+            .filter(|(_, (_, v))| !v.is_empty())
+            .map(|(&icao, (_, v))| (icao, v.iter().sum::<f32>() / v.len() as f32))
+            .collect()
+    }
 }
 
 /// The coverage diagram: each cell an annular slice, yellow like the
@@ -556,17 +596,26 @@ pub struct Layers<'a> {
     /// flight tracks, drawn as lines instead of the engine's dots.
     pub alt_trails: Option<&'a Recent>,
     /// With ALT on, the aircraft in the colour of their altitude; else white.
+    /// With SIG on, the same, in the colour of their signal now.
     pub alt_planes: bool,
+    /// Colour the trails (and, with [`Self::alt_planes`], the aircraft) by
+    /// signal level instead of altitude (chip SIG). Only with
+    /// [`Self::alt_trails`]: the two chips share the trail and the legend.
+    pub sig: bool,
 }
 
-/// A kept point of a flight track as the map draws it: where, when, how high.
-/// Filled by [`crate::adsb_tracks`] (native only; the browser has no tracks).
+/// A kept point of a flight track as the map draws it: where, when, how high,
+/// how strong. Filled by [`crate::adsb_tracks`] (native only; the browser has
+/// no tracks).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TrailPoint {
     pub t: i64,
     pub lat: f32,
     pub lon: f32,
     pub alt_ft: Option<i32>,
+    /// Signal level of the aircraft's last frame when the point was kept,
+    /// dBFS — what the SIG chip colours the trail by.
+    pub sig_dbfs: f32,
 }
 
 /// Kept points per aircraft, oldest first.
@@ -614,6 +663,82 @@ pub fn alt_color(ft: i32) -> Color32 {
         (f32::from(lo.1[i]) + (f32::from(hi.1[i]) - f32::from(lo.1[i])) * f).round() as u8
     };
     Color32::from_rgb(mix(0), mix(1), mix(2))
+}
+
+/// The signal scale, dBFS → colour: dark red from −30 dBFS down, where a
+/// frame barely decodes, through orange and yellow to green and cyan for a
+/// strong one, magenta from −3 dBFS, where readsb counts a message as strong
+/// and the receiver is close to overload. Linear in dB between the stops.
+/// Why: HDZ 2026-11-27: „neben dem höhen farbcode noch einen s/n farbcode …
+///      die punkte der spur die farbe bekommen, die sie da hatten und das
+///      flugzeug dann die aktuelle“; „einfache robuste fassung“ — the frame's
+///      level as the table's SIG column shows it, no noise floor subtracted:
+///      the noise is in the demodulator or in readsb's stats.json, not in a
+///      Beast frame, and over minutes it is a constant that only moves labels.
+///      Red from −30: „−40 ist utopisch“ (a station with an LNA hears its
+///      weakest aircraft around −25 to −30 dBFS).
+const SIG_STOPS: [(f32, [u8; 3]); 7] = [
+    (-30.0, [0x8E, 0x1E, 0x1E]),
+    (-25.0, [0xD9, 0x48, 0x2B]),
+    (-20.0, [0xE8, 0x9B, 0x3A]),
+    (-15.0, [0xE0, 0xD0, 0x46]),
+    (-10.0, [0x7F, 0xC4, 0x3C]),
+    (-6.0, [0x4F, 0xB8, 0xD0]),
+    (-3.0, [0xC8, 0x3C, 0xD8]),
+];
+
+/// The colour of a signal level in dBFS; below −30 as −30, above −3 as −3.
+pub fn sig_color(dbfs: f32) -> Color32 {
+    let first = SIG_STOPS[0];
+    let last = SIG_STOPS[SIG_STOPS.len() - 1];
+    let v = if dbfs.is_finite() { dbfs.clamp(first.0, last.0) } else { first.0 };
+    let k = SIG_STOPS.iter().position(|s| s.0 >= v).unwrap_or(SIG_STOPS.len() - 1).max(1);
+    let (lo, hi) = (SIG_STOPS[k - 1], SIG_STOPS[k]);
+    let f = ((v - lo.0) / (hi.0 - lo.0)).clamp(0.0, 1.0);
+    let mix = |i: usize| {
+        (f32::from(lo.1[i]) + (f32::from(hi.1[i]) - f32::from(lo.1[i])) * f).round() as u8
+    };
+    Color32::from_rgb(mix(0), mix(1), mix(2))
+}
+
+/// The signal legend in the altitude legend's place: the bar from −30 to
+/// −3 dBFS, linear, labelled at the stops.
+fn draw_sig_legend(p: &eframe::egui::Painter, rect: Rect, sea: Color32) {
+    let w = (rect.width() * 0.45).clamp(160.0, 420.0);
+    let bar =
+        Rect::from_min_size(pos2(rect.center().x - w / 2.0, rect.bottom() - 26.0), vec2(w, 7.0));
+    p.rect_filled(
+        bar.expand2(vec2(6.0, 4.0)).with_max_y(rect.bottom() - 4.0),
+        3.0,
+        alpha(sea, 200.0),
+    );
+    let (lo, hi) = (SIG_STOPS[0].0, SIG_STOPS[SIG_STOPS.len() - 1].0);
+    let n = 120;
+    for i in 0..n {
+        let db = lo + (hi - lo) * (i as f32 + 0.5) / n as f32;
+        let x0 = bar.left() + w * i as f32 / n as f32;
+        let x1 = bar.left() + w * (i + 1) as f32 / n as f32 + 0.5;
+        p.rect_filled(Rect::from_x_y_ranges(x0..=x1, bar.y_range()), 0.0, sig_color(db));
+    }
+    let font = FontId::monospace(8.0);
+    for (k, &(db, _)) in SIG_STOPS.iter().enumerate() {
+        let x = bar.left() + w * (db - lo) / (hi - lo);
+        p.line_segment([pos2(x, bar.top()), pos2(x, bar.bottom())], (1.0, Color32::BLACK));
+        // −6 would crowd the last label, which carries the unit.
+        if db == -6.0 {
+            continue;
+        }
+        let last = k + 1 == SIG_STOPS.len();
+        let label = if last { format!("{db:.0} dBFS") } else { format!("{db:.0}") };
+        let align = if last { Align2::RIGHT_TOP } else { Align2::CENTER_TOP };
+        p.text(
+            pos2(x, bar.bottom() + 1.0),
+            align,
+            label.replace('-', "\u{2212}"),
+            font.clone(),
+            alpha(Color32::WHITE, 200.0),
+        );
+    }
 }
 
 /// The altitude legend along the bottom of the map, centred: the bar with its
@@ -694,6 +819,10 @@ pub fn show(
     // where it used to be either.
     let live: Vec<&AdsbAircraft> =
         aircraft.iter().filter(|a| !a.pos_stale(now, cfg.drop_map_s)).collect();
+    // The level each symbol and its last trail segment are coloured by under
+    // SIG: the mean of the latest few, not the last frame's alone.
+    let sig_mean = state.sig.update(aircraft);
+    let sig_of = |a: &AdsbAircraft| sig_mean.get(&a.icao).copied().unwrap_or(a.rssi_dbfs);
 
     // ── the view ──
     let aspect = (rect.height() / rect.width()) as f64;
@@ -791,22 +920,28 @@ pub fn show(
     }
 
     // ── history, under everything ──
-    // With ALT, the kept points of the flight tracks as a line coloured by
-    // altitude, up to where the aircraft is now; else the engine's dots.
+    // With ALT or SIG, the kept points of the flight tracks as a line coloured
+    // by altitude or by signal, up to where the aircraft is now; else the
+    // engine's dots. A point keeps the signal it had when it was kept; the
+    // last segment, to the aircraft, takes the signal now.
     if let Some(trails) = layers.alt_trails {
         for a in &live {
             let Some(pts) = trails.get(&a.icao) else { continue };
-            let here = a.lat.zip(a.lon).map(|(la, lo)| (project(la, lo), a.altitude_ft));
+            let here = a.lat.zip(a.lon).map(|(la, lo)| (project(la, lo), a.altitude_ft, sig_of(a)));
             let mut prev: Option<(Pos2, Option<i32>)> = None;
-            for (c, alt) in pts
+            for (c, alt, sig) in pts
                 .iter()
-                .map(|q| (project(f64::from(q.lat), f64::from(q.lon)), q.alt_ft))
+                .map(|q| (project(f64::from(q.lat), f64::from(q.lon)), q.alt_ft, q.sig_dbfs))
                 .chain(here)
             {
                 if let Some((pc, palt)) = prev {
-                    // A segment takes the altitude it ends at; on the ground
-                    // (no altitude) the ground's colour.
-                    let col = alt_color(alt.or(palt).unwrap_or(0));
+                    // A segment takes the value it ends at; on the ground (no
+                    // altitude) the ground's colour.
+                    let col = if layers.sig {
+                        sig_color(sig)
+                    } else {
+                        alt_color(alt.or(palt).unwrap_or(0))
+                    };
                     p.line_segment([pc, c], (2.0, alpha(col, 230.0)));
                 }
                 prev = Some((c, alt));
@@ -886,6 +1021,8 @@ pub fn show(
             map.dx
         } else if top {
             map.hover
+        } else if alt_mode && alt_planes && layers.sig {
+            sig_color(sig_of(a))
         } else if alt_mode && alt_planes {
             alt_color(if a.on_ground { 0 } else { a.altitude_ft.unwrap_or(0) })
         } else if alt_mode {
@@ -1114,6 +1251,14 @@ pub fn show(
             let bear = sdroxide_types::bearing_deg(h, (lat, lon));
             tip.push_str(&format!("\n{km:.0} km   {bear:.0}°"));
         }
+        // The level of its last frame and how long ago that was (HDZ
+        // 2026-11-27: „im tooltip des flugzeuges noch als info den s/n wert
+        // mit bei und last seen in sek“).
+        tip.push_str(&tr!(
+            "adsbmap-sig-seen",
+            sig = format!("{:.1}", a.rssi_dbfs),
+            s = (now - a.last_at).max(0).to_string()
+        ));
         if let Some(e) = &a.emergency {
             tip.push_str(&format!("\n{e}"));
         }
@@ -1151,7 +1296,11 @@ pub fn show(
     //      Anzeige mit UTC und wieviele plains on the map sind. für
     //      screenshots“; text „Sdr Oxide . xy planes 5345324 UTC“; switchable.
     if layers.alt_trails.is_some() {
-        draw_alt_legend(&p, rect, map.sea);
+        if layers.sig {
+            draw_sig_legend(&p, rect, map.sea);
+        } else {
+            draw_alt_legend(&p, rect, map.sea);
+        }
     }
     let mut hint_bottom = rect.bottom() - 4.0;
     if layers.stamp {
@@ -1192,6 +1341,37 @@ mod tests {
 
     /// The altitude colours: the stops as read off the legend, mixed between
     /// them, and held at both ends.
+    /// The symbol's level is the mean of the latest three frames; a snapshot
+    /// repeating the same frame adds nothing, and an aircraft gone from the
+    /// table is forgotten.
+    #[test]
+    fn the_symbol_level_is_the_mean_of_the_last_three_frames() {
+        let mut sm = SigSmooth::default();
+        let mut a = AdsbAircraft::new(0x48C223, 0);
+        for (t, db) in [(1, -20.0), (2, -10.0), (3, -15.0), (4, -5.0)] {
+            a.last_at = t;
+            a.rssi_dbfs = db;
+            sm.update(std::slice::from_ref(&a));
+        }
+        // −10, −15, −5: the first one has dropped out.
+        assert_eq!(sm.update(std::slice::from_ref(&a))[&0x48C223], -10.0);
+        a.rssi_dbfs = -30.0; // same frame time: not a new value
+        assert_eq!(sm.update(std::slice::from_ref(&a))[&0x48C223], -10.0);
+        assert!(sm.update(&[]).is_empty());
+    }
+
+    #[test]
+    fn signal_colours_follow_the_legend() {
+        assert_eq!(sig_color(-30.0), Color32::from_rgb(0x8E, 0x1E, 0x1E));
+        assert_eq!(sig_color(-45.0), sig_color(-30.0), "below the scale is its weak end");
+        assert_eq!(sig_color(-10.0), Color32::from_rgb(0x7F, 0xC4, 0x3C));
+        assert_eq!(sig_color(-3.0), Color32::from_rgb(0xC8, 0x3C, 0xD8));
+        assert_eq!(sig_color(0.0), sig_color(-3.0), "near overload, one colour");
+        assert_eq!(sig_color(f32::NAN), sig_color(-30.0), "no level is the weak end");
+        // Half-way between −15 and −10 is half-way between yellow and green.
+        assert_eq!(sig_color(-12.5), Color32::from_rgb(0xB0, 0xCA, 0x41));
+    }
+
     #[test]
     fn altitude_colours_follow_the_legend() {
         assert_eq!(alt_color(0), Color32::from_rgb(0xDB, 0x72, 0x31));

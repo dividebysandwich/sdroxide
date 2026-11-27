@@ -129,6 +129,7 @@ impl TrackBook {
                 lat: lat as f32,
                 lon: lon as f32,
                 alt_ft: a.altitude_ft,
+                sig_dbfs: a.rssi_dbfs,
             });
         }
         for pts in self.recent.values_mut() {
@@ -244,14 +245,18 @@ mod tests {
         a.lat = Some(51.4448);
         a.lon = Some(7.0889);
         a.altitude_ft = Some(4675);
+        a.rssi_dbfs = -21.5;
         a.last_pos_at = t;
         b.note(std::slice::from_ref(&a), t);
         a.altitude_ft = Some(5900);
+        a.rssi_dbfs = -9.0;
         a.last_pos_at = t + 16;
         b.note(std::slice::from_ref(&a), t + 16);
         let pts = &b.recent()[&0x3E28E4];
         let alts: Vec<_> = pts.iter().map(|q| q.alt_ft).collect();
         assert_eq!(alts, vec![Some(4675), Some(5900)], "the same points the file gets");
+        let sigs: Vec<_> = pts.iter().map(|q| q.sig_dbfs).collect();
+        assert_eq!(sigs, vec![-21.5, -9.0], "each point keeps the signal it had");
         // Ten minutes after the first point it goes; after the last, all.
         b.note(&[], t + RECENT_S + 1);
         assert_eq!(b.recent()[&0x3E28E4].len(), 1);

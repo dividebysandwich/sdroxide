@@ -325,6 +325,18 @@ impl SdroxideApp {
                 .clicked()
             {
                 self.view.adsb_map_alt = !self.view.adsb_map_alt;
+                self.view.adsb_map_sig = false;
+            }
+            // The same trail coloured by signal level (HDZ 2026-11-27: „neben
+            // dem höhen farbcode noch einen s/n farbcode“). One colouring at a
+            // time: the two share the trail and the legend.
+            #[cfg(not(target_arch = "wasm32"))]
+            if crate::chrome::chip(ui, self.view.adsb_map_sig, small(tr!("adsb-chip-sig")))
+                .on_hover_text(tr!("adsb-chip-sig-tip"))
+                .clicked()
+            {
+                self.view.adsb_map_sig = !self.view.adsb_map_sig;
+                self.view.adsb_map_alt = false;
             }
             let range = self.view.adsb_map_range;
             let tip =
@@ -1269,7 +1281,8 @@ impl SdroxideApp {
         let airports =
             if self.view.adsb_map_airports { self.adsb_routes.map_airports() } else { None };
         #[cfg(not(target_arch = "wasm32"))]
-        let alt_trails = self.view.adsb_map_alt.then(|| self.adsb_tracks.recent());
+        let alt_trails =
+            (self.view.adsb_map_alt || self.view.adsb_map_sig).then(|| self.adsb_tracks.recent());
         #[cfg(target_arch = "wasm32")]
         let alt_trails = None;
         let layers = crate::adsb_map::Layers {
@@ -1285,6 +1298,7 @@ impl SdroxideApp {
             stamp: self.view.adsb_map_stamp,
             alt_planes: self.view.adsb_alt_planes,
             alt_trails,
+            sig: self.view.adsb_map_sig,
         };
         let state = &mut self.adsb_map;
         crate::adsb_map::show(ui, state, &st.aircraft, &route, home, now, cfg, h, layers);
