@@ -99,17 +99,52 @@ fn draw_coverage(
         }
         pts
     };
+    // How opaque a cell is: brighter for a stronger mean level (−30 dBFS weak
+    // … −3 dBFS strong), more opaque for more positions.
+    let shade = |n: f32, mean_rssi: f32| -> f32 {
+        let q = ((mean_rssi + 30.0) / 27.0).clamp(0.0, 1.0);
+        let fill = (n.ln_1p() / 20f32.ln_1p()).min(1.0);
+        18.0 + 80.0 * fill * (0.35 + 0.65 * q)
+    };
+    // The innermost ring as one disc. Its 5° slices are under a kilometre wide
+    // at their inner edge, and few aircraft pass right overhead, so drawn cell
+    // by cell it is a starburst of slivers and seams; but whatever the station
+    // hears at 10 km, it hears all round. One disc, in the pooled mean of the
+    // ring's cells and the mean count of those that have any.
+    // Why: HDZ 2026-11-27: „fixe mal den innersten reichweitenring, der ist
+    //      hässlich segmentiert, da kann man ja von ausgehen, dass der gefüllt
+    //      sein muss“.
+    let (mut n0, mut sum0, mut with0) = (0u32, 0.0f32, 0u32);
+    for s in 0..SECTORS {
+        let c = cov.cells[s * RINGS];
+        if c.n > 0 {
+            n0 += c.n;
+            sum0 += c.rssi_sum;
+            with0 += 1;
+        }
+    }
+    if n0 > 0 {
+        let disc: Vec<Pos2> = (0..SECTORS)
+            .map(|s| {
+                let (la, lo) = destination(cov.home, s as f64 * step, RING_KM);
+                project(la, lo)
+            })
+            .collect();
+        let a = shade(n0 as f32 / with0 as f32, sum0 / n0 as f32);
+        p.add(eframe::egui::Shape::convex_polygon(
+            disc,
+            alpha(yellow, a),
+            eframe::egui::Stroke::NONE,
+        ));
+    }
     for s in 0..SECTORS {
         let (b0, b1) = (s as f64 * step, (s + 1) as f64 * step);
-        for r in 0..RINGS {
+        for r in 1..RINGS {
             let c = cov.cells[s * RINGS + r];
             if c.n == 0 {
                 continue;
             }
-            // −30 dBFS weak … −3 dBFS strong.
-            let q = ((c.mean_rssi() + 30.0) / 27.0).clamp(0.0, 1.0);
-            let fill = ((c.n as f32).ln_1p() / 20f32.ln_1p()).min(1.0);
-            let a = 18.0 + 80.0 * fill * (0.35 + 0.65 * q);
+            let a = shade(c.n as f32, c.mean_rssi());
             let pts = slice(b0, b1, r as f64 * RING_KM, (r + 1) as f64 * RING_KM);
             p.add(eframe::egui::Shape::convex_polygon(
                 pts,
