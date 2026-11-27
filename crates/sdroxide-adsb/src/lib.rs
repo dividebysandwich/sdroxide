@@ -65,6 +65,7 @@ pub mod crc;
 pub mod demod;
 pub mod frame;
 pub mod message;
+pub mod prior;
 pub mod track;
 
 pub use controller::{AdsbAction, AdsbController};

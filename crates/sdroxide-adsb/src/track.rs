@@ -35,6 +35,7 @@ use sdroxide_types::{
 use crate::cpr;
 use crate::frame::Accepted;
 use crate::message::{Body, Cpr, Es};
+use crate::prior::SharedPrior;
 
 /// How far apart an even and an odd frame may be and still be decoded as a
 /// pair, in seconds.
@@ -46,6 +47,59 @@ const CPR_PAIR_MAX_S: f64 = 10.0;
 
 /// How old a fix may be and still serve as the reference for a local decode.
 const LOCAL_REF_MAX_S: f64 = 60.0;
+
+/// The fastest a new fix may imply the aircraft moved since the last one,
+/// knots, before it is taken for a decoding error and dropped; plus
+/// [`JUMP_SLACK_KM`] for the CPR quantisation and the latency of a feed.
+///
+/// A CPR pair decoded across a zone boundary, or one frame with an undetected
+/// bit error, does not land near the truth: it lands a whole zone away — six
+/// degrees of latitude, about 670 km, or a zone of longitude, 10° at 52° N —
+/// and the next good frame brings it back. Measured 2026-11-27 on a readsb
+/// feed: KLM49L at 40 km, seven seconds later 929 km (+6.09° latitude), twelve
+/// seconds after that 43 km again; 42 of 74 339 kept points that day. Two
+/// thousand knots is above anything that sends ADS-B, and over the longest gap
+/// a fix is checked against (a minute, [`LOCAL_REF_MAX_S`]) it allows about
+/// 60 km — a fifth of the smallest jump a zone error makes.
+/// Why: HDZ 2026-11-27: „ist das 600km signal echt?“ — „die koordinate ist
+///      falsch dekodiert“.
+const JUMP_MAX_KT: f64 = 2000.0;
+const JUMP_SLACK_KM: f64 = 10.0;
+
+/// Log-odds at which a fix is believed: nine to one.
+///
+/// A fix that follows the aircraft's recent track is believed outright. Any
+/// other — a first fix, one after a minute's silence, one that contradicts the
+/// track — starts at the station's learned prior for where it lands (see
+/// [`crate::prior`]) and is held as a candidate until the evidence reaches
+/// this. Inside the range the station has learned the prior alone does, and
+/// the aircraft appears at its first fix; far outside it, at the second or
+/// third fix that follows, within about a second (see
+/// [`crate::prior::LOG_ODDS_MIN`]).
+const ACCEPT_LOG_ODDS: f64 = 2.197_224_577_336_219; // ln 9
+
+/// Evidence one fix adds when it follows a candidate: a zone error does not
+/// repeat itself consistently, since the next frame decodes right, so a
+/// second agreeing fix is about 1/ε times likelier for a real aircraft.
+const LLR_FOLLOWS: f64 = 6.907_755_278_982_137; // ln 1000
+
+/// Evidence against a fix that contradicts a track heard within the last
+/// minute: the same weight, the other way. Two agreeing fixes overturn it, so
+/// a track that was itself wrong is corrected within a second or two.
+const LLR_CONTRADICTS: f64 = -LLR_FOLLOWS;
+
+/// Accepted fixes in a row before an aircraft's positions teach the prior, so
+/// that a fix believed on a thin prior does not reinforce itself.
+const TEACH_AFTER: u32 = 3;
+
+/// A fix not yet believed, and the evidence for it so far.
+#[derive(Debug, Clone, Copy)]
+struct Candidate {
+    lat: f64,
+    lon: f64,
+    at: f64,
+    log_odds: f64,
+}
 
 /// Window the turn rate is measured over, seconds. Long enough that the 1-degree
 /// quantisation of a broadcast track does not dominate it, short enough to
@@ -79,6 +133,10 @@ struct Entry {
     /// an aircraft that came into range a minute ago has had a minute to send,
     /// not two.
     positions_since: Option<f64>,
+    /// A fix held back until it is believed, see [`ACCEPT_LOG_ODDS`].
+    cand: Option<Candidate>,
+    /// Fixes accepted in a row, each following the last; see [`TEACH_AFTER`].
+    run: u32,
 }
 
 /// The shortest stretch [`AdsbAircraft::rx_share`] is given for: twenty
@@ -134,11 +192,24 @@ pub struct Tracker {
     /// The latest stream time seen, which [`AdsbAircraft::rx_share`] is
     /// counted up to.
     mono_s: f64,
+    /// The station's learned range, which a fix with nothing recent to follow
+    /// is judged by; `None`, every such fix is taken.
+    prior: Option<SharedPrior>,
 }
 
 impl Tracker {
     pub fn new(cfg: AdsbSettings) -> Tracker {
-        Tracker { by_icao: HashMap::new(), cfg: cfg.sane(), home: None, mono_s: 0.0 }
+        Tracker { by_icao: HashMap::new(), cfg: cfg.sane(), home: None, mono_s: 0.0, prior: None }
+    }
+
+    /// Judge new fixes by, and teach, this prior.
+    pub fn set_prior(&mut self, prior: Option<SharedPrior>) {
+        if let Some(p) = &prior
+            && let Ok(mut g) = p.lock()
+        {
+            g.set_home(self.home);
+        }
+        self.prior = prior;
     }
 
     /// Move the stream clock on without a message, so the shares of the
@@ -153,6 +224,11 @@ impl Tracker {
 
     pub fn set_home(&mut self, home: Option<(f64, f64)>) {
         self.home = home;
+        if let Some(p) = &self.prior
+            && let Ok(mut g) = p.lock()
+        {
+            g.set_home(home);
+        }
     }
 
     /// Whether an address has been proved by a verified squitter recently
@@ -190,6 +266,7 @@ impl Tracker {
         let verified = acc.is_verified();
         let home = self.home;
         let history = self.cfg.history_points as usize;
+        let prior = self.prior.as_ref();
 
         let e = self.by_icao.entry(icao).or_insert_with(|| Entry {
             ac: AdsbAircraft::new(icao, now),
@@ -201,6 +278,8 @@ impl Tracker {
             carriers: std::collections::VecDeque::new(),
             positions_at: std::collections::VecDeque::new(),
             positions_since: None,
+            cand: None,
+            run: 0,
         });
         self.mono_s = self.mono_s.max(mono_s);
         if let Some(hz) = carrier_hz {
@@ -218,7 +297,7 @@ impl Tracker {
         e.ac.raw_hex = bytes.iter().map(|b| format!("{b:02X}")).collect();
 
         match &acc.message().body {
-            Body::Squitter(es) => absorb_es(e, es, home, history, now, mono_s),
+            Body::Squitter(es) => absorb_es(e, es, home, prior, history, now, mono_s),
             // The answers to an interrogation. Worth taking: near a busy
             // airport a radar sweeps every few seconds, so these arrive far
             // more often than the aircraft's own squitters.
@@ -273,6 +352,7 @@ fn absorb_es(
     e: &mut Entry,
     es: &Es,
     home: Option<(f64, f64)>,
+    prior: Option<&SharedPrior>,
     history: usize,
     now: i64,
     mono_s: f64,
@@ -294,7 +374,7 @@ fn absorb_es(
             }
             e.ac.on_ground = false;
             note_position(e, mono_s);
-            airborne_position(e, *cpr, history, now, mono_s);
+            airborne_position(e, *cpr, prior, history, now, mono_s);
         }
         Es::Surface { movement_kt, track_deg, cpr } => {
             e.ac.on_ground = true;
@@ -310,6 +390,7 @@ fn absorb_es(
             if let Some((rlat, rlon)) = reference
                 && let Some((lat, lon)) =
                     cpr::local_surface((cpr.lat, cpr.lon), cpr.odd, rlat, rlon)
+                && plausible(e, lat, lon, mono_s)
             {
                 place(e, lat, lon, history, now, mono_s);
             }
@@ -391,7 +472,14 @@ fn absorb_es(
 }
 
 /// Resolve an airborne position squitter into a fix, locally or globally.
-fn airborne_position(e: &mut Entry, cpr: Cpr, history: usize, now: i64, mono_s: f64) {
+fn airborne_position(
+    e: &mut Entry,
+    cpr: Cpr,
+    prior: Option<&SharedPrior>,
+    history: usize,
+    now: i64,
+    mono_s: f64,
+) {
     if cpr.odd {
         e.odd = Some((cpr, mono_s));
     } else {
@@ -404,7 +492,7 @@ fn airborne_position(e: &mut Entry, cpr: Cpr, history: usize, now: i64, mono_s: 
         && mono_s - e.fix_at <= LOCAL_REF_MAX_S
         && let Some((la, lo)) = cpr::local((cpr.lat, cpr.lon), cpr.odd, lat, lon)
     {
-        place(e, la, lo, history, now, mono_s);
+        consider(e, la, lo, prior, history, now, mono_s);
         return;
     }
 
@@ -414,8 +502,92 @@ fn airborne_position(e: &mut Entry, cpr: Cpr, history: usize, now: i64, mono_s: 
         && (te - to).abs() <= CPR_PAIR_MAX_S
         && let Some((lat, lon)) = cpr::global((ev.lat, ev.lon), (od.lat, od.lon), te >= to)
     {
-        place(e, lat, lon, history, now, mono_s);
+        consider(e, lat, lon, prior, history, now, mono_s);
     }
+}
+
+/// Whether getting from `from`, fixed at stream time `from_at`, to `to` by
+/// `at` takes no more than [`JUMP_MAX_KT`].
+fn follows(from: (f64, f64), from_at: f64, to: (f64, f64), at: f64) -> bool {
+    let dt = at - from_at;
+    if !(0.0..=LOCAL_REF_MAX_S).contains(&dt) {
+        return false;
+    }
+    sdroxide_types::distance_km(from, to) <= JUMP_MAX_KT * 1.852 / 3600.0 * dt + JUMP_SLACK_KM
+}
+
+/// Take a decoded airborne fix, or hold it, by the evidence for it.
+///
+/// A fix that follows the track of the last minute is believed and placed;
+/// once the track has run for [`TEACH_AFTER`] fixes, it also teaches the
+/// prior. Any other starts or continues a [`Candidate`]: its log-odds begin at
+/// the prior for where it lands, less [`LLR_CONTRADICTS`] if it contradicts a
+/// live track, and gain [`LLR_FOLLOWS`] for each fix that follows it. At
+/// [`ACCEPT_LOG_ODDS`] it is placed — replacing the track it contradicted,
+/// whose history then goes with it.
+fn consider(
+    e: &mut Entry,
+    lat: f64,
+    lon: f64,
+    prior: Option<&SharedPrior>,
+    history: usize,
+    now: i64,
+    mono_s: f64,
+) {
+    if !lat.is_finite() || !lon.is_finite() || lat.abs() > 90.0 || lon.abs() > 180.0 {
+        return;
+    }
+    let track =
+        e.ac.lat.zip(e.ac.lon).filter(|_| (0.0..=LOCAL_REF_MAX_S).contains(&(mono_s - e.fix_at)));
+    if let Some(from) = track
+        && follows(from, e.fix_at, (lat, lon), mono_s)
+    {
+        e.cand = None;
+        place(e, lat, lon, history, now, mono_s);
+        e.run = e.run.saturating_add(1);
+        if e.run >= TEACH_AFTER
+            && let Some(p) = prior
+            && let Ok(mut g) = p.lock()
+        {
+            g.learn(lat, lon, now);
+        }
+        return;
+    }
+    let log_odds = match e.cand {
+        Some(c) if follows((c.lat, c.lon), c.at, (lat, lon), mono_s) => c.log_odds + LLR_FOLLOWS,
+        _ => {
+            let base = prior
+                .and_then(|p| p.lock().ok().map(|g| g.log_odds(lat, lon)))
+                .unwrap_or_else(|| ((1.0 - crate::prior::EPS) / crate::prior::EPS).ln());
+            base + if track.is_some() { LLR_CONTRADICTS } else { 0.0 }
+        }
+    };
+    if log_odds < ACCEPT_LOG_ODDS {
+        e.cand = Some(Candidate { lat, lon, at: mono_s, log_odds });
+        return;
+    }
+    e.cand = None;
+    if track.is_some() {
+        // The track it overturns was the wrong one; so is its history.
+        e.ac.track.clear();
+        e.ac.lat = None;
+        e.ac.lon = None;
+    }
+    place(e, lat, lon, history, now, mono_s);
+    e.run = 1;
+}
+
+/// Whether a surface fix at `lat`/`lon` could follow the aircraft's last one:
+/// always when there is none or it is older than [`LOCAL_REF_MAX_S`], else
+/// only if getting there took no more than [`JUMP_MAX_KT`]. A surface fix is
+/// decoded against a reference within 45 NM, so it cannot land a zone away;
+/// this only keeps a bit error from moving it across the airfield.
+fn plausible(e: &Entry, lat: f64, lon: f64, mono_s: f64) -> bool {
+    let (Some(plat), Some(plon)) = (e.ac.lat, e.ac.lon) else { return true };
+    if !(0.0..=LOCAL_REF_MAX_S).contains(&(mono_s - e.fix_at)) {
+        return true;
+    }
+    follows((plat, plon), e.fix_at, (lat, lon), mono_s)
 }
 
 /// Record a fix, pushing the previous one onto the history.
@@ -482,6 +654,154 @@ fn update_track(e: &mut Entry, deg: f32, mono_s: f64) {
 
 #[cfg(test)]
 mod tests {
+    fn entry_at(lat: f64, lon: f64, fix_at: f64) -> Entry {
+        let mut ac = AdsbAircraft::new(0x484166, 0);
+        ac.lat = Some(lat);
+        ac.lon = Some(lon);
+        Entry {
+            ac,
+            even: None,
+            odd: None,
+            fix_at,
+            verified: true,
+            turn_ref: None,
+            carriers: std::collections::VecDeque::new(),
+            positions_at: std::collections::VecDeque::new(),
+            positions_since: None,
+            cand: None,
+            run: 0,
+        }
+    }
+
+    /// A prior for HOME that has heard aircraft westwards out to 300 km.
+    fn prior_west() -> SharedPrior {
+        const HOME: (f64, f64) = (51.49792, 7.40417);
+        let mut p = crate::prior::RangePrior::new(0);
+        p.set_home(Some(HOME));
+        for i in 0..3000 {
+            let km = 5.0 + 295.0 * (i as f64 / 3000.0);
+            let lon = HOME.1 - km / (111.32 * HOME.0.to_radians().cos());
+            p.learn(HOME.0, lon, 0);
+        }
+        std::sync::Arc::new(std::sync::Mutex::new(p))
+    }
+
+    fn fresh() -> Entry {
+        let mut e = entry_at(0.0, 0.0, f64::NEG_INFINITY);
+        e.ac.lat = None;
+        e.ac.lon = None;
+        e
+    }
+
+    /// A first fix far outside what the station has learned (KLM49L's zone
+    /// error, 929 km) is held; the right fix half a second later appears at
+    /// once, and the wrong one never did.
+    #[test]
+    fn a_first_fix_far_outside_the_learned_range_is_held() {
+        let p = prior_west();
+        let mut e = fresh();
+        consider(&mut e, 57.23, -3.06, Some(&p), 10, 0, 10.0);
+        assert_eq!(e.ac.lat, None, "a zone error was shown");
+        assert!(e.cand.is_some());
+        consider(&mut e, 51.14, 7.34, Some(&p), 10, 0, 10.5);
+        assert_eq!((e.ac.lat, e.ac.lon), (Some(51.14), Some(7.34)));
+        assert!(e.cand.is_none() && e.ac.track.is_empty());
+    }
+
+    /// A real aircraft far outside the learned range — ducting, a new antenna
+    /// — is held for two fixes and shown at the third that follows them, about
+    /// a second after the first; however long the station has learned.
+    #[test]
+    fn a_real_aircraft_beyond_the_learned_range_is_shown_at_its_third_fix() {
+        let p = prior_west();
+        let mut e = fresh();
+        consider(&mut e, 51.5, -1.2, Some(&p), 10, 0, 10.0); // ~600 km west
+        consider(&mut e, 51.5, -1.19, Some(&p), 10, 0, 10.5);
+        assert_eq!(e.ac.lat, None);
+        consider(&mut e, 51.5, -1.18, Some(&p), 10, 0, 11.0);
+        assert_eq!(e.ac.lat, Some(51.5));
+    }
+
+    /// Inside the learned range a first fix is believed at once.
+    #[test]
+    fn a_first_fix_inside_the_learned_range_is_shown_at_once() {
+        let p = prior_west();
+        let mut e = fresh();
+        consider(&mut e, 51.49, 5.9, Some(&p), 10, 0, 10.0); // ~105 km west
+        assert_eq!(e.ac.lat, Some(51.49));
+    }
+
+    /// A station without a prior takes a first fix as it always did.
+    #[test]
+    fn without_a_prior_a_first_fix_is_taken() {
+        let mut e = fresh();
+        consider(&mut e, 57.23, -3.06, None, 10, 0, 10.0);
+        assert_eq!(e.ac.lat, Some(57.23));
+    }
+
+    /// Two fixes that agree with each other overturn a track they contradict:
+    /// a track that started wrong is put right within a second.
+    #[test]
+    fn two_agreeing_fixes_overturn_a_wrong_track() {
+        let mut e = entry_at(57.23, -3.06, 10.0);
+        e.ac.track.push((57.2, -3.1));
+        consider(&mut e, 51.14, 7.34, None, 10, 0, 10.5);
+        assert_eq!(e.ac.lat, Some(57.23), "one contradicting fix is not enough");
+        consider(&mut e, 51.141, 7.341, None, 10, 0, 11.0);
+        assert_eq!(e.ac.lat, Some(51.141));
+        assert!(e.ac.track.is_empty(), "the wrong track's history stayed");
+    }
+
+    /// Only a track that has run a few fixes teaches the prior.
+    #[test]
+    fn a_running_track_teaches_the_prior() {
+        let p = crate::prior::open(
+            &std::env::temp_dir().join(format!("sdroxide-teach-{}.txt", std::process::id())),
+            0,
+        );
+        p.lock().unwrap().set_home(Some((51.49792, 7.40417)));
+        let sum = |p: &SharedPrior| -> f32 {
+            let g = p.lock().unwrap();
+            (0..crate::prior::SECTORS).map(|s| g.sector(s).iter().sum::<f32>()).sum()
+        };
+        let mut e = fresh();
+        for k in 0..4 {
+            consider(&mut e, 51.2 + 0.001 * k as f64, 7.0, Some(&p), 10, 0, 10.0 + k as f64);
+        }
+        // Fixes 1 and 2 do not teach; 3 and 4 do.
+        assert_eq!(sum(&p), 2.0);
+    }
+
+    /// The jump measured on KLM49L: 40 km out, then a fix one latitude zone
+    /// north seven seconds later. It is dropped; the aircraft stays where it
+    /// was, and the next ordinary fix is taken.
+    #[test]
+    fn a_fix_a_zone_away_seconds_later_is_dropped() {
+        let mut e = entry_at(51.14, 7.34, 100.0);
+        consider(&mut e, 57.23, -3.06, None, 10, 7, 107.0);
+        assert_eq!((e.ac.lat, e.ac.lon), (Some(51.14), Some(7.34)), "teleported");
+        assert_eq!(e.fix_at, 100.0, "a held fix is no reference");
+        consider(&mut e, 51.11, 7.40, None, 10, 19, 119.0);
+        assert_eq!((e.ac.lat, e.ac.lon), (Some(51.11), Some(7.40)));
+    }
+
+    /// Ordinary flight passes: 500 kt for ten seconds is 2.6 km.
+    #[test]
+    fn a_fix_at_airliner_speed_is_taken() {
+        let mut e = entry_at(51.0, 7.0, 0.0);
+        consider(&mut e, 51.0 + 2.6 / 111.2, 7.0, None, 10, 10, 10.0);
+        assert!((e.ac.lat.unwrap() - 51.0234).abs() < 1e-3);
+    }
+
+    /// With the last fix older than a minute there is nothing to judge by, so
+    /// a track that was itself wrong recovers.
+    #[test]
+    fn after_a_minute_the_next_fix_is_taken_wherever_it_is() {
+        let mut e = entry_at(57.23, -3.06, 0.0);
+        consider(&mut e, 51.14, 7.34, None, 10, 61, 61.0);
+        assert_eq!((e.ac.lat, e.ac.lon), (Some(51.14), Some(7.34)));
+    }
+
     use super::*;
     use crate::frame::accept;
 
