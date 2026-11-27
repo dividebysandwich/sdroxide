@@ -6,7 +6,9 @@
 //! `mlat-client`'s Beast input, a second SDR Oxide.
 //!
 //! [`BeastClient`] is the input: it connects to somebody else's Beast output
-//! and hands the frames over, reconnecting when the far end goes away.
+//! and hands the frames over, reconnecting when the far end goes away or falls
+//! silent. Every decoder in the process that asks for the same address shares
+//! one connection.
 //!
 //! # Why the two never meet
 //!
@@ -18,10 +20,11 @@
 //! aircraft table and stop there. The barrier is in the wiring, not in a
 //! filter that could be got wrong — see the controller's tests.
 
+use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock, Mutex, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -36,6 +39,12 @@ const ACCEPT_POLL: Duration = Duration::from_millis(100);
 /// A client whose socket will not take this much more is dropped rather than
 /// let it hold up the rest. Two seconds of a busy sector.
 const CLIENT_BACKLOG_MAX: usize = 256 * 1024;
+
+/// How often the output says it is alive when it has nothing else to say, and
+/// what it says: readsb's heartbeat, a Mode A/C frame of zeros. A reader can
+/// then tell a quiet sky from a dead connection — see [`IDLE_MAX`].
+const HEARTBEAT: Duration = Duration::from_secs(60);
+const HEARTBEAT_FRAME: [u8; 11] = [0x1a, b'1', 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
 /// Reconnect backoff for the client, doubling from the first to the last.
 const RETRY_FIRST: Duration = Duration::from_secs(2);
@@ -75,6 +84,10 @@ impl BeastServer {
     /// Bind `addr` ("0.0.0.0:30005") and start serving. Fails as the bind
     /// fails, so "port already in use" reaches the operator.
     pub fn bind(addr: &str) -> std::io::Result<BeastServer> {
+        Self::bind_with(addr, HEARTBEAT)
+    }
+
+    fn bind_with(addr: &str, heartbeat: Duration) -> std::io::Result<BeastServer> {
         let listener = TcpListener::bind(addr)?;
         listener.set_nonblocking(true)?;
         let local = listener.local_addr()?;
@@ -85,7 +98,7 @@ impl BeastServer {
             let (clients, stop) = (clients.clone(), stop.clone());
             std::thread::Builder::new()
                 .name("sdroxide-beast-out".into())
-                .spawn(move || serve(listener, rx, clients, stop))?
+                .spawn(move || serve(listener, rx, clients, stop, heartbeat))?
         };
         info!(%local, "Beast output listening");
         Ok(BeastServer { out: BeastOut { tx }, addr: local, clients, stop, worker: Some(worker) })
@@ -126,9 +139,11 @@ fn serve(
     rx: Receiver<Vec<u8>>,
     clients: Arc<AtomicUsize>,
     stop: Arc<AtomicBool>,
+    heartbeat: Duration,
 ) {
     let mut peers: Vec<Peer> = Vec::new();
     let mut scratch = [0u8; 512];
+    let mut said = Instant::now();
     while !stop.load(Ordering::Relaxed) {
         loop {
             match listener.accept() {
@@ -161,6 +176,14 @@ fn serve(
             Err(RecvTimeoutError::Timeout) => Vec::new(),
             Err(RecvTimeoutError::Disconnected) => break,
         };
+        let chunk = if chunk.is_empty() && said.elapsed() >= heartbeat {
+            HEARTBEAT_FRAME.to_vec()
+        } else {
+            chunk
+        };
+        if !chunk.is_empty() {
+            said = Instant::now();
+        }
 
         peers.retain_mut(|p| {
             // A Beast output has nothing to hear, but a reader that closed
@@ -204,29 +227,83 @@ pub enum FeedState {
     Down(String),
 }
 
-/// The Beast input: a thread that keeps a connection to `addr` open and hands
-/// over whatever frames arrive.
+/// How long a connected input may go without a single byte before it is
+/// counted dead and dialled again.
+///
+/// A Beast output sends a heartbeat at least once a minute when its sky is
+/// empty (readsb and dump1090 both do; so does [`BeastServer`]), and this
+/// client only reads, so a far end that rebooted or a NAT that forgot the
+/// connection is otherwise never noticed: the socket stays open, nothing
+/// arrives, and the table empties as if the sky had. Two and a half
+/// heartbeats is late enough not to trip on one lost to a slow link.
+const IDLE_MAX: Duration = Duration::from_secs(150);
+
+/// The input as callers hold it: a subscription to the one connection this
+/// process keeps to `addr`.
+///
+/// Every radio in the ADS-B mode with a Beast feed starts a decoder, and each
+/// decoder asks for the feed. Were each to dial its own, four radios would pull
+/// the same stream four times over the same link — on a Wi-Fi hop to a
+/// receiver outdoors that is the difference between a feed that holds and one
+/// the far end drops for being too slow. So the connection is shared: the
+/// first subscriber to an address opens it, every later one is handed the
+/// same frames, and the last to leave closes it.
 pub struct BeastClient {
     addr: String,
-    state: Arc<Mutex<FeedState>>,
-    stop: Arc<AtomicBool>,
-    worker: Option<JoinHandle<()>>,
+    id: u64,
+    link: Arc<Link>,
 }
 
+/// One connection, and the thread that keeps it.
+struct Link {
+    shared: Arc<Shared>,
+    worker: Mutex<Option<JoinHandle<()>>>,
+}
+
+/// Who is listening to a connection, each under the id its handle carries.
+type Subs = Mutex<Vec<(u64, Sender<Vec<BeastFrame>>)>>;
+
+/// What the connection's thread and its subscribers both see.
+struct Shared {
+    state: Mutex<FeedState>,
+    subs: Subs,
+    stop: AtomicBool,
+    idle_max: Duration,
+}
+
+/// The connections open in this process, by address. Weak, so the last
+/// subscriber's drop is what closes a connection, not this table.
+static LINKS: LazyLock<Mutex<HashMap<String, Weak<Link>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
 impl BeastClient {
-    /// Start connecting to `addr` ("192.168.178.127:30005"). Frames go to
-    /// `tx` in batches, one per read; a full channel drops the batch.
+    /// Subscribe to the Beast output at `addr` ("192.168.178.127:30005"),
+    /// connecting if nobody in this process is yet. Frames go to `tx` in
+    /// batches, one per read; a full channel drops the batch for that
+    /// subscriber only.
     pub fn start(addr: &str, tx: Sender<Vec<BeastFrame>>) -> BeastClient {
-        let state = Arc::new(Mutex::new(FeedState::Connecting));
-        let stop = Arc::new(AtomicBool::new(false));
-        let worker = {
-            let (addr, state, stop) = (addr.to_string(), state.clone(), stop.clone());
-            std::thread::Builder::new()
-                .name("sdroxide-beast-in".into())
-                .spawn(move || subscribe(&addr, &tx, &state, &stop))
-                .ok()
+        Self::start_with(addr, tx, IDLE_MAX)
+    }
+
+    fn start_with(addr: &str, tx: Sender<Vec<BeastFrame>>, idle_max: Duration) -> BeastClient {
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let mut links = LINKS.lock().unwrap_or_else(|e| e.into_inner());
+        let link = match links.get(addr).and_then(Weak::upgrade) {
+            Some(l) => l,
+            None => {
+                let l = Link::open(addr, idle_max);
+                links.insert(addr.to_string(), Arc::downgrade(&l));
+                l
+            }
         };
-        BeastClient { addr: addr.to_string(), state, stop, worker }
+        // Under the table's lock, so a link cannot lose its last subscriber
+        // and stop between being found and being joined.
+        if let Ok(mut s) = link.shared.subs.lock() {
+            s.push((id, tx));
+        }
+        drop(links);
+        BeastClient { addr: addr.to_string(), id, link }
     }
 
     pub fn addr(&self) -> &str {
@@ -234,16 +311,46 @@ impl BeastClient {
     }
 
     pub fn state(&self) -> FeedState {
-        self.state.lock().map(|s| s.clone()).unwrap_or_default()
+        self.link.shared.state.lock().map(|s| s.clone()).unwrap_or_default()
     }
 }
 
 impl Drop for BeastClient {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(h) = self.worker.take() {
-            let _ = h.join();
+        if let Ok(mut s) = self.link.shared.subs.lock() {
+            s.retain(|(id, _)| *id != self.id);
         }
+        // The `Arc<Link>` goes with this; if it was the last, the link stops.
+    }
+}
+
+impl Link {
+    fn open(addr: &str, idle_max: Duration) -> Arc<Link> {
+        let shared = Arc::new(Shared {
+            state: Mutex::new(FeedState::Connecting),
+            subs: Mutex::new(Vec::new()),
+            stop: AtomicBool::new(false),
+            idle_max,
+        });
+        let worker = {
+            let (addr, shared) = (addr.to_string(), shared.clone());
+            std::thread::Builder::new()
+                .name("sdroxide-beast-in".into())
+                .spawn(move || subscribe(&addr, &shared))
+                .ok()
+        };
+        Arc::new(Link { shared, worker: Mutex::new(worker) })
+    }
+}
+
+impl Drop for Link {
+    fn drop(&mut self) {
+        // Not joined, as the output is not: the thread may sit in a DNS
+        // lookup or a five-second connect, and the last subscriber leaves on
+        // the engine thread when the ADS-B lane stops. It sees `stop` within
+        // a read timeout and ends itself.
+        self.shared.stop.store(true, Ordering::Relaxed);
+        drop(self.worker.lock().ok().and_then(|mut w| w.take()));
     }
 }
 
@@ -277,23 +384,28 @@ fn connect(addr: &str) -> std::io::Result<TcpStream> {
     Err(last)
 }
 
-fn subscribe(
-    addr: &str,
-    tx: &Sender<Vec<BeastFrame>>,
-    state: &Mutex<FeedState>,
-    stop: &AtomicBool,
-) {
+/// Hand a batch to every subscriber. A subscriber whose decoder has gone is
+/// struck off; one that is merely behind loses this batch, and nobody else
+/// waits for it.
+fn fan_out(subs: &Subs, frames: Vec<BeastFrame>) {
+    let Ok(mut s) = subs.lock() else { return };
+    s.retain(|(_, tx)| !matches!(tx.try_send(frames.clone()), Err(TrySendError::Disconnected(_))));
+}
+
+fn subscribe(addr: &str, shared: &Shared) {
+    let stop = &shared.stop;
     let mut retry = RETRY_FIRST;
     let mut buf = vec![0u8; 16 * 1024];
     while !stop.load(Ordering::Relaxed) {
-        set(state, FeedState::Connecting);
+        set(&shared.state, FeedState::Connecting);
         let why = match connect(addr) {
             Ok(mut sock) => {
                 let _ = sock.set_read_timeout(Some(Duration::from_millis(250)));
-                set(state, FeedState::Connected);
+                set(&shared.state, FeedState::Connected);
                 info!(addr, "Beast input connected");
                 retry = RETRY_FIRST;
                 let mut parser = Parser::new();
+                let mut heard = Instant::now();
                 loop {
                     if stop.load(Ordering::Relaxed) {
                         return;
@@ -301,17 +413,26 @@ fn subscribe(
                     match sock.read(&mut buf) {
                         Ok(0) => break "closed by the far end".to_string(),
                         Ok(n) => {
+                            heard = Instant::now();
                             let frames = parser.push(&buf[..n]);
-                            // Full drops the batch; disconnected means the
-                            // decoder is gone, and so is the reason to read.
-                            if !frames.is_empty()
-                                && let Err(TrySendError::Disconnected(_)) = tx.try_send(frames)
-                            {
-                                return;
+                            if !frames.is_empty() {
+                                fan_out(&shared.subs, frames);
                             }
                         }
                         Err(e)
-                            if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+                            if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
+                        {
+                            if heard.elapsed() >= shared.idle_max {
+                                // Closing here is the point: the far end may
+                                // still hold its half, and a socket kept open
+                                // on our side is one more it has to time out.
+                                let _ = sock.shutdown(Shutdown::Both);
+                                break format!(
+                                    "nothing received for {} s",
+                                    shared.idle_max.as_secs()
+                                );
+                            }
+                        }
                         Err(e) => break e.to_string(),
                     }
                 }
@@ -319,7 +440,7 @@ fn subscribe(
             Err(e) => e.to_string(),
         };
         warn!(addr, %why, "Beast input down; retrying in {retry:?}");
-        set(state, FeedState::Down(why));
+        set(&shared.state, FeedState::Down(why));
         if !wait(retry, stop) {
             return;
         }
@@ -397,5 +518,97 @@ mod tests {
         let (mut s, _) = l.accept().unwrap();
         s.write_all(&wire).unwrap();
         assert!(rx.recv_timeout(Duration::from_secs(5)).is_ok());
+    }
+
+    /// Two decoders on one address make one connection, both get every
+    /// frame, and the connection lives exactly as long as its last subscriber.
+    #[test]
+    fn two_decoders_on_one_address_share_one_connection() {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap().to_string();
+        let (tx1, rx1) = bounded(16);
+        let (tx2, rx2) = bounded(16);
+        let c1 = BeastClient::start(&addr, tx1);
+        let c2 = BeastClient::start(&addr, tx2);
+
+        let (mut s, _) = l.accept().unwrap();
+        l.set_nonblocking(true).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(l.accept().is_err(), "a second subscriber dialled its own connection");
+
+        let mut wire = Vec::new();
+        encode(&mut wire, 7, 9, &[0x5D, 0x4C, 0xA2, 0xD4, 0xA5, 0xA0, 0xF6]);
+        s.write_all(&wire).unwrap();
+        assert_eq!(rx1.recv_timeout(Duration::from_secs(3)).unwrap()[0].timestamp, 7);
+        assert_eq!(rx2.recv_timeout(Duration::from_secs(3)).unwrap()[0].timestamp, 7);
+
+        // The first leaves; the second still hears.
+        drop(c1);
+        s.write_all(&wire).unwrap();
+        assert!(rx2.recv_timeout(Duration::from_secs(3)).is_ok());
+        assert_eq!(c2.state(), FeedState::Connected);
+
+        // The last leaves; the connection closes.
+        drop(c2);
+        s.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let mut b = [0u8; 16];
+        assert_eq!(s.read(&mut b).unwrap(), 0, "the connection outlived its subscribers");
+    }
+
+    /// An input that stops hearing anything — the far end rebooted, a NAT
+    /// forgot the mapping — is closed and dialled again, instead of waiting on
+    /// a socket nothing will ever arrive on.
+    #[test]
+    fn a_silent_input_is_closed_and_dialled_again() {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap().to_string();
+        let (tx, rx) = bounded(16);
+        let client = BeastClient::start_with(&addr, tx, Duration::from_millis(500));
+
+        let (mut s, _) = l.accept().unwrap();
+        let mut wire = Vec::new();
+        encode(&mut wire, 3, 9, &[0x5D, 0x4C, 0xA2, 0xD4, 0xA5, 0xA0, 0xF6]);
+        s.write_all(&wire).unwrap();
+        assert!(rx.recv_timeout(Duration::from_secs(3)).is_ok());
+
+        // Hold the socket open and say nothing.
+        let t0 = Instant::now();
+        while !matches!(client.state(), FeedState::Down(_)) && t0.elapsed() < Duration::from_secs(3)
+        {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        match client.state() {
+            FeedState::Down(why) => assert!(why.contains("nothing received"), "{why}"),
+            other => panic!("still {other:?} after a silence"),
+        }
+        s.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let mut b = [0u8; 16];
+        assert_eq!(s.read(&mut b).unwrap(), 0, "the silent socket was left open");
+
+        // And it comes back by itself.
+        let (mut s2, _) = l.accept().unwrap();
+        s2.write_all(&wire).unwrap();
+        assert!(rx.recv_timeout(Duration::from_secs(5)).is_ok());
+    }
+
+    /// A quiet output still speaks: a heartbeat, so its readers can tell an
+    /// empty sky from a dead link.
+    #[test]
+    fn a_quiet_output_sends_a_heartbeat() {
+        let srv = BeastServer::bind_with("127.0.0.1:0", Duration::from_millis(200)).unwrap();
+        let mut c = TcpStream::connect(srv.local_addr()).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let mut got = [0u8; 11];
+        c.read_exact(&mut got).unwrap();
+        assert_eq!(got, HEARTBEAT_FRAME);
+    }
+
+    /// The heartbeat parses as a Mode A/C frame, which the table skips: it
+    /// keeps the link alive and adds nothing to the sky.
+    #[test]
+    fn the_heartbeat_is_a_mode_ac_frame() {
+        let frames = Parser::new().push(&HEARTBEAT_FRAME);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].bytes.len(), 2);
     }
 }
