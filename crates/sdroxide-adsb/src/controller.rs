@@ -87,6 +87,8 @@ enum Ctl {
     Out(Option<BeastOut>),
     /// Where the table's frames come from, and the Beast address if a stream.
     Feed(AdsbFeed, Option<String>),
+    /// Where the station's learned range is kept, see [`crate::prior`].
+    Prior(Option<std::path::PathBuf>),
     Stop,
 }
 
@@ -122,6 +124,7 @@ impl AdsbController {
                             Ok(Ctl::Home(h)) => w.set_home(h),
                             Ok(Ctl::Out(o)) => w.out = o,
                             Ok(Ctl::Feed(f, addr)) => w.set_feed(f, addr),
+                            Ok(Ctl::Prior(path)) => w.set_prior(path),
                             Ok(Ctl::Stop) | Err(_) => break,
                         },
                         recv(iq_rx) -> msg => match msg {
@@ -134,12 +137,14 @@ impl AdsbController {
                             }
                         },
                         recv(emit) -> _ => {
+                            w.save_prior(false);
                             if res_tx.send(AdsbAction::Status(Box::new(w.status()))).is_err() {
                                 break;
                             }
                         },
                     }
                 }
+                w.save_prior(true);
             })
             .expect("spawn adsb worker");
 
@@ -169,6 +174,13 @@ impl AdsbController {
     /// reference to be decoded against.
     pub fn set_home(&self, home: Option<(f64, f64)>) {
         let _ = self.ctl_tx.send(Ctl::Home(home));
+    }
+
+    /// Judge first fixes by the station's learned range kept in `path`, and
+    /// teach it; `None`, every first fix is taken. Every decoder given the
+    /// same path shares one prior.
+    pub fn set_prior_file(&self, path: Option<std::path::PathBuf>) {
+        let _ = self.ctl_tx.send(Ctl::Prior(path));
     }
 
     /// Also send every frame the demodulator accepts to `out`, as Beast; `None`
@@ -205,6 +217,10 @@ impl Drop for AdsbController {
 struct Worker {
     demod: Demod,
     tracker: Tracker,
+    /// The station's learned range and the file it is kept in.
+    prior: Option<(crate::prior::SharedPrior, std::path::PathBuf)>,
+    /// When the prior was last written.
+    prior_saved: Instant,
     center_hz: f64,
     rate_hz: f64,
     /// Samples seen, which at a known rate is the stream clock.
@@ -250,6 +266,8 @@ impl Worker {
             client: None,
             net_tx: None,
             t0: Instant::now(),
+            prior: None,
+            prior_saved: Instant::now(),
         }
     }
 
@@ -261,6 +279,7 @@ impl Worker {
             self.feed = feed;
             self.tracker = Tracker::new(self.cfg);
             self.tracker.set_home(self.home);
+            self.tracker.set_prior(self.prior.as_ref().map(|(p, _)| p.clone()));
             (self.frames, self.bad_crc, self.unmatched, self.repaired) = (0, 0, 0, 0);
             info!(?feed, "ADS-B feed");
         }
@@ -329,6 +348,27 @@ impl Worker {
     fn set_home(&mut self, home: Option<(f64, f64)>) {
         self.home = home;
         self.tracker.set_home(home);
+    }
+
+    fn set_prior(&mut self, path: Option<std::path::PathBuf>) {
+        self.save_prior(true);
+        self.prior = path.map(|f| (crate::prior::open(&f, unix_now()), f));
+        self.tracker.set_prior(self.prior.as_ref().map(|(p, _)| p.clone()));
+    }
+
+    /// Write the prior every five minutes, or now if `now` — a crash then
+    /// costs at most five minutes of learning.
+    fn save_prior(&mut self, now: bool) {
+        if !now && self.prior_saved.elapsed() < Duration::from_secs(300) {
+            return;
+        }
+        self.prior_saved = Instant::now();
+        if let Some((p, path)) = &self.prior
+            && let Ok(g) = p.lock()
+            && let Err(e) = crate::prior::save(&g, path)
+        {
+            tracing::warn!(path = %path.display(), "saving the ADS-B range prior: {e}");
+        }
     }
 
     fn process(&mut self, iq: &[C32]) {

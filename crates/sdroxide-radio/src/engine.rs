@@ -5881,6 +5881,13 @@ impl RigDigest {
     }
 }
 
+/// Where the ADS-B decoders keep the station's learned range: one file in
+/// the config folder, shared by every radio, since they all look at the same
+/// sky from the same place.
+fn adsb_prior_file() -> Option<std::path::PathBuf> {
+    sdroxide_config::config_dir().ok().map(|d| d.join("adsb-prior.txt"))
+}
+
 impl Drop for Engine {
     fn drop(&mut self) {
         // A picture held for its FSK ID goes now rather than not at all, and
@@ -12750,6 +12757,7 @@ impl Engine {
                     self.state.adsb,
                 );
                 c.set_home(self.adsb_home);
+                c.set_prior_file(adsb_prior_file());
                 c.set_feed(feed, self.beast_cfg.in_target());
                 self.adsb = Some(c);
                 self.adsb_feed = feed;
@@ -12760,6 +12768,7 @@ impl Engine {
                 let out_rate = ddc.out_rate();
                 let c = AdsbController::new(center, out_rate, self.state.adsb);
                 c.set_home(self.adsb_home);
+                c.set_prior_file(adsb_prior_file());
                 c.set_out(self.beast_srv.as_ref().map(|s| s.out()));
                 self.adsb = Some(c);
                 self.adsb_ddc = Some(ddc);
