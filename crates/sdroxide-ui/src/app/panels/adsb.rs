@@ -1230,6 +1230,20 @@ impl SdroxideApp {
             .and_then(|a| self.adsb_routes.route(&a.callsign))
             .map(|r| r.iter().filter_map(|c| self.adsb_routes.airport(c)).collect())
             .unwrap_or_default();
+        // Every aircraft's route as the table's short code, for its tooltip;
+        // the route in full is in the selected aircraft's card (HDZ
+        // 2026-11-27: „die strecke ist ja im selektionsfenster links drin,
+        // also reicht das kurzzeichen“). Asked for as the table asks, so only
+        // the airlines heard are fetched.
+        let routes: std::collections::HashMap<u32, String> = st
+            .aircraft
+            .iter()
+            .filter(|a| a.lat.is_some())
+            .filter_map(|a| {
+                let r = self.adsb_routes.route(&a.callsign)?;
+                Some((a.icao, crate::adsb_route::short(&r)))
+            })
+            .collect();
         let night = self.night_texture(ui.ctx());
         let (clouds_tex, clouds_credit) = if self.view.adsb_map_clouds || self.view.adsb_map_storms
         {
@@ -1283,6 +1297,7 @@ impl SdroxideApp {
             clouds_credit,
             airports,
             stamp: self.view.adsb_map_stamp,
+            routes: Some(&routes),
             alt_planes: self.view.adsb_alt_planes,
             alt_trails,
         };
